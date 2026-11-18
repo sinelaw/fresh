@@ -117,6 +117,7 @@ fn born_attached_session_does_not_wedge_source_window_typing() {
                 plugin_name: None,
                 shortcuts: Vec::new(),
                 scoped: Vec::new(),
+                hold_keys: false,
             })
             .unwrap();
     }

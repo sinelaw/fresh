@@ -6412,9 +6412,19 @@ impl JsEditorApi {
     /// ], true);
     /// ```
     ///
+    /// `holdKeys` makes keystrokes in this mode wait for one another: a key
+    /// that arrives while the handler of the previous one is still running
+    /// is held until it settles (at most 2 s), so it is read in whatever
+    /// mode that handler switched to. Set it for modal editing (vi's `d`
+    /// then `w`), where a key changes how the next one reads; leave it off
+    /// otherwise, since a slow handler then delays typing.
+    ///
     /// @param name - Mode name (e.g., "diagnostics-list")
     /// @param bindingsArr - Array of [key_string, command_name] pairs
     /// @param readOnly - Whether buffers in this mode are read-only
+    /// @param allowTextInput - Whether unbound characters reach the plugin as `mode_text_input`
+    /// @param inheritNormalBindings - Whether unbound keys fall through to the Normal bindings
+    /// @param holdKeys - Whether a key waits for the previous key's handler to settle
     pub fn define_mode(
         &self,
         name: String,
@@ -6422,6 +6432,7 @@ impl JsEditorApi {
         read_only: fresh_js::function::Opt<bool>,
         allow_text_input: fresh_js::function::Opt<bool>,
         inherit_normal_bindings: fresh_js::function::Opt<bool>,
+        hold_keys: fresh_js::function::Opt<bool>,
     ) -> bool {
         // A binding's optional third element `"shortcut"` declares it a
         // dialog-wide shortcut: on a widget panel it runs before the focused
@@ -6503,6 +6514,7 @@ impl JsEditorApi {
                 plugin_name: Some(self.plugin_name.clone()),
                 shortcuts,
                 scoped,
+                hold_keys: hold_keys.0.unwrap_or(false),
             })
             .is_ok()
     }

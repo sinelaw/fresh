@@ -30,6 +30,11 @@ pub struct BufferMode {
 
     /// Name of the plugin that registered this mode (for attribution in keybinding editor)
     pub plugin_name: Option<String>,
+
+    /// When true, a key that arrives while this mode's plugin handler for
+    /// the previous key is still running waits for it (see
+    /// `app::plugin_key_hold`). Modal editors (vi) opt in.
+    pub hold_keys: bool,
 }
 
 impl BufferMode {
@@ -41,6 +46,7 @@ impl BufferMode {
             allow_text_input: false,
             inherit_normal_bindings: false,
             plugin_name: None,
+            hold_keys: false,
         }
     }
 
@@ -65,6 +71,12 @@ impl BufferMode {
     /// Set whether unbound keys fall through to Normal-context bindings
     pub fn with_inherit_normal_bindings(mut self, inherit: bool) -> Self {
         self.inherit_normal_bindings = inherit;
+        self
+    }
+
+    /// Set whether keys wait for this mode's previous key handler to settle
+    pub fn with_hold_keys(mut self, hold_keys: bool) -> Self {
+        self.hold_keys = hold_keys;
         self
     }
 }

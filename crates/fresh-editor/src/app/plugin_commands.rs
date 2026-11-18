@@ -2531,6 +2531,7 @@ impl Editor {
         allow_text_input: bool,
         inherit_normal_bindings: bool,
         plugin_name: Option<String>,
+        hold_keys: bool,
     ) {
         use crate::input::buffer_mode::BufferMode;
         use crate::input::keybindings::parse_key_seq;
@@ -2540,6 +2541,7 @@ impl Editor {
             .with_read_only(read_only)
             .with_allow_text_input(allow_text_input)
             .with_inherit_normal_bindings(inherit_normal_bindings)
+            .with_hold_keys(hold_keys)
             .with_plugin_name(plugin_name);
 
         // Clear any existing plugin defaults for this mode before re-registering

@@ -72,6 +72,7 @@ pub mod plugin_authoring;
 pub mod plugin_config_changed_hook;
 pub mod plugin_config_map;
 pub mod plugin_config_registration;
+pub mod plugin_key_hold;
 pub mod plugin_keybinding_execution;
 pub mod plugin_snapshot_idle;
 pub mod plugin_snapshot_scaling;

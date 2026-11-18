@@ -5324,6 +5324,12 @@ pub enum PluginCommand {
         /// applies only while one of its widgets holds the panel's focus.
         #[serde(default)]
         scoped: Vec<(String, Vec<String>)>,
+        /// When true, a key that arrives while this mode's handler for the
+        /// previous key is still running waits for it (up to a bound), so it
+        /// is read in the mode the handler switches to. For modal editors
+        /// (vi), whose keys change how the next key reads.
+        #[serde(default)]
+        hold_keys: bool,
     },
 
     /// Switch the current split to display a buffer
@@ -8514,6 +8520,7 @@ impl PluginApi {
             plugin_name: None,
             shortcuts: Vec::new(),
             scoped: Vec::new(),
+            hold_keys: false,
         })
     }
 
