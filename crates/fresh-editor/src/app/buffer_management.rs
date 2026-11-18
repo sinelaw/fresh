@@ -654,7 +654,6 @@ impl Editor {
             let start_line_0 = start_line.saturating_sub(1);
             let start_col_0 = start_col.map(|c| c.saturating_sub(1)).unwrap_or(0);
             let end_line_0 = end_line.saturating_sub(1);
-            let end_col_0 = end_col.map(|c| c.saturating_sub(1)).unwrap_or(0);
 
             let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
 
@@ -662,9 +661,33 @@ impl Editor {
                 .buffer
                 .line_col_to_position(start_line_0.min(max_line), start_col_0)
                 .min(buffer_len);
+            let end_line_0 = end_line_0.min(max_line);
+            let end_line_start = state
+                .buffer
+                .line_col_to_position(end_line_0, 0)
+                .min(buffer_len);
+            // A bare end line (`10-25`) includes that whole line: the
+            // selection runs to the end of its text, before the line break.
+            // An explicit end column (`10:5-25:3`) is used as given.
+            let end_col_0 = match end_col {
+                Some(c) => c.saturating_sub(1),
+                None => {
+                    let next_line_start = if end_line_0 < max_line {
+                        state.buffer.line_col_to_position(end_line_0 + 1, 0)
+                    } else {
+                        buffer_len
+                    }
+                    .min(buffer_len);
+                    let line = state.buffer.slice_bytes(end_line_start..next_line_start);
+                    line.strip_suffix(b"\n")
+                        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+                        .unwrap_or(&line[..])
+                        .len()
+                }
+            };
             let end_pos = state
                 .buffer
-                .line_col_to_position(end_line_0.min(max_line), end_col_0)
+                .line_col_to_position(end_line_0, end_col_0)
                 .min(buffer_len);
 
             let event = Event::MoveCursor {
