@@ -1,0 +1,28 @@
+{
+  "title": "What changed: the script channel",
+  "description": "How an agent's terminal gets the right to drive the editor",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "The verb an agent runs",
+      "file_path": "crates/fresh-editor/src/main.rs",
+      "lines": [5094, 5100],
+      "explanation": "`fresh --cmd script run` reads the program from a file or from standard input and hands it to the running editor."
+    },
+    {
+      "step_id": 2,
+      "title": "Where the authority comes from",
+      "file_path": "crates/fresh-editor/src/app/terminal.rs",
+      "lines": [114, 171],
+      "explanation": "A workspace hands its agent the ability to drive the editor when it starts it, bound to that workspace and nothing else. Nothing else in the process gets it by default."
+    },
+    {
+      "step_id": 3,
+      "title": "The check, and the target",
+      "file_path": "crates/fresh-editor/src/server/command_access.rs",
+      "lines": [223, 226],
+      "explanation": "Each script names a token. The editor looks it up, refuses one that may not script, and runs the program against the window the token was minted for."
+    }
+  ]
+}

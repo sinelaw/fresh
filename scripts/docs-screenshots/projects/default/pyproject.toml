@@ -1,0 +1,7 @@
+[project]
+name = "invoicing"
+version = "0.3.0"
+requires-python = ">=3.11"
+
+[project.scripts]
+invoicing = "invoicing.cli:main"

@@ -1,0 +1,27 @@
+{
+  "title": "Where invoices are kept",
+  "description": "Saving and loading invoices",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "One file per invoice",
+      "file_path": "invoicing/store.py",
+      "lines": [
+        1,
+        20
+      ],
+      "explanation": "Invoices are JSON files under `~/.invoicing`."
+    },
+    {
+      "step_id": 2,
+      "title": "The design note",
+      "file_path": "docs/design.md",
+      "lines": [
+        8,
+        11
+      ],
+      "explanation": "Why files and not a database, for now."
+    }
+  ]
+}

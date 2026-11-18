@@ -1,0 +1,8 @@
+{
+  "name": "inventory-api",
+  "version": "1.4.0",
+  "type": "module",
+  "scripts": { "start": "node src/server.js", "test": "node --test tests/" },
+  "dependencies": { "express": "^4.19.2", "pg": "^8.11.5" },
+  "devDependencies": { "supertest": "^7.0.0" }
+}

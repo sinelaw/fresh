@@ -1,0 +1,57 @@
+{
+  "title": "How an invoice adds up",
+  "description": "From a logged hour to the total on the invoice",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "Client sets the rate",
+      "file_path": "invoicing/models.py",
+      "lines": [
+        6,
+        11
+      ],
+      "explanation": "## Where the money starts\n\nEvery invoice belongs to one **client**, and the client carries the `hourly_rate`. Nothing else in the model knows a price."
+    },
+    {
+      "step_id": 2,
+      "title": "Hours times rate",
+      "file_path": "invoicing/models.py",
+      "lines": [
+        14,
+        22
+      ],
+      "explanation": "A `LineItem` copies the rate when it is created, so changing a client's rate later never rewrites old invoices.\n\n`total` rounds to cents here, once per line."
+    },
+    {
+      "step_id": 3,
+      "title": "Adding work",
+      "file_path": "invoicing/models.py",
+      "lines": [
+        33,
+        40
+      ],
+      "explanation": "Two things are decided here, and the second is the one that matters.\n\n`add` takes **hours only**: the rate always comes from the invoice's client, so a caller cannot bill one line at a different price by mistake. And the item is appended to the invoice it was added to, not to whichever invoice is current \u2014 there is no hidden state to get wrong.\n\nThe subtotal is a plain sum of the line totals; tax is computed on that sum, never per line."
+    },
+    {
+      "step_id": 4,
+      "title": "Tax and the total",
+      "file_path": "invoicing/models.py",
+      "lines": [
+        42,
+        47
+      ],
+      "explanation": "Tax is a rate applied to the subtotal and rounded to cents. The total is subtotal plus tax \u2014 nothing more."
+    },
+    {
+      "step_id": 5,
+      "title": "Showing it",
+      "file_path": "invoicing/cli.py",
+      "lines": [
+        24,
+        27
+      ],
+      "explanation": "`invoicing list` prints one row per invoice, with its total and whether it is paid."
+    }
+  ]
+}
