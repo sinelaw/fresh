@@ -116,6 +116,52 @@ fn test_editor_server_initialize_restores_workspace() {
     }
 }
 
+/// With `editor.restore_previous_session` off, the background editor starts
+/// fresh like a plain launch does, instead of bringing back the old tabs
+/// (#3783).
+#[test]
+fn test_editor_server_initialize_honours_restore_previous_session_off() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("hello.txt");
+    std::fs::write(&file1, "original content").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let session_name = unique_session_name("no-restore-ws");
+
+    // --- Session 1: initialize, open file, shutdown ---
+    {
+        let config = make_server_config(&session_name, project_dir.clone(), dir_context.clone());
+        let mut server = EditorServer::new(config).unwrap();
+        server.initialize_editor().unwrap();
+
+        let editor = server.editor_mut().unwrap();
+        editor.queue_file_open(file1.clone(), None, None, None, None, None, None);
+        editor.process_pending_file_opens();
+        editor.end_recovery_session().unwrap();
+        editor.save_workspace().unwrap();
+    }
+
+    // --- Session 2: the setting is off, so nothing is restored ---
+    {
+        let mut config =
+            make_server_config(&session_name, project_dir.clone(), dir_context.clone());
+        config.editor_config.editor.restore_previous_session = false;
+        let mut server = EditorServer::new(config).unwrap();
+        server.initialize_editor().unwrap();
+
+        let editor = server.editor().unwrap();
+        let content = editor.active_state().buffer.to_string().unwrap_or_default();
+        assert!(
+            !content.contains("original content"),
+            "restore_previous_session=false: hello.txt must not be restored, got: {:?}",
+            content
+        );
+    }
+}
+
 /// Same as above but with an unnamed buffer — verifies hot exit recovery
 /// restores unsaved content that was never on disk.
 #[test]

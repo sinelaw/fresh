@@ -909,18 +909,40 @@ impl EditorServer {
         let (mut editor, terminal) = self.build_editor_instance()?;
 
         // Restore workspace and recovery data (mirrors the standalone startup
-        // path in handle_first_run_setup in main.rs).
-        let restored = editor.try_restore_workspace();
-        editor.mark_active_window_focused();
-        match restored {
-            Ok(true) => {
-                tracing::info!("Session workspace restored successfully");
+        // path in handle_first_run_setup in main.rs), honouring
+        // `editor.restore_previous_session` the same way.
+        if editor.config().editor.restore_previous_session {
+            let restored = editor.try_restore_workspace();
+            editor.mark_active_window_focused();
+            match restored {
+                Ok(true) => {
+                    tracing::info!("Session workspace restored successfully");
+                }
+                Ok(false) => {
+                    tracing::debug!("No previous session workspace found");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to restore session workspace: {}", e);
+                }
             }
-            Ok(false) => {
-                tracing::debug!("No previous session workspace found");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to restore session workspace: {}", e);
+        } else {
+            tracing::info!(
+                "Skipping workspace restore: editor.restore_previous_session is disabled"
+            );
+            editor.mark_active_window_focused();
+            // Session restore opted out, but unsaved work (modified files and
+            // unnamed buffers with content) still comes back, as in main.rs.
+            match editor.try_restore_hot_exit_buffers() {
+                Ok(n) if n > 0 => {
+                    tracing::info!(
+                        "Restored {} hot-exit buffer(s) despite skipping session restore",
+                        n
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!("Failed to restore hot-exit buffers: {}", e);
+                }
             }
         }
 
