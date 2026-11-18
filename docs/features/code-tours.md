@@ -66,7 +66,7 @@ It deliberately does not pick for you. A repository can hold several tours, and 
 
 ## Moving through a tour
 
-Step forward and back from the panel, or from the code you are reading without leaving it, or by clicking any step in the list to jump straight there. Every time the step changes, the file opens and the range highlights (themes set its colour with `ui.tour_step_bg`).
+Step forward and back from the panel, or from the code you are reading with **Tour: Next Step** and **Tour: Previous Step**, or by clicking any step in the list to jump straight there. Every time the step changes, the file opens and the range highlights (themes set its colour with `ui.tour_step_bg`).
 
 The panel shows what each key does along the bottom, so there is nothing to memorise — open a tour and the controls are in front of you. Explanations are rendered markdown, so headings, lists, emphasis and links come out as written, and you can select and copy the text.
 

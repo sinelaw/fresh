@@ -20,6 +20,8 @@ Each row shows the workspace's state, so you can tell at a glance where you are 
 | **✓** | It finished work you haven't looked at yet |
 | **\*** | It is working |
 | **·** | Idle |
+| **!** | Creating it failed; the row says why and offers **Retry** |
+| **○** | A worktree on disk with no workspace open yet (shown with **All worktrees**) |
 
 When a background workspace needs you, the status bar says so. **Orchestrator: Jump to Attention** takes you to it, and **Orchestrator: Jump Back** returns you to where you were.
 

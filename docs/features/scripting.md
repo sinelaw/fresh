@@ -145,7 +145,7 @@ echo '
 ' | fresh --cmd script run
 ```
 
-`unarchiveWorkspace(name)` puts one back where it came from. It returns as an unopened worktree on the dock rather than a running session — the inverse of Archive, not "restore and launch" — so follow it with `focusWorkspace` when you want it open. It refuses rather than overwrites if something has since taken the path it wants back.
+`unarchiveWorkspace(name)` puts one back where it came from. It returns as an unopened worktree on the dock (listed when **Menu ▾ → Show → All worktrees** is on) rather than a running session — the inverse of Archive, not "restore and launch" — so follow it with `focusWorkspace` when you want it open. It refuses rather than overwrites if something has since taken the path it wants back.
 
 ### Start a workspace on another machine
 
@@ -181,10 +181,10 @@ Some things do not need a script at all:
 
 ```sh
 fresh --cmd agent list               # every workspace and its agent's state
-fresh --cmd agent wait fix-flaky     # block until that agent has gone quiet
+fresh --cmd agent wait fresh-2       # block until that agent has gone quiet
 ```
 
-That makes it easy to chain work behind an agent from a script or another agent. Run `fresh --cmd agent` on its own for every verb and option.
+That makes it easy to chain work behind an agent from a script or another agent. The verbs take a workspace's name or ID, as `agent list` shows them. Run `fresh --cmd agent` on its own for every verb and option.
 
 ## Where scripts can run
 
