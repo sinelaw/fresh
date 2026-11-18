@@ -2165,6 +2165,7 @@
   "terminal.closed": "ปิดเทอร์มินัล %{id} แล้ว",
   "terminal.exited": "เทอร์มินัล %{id} ออกแล้ว",
   "terminal.failed_to_open": "เปิดเทอร์มินัลไม่สำเร็จ: %{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "ไม่มีเทอร์มินัลที่เปิดอยู่ — โปรดเปิดเทอร์มินัลก่อน",
   "terminal.opened": "เปิดเทอร์มินัล %{id} แล้ว (กด %{exit_key} เพื่อออก)",
   "terminal.sent_selection": "ส่งไปยังเทอร์มินัล %{id} แล้ว",

@@ -26,6 +26,11 @@
 //! cooperation. [`Authority::with_trust`](crate::services::authority::Authority::with_trust)
 //! installs the wrappers; the server calls it once per editor build.
 //!
+//! The integrated terminal is the exception: it opens its PTY directly, not
+//! through those spawners, so it checks the level itself and refuses to start
+//! (or restores without a process) when Blocked. Under Restricted it still
+//! runs the user's own shell.
+//!
 //! `editor.spawnHostProcess` (plugin internals that must run on the host,
 //! e.g. `devcontainer up`) bypasses the authority spawner, so it can't be
 //! caught at this choke-point; it consults [`WorkspaceTrust::decide`]

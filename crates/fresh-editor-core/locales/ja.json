@@ -2165,6 +2165,7 @@
   "terminal.closed": "ターミナル %{id} を閉じました",
   "terminal.exited": "ターミナル %{id} が終了しました",
   "terminal.failed_to_open": "ターミナルを開けませんでした: %{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "開いているターミナルがありません — 先にターミナルを開いてください",
   "terminal.opened": "ターミナル %{id} を開きました (%{exit_key} で終了)",
   "terminal.sent_selection": "ターミナル %{id} に送信しました",

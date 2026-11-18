@@ -2183,6 +2183,7 @@
   "terminal.closed": "Terminál %{id} zavřen",
   "terminal.exited": "Terminál %{id} ukončen",
   "terminal.failed_to_open": "Otevření terminálu selhalo: %{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "Žádný otevřený terminál — nejprve otevřete terminál",
   "terminal.opened": "Terminál %{id} otevřen (%{exit_key} pro ukončení)",
   "terminal.sent_selection": "Odesláno do terminálu %{id}",

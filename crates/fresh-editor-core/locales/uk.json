@@ -2192,6 +2192,7 @@
   "terminal.closed": "Термінал %{id} закрито",
   "terminal.exited": "Термінал %{id} завершено",
   "terminal.failed_to_open": "Не вдалося відкрити термінал: %{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "Немає відкритого термінала — спочатку відкрийте термінал",
   "terminal.opened": "Термінал %{id} відкрито (%{exit_key} для виходу)",
   "terminal.sent_selection": "Надіслано в термінал %{id}",

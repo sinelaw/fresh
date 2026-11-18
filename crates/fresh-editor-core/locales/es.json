@@ -2174,6 +2174,7 @@
   "terminal.closed": "Terminal %{id} cerrado",
   "terminal.exited": "Terminal %{id} finalizado",
   "terminal.failed_to_open": "Error al abrir terminal: %{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "No hay ningún terminal abierto — abra primero un terminal",
   "terminal.opened": "Terminal %{id} abierto (%{exit_key} para salir)",
   "terminal.sent_selection": "Enviado al terminal %{id}",

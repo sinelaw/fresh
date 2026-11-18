@@ -264,6 +264,41 @@ fn test_open_terminal() {
     harness.assert_screen_contains("Terminal");
 }
 
+/// #3778: a workspace whose trust is Blocked runs nothing, so Open Terminal
+/// refuses with a status message instead of starting a shell.
+#[test]
+fn test_open_terminal_refused_when_workspace_blocked() {
+    let mut harness = harness_or_return!(160, 24);
+    harness
+        .editor()
+        .authority()
+        .workspace_trust
+        .set_level_transient(fresh::services::workspace_trust::TrustLevel::Blocked);
+
+    harness.editor_mut().open_terminal();
+    harness
+        .editor_mut()
+        .open_terminal_split(fresh::model::event::SplitDirection::Vertical);
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("*Terminal"),
+        "no terminal may start in a Blocked workspace.\nScreen:\n{screen}"
+    );
+    harness.assert_screen_contains("Workspace trust is Blocked");
+
+    // Trusting the folder again lets terminals run.
+    harness
+        .editor()
+        .authority()
+        .workspace_trust
+        .set_level_transient(fresh::services::workspace_trust::TrustLevel::Trusted);
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+}
+
 /// Running "Open Terminal to the Right" from the command palette creates a
 /// terminal in a new split beside the editor: both panes stay visible side
 /// by side, with the terminal to the right of the still-visible editor
