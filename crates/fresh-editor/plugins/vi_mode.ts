@@ -3386,18 +3386,59 @@ async function blockTopLeft(): Promise<number | null> {
   return start + byteOfCharColumn(text, Math.min(block.anchorCol, block.headCol));
 }
 
+// The block's span on each line it covers, top to bottom, as buffer byte
+// ranges: its character columns on that line's own text, clamped to the
+// line's end.
+async function blockLineSpans(): Promise<{ start: number; end: number }[] | null> {
+  const block = state.visual?.block ?? null;
+  if (block === null) {
+    return null;
+  }
+  const firstCol = Math.min(block.anchorCol, block.headCol);
+  const lastCol = Math.max(block.anchorCol, block.headCol);
+  const spans: { start: number; end: number }[] = [];
+  const top = Math.min(block.anchorLine, block.headLine);
+  const bottom = Math.max(block.anchorLine, block.headLine);
+  for (let line = top; line <= bottom; line++) {
+    const start = await editor.getLineStartPosition(line);
+    const text = await lineTextAt(line);
+    if (start === null || text === null) {
+      return null;
+    }
+    const length = editor.utf8ByteLength(text);
+    spans.push({
+      start: start + Math.min(byteOfCharColumn(text, firstCol), length),
+      end: start + Math.min(byteOfCharColumn(text, lastCol + 1), length),
+    });
+  }
+  return spans;
+}
+
 // Visual block delete - delete the selected column. `copy` takes the block's
-// text; deleting through the editing path splits the rectangle into one
-// selection per line, so each line loses only its part.
+// text (as a block, so `p` puts it back as one); the column comes out of
+// every line in one edit, so one `u` brings it back.
 async function vi_vblock_delete() : Promise<void> {
   const topLeft = await blockTopLeft();
+  const spans = await blockLineSpans();
   editor.executeAction("copy");
-  editor.executeAction("delete_forward");
-  editor.executeAction("remove_secondary_cursors");
   memory.register = "charwise";
+  const bufferId = editor.getActiveBufferId();
+  if (spans !== null && spans.length > 0) {
+    const regionStart = spans[0].start;
+    const regionEnd = spans[spans.length - 1].end;
+    const text = await editor.getBufferText(bufferId, regionStart, regionEnd);
+    const at = (byte: number) => byteOffsetToStringIndex(text, byte - regionStart);
+    let kept = "";
+    let from = regionStart;
+    for (const span of spans) {
+      kept += text.slice(at(from), at(span.start));
+      from = span.end;
+    }
+    await editor.replaceRange(bufferId, regionStart, regionEnd, kept);
+  }
   switchMode("normal");
   if (topLeft !== null) {
-    editor.setBufferCursor(editor.getActiveBufferId(), topLeft);
+    editor.setBufferCursor(bufferId, topLeft);
   }
 }
 registerHandler("vi_vblock_delete", vi_vblock_delete);
