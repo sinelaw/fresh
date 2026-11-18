@@ -67,7 +67,7 @@ with undo, not with `C-y`.
 |-----|---------|
 | `C-s` | search forward (opens the search prompt) |
 | `C-s` / `C-r` in the prompt | repeat forward / backward |
-| `C-r` | search backward |
+| `C-r` | previous match of the last search |
 | `M-%` | query replace |
 
 ## Files, buffers and windows (`C-x`)

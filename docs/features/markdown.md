@@ -14,7 +14,7 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 
 - Enter continues list items (bullets, ordered lists, checkboxes)
 - Enter on an empty list marker removes it
-- Tab indents list items and cycles the bullet style
+- Tab on an empty list item indents it and cycles the bullet style (Shift+Tab reverses); elsewhere Tab works as usual
 - Single-quote auto-close is disabled so apostrophes don't interfere
 
 ## Compose Mode
@@ -137,7 +137,7 @@ Settings live under *Plugins → markdown_toc* (`plugins.markdown_toc.settings` 
 |---------|---------|---------|
 | `follow` | `"cursor"` | `"cursor"` highlights the heading containing the cursor; `"scroll"` the one at the top of the viewport |
 | `foldBuffer` | `false` | Collapsing a heading in the panel also folds its section in the buffer |
-| `autoOpen` | `true` | Open the panel for Markdown files and close it for other files automatically |
+| `autoOpen` | `true` | Open the panel for Markdown files and close it for other files automatically (it appears while the sidebar is shown) |
 | `rows` | `10` | Rows the section asks for; dragging the section divider overrides it |
 
 Files above the `editor.large_file_threshold_bytes` limit keep the headings last scanned and the section title reads "Contents (stale)".

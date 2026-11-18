@@ -12,7 +12,7 @@ The in-memory encoding is always UTF-8. Files are converted to UTF-8 when loaded
 
 ## Supported Encodings
 
-- **UTF-8** (default)
+- **UTF-8** (default), **UTF-8 BOM**, **ASCII**
 - **UTF-16 LE/BE** (with BOM detection)
 - **Latin-1** (ISO-8859-1)
 - **Windows-1252**, **Windows-1250**, **Windows-1251**
@@ -22,7 +22,7 @@ The in-memory encoding is always UTF-8. Files are converted to UTF-8 when loaded
 
 ## Status Bar Indicator
 
-The current encoding is shown in the status bar. Click it to change the encoding.
+The current encoding is shown in the status bar. Click it to change the encoding the file is saved in (the same as **Set Encoding** in the command palette); the text already loaded is not re-read.
 
 ## Fixing Wrong Encoding Detection
 
@@ -30,7 +30,6 @@ Encoding detection is heuristic — Fresh sniffs byte patterns to guess the on-d
 
 1. **Command Palette**: `Ctrl+P` → type "Reload with Encoding"
 2. **File Menu**: File → Reload with Encoding...
-3. **Status Bar**: Click the encoding indicator
 
 Cyrillic-script files (Windows-1251) with a mix of uppercase and lowercase letters are detected automatically.
 
@@ -43,4 +42,4 @@ When opening files via the file browser (`Ctrl+O`):
 
 ## Large File Confirmation
 
-For large files (>10MB) with non-UTF-8 encodings, Fresh shows a confirmation prompt before loading since full re-conversion is required.
+Large files (over 10 MB) in GBK, GB18030, Shift-JIS or EUC-KR have to be loaded and converted in full, so Fresh asks before loading them. Other encodings open large files lazily, without a prompt.

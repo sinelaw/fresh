@@ -40,7 +40,7 @@ pressing the current one again, or `Esc`, returns to Normal.
 | `%` | matching bracket |
 | `f` `t` `F` `T` + char | next / till next / previous / till previous character on the line |
 | `;` / `,` | repeat the last `f`/`t`/`F`/`T` forward / backward |
-| `/` `?` then `n` `N` | search forward / backward, next / previous match |
+| `/` then `n` `N` | search, next / previous match |
 | `*` / `#` | search for the word under the cursor forward / backward |
 | `Ctrl+D` / `Ctrl+U` | down / up ten lines |
 

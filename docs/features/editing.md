@@ -9,8 +9,8 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Smart Home** — Home toggles between first non-whitespace character and column 0; Shift+Home extends the selection the same way (`select_smart_home`).
 - **Smart Backspace** — Backspace in leading whitespace removes one indent level instead of a single character.
 - **Auto-indent** — Enter preserves the current indentation level. After `{`, `(`, or `:`, an extra indent level is added.
-- **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close`. Plain text files never auto-close quotes, only brackets.
-- **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides. It is independent of `auto_close`: either can be on with the other off.
+- **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close` apply while the global setting is on. Plain text files never auto-close quotes, only brackets.
+- **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides (again, only while the global setting is on). It is independent of `auto_close`: either can be on with the other off.
 - **Markdown types delimiters literally** — Markdown ships with both `languages.markdown.auto_close` and `languages.markdown.auto_surround` set to `false`, because prose types backticks, quotes and brackets as literal text far more often than as pairs. Set either to `true` to opt back in.
 - **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
 - **Bracket matching** — Matching brackets are highlighted, and nested brackets are colored by depth (rainbow brackets, on by default; turn it off with **Rainbow Brackets** in Settings). Use "Go to Matching Bracket" from the command palette to jump. Bracket highlighting itself is on by default (**Highlight Matching Brackets** in Settings).
@@ -18,7 +18,7 @@ Some keybindings may not work or may differ on your system due to differences in
 
 ## Vertical Rulers
 
-Add column rulers at any position via "Add Ruler" from the command palette. Useful for enforcing line length limits. Remove with "Remove Ruler". Rulers are per-buffer. The `rulers` config setting can also set default rulers (e.g. `[80, 120]`).
+Add column rulers at any position via "Add Ruler" from the command palette. Useful for enforcing line length limits. Remove with "Remove Ruler". Both change the current buffer and also save the result as your `rulers` setting, so files you open later (and later sessions) get the same rulers. You can also set `rulers` in config directly (e.g. `[80, 120]`).
 
 Ruler columns are 1-based *display* columns — screen cells, not characters: a ruler at 80 highlights the 80th display column, the last one the text may occupy. A tab advances to the next tab stop and a full-width character (CJK, most emoji) takes two cells, so on lines containing either, the ruler column is not the character count the status bar reports; for plain ASCII text the two numbers agree. Values below 1 are not valid columns and are ignored.
 
@@ -47,7 +47,7 @@ Guides are a source-code aid, so plain-text buffers (language `text` — undetec
 
 ## Current-Line Highlight
 
-The row the cursor is on is highlighted for quick visual tracking. Enabled by default; toggle via the command palette ("Toggle Current Line Highlight") or in the Settings UI. A matching **Toggle Current Column Highlight** highlights the cursor's column too — useful for visually aligning code with rulers. The Settings UI also has an option to drop the line highlight while text is selected.
+The row the cursor is on is highlighted for quick visual tracking. Enabled by default; toggle via the command palette ("Toggle Current Line Highlight") or in the Settings UI. The Settings UI also has **Highlight Current Column**, which highlights the cursor's column too — useful for visually aligning code with rulers — and an option to drop the line highlight while text is selected.
 
 ## Occurrence Highlighting
 
@@ -80,13 +80,13 @@ Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the comm
 
 ## Read-Only Mode
 
-Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read Only" from the command palette to override for a single buffer, or set `auto_read_only` to `false` in config to disable automatic read-only entirely (binary files still open read-only).
+Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read-Only Mode (Current Buffer)" from the command palette to override for a single buffer, or set `auto_read_only` to `false` in config to disable automatic read-only entirely (binary files still open read-only).
 
 ## Whitespace Indicators
 
-Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or `whitespace_indicators` in config. A master toggle and per-language overrides are supported. Theme color: `whitespace_indicator_fg`.
+Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or the `whitespace_*` settings in config, with `whitespace_show` as the master toggle. A language can hide tab arrows with `show_whitespace_tabs`. Theme color: `whitespace_indicator_fg`.
 
-**Toggle Whitespace Indicators (Current Buffer)** in the command palette flips the master toggle for the active buffer. Switching it on marks every space, whatever the configured per-position settings say — otherwise the command looks inert in a space-indented file with the default settings (spaces off, tabs on). Tab and line-ending indicators follow the configuration, so a language that hides tab arrows keeps hiding them. "Reset Buffer Settings" drops the per-buffer choice.
+**Toggle Whitespace Indicators (Current Buffer)** in the command palette flips the master toggle for the active buffer. Switching it on marks every space, whatever the configured per-position settings say. With the default settings (spaces off, tabs on) the indicators count as on, so the first use hides them and the second shows every space. Tab and line-ending indicators follow the configuration, so a language that hides tab arrows keeps hiding them. "Reset Buffer Settings" drops the per-buffer choice.
 
 Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle. New files use LF line endings unless you pick another in Settings (**Default Line Ending**: LF, CRLF or CR); opened files keep their own.
 
@@ -202,7 +202,7 @@ Configure `trim_trailing_whitespace_on_save` and `ensure_final_newline_on_save` 
 |----------|--------|
 | `Ctrl+F` | Search in buffer |
 | `Ctrl+R` | Replace in buffer |
-| `Ctrl+Alt+R` | Interactive replace (y/n/!/q for each match) |
+| `Ctrl+Alt+R` | Interactive replace (`y`/`n`/`a`/`c` for each match: yes, no, all, cancel) |
 | `F3` | Find next match (works with the search bar open, which stays open) |
 | `Shift+F3` | Find previous match (likewise) |
 | `Alt+N` / `Ctrl+F3` | Find next occurrence of selection |
@@ -228,7 +228,7 @@ A recorded macro lives only in its register until you persist it:
 - **Macro: Save to init.ts** writes the macro to your [`init.ts`](../configuration/init.md) as an editable `editor.defineMacro("0", [...])` block. Saved macros are seeded back into their registers at startup.
 - **Macro: Promote to command** turns the macro into a `registerCommand` handler in `init.ts`, seeded with the recorded steps — a starting point you can extend with loops, conditionals, or any plugin API.
 
-Both write a sentinel-delimited block and reload `init.ts` immediately. Each step is `{ action, args?, count? }`; the [Actions reference](../configuration/actions.md) lists every action name and the args it takes.
+Both write one sentinel-delimited block per register and reload `init.ts` immediately, so promoting a saved macro replaces its saved form (the register is then no longer seeded at startup). Each step is `{ action, args?, count? }`; the [Actions reference](../configuration/actions.md) lists every action name and the args it takes.
 
 To bind a custom key to play a macro, follow the example below to add a `keybindings` section to your local `config.json`. 
 
@@ -296,7 +296,7 @@ See [Navigation](./navigation.md) for more details.
 
 Fresh offers buffer-word completions without needing a language server — candidates are pulled from the words already present in your open buffers. These appear in the completion popup below any LSP results, so you still get both when an LSP is running.
 
-- Open the popup explicitly with **Trigger Completion** from the command palette (check the Keybinding Editor for the current key — by default `Ctrl+Space`).
+- Open the popup explicitly with **Show Completions** from the command palette (check the Keybinding Editor for the current key — by default `Ctrl+Space`).
 - A setting controls whether the popup also appears automatically as you type (default: explicit only).
 - **Tab** accepts the highlighted completion; **Enter** dismisses the popup and inserts a newline.
 
