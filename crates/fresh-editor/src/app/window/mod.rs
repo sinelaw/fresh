@@ -942,11 +942,11 @@ pub struct Window {
     /// active window's LSP. Per-window because the LSP they target is
     /// per-window (Step 0k).
     pub scheduled_diagnostic_pull: Option<(BufferId, std::time::Instant)>,
-    /// Backoff for [`Window::resync_desynced_lsp_documents`]: the earliest
-    /// time of the next repair attempt and the delay that set it. Grows while
-    /// resends keep failing, so a server that never takes them is not retried
-    /// on every frame (#3794).
-    lsp_resync_backoff: Option<(std::time::Instant, std::time::Duration)>,
+    /// Backoff for [`Window::resync_desynced_lsp_documents`], per server:
+    /// grows while resends to that server keep failing, so a server that
+    /// never takes them is not retried on every frame, and does not hold up
+    /// repairs for the others (#3794).
+    lsp_resync_backoff: LspResyncBackoff,
     pub scheduled_inlay_hints_request: Option<(BufferId, std::time::Instant)>,
 
     /// LSP languages the user dismissed the "do you want to enable
@@ -2670,7 +2670,7 @@ impl Window {
             search_use_regex: search_defaults.regex,
             search_confirm_each: search_defaults.confirm_each,
             scheduled_diagnostic_pull: None,
-            lsp_resync_backoff: None,
+            lsp_resync_backoff: LspResyncBackoff::default(),
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             editor_mode: None,
@@ -4876,7 +4876,7 @@ impl Window {
         buffer_id: BufferId,
         changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
     ) {
-        let _sent = self.send_lsp_changes_inner(buffer_id, changes, false);
+        let _sent = self.send_lsp_changes_inner(buffer_id, changes, None);
     }
 
     /// Whether a `didChange` for this buffer could reach a server at all.
@@ -4902,14 +4902,15 @@ impl Window {
             && self.buffers.get(&buffer_id).is_some()
     }
 
-    /// `resync_only` restricts the send to servers whose copy of the document
-    /// is known to have diverged, so a repair pass cannot disturb servers that
-    /// are still in sync (#3038).
+    /// `resync_only` (the ids of the servers being repaired) restricts the
+    /// send to those of them whose copy of the document is known to have
+    /// diverged, so a repair pass cannot disturb servers that are still in
+    /// sync (#3038), nor one still waiting out its backoff (#3794).
     fn send_lsp_changes_inner(
         &mut self,
         buffer_id: BufferId,
         changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
-        resync_only: bool,
+        resync_only: Option<&[u64]>,
     ) -> bool {
         const INLAY_HINTS_DEBOUNCE_MS: u64 = 500;
 
@@ -5056,12 +5057,16 @@ impl Window {
                 desynced: sh.handle.needs_full_resync(&path_for_resync),
                 has_capacity: sh.handle.has_command_capacity(),
                 text_available,
-                resync_only,
+                resync_only: resync_only.is_some(),
             };
+        let targeted = |sh: &crate::services::lsp::manager::ServerHandle| {
+            resync_only.is_none_or(|ids| ids.contains(&sh.handle.id()))
+        };
         let resync_text = self
             .lsp
             .get_handles(&language)
             .iter()
+            .filter(|sh| targeted(sh))
             .any(|sh| decide_change_to_send(sync_state(sh, true)) == ChangeToSend::FullText)
             .then(|| {
                 self.buffers
@@ -5073,6 +5078,9 @@ impl Window {
         let lsp = &mut self.lsp;
         let mut any_sent = false;
         for sh in lsp.get_handles_mut(&language) {
+            if !targeted(sh) {
+                continue;
+            }
             let outgoing = match decide_change_to_send(sync_state(sh, resync_text.is_some())) {
                 ChangeToSend::FullText => {
                     if sh.handle.needs_full_resync(&path_for_resync) {
@@ -5192,27 +5200,27 @@ impl Window {
         // Only servers with room for the notification are worth doing work
         // for; the rest are still backed up and would reject it, so they are
         // left for a later tick rather than rebuilding the payload every frame.
-        let stale: Vec<(u64, std::path::PathBuf)> = self
-            .lsp
-            .all_handles()
-            .iter()
-            .filter(|sh| sh.handle.has_command_capacity())
-            .flat_map(|sh| {
-                let id = sh.handle.id();
-                sh.handle
-                    .desynced_documents()
-                    .into_iter()
-                    .map(move |path| (id, path))
-            })
-            .collect();
-        if stale.is_empty() {
-            self.lsp_resync_backoff = None;
-            return acted;
-        }
+        // A server still waiting out its backoff is left alone; the others
+        // are repaired regardless.
         let now = std::time::Instant::now();
-        if matches!(self.lsp_resync_backoff, Some((not_before, _)) if now < not_before) {
+        let mut desynced_servers: Vec<u64> = Vec::new();
+        let mut stale: Vec<(u64, std::path::PathBuf)> = Vec::new();
+        for sh in self.lsp.all_handles() {
+            let id = sh.handle.id();
+            let paths = sh.handle.desynced_documents();
+            if paths.is_empty() {
+                continue;
+            }
+            desynced_servers.push(id);
+            if sh.handle.has_command_capacity() && self.lsp_resync_backoff.ready(id, now) {
+                stale.extend(paths.into_iter().map(|path| (id, path)));
+            }
+        }
+        self.lsp_resync_backoff.retain(&desynced_servers);
+        if stale.is_empty() {
             return acted;
         }
+        let repairing: Vec<u64> = stale.iter().map(|(id, _)| *id).collect();
 
         let buffer_for_path = |path: &std::path::Path| {
             self.buffer_metadata.iter().find_map(|(id, meta)| {
@@ -5282,26 +5290,20 @@ impl Window {
                     range_length: None,
                     text: String::new(),
                 }],
-                true,
+                Some(&repairing),
             );
         }
 
-        // Whatever is still flagged was attempted and refused; wait longer
-        // before each further attempt instead of retrying every frame.
-        let still_stale = self
-            .lsp
-            .all_handles()
-            .iter()
-            .filter(|sh| stale.iter().any(|(id, _)| *id == sh.handle.id()))
-            .any(|sh| !sh.handle.desynced_documents().is_empty());
-        self.lsp_resync_backoff = still_stale.then(|| {
-            const FIRST: std::time::Duration = std::time::Duration::from_millis(100);
-            const MAX: std::time::Duration = std::time::Duration::from_secs(5);
-            let delay = self
-                .lsp_resync_backoff
-                .map_or(FIRST, |(_, d)| (d * 2).min(MAX));
-            (now + delay, delay)
-        });
+        // A server whose documents are still flagged was attempted and
+        // refused; it waits longer before each further attempt instead of
+        // being retried every frame. One that took them starts afresh.
+        for sh in self.lsp.all_handles() {
+            let id = sh.handle.id();
+            if repairing.contains(&id) {
+                let still_stale = !sh.handle.desynced_documents().is_empty();
+                self.lsp_resync_backoff.record(id, still_stale, now);
+            }
+        }
         acted
     }
 
@@ -5672,6 +5674,72 @@ fn wrap_scroll_geometry(
 // assertion isn't worth the maintenance, and the same behaviour is
 // already exercised by every `EditorTestHarness::create` path that
 // names a window.
+
+/// Per-server backoff for the LSP resync pass
+/// ([`Window::resync_desynced_lsp_documents`]): the earliest time of each
+/// server's next repair attempt and the delay that set it (#3794).
+#[derive(Debug, Default)]
+struct LspResyncBackoff {
+    by_server: std::collections::HashMap<u64, (std::time::Instant, std::time::Duration)>,
+}
+
+impl LspResyncBackoff {
+    const FIRST: std::time::Duration = std::time::Duration::from_millis(100);
+    const MAX: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// Whether server `id` may be sent a repair at `now`.
+    fn ready(&self, id: u64, now: std::time::Instant) -> bool {
+        self.by_server
+            .get(&id)
+            .is_none_or(|(not_before, _)| now >= *not_before)
+    }
+
+    /// Record a repair attempt on server `id` at `now`: a refused one
+    /// (`still_stale`) doubles its delay, an accepted one clears it.
+    fn record(&mut self, id: u64, still_stale: bool, now: std::time::Instant) {
+        if !still_stale {
+            self.by_server.remove(&id);
+            return;
+        }
+        let delay = self
+            .by_server
+            .get(&id)
+            .map_or(Self::FIRST, |(_, d)| (*d * 2).min(Self::MAX));
+        self.by_server.insert(id, (now + delay, delay));
+    }
+
+    /// Forget every server not in `desynced` (in sync again, or gone).
+    fn retain(&mut self, desynced: &[u64]) {
+        self.by_server.retain(|id, _| desynced.contains(id));
+    }
+}
+
+#[cfg(test)]
+mod lsp_resync_backoff_tests {
+    use super::LspResyncBackoff;
+    use std::time::{Duration, Instant};
+
+    /// #3794: one server that keeps refusing repairs backs off on its own;
+    /// another server is still repaired straight away.
+    #[test]
+    fn backoff_is_per_server() {
+        let now = Instant::now();
+        let mut backoff = LspResyncBackoff::default();
+        for _ in 0..5 {
+            backoff.record(1, true, now);
+        }
+        assert!(!backoff.ready(1, now + Duration::from_millis(500)));
+        assert!(backoff.ready(2, now), "a stuck server delays only itself");
+        backoff.record(2, true, now);
+        assert!(backoff.ready(2, now + LspResyncBackoff::FIRST));
+        assert!(backoff.ready(1, now + LspResyncBackoff::MAX));
+
+        backoff.record(1, false, now);
+        assert!(backoff.ready(1, now), "an accepted repair clears it");
+        backoff.retain(&[]);
+        assert!(backoff.ready(2, now), "a server back in sync is forgotten");
+    }
+}
 
 #[cfg(test)]
 mod exited_terminal_tests {
