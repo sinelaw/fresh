@@ -1,19 +1,62 @@
 # Themes
 
+Fresh ships twelve built-in color themes — the same project in each, below (click an image to see it full size). Pick one with **Select Theme** from the command palette, or tweak any of them, or build your own from scratch, in the visual [Theme Editor](#creating-and-editing-themes). Themes are plain JSON files, so they can also [inherit](#inheritance) from a built-in and change just a few colors, and you can [install](../plugins/index.md) more from the package registry.
 
-Fresh supports customizable color themes.
+**`dark`**
+
+![The invoicing project in the dark theme: file explorer on the left, models.py on the right](/images/themes/dark.png)
+
+**`light`**
+
+![The invoicing project in the light theme: file explorer on the left, models.py on the right](/images/themes/light.png)
+
+**`high-contrast`**
+
+![The invoicing project in the high-contrast theme: file explorer on the left, models.py on the right](/images/themes/high-contrast.png)
+
+**`quiet`**
+
+![The invoicing project in the quiet theme: file explorer on the left, models.py on the right](/images/themes/quiet.png)
+
+**`nord`**
+
+![The invoicing project in the nord theme: file explorer on the left, models.py on the right](/images/themes/nord.png)
+
+**`dracula`**
+
+![The invoicing project in the dracula theme: file explorer on the left, models.py on the right](/images/themes/dracula.png)
+
+**`tokyo-night`**
+
+![The invoicing project in the tokyo-night theme: file explorer on the left, models.py on the right](/images/themes/tokyo-night.png)
+
+**`gruvbox`**
+
+![The invoicing project in the gruvbox theme: file explorer on the left, models.py on the right](/images/themes/gruvbox.png)
+
+**`solarized-dark`**
+
+![The invoicing project in the solarized-dark theme: file explorer on the left, models.py on the right](/images/themes/solarized-dark.png)
+
+**`flat`**
+
+![The invoicing project in the flat theme: file explorer on the left, models.py on the right](/images/themes/flat.png)
+
+**`nostalgia`**
+
+![The invoicing project in the nostalgia theme: file explorer on the left, models.py on the right](/images/themes/nostalgia.png)
+
+**`terminal`**
+
+![The invoicing project in the terminal theme: file explorer on the left, models.py on the right](/images/themes/terminal.png)
 
 ## Selecting a Theme
 
 Use the command palette (`Ctrl+P`) and search for "Select Theme" to choose from available themes. Built-in themes and user themes are both shown.
 
-![The Select Theme prompt listing the built-in themes, with quiet marked as current](/images/themes-select-theme.png)
+![The Select Theme prompt listing the built-in themes, with dark marked as current](/images/themes-select-theme.png)
 
-Fresh ships these built-in themes: `dark`, `light`, `high-contrast`, `nostalgia`, `dracula`, `nord`, `solarized-dark`, `tokyo-night`, `gruvbox`, `flat`, `quiet`, and `terminal`.
-
-![The same Python file in six built-in themes](/images/themes-builtin-gallery.png)
-
-*Left to right, top to bottom: `light`, `dracula`, `nord`, `gruvbox`, `solarized-dark`, `nostalgia`.*
+The theme is also a setting: **Settings → General → Theme**, a dropdown of every installed theme.
 
 ## Setting a Theme in `config.json`
 

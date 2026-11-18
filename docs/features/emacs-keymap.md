@@ -1,13 +1,17 @@
 # Emacs Keymap
 
 Fresh ships an Emacs keymap. Turn it on from **View → Keybinding Style → Emacs**,
-or set it in `config.json`:
+or in **Settings → Keybindings → Active Keybinding Map**:
 
+![Settings at Keybindings, with the Active Keybinding Map dropdown open: default, emacs, vscode, macos, macos-gui](/images/settings-keybinding-map.png)
+
+::: details Show JSON
 ```json
 {
   "active_keybinding_map": "emacs"
 }
 ```
+:::
 
 The keymap inherits `default`, so every key Emacs has no opinion about — the
 settings editor, the completion popup, the integrated terminal, the dock, the

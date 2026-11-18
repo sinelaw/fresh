@@ -47,9 +47,9 @@ A **running** terminal is never restarted — the indicator only appears once th
 
 The indicator is the `{terminal_restart}` status-bar element and can be moved or removed via `editor.status_bar.left` / `.right` like any other.
 
-To have a shell's tab close when you `exit` it (or press `Ctrl+D`) instead, set `terminal.close_on_exit = true`. A pane the terminal was the only tab of closes with it, like clicking the tab's ×. Terminals running a command — an agent, a plugin's build output — keep their scrollback either way, since reading it is the point.
+To have a shell's tab close when you `exit` it (or press `Ctrl+D`) instead, turn on **Close On Exit** under **Settings → Terminal** (`terminal.close_on_exit`). A pane the terminal was the only tab of closes with it, like clicking the tab's ×. Terminals running a command — an agent, a plugin's build output — keep their scrollback either way, since reading it is the point.
 
-In a terminal pane, `Ctrl+V` pastes the system clipboard's text. When the clipboard holds no text, for example an image you copied, `Ctrl+V` goes to the program instead, so an agent CLI such as Claude Code can read the image from the clipboard itself. Set `terminal.pass_ctrl_v_without_text = false` to paste your last yank in that case instead. When the system clipboard can't be read at all (no display, over SSH), `Ctrl+V` pastes your last yank either way.
+In a terminal pane, `Ctrl+V` pastes the system clipboard's text. When the clipboard holds no text, for example an image you copied, `Ctrl+V` goes to the program instead, so an agent CLI such as Claude Code can read the image from the clipboard itself. Turn off **Pass Ctrl V Without Text** under **Settings → Terminal** (`terminal.pass_ctrl_v_without_text`) to paste your last yank in that case instead. When the system clipboard can't be read at all (no display, over SSH), `Ctrl+V` pastes your last yank either way.
 
 ## Terminal Modes
 
@@ -90,7 +90,7 @@ In scrollback mode, you can use standard editor navigation:
 
 ## Shell Override
 
-By default the integrated terminal runs `$SHELL` (or the platform default if `$SHELL` is empty). Override this with `terminal.shell` in config without changing `$SHELL` for the whole process — handy when you want a wrapper that forces an interactive shell, or a different shell inside a container:
+By default the integrated terminal runs `$SHELL` (or the platform default if `$SHELL` is empty). The Settings UI doesn't offer this one yet; override it with `terminal.shell` in `config.json` without changing `$SHELL` for the whole process — handy when you want a wrapper that forces an interactive shell, or a different shell inside a container:
 
 ```json
 {
@@ -106,8 +106,8 @@ The override applies to host-shell terminals; wrappers that re-parent the shell 
 
 *   **Workspace Persistence:** Terminal scrollback and tab names are preserved across editor restarts, but running processes are terminated. A restored terminal starts in the directory its shell was last in.
 *   **Daemon Mode:** A bare `fresh` runs in the background daemon by default (Auto Attach), so you can **Detach** (File menu or command palette) and your terminal processes keep running. Run `fresh` again to reattach. With Auto Attach turned off, `fresh -a` does the same. See [Daemon Mode](./session-persistence.md) for details.
-*   **Automatic Scroll:** When new output arrives while the focused split is in scrollback mode, it automatically returns to terminal mode to show the latest output. Disable this with the `terminal.jump_to_end_on_output` config option — handy when you want to read scrollback in one split while another split (or the same one) keeps streaming. The jump always yields while a text selection is active, so new output can't destroy a selection you're about to copy.
-*   **Mouse Selection:** Dragging on a live terminal selects text — the split drops into read-only scrollback (`Ctrl+Space` resumes) with a real selection that `Ctrl+C` copies; a bare click still just focuses the terminal, and double-click selects a word and triple-click a line, on the live terminal as well as in scrollback. Set `terminal.mouse_drag_selects = false` to make drags on the live grid inert again.
+*   **Automatic Scroll:** When new output arrives while the focused split is in scrollback mode, it automatically returns to terminal mode to show the latest output. Disable this with **Jump To End On Output** under **Settings → Terminal** (`terminal.jump_to_end_on_output`) — handy when you want to read scrollback in one split while another split (or the same one) keeps streaming. The jump always yields while a text selection is active, so new output can't destroy a selection you're about to copy.
+*   **Mouse Selection:** Dragging on a live terminal selects text — the split drops into read-only scrollback (`Ctrl+Space` resumes) with a real selection that `Ctrl+C` copies; a bare click still just focuses the terminal, and double-click selects a word and triple-click a line, on the live terminal as well as in scrollback. Turn off **Mouse Drag Selects** under **Settings → Terminal** (`terminal.mouse_drag_selects`) to make drags on the live grid inert again.
 *   **Mouse Forwarding:** Mouse events reach the program inside the terminal only when it enabled mouse reporting (DECSET 1000/1002/1003), and `Shift`+drag bypasses it so you can always select. Set `terminal.mouse_forwarding = "alt_screen"` to restore the legacy rule (forward everything to any alternate-screen program, no `Shift` bypass).
 *   **Clipboard from programs:** When a program in the terminal copies text with OSC 52 (tmux, Neovim, a remote shell), it lands on your system clipboard. Programs can write to the clipboard but not read it.
 *   **Resizing:** The terminal automatically resizes when you resize the editor or split panes.

@@ -256,3 +256,9 @@
     width: 100%;
     display: block;
 }
+
+/* Editor screenshots: a terminal window, not a pasted bitmap. */
+.vp-doc img[src*="/images/"] {
+    border-radius: 8px;
+}
+

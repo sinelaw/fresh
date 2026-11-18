@@ -55,13 +55,17 @@ Each server can opt into or out of specific features using `only_features` / `ex
 
 To disable a single server, set `"enabled": false` on its entry in the `lsp` map (Settings UI: **Syntax & Languages → Language Servers**), or pick **Disable LSP for …** in the status-bar popup.
 
-To disable LSP for **all** languages at once, set the top-level `lsp_enabled` master switch to `false` (same Settings UI page):
+To disable LSP for **all** languages at once, turn off the **Lsp Enabled** master switch on the same Settings page:
 
+![Settings at Syntax & Languages, with the Lsp Enabled master switch selected under Language Servers](/images/settings-lsp-enabled.png)
+
+::: details Show JSON
 ```json
 {
   "lsp_enabled": false
 }
 ```
+:::
 
 No language server will auto-start for any language (universal servers included), and the status bar shows a dimmed `LSP (off)` pill when servers are configured for the current language. You can still start a server explicitly with **Start/Restart LSP Server** from the command palette — a manual start overrides the global switch for that language.
 
@@ -102,10 +106,13 @@ In a JavaScript/TypeScript project with a `deno.json` or `deno.jsonc` at its roo
 
 ## Python LSP Configuration
 
-The default Python server is `pylsp`. Alternatives:
+The default Python server is `pylsp`. To use another one, open **Settings → Syntax & Languages → Language Servers → python**, open the server, and change its **Command** and **Args**:
 
-**Using pyright (recommended for type checking):**
+![The Language Servers entry for python opened in Settings: the server's Command, Enabled, Name, Args, Auto Start and Root Markers, with Env and Language Id Overrides under Advanced](/images/settings-lsp-entry.png)
 
+**Using pyright (recommended for type checking):** Command `pyright-langserver`, Args `--stdio`.
+
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -117,11 +124,13 @@ The default Python server is `pylsp`. Alternatives:
   }
 }
 ```
+:::
 
 Install pyright with: `npm install -g pyright` or `pip install pyright`
 
-**Using basedpyright (enhanced pyright fork):**
+**Using basedpyright (enhanced pyright fork):** Command `basedpyright-langserver`, Args `--stdio`.
 
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -133,13 +142,15 @@ Install pyright with: `npm install -g pyright` or `pip install pyright`
   }
 }
 ```
+:::
 
 Install basedpyright with: `pip install basedpyright` or `uv pip install basedpyright`
 
 **Using pylsp with plugins:**
 
-pylsp supports various plugins for enhanced functionality:
+pylsp supports various plugins for enhanced functionality. Turn them on through the server's **Initialization Options** (under **Advanced** in the same dialog):
 
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -159,16 +170,18 @@ pylsp supports various plugins for enhanced functionality:
   }
 }
 ```
+:::
 
 ## Configuring LSP for a New Language
 
-To add LSP support for a language, you need to configure two sections in your `~/.config/fresh/config.json`:
+Adding a language server for a language takes two entries in **Settings → Syntax & Languages**, under the same key (for example `csharp`):
 
-1. **`languages`**: Define the file extensions for the language
-2. **`lsp`**: Configure the language server command
+1. **Languages → [+] Add new** — the language itself: its file **Extensions**, **Grammar** and **Comment Prefix**.
+2. **Language Servers → [+] Add new** — the server: its **Command** and **Args**.
 
 For example, to add C# support:
 
+::: details Show JSON
 ```json
 {
   "languages": {
@@ -188,13 +201,15 @@ For example, to add C# support:
   }
 }
 ```
+:::
 
 The language name (e.g., `"csharp"`) must match in both sections. The `grammar` field must be a valid grammar name — run `fresh --cmd grammar list` to see all available grammars. Fresh includes built-in language definitions for many languages, visible in the Settings UI (run **Open Settings** from the palette) under **Syntax & Languages → Languages**.
 
 ### Environment Variables
 
-Pass environment variables to LSP server binaries:
+Pass environment variables to LSP server binaries with the server's **Env** list (under **Advanced** in its Settings dialog):
 
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -206,11 +221,13 @@ Pass environment variables to LSP server binaries:
   }
 }
 ```
+:::
 
 ### Language ID Overrides
 
-Some LSP servers expect a different `languageId` than Fresh's internal language name for certain files. Use `language_id_overrides` to map a **file extension** (without the dot) to the `languageId` to send:
+Some LSP servers expect a different `languageId` than Fresh's internal language name for certain files. Use the server's **Language Id Overrides** (under **Advanced** in its Settings dialog) to map a **file extension** (without the dot) to the `languageId` to send:
 
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -224,6 +241,7 @@ Some LSP servers expect a different `languageId` than Fresh's internal language 
   }
 }
 ```
+:::
 
 ### Rust LSP Mode Switching
 

@@ -19,7 +19,7 @@ Press `Ctrl+P` to open the command palette. It opens in command mode, with `>` a
 - In file finder mode, use `path:line[:col]` syntax to jump to a location after opening (e.g. `src/main.rs:42:10`)
 - In go-to-line mode (`:`) and in file-finder mode when you append `:<N>` to a file, the cursor previews the target line live as you type and commits when you press Enter. If you move the mouse or hit Escape, the preview is reverted.
 
-![The file finder with the query "test res": tests/reservations.test.js is the top match, followed by other files whose paths contain both terms](/images/palette-file-finder.png)
+![The file finder with the query "test inv": five files whose paths contain both terms, led by tests/fixtures/invoice-2026-001.json](/images/palette-file-finder.png)
 
 ## File Finder on Large and Remote Trees
 

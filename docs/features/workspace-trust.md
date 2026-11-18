@@ -47,8 +47,11 @@ The active environment applies uniformly across every backend — the integrated
 
 ### Customizing detectors
 
-Detectors are defined under `env.detectors` and are user-extensible. Each entry has a `name` (the pill label), a list of `markers`, a `kind` (`"path-only"` or `"shell"`), an activation `snippet`, and an optional `require` list of evidence paths:
+Detectors are listed in **Settings → Env → Detectors** and are user-extensible: **[+] Add new** adds one, and opening a row edits it. Each entry has a **Name** (the pill label), a list of **Markers**, a **Kind** (`path-only` or `shell`), an activation **Snippet**, and an optional **Require** list of evidence paths:
 
+![Settings at Env, with the Detectors list: .venv, venv, direnv, mise, pipenv and poetry, then Add new](/images/settings-env-detectors.png)
+
+::: details Show JSON
 ```jsonc
 {
   "env": {
@@ -63,6 +66,7 @@ Detectors are defined under `env.detectors` and are user-extensible. Each entry 
   }
 }
 ```
+:::
 
 Listing `detectors` replaces the built-in set, so re-add the defaults you still want. Most users never need to touch this — the built-ins cover the common Python and shell tools.
 

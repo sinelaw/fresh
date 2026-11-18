@@ -1,0 +1,37 @@
+{
+  "title": "Start here",
+  "description": "The layout of the repository",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "The README",
+      "file_path": "README.md",
+      "lines": [
+        1,
+        18
+      ],
+      "explanation": "What the service does and how to run it."
+    },
+    {
+      "step_id": 2,
+      "title": "The model",
+      "file_path": "invoicing/models.py",
+      "lines": [
+        1,
+        12
+      ],
+      "explanation": "Clients, line items and invoices."
+    },
+    {
+      "step_id": 3,
+      "title": "The HTTP API",
+      "file_path": "web/server.js",
+      "lines": [
+        1,
+        15
+      ],
+      "explanation": "Express routes for items and invoices."
+    }
+  ]
+}

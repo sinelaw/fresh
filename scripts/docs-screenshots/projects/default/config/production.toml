@@ -1,0 +1,16 @@
+[server]
+host = "0.0.0.0"
+port = 443
+workers = 8
+
+[database]
+url = "postgres://db.prod.internal/billing"
+pool_size = 20
+
+[mail]
+from = "billing@example.com"
+send_reminders = true
+reminder_days = 14
+
+[tax]
+default_rate = "0.21"

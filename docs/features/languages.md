@@ -18,8 +18,11 @@ To see every built-in language in the version you have installed, run **Open Set
 
 ## Language servers
 
-Each language can be wired to an LSP server under `lsp.<language-id>` in config:
+Each language can be wired to one or more LSP servers. Run **Open Settings**, go to **Syntax & Languages → Language Servers**, pick the language (or **[+] Add new** for one that isn't listed) and open its server to set the command, arguments, root markers and whether it starts automatically:
 
+![The Language Servers entry for python opened in Settings: the server's Command, Enabled, Name, Args, Auto Start and Root Markers, with Env and Language Id Overrides under Advanced](/images/settings-lsp-entry.png)
+
+::: details Show JSON
 ```jsonc
 {
   "lsp": {
@@ -33,8 +36,9 @@ Each language can be wired to an LSP server under `lsp.<language-id>` in config:
   }
 }
 ```
+:::
 
-`enabled` defaults to `true`. Built-in servers do not start on their own: start one from the LSP status popup (run **Show LSP Status** from the palette), choosing **(always)** to keep it starting automatically. A server entry you write yourself starts automatically unless you set `"auto_start": false`. Language servers only run in a [trusted workspace](./workspace-trust.md). See [LSP Integration](./lsp.md) for the editor-side features.
+`enabled` defaults to `true`. Built-in servers do not start on their own: start one from the LSP status popup (run **Show LSP Status** from the palette), choosing **(always)** to keep it starting automatically. A server entry you add yourself starts automatically unless you turn off **Auto Start**. Language servers only run in a [trusted workspace](./workspace-trust.md). See [LSP Integration](./lsp.md) for the editor-side features.
 
 ### Assembly (asm-lsp)
 

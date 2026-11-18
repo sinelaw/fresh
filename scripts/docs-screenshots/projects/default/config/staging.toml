@@ -1,0 +1,16 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 2
+
+[database]
+url = "postgres://db.staging.internal/billing"
+pool_size = 5
+timeout_secs = 30
+
+[mail]
+from = "billing@staging.example.com"
+send_reminders = false
+
+[tax]
+default_rate = "0.20"
