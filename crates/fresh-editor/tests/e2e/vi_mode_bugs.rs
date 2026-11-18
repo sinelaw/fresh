@@ -4081,6 +4081,42 @@ fn test_vi_visual_block_multibyte_columns() {
     );
 }
 
+/// The block's head keeps the column it was aimed at through a short line,
+/// as Vim's does: `lll Ctrl+V jjj l d` over a two-character line takes
+/// columns 3-4 from every line long enough, not columns 1-2 from the lines
+/// after the short one.
+#[test]
+fn test_vi_visual_block_keeps_column_through_short_line() {
+    let (mut harness, _td, fixture) = open_vi("abcdef\nab\nabcd\nαβγδεζ\n");
+
+    for c in ['l', 'l', 'l'] {
+        send_key(&mut harness, c);
+    }
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    for c in ['j', 'j', 'j', 'l', 'd'] {
+        send_key(&mut harness, c);
+    }
+    wait_normal(&mut harness);
+    run_ex(&mut harness, "w");
+    harness
+        .wait_until(|_| fs::read_to_string(&fixture.path).unwrap() == "abcf\nab\nabc\nαβγζ\n")
+        .unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    for line in ["abcf", "abc", "αβγζ"] {
+        assert!(
+            screen.lines().any(|l| l.contains(line)),
+            "{line:?} on screen:\n{screen}"
+        );
+    }
+}
+
 /// `p` after a whole-line `Ctrl+C` (nothing selected) puts it on a line of
 /// its own.
 #[test]
