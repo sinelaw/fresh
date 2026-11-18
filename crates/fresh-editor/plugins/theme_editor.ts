@@ -3627,7 +3627,10 @@ registerHandler("theme_editor_toggle_section", theme_editor_toggle_section);
 /**
  * Open a theme (builtin or user) for editing
  */
-function theme_editor_open() : void {
+async function theme_editor_open() : Promise<void> {
+  // Read the registry afresh: a theme saved (or deleted) since the editor
+  // opened is listed (or not) only once it is reloaded.
+  await loadThemeRegistry();
   editor.startPrompt(editor.t("prompt.open_theme"), "theme-open");
 
   const suggestions: PromptSuggestion[] = [];
@@ -3749,7 +3752,27 @@ registerHandler("theme_editor_reload", theme_editor_reload);
  * Show help
  */
 function theme_editor_show_help() : void {
-  editor.debug(editor.t("status.help"));
+  editor.showActionPopup({
+    id: "theme-editor-help",
+    title: editor.t("cmd.show_help"),
+    message: editor.t("status.help", {
+      open: shortcutLabel(SHORTCUTS.open),
+      save: shortcutLabel(SHORTCUTS.save),
+      save_as: shortcutLabel(SHORTCUTS.save_as),
+      delete: shortcutLabel(SHORTCUTS.delete),
+      reload: shortcutLabel(SHORTCUTS.reload),
+      close: shortcutLabel(SHORTCUTS.close),
+    }),
+    actions: [{ id: "close", label: editor.t("btn.close") }],
+  });
+}
+
+/** A mode key (`C-S-s`) as the help shows it (`Ctrl+Shift+S`). */
+function shortcutLabel(key: string): string {
+  const parts = key.split("-");
+  const base = parts.pop() ?? key;
+  const mods = parts.map((m) => (m === "C" ? "Ctrl" : m === "S" ? "Shift" : m === "M" ? "Alt" : m));
+  return [...mods, base.length === 1 ? base.toUpperCase() : base].join("+");
 }
 registerHandler("theme_editor_show_help", theme_editor_show_help);
 
