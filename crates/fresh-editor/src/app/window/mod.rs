@@ -152,6 +152,10 @@ pub struct ExitedTerminal {
     /// name back to auto-naming. `None` for an explicitly-titled tab, and for
     /// one that never resolved a name beyond the `*Terminal N*` default.
     pub auto_title: Option<String>,
+    /// Restored without a process only because the workspace was Blocked
+    /// (#3778), not because it exited: a save keeps it as the live terminal
+    /// it was, so it runs again once the folder is trusted.
+    pub held_by_trust: bool,
 }
 
 impl ExitedTerminal {
@@ -5762,6 +5766,7 @@ mod exited_terminal_tests {
             script_access: false,
             title: None,
             auto_title: None,
+            held_by_trust: false,
         }
     }
 

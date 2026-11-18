@@ -1557,6 +1557,7 @@ impl Editor {
             script_access: window.terminal_has_script_access(terminal_id),
             title: None,
             auto_title: None,
+            held_by_trust: false,
         }
     }
 

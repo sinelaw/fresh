@@ -1066,11 +1066,13 @@ impl crate::app::window::Window {
                 predicted_id,
                 log_path,
                 backing_path,
+                false,
             );
         }
         // A Blocked workspace runs nothing (#3778): bring the terminal back
         // with its transcript but no process, like one that had exited. Its
-        // restart offer stays, and works once the folder is trusted again.
+        // restart offer stays, and works once the folder is trusted again;
+        // a save keeps it live, so a later trusted restore runs it.
         if self.authority().workspace_trust.level()
             == crate::services::workspace_trust::TrustLevel::Blocked
         {
@@ -1084,6 +1086,7 @@ impl crate::app::window::Window {
                 predicted_id,
                 log_path,
                 backing_path,
+                true,
             );
         }
 
@@ -1204,6 +1207,7 @@ impl crate::app::window::Window {
         terminal_id: crate::services::terminal::TerminalId,
         log_path: PathBuf,
         backing_path: PathBuf,
+        held_by_trust: bool,
     ) -> Option<BufferId> {
         let command = terminal.command.clone().filter(|argv| !argv.is_empty());
         let resume = terminal
@@ -1264,6 +1268,7 @@ impl crate::app::window::Window {
                 // survives any number of restarts of the editor, exactly as
                 // the launch/resume argv above do.
                 auto_title: terminal.auto_title.clone(),
+                held_by_trust,
             },
         );
         Some(buffer_id)
@@ -2898,7 +2903,9 @@ impl crate::app::window::Window {
                     .as_ref()
                     .filter(|argv| !argv.is_empty())
                     .map(|argv| crate::workspace::AgentResume { argv: argv.clone() }),
-                exited: Some(crate::workspace::ExitedTerminalState {
+                // One held back only by a Blocked folder (#3778) is saved as
+                // the live terminal it was, so it runs again once trusted.
+                exited: (!exited.held_by_trust).then_some(crate::workspace::ExitedTerminalState {
                     exit_code: exited.exit_code,
                 }),
                 // The pre-exit tab title, not the "(exited)" form the tab is
