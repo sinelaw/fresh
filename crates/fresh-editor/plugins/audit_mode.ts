@@ -5223,7 +5223,7 @@ function discardParkedComposite(): void {
  *  together: fetching one version at a time made opening side-by-side
  *  wait out two full `git show` round trips back to back, and that pair
  *  is the largest single cost of the switch. */
-async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string; newContent: string; absPath: string }> {
+async function fetchFileVersions(file: FileEntry): Promise<FileVersions> {
     const root = state.repo ? state.repo.root : (editor.getCwd() || "");
     const absPath = root ? editor.pathJoin(root, file.path) : file.path;
     const cwd = root || editor.getCwd();
@@ -5234,17 +5234,21 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
     const gitShow = async (rev: string): Promise<string> => (await tryGitShow(rev)) ?? "";
     const readWorking = (): string => editor.readFile(editor.authorityPath(absPath)) ?? "";
     // The index copy (`git show :path`). An unmerged (conflicted) path has
-    // no stage-0 entry there, so `fallback` stands in for it.
+    // no stage-0 entry there, so `fallback` stands in for it, and
+    // `indexMissing` tells the pane labels so.
+    let indexMissing = false;
     const indexOr = async (fallback: () => Promise<string> | string): Promise<string> => {
         const staged = await tryGitShow("");
-        return staged ?? (await fallback());
+        if (staged !== null) return staged;
+        indexMissing = true;
+        return await fallback();
     };
     if (state.mode === 'range' && state.range) {
         const [oldContent, newContent] = await Promise.all([
             gitShow(state.range.from),
             gitShow(state.range.to),
         ]);
-        return { oldContent, newContent, absPath };
+        return { oldContent, newContent, absPath, indexMissing };
     }
     if (file.category === 'staged') {
         // A staged entry's hunks are `git diff --cached`: HEAD against the
@@ -5254,7 +5258,7 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
             file.status !== 'A' ? gitShow("HEAD") : Promise.resolve(""),
             file.status !== 'D' ? indexOr(readWorking) : Promise.resolve(""),
         ]);
-        return { oldContent, newContent, absPath };
+        return { oldContent, newContent, absPath, indexMissing };
     }
     // Unstaged hunks are `git diff`: the index against the working file. The
     // index equals HEAD unless part of the file is staged, and then only the
@@ -5264,20 +5268,37 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
         ? await indexOr(() => gitShow("HEAD"))
         : "";
     const newContent = file.status !== 'D' ? readWorking() : "";
-    return { oldContent, newContent, absPath };
+    return { oldContent, newContent, absPath, indexMissing };
+}
+
+/** Both sides of a file's side-by-side, as `fetchFileVersions` read them.
+ *  `indexMissing`: the side that is the index came from its fallback
+ *  instead (HEAD on the left, the working file on the right), because the
+ *  path has no index copy — it is unmerged. */
+interface FileVersions {
+    oldContent: string;
+    newContent: string;
+    absPath: string;
+    indexMissing: boolean;
 }
 
 /** The OLD / NEW pane labels for `file`'s side-by-side: what each side
- *  actually shows, which depends on the section the entry is in. */
-function paneLabelsFor(file: FileEntry): { old: string; new: string } {
+ *  actually shows, which depends on the section the entry is in and on
+ *  whether the index could be read (`indexMissing`, see `FileVersions`). */
+function paneLabelsFor(file: FileEntry, indexMissing: boolean): { old: string; new: string } {
     if (state.mode === 'range' && state.range) {
         return { old: `OLD (${state.range.from})`, new: `NEW (${state.range.to})` };
     }
-    if (file.category === 'staged') return { old: "OLD (HEAD)", new: "NEW (Staged)" };
+    if (file.category === 'staged') {
+        return { old: "OLD (HEAD)", new: indexMissing ? "NEW (Working)" : "NEW (Staged)" };
+    }
     // An unstaged entry's left side is the index; call it that when it
     // differs from HEAD, i.e. when the same path also has staged changes.
     const partlyStaged = state.files.some(f => f.path === file.path && f.category === 'staged');
-    return { old: partlyStaged ? "OLD (Staged)" : "OLD (HEAD)", new: "NEW (Working)" };
+    return {
+        old: partlyStaged && !indexMissing ? "OLD (Staged)" : "OLD (HEAD)",
+        new: "NEW (Working)",
+    };
 }
 
 /** How many review comments are anchored in `file`. Shown in the
@@ -5341,7 +5362,7 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     // sitting there is now dead weight.
     discardParkedComposite();
 
-    const { oldContent, newContent, absPath } = await fetchFileVersions(file);
+    const { oldContent, newContent, absPath, indexMissing } = await fetchFileVersions(file);
     if (token !== state.centerBuildToken || state.groupId === null) return;
 
     const fileHunks = hunksForFile(file);
@@ -5367,7 +5388,7 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
         ? { type: "side-by-side", ratios: [0.5, 0.5], showSeparator: true }
         : { type: "unified", showSeparator: false };
 
-    const paneLabels = paneLabelsFor(file);
+    const paneLabels = paneLabelsFor(file, indexMissing);
     const compositeBufId = await editor.createCompositeBuffer({
         name: `*Review: ${file.path}*`,
         mode: REVIEW_DIFF_MODE,
@@ -5588,8 +5609,8 @@ async function review_drill_down() {
 
     // The two sides this entry's hunks were diffed between: HEAD and the
     // index for a staged entry, the index and the working file otherwise.
-    const { oldContent, newContent } = await fetchFileVersions(selectedFile);
-    const paneLabels = paneLabelsFor(selectedFile);
+    const { oldContent, newContent, indexMissing } = await fetchFileVersions(selectedFile);
+    const paneLabels = paneLabelsFor(selectedFile, indexMissing);
 
     // Close any existing side-by-side views (old split-based approach)
     if (activeSideBySideState) {
