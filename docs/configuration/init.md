@@ -73,7 +73,7 @@ if (editor.getEnv("FRESH_PROFILE") === "writing") {
 ## Editing and reloading
 
 - **`init: Edit init.ts`** from the command palette opens (or creates) `~/.config/fresh/init.ts` with a starter template. The same command also refreshes `types/fresh.d.ts`, writes `types/plugins.d.ts` (so `editor.getPluginApi("dashboard")` and friends are typed), and creates a `tsconfig.json` on first run.
-- **`init: Reload init.ts`** re-runs the file without restarting Fresh.
+- **`init: Reload init.ts`** re-runs the file without restarting Fresh. From a terminal inside the editor, `fresh --cmd init reload` does the same.
 - **`init: Check init.ts`** runs a syntax check (oxc parser) and reports parse errors. It does not run a full TypeScript type-check.
 - **`fresh --no-init`** (alias `--safe`) skips loading for a single launch — useful if the file errors out.
 - **Crash fuse:** if `init.ts` fails to evaluate three times in a row within five minutes, the next launch auto-skips it until you fix or remove the file. A successful evaluation clears the counter.

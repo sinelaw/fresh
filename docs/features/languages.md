@@ -6,18 +6,15 @@ Fresh ships syntax highlighting and indentation for a large set of languages out
 
 Fresh picks a language for a buffer in this order:
 
-1. **Filename** — well-known names map to their real format, including lock and config files (`yarn.lock` → YAML; `Cargo.lock`, `poetry.lock`, `uv.lock` → TOML; `composer.lock`, `Pipfile.lock`, `flake.lock`, `deno.lock` → JSON).
+1. **Filename** — well-known names map to their real format, including lock and config files (`yarn.lock` → YAML; `Cargo.lock`, `poetry.lock`, `uv.lock` → TOML; `composer.lock`, `Pipfile.lock`, `flake.lock`, `deno.lock` → JSON; `bun.lock` → JSONC).
 2. **Extension** — e.g. `.rs`, `.py`, `.fish`, `.smali`, `.gd`.
 3. **Shebang** — for extensionless scripts, the interpreter on the first line (`#!/usr/bin/fish`, `python3.11`, `env -S …`) selects the language. An existing extension match wins over the shebang.
 
-To see every built-in language, open **Open Settings** from the command palette and look under **Languages**, or run `fresh --cmd grammar list`.
+## Supported languages
 
-## Recently added
+The built-in set grows with most releases. Beyond mainstream languages, shells, and config and data formats, it covers more specialised ones such as shader languages (Slang, CUDA, HIP, Metal, GLSL), Fortran, LLVM IR and MLIR, assembly, the LaTeX family, Bazel/Starlark and CMake.
 
-- **Assembly** (GAS / AT&T and NASM/Intel, across x86, x86_64, ARM, RISC-V) — see [Assembly (asm-lsp)](#assembly-asm-lsp) below.
-- **Fish** — highlighting and auto-indentation.
-- **Smali** — highlighting.
-- **GDScript** — highlighting; LSP available via Godot (see below).
+To see every built-in language in the version you have installed, run `fresh --cmd grammar list`, or open **Open Settings** from the command palette and look under **Syntax & Languages → Languages**.
 
 ## Language servers
 

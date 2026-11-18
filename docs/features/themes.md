@@ -7,6 +7,8 @@ Fresh supports customizable color themes.
 
 Use the command palette (`Ctrl+P`) and search for "Select Theme" to choose from available themes. Built-in themes and user themes are both shown.
 
+Fresh ships these built-in themes: `dark`, `light`, `high-contrast`, `nostalgia`, `dracula`, `nord`, `solarized-dark`, `tokyo-night`, `gruvbox`, `flat`, `quiet`, and `terminal`.
+
 ## Setting a Theme in `config.json`
 
 The `theme` field in `config.json` accepts several forms, so you can point at a built-in, a local file, or a theme hosted somewhere else (Fresh's config parser accepts JSONC, so `//` comments are fine):
@@ -107,6 +109,11 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 
 Colors are specified as `[R, G, B]` arrays with values from 0-255, or by
 name (`"Red"`, `"LightBlue"`, …; `"Default"` is the terminal's own color).
+
+The main text cursor is drawn by your terminal, so its color comes from your
+terminal's settings. `editor.cursor` colors the accents Fresh draws itself,
+such as the cursor-jump animation and a focused panel's border, and
+`editor.inactive_cursor` colors the cursor in an unfocused split.
 
 ### File explorer colors
 
@@ -320,15 +327,13 @@ override the base.
 {
   "name": "my-light-tweak",
   "extends": "builtin://light",        // pick the base
-  "editor": { "cursor": [255, 105, 180] }  // change one thing
+  "editor": { "selection_bg": [255, 214, 240] }  // change one thing
 }
 ```
 
 `extends` accepts a built-in name in either form: `"builtin://light"` or
-just `"light"`. The available built-ins are `dark`, `light`, and
-`high-contrast` (plus any others shipped in your install — see the
-**Select Theme** menu for the full list). Inheriting from another *user*
-theme is not supported in this version.
+just `"light"` — any of the [built-in themes](#selecting-a-theme) works.
+Inheriting from another *user* theme is not supported in this version.
 
 If `extends` is omitted and the theme leaves out any of the
 [required colors](#fallbacks), Fresh picks a base for you:
