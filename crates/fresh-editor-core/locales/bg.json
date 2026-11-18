@@ -2244,6 +2244,7 @@
   "terminal.closed": "Терминал %{id} бе затворен",
   "terminal.exited": "Терминал %{id} приключи работа",
   "terminal.failed_to_open": "Неуспешно отваряне на терминал: %{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "Няма отворен терминал — първо отворете терминал",
   "terminal.opened": "Терминал %{id} бе отворен (%{exit_key} за изход)",
   "terminal.restart_failed": "Неуспешно рестартиране на терминалния процес",

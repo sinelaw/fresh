@@ -2165,6 +2165,7 @@
   "terminal.closed": "终端 %{id} 已关闭",
   "terminal.exited": "终端 %{id} 已退出",
   "terminal.failed_to_open": "打开终端失败：%{error}",
+  "terminal.blocked_by_trust": "Workspace trust is Blocked: terminals do not run in this folder. Use Workspace Trust… to change it.",
   "terminal.no_terminal_open": "没有打开的终端 — 请先打开一个终端",
   "terminal.opened": "终端 %{id} 已打开（按 %{exit_key} 退出）",
   "terminal.sent_selection": "已发送到终端 %{id}",

@@ -426,6 +426,9 @@ impl Window {
         extra_env: HashMap<String, String>,
         force_local: bool,
     ) -> Option<TerminalId> {
+        if self.refuse_terminal_spawn_if_blocked() {
+            return None;
+        }
         let (cols, rows) = self.get_terminal_dimensions();
 
         // Per-window async bridge — terminal output flows back through
@@ -520,6 +523,23 @@ impl Window {
                 None
             }
         }
+    }
+
+    /// Whether this window's workspace trust is Blocked, which means no
+    /// terminal may start in it (#3778). The PTY is spawned directly rather
+    /// than through the authority's trust-gated spawners, so the integrated
+    /// terminal checks the level itself. When Blocked, says so on the status
+    /// bar and returns true. Restricted still allows the terminal: it runs
+    /// the user's own shell, not repo-controlled code.
+    pub(crate) fn refuse_terminal_spawn_if_blocked(&mut self) -> bool {
+        if self.authority().workspace_trust.level()
+            != crate::services::workspace_trust::TrustLevel::Blocked
+        {
+            return false;
+        }
+        tracing::info!("Refusing to start a terminal: workspace trust is Blocked");
+        self.set_status_message(t!("terminal.blocked_by_trust").to_string());
+        true
     }
 
     /// Create a buffer for a terminal session in this window, attached
@@ -1224,6 +1244,10 @@ impl Window {
         let bridge = self.bridge.clone();
         self.terminal_manager.set_async_bridge(bridge);
 
+        if self.refuse_terminal_spawn_if_blocked() {
+            return None;
+        }
+
         let spawn_argv = spec.resume_argv.as_ref().or(spec.launch_argv.as_ref());
         let wrapper = match spawn_argv {
             Some(argv) => self.authority().terminal_command(argv),
@@ -1818,6 +1842,10 @@ impl Editor {
                 t!("terminal.restart_unavailable")
             };
             self.set_status_message(message.to_string());
+            return;
+        }
+        // Says why on the status bar; the generic failure below would hide it.
+        if self.active_window_mut().refuse_terminal_spawn_if_blocked() {
             return;
         }
 
