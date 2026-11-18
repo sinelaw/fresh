@@ -1673,18 +1673,7 @@ impl Editor {
                 self.should_quit = true;
             }
         } else if first_char == discard_first {
-            // Clearing modified is what stops `end_recovery_session`
-            // preserving these under hot_exit — the user asked to throw them
-            // away. Every workspace, since the prompt counted every workspace:
-            // otherwise the others' recovery data silently resurrects the
-            // changes (issue #3189).
-            for window in self.windows.values_mut() {
-                for (_, state) in &mut window.buffers {
-                    state.buffer.clear_modified();
-                    state.buffer.set_recovery_pending(false);
-                }
-            }
-            self.should_quit = true;
+            self.discard_unsaved_changes_and_quit();
         } else if first_char == quit_first && self.config.editor.hot_exit {
             // Quit without saving — changes will be preserved via hot exit recovery
             self.should_quit = true;
@@ -1693,6 +1682,23 @@ impl Editor {
             self.set_status_message(t!("buffer.quit_cancelled").to_string());
         }
         false
+    }
+
+    /// Quit, throwing away every unsaved change: the quit prompt's Discard,
+    /// and `force_quit` (vi's `:q!`).
+    ///
+    /// Clearing modified is what stops `end_recovery_session` preserving
+    /// these under hot_exit — the user asked to throw them away. Every
+    /// workspace, since the prompt counted every workspace: otherwise the
+    /// others' recovery data silently resurrects the changes (issue #3189).
+    pub(crate) fn discard_unsaved_changes_and_quit(&mut self) {
+        for window in self.windows.values_mut() {
+            for (_, state) in &mut window.buffers {
+                state.buffer.clear_modified();
+                state.buffer.set_recovery_pending(false);
+            }
+        }
+        self.should_quit = true;
     }
 
     /// Handle StopLspServer prompt confirmation.

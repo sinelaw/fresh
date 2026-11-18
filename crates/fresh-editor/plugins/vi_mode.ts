@@ -98,6 +98,16 @@ interface VisualState {
   // sampled on entering a visual mode (the caret is on it at that moment), so
   // `v` carries it too and `v` -> `V` can pick it up.
   lines: { anchor: number; head: number } | null;
+  // Visual-block's rectangle, as the anchor's and the moving corner's line
+  // and byte column (both inclusive, like Vim's). Null outside `CTRL-V`.
+  block: BlockCorners | null;
+}
+
+interface BlockCorners {
+  anchorLine: number;
+  anchorCol: number;
+  headLine: number;
+  headCol: number;
 }
 
 // An operator waiting for the range it will consume. `d`, `c`, `y`, `>` and
@@ -2047,12 +2057,12 @@ async function vi_doc_end() : Promise<void> {
 registerHandler("vi_doc_end", vi_doc_end);
 
 function vi_page_down() : void {
-  executeWithCount("page_down");
+  executeWithCount("move_page_down");
 }
 registerHandler("vi_page_down", vi_page_down);
 
 function vi_page_up() : void {
-  executeWithCount("page_up");
+  executeWithCount("move_page_up");
 }
 registerHandler("vi_page_up", vi_page_up);
 
@@ -2640,12 +2650,21 @@ async function replaceCharsUnderCursor(replacement: string, count: number): Prom
   if (count > (await charsAvailableOnLine(true))) {
     return;
   }
-  for (let i = 0; i < count; i++) {
-    editor.executeAction("delete_forward");
-    editor.insertAtCursor(replacement);
+  const bufferId = editor.getActiveBufferId();
+  const position = editor.getCursorPosition();
+  if (position === null) {
+    return;
   }
-  // Move cursor back to stay on the replaced char (vim behavior).
-  editor.executeAction("move_left");
+  const sample = (await safeGetBufferText(bufferId, position, position + count * 4)) ?? "";
+  const replaced = [...sample].slice(0, count).join("");
+  const text = replacement.repeat(count);
+  // One edit, so one `u` undoes it.
+  await editor.replaceRange(bufferId, position, position + editor.utf8ByteLength(replaced), text);
+  // The caret stays on the last replaced character (Vim).
+  editor.setBufferCursor(
+    bufferId,
+    position + editor.utf8ByteLength(text) - editor.utf8ByteLength(replacement),
+  );
 }
 
 // Substitute (delete char and enter insert mode)
@@ -2714,6 +2733,24 @@ async function vi_paste_before() : Promise<void> {
     await pasteCharwiseAtCaret();
   }
 }
+
+// Ctrl+C in normal mode is the editor's own copy, which takes the whole
+// line when nothing is selected. Record that shape so `p` puts the line on a
+// line of its own, as it does after `yy`. A selection of whole lines (Ctrl+L)
+// is line-wise too.
+async function vi_copy() : Promise<void> {
+  const selection = editor.getPrimaryCursor()?.selection ?? null;
+  let shape: RegisterShape = "linewise";
+  if (selection !== null && selection.end > selection.start) {
+    const bufferId = editor.getActiveBufferId();
+    const text = (await editor.getBufferText(bufferId, selection.start, selection.end)) ?? "";
+    const startsLine = (await findLineStartAtPosition(bufferId, selection.start)) === selection.start;
+    shape = startsLine && /(\r\n|\n|\r)$/.test(text) ? "linewise" : "charwise";
+  }
+  editor.executeAction("copy");
+  memory.register = shape;
+}
+registerHandler("vi_copy", vi_copy);
 
 // Paste the character-wise register at the caret. Vim leaves the caret on
 // the last pasted character, or at the start of the pasted text when it
@@ -2912,13 +2949,32 @@ async function joinLines(joins: number): Promise<void> {
   if (line === null || lastLine === null) {
     return;
   }
-  for (let i = 0; i < Math.min(joins, lastLine - line); i++) {
-    editor.executeAction("move_line_end");
-    // Delete the newline character
-    editor.executeAction("delete_forward");
-    // Insert a space between the joined content
-    editor.insertAtCursor(" ");
+  const lines = Math.min(joins, lastLine - line);
+  if (lines <= 0) {
+    return;
   }
+  const start = await editor.getLineStartPosition(line);
+  const end = await editor.getLineEndPosition(line + lines);
+  if (start === null || end === null) {
+    return;
+  }
+  const text = (await editor.getBufferText(bufferId, start, end)) ?? "";
+  // Vim's `J`: each following line loses its leading blanks and is joined
+  // with one space, or none when the line so far already ends in a blank,
+  // the next line is empty, or it starts with `)`. The caret lands where the
+  // last join happened.
+  const pieces = text.split(/\r\n|\n|\r/);
+  let joined = pieces[0];
+  let joinAt = 0;
+  for (const piece of pieces.slice(1)) {
+    const next = piece.replace(/^[ \t]+/, "");
+    joinAt = editor.utf8ByteLength(joined);
+    const separator = next === "" || /[ \t]$/.test(joined) || next.startsWith(")") ? "" : " ";
+    joined += separator + next;
+  }
+  // One edit, so one `u` undoes the whole join.
+  await editor.replaceRange(bufferId, start, end, joined);
+  editor.setBufferCursor(bufferId, start + joinAt);
 }
 
 // Join lines — delete newline at end of current line and insert a space
@@ -2944,12 +3000,27 @@ function vi_search_forward() : void {
 }
 registerHandler("vi_search_forward", vi_search_forward);
 
+// `?` has no counterpart in the editor's search, which only runs forward, so
+// it prompts for the text itself and searches like `#` does: `n` then goes on
+// backward and `N` forward.
+let backwardSearchCount = 1;
+
 function vi_search_backward() : void {
-  memory.lastWordSearch = null;
-  // Use same search dialog, user can search backward manually
-  editor.executeAction("search");
+  backwardSearchCount = consumeCount();
+  editor.startPrompt("?", "vi-search-backward");
 }
 registerHandler("vi_search_backward", vi_search_backward);
+
+async function runBackwardSearch(input: string): Promise<void> {
+  // An empty `?` repeats the last search backward, as in Vim.
+  const text = input.length > 0 ? input : memory.lastWordSearch?.text;
+  if (text === undefined || text.length === 0) {
+    return;
+  }
+  const wholeWord = input.length > 0 ? false : (memory.lastWordSearch?.wholeWord ?? false);
+  memory.lastWordSearch = { text, direction: "backward", wholeWord };
+  await executeStoredWordSearch(text, "backward", backwardSearchCount, wholeWord);
+}
 
 async function vi_find_next() : Promise<void> {
   if (memory.lastWordSearch) {
@@ -2982,7 +3053,7 @@ registerHandler("vi_find_prev", vi_find_prev);
 
 // Center view
 function vi_center_cursor() : void {
-  editor.executeAction("center_cursor");
+  editor.executeAction("recenter");
 }
 registerHandler("vi_center_cursor", vi_center_cursor);
 
@@ -3079,6 +3150,7 @@ function beginVisualSelection(): void {
     head: anchor,
     range: null,
     lines: anchorLine === null ? null : { anchor: anchorLine, head: anchorLine },
+    block: null,
   };
 }
 
@@ -3128,80 +3200,212 @@ async function vi_visual_toggle_line() : Promise<void> {
 registerHandler("vi_visual_toggle_line", vi_visual_toggle_line);
 
 // Enter visual block mode (Ctrl-v)
-// The (line, col) origin a rectangular selection would need is not computed
-// here: block motions extend the host's own selection, and nothing read the
-// stored anchor. It comes back when block-wise `I`/`A` land, which are the
-// commands that actually need a column.
-function vi_visual_block() : void {
+//
+// The rectangle is the editor's own block selection (the one
+// `block_select_*` draws), so copy, delete and typing act on a column.
+// Its anchor is fixed where the block selection starts, and the host's
+// rectangle is half-open on the moving side, so the plugin keeps both
+// corners itself (`state.visual.block`, inclusive like Vim's) and redraws
+// the host's rectangle from them after every motion — the only way a head
+// moving left of the anchor still keeps the anchor's column selected.
+async function vi_visual_block() : Promise<void> {
   beginVisualSelection();
-
-  // Select current character to start
-  editor.executeAction("select_right");
   switchMode("visual-block");
+  const visual = state.visual;
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  if (visual === null || line === null) {
+    return;
+  }
+  const lineStart = await editor.getLineStartPosition(line);
+  if (lineStart === null) {
+    return;
+  }
+  const col = visual.anchor - lineStart;
+  visual.block = { anchorLine: line, anchorCol: col, headLine: line, headCol: col };
+  await drawVisualBlock();
 }
 registerHandler("vi_visual_block", vi_visual_block);
 
-// Visual block mode motions - these extend the rectangular selection
-function vi_vblock_left() : void {
-  executeWithCount("select_left");
+// Redraw the host's block selection from `state.visual.block`.
+async function drawVisualBlock(): Promise<void> {
+  const block = state.visual?.block ?? null;
+  if (block === null) {
+    return;
+  }
+  const bufferId = editor.getActiveBufferId();
+  const anchorStart = await editor.getLineStartPosition(block.anchorLine);
+  if (anchorStart === null) {
+    return;
+  }
+  // Inclusive corners to the host's half-open span: the edge column on the
+  // far side of the head is one past it.
+  const rightward = block.headCol >= block.anchorCol;
+  const anchorCol = rightward ? block.anchorCol : block.anchorCol + 1;
+  const headCol = rightward ? block.headCol + 1 : block.headCol;
+  const lines = block.headLine - block.anchorLine;
+  const cols = headCol - anchorCol;
+  // Any non-block action ends the previous rectangle.
+  editor.executeAction("move_left");
+  editor.setBufferCursor(bufferId, anchorStart + anchorCol);
+  const steps: ActionSpec[] = [
+    { action: cols > 0 ? "block_select_right" : "block_select_left", count: Math.abs(cols) },
+  ];
+  if (lines !== 0) {
+    steps.push({ action: lines > 0 ? "block_select_down" : "block_select_up", count: Math.abs(lines) });
+  }
+  editor.executeActions(steps);
+}
+
+// Line length in bytes, without its terminator; null past the buffer.
+async function lineLength(line: number): Promise<number | null> {
+  const start = await editor.getLineStartPosition(line);
+  const end = await editor.getLineEndPosition(line);
+  if (start === null || end === null) {
+    return null;
+  }
+  return end - start;
+}
+
+// Move the block's head and redraw it. `to` gets the head and returns its
+// new place; columns are clamped to the head line's last character.
+async function moveBlockHead(
+  to: (head: { line: number; col: number }) => Promise<{ line: number; col: number }>,
+): Promise<void> {
+  const block = state.visual?.block ?? null;
+  if (block === null) {
+    return;
+  }
+  const next = await to({ line: block.headLine, col: block.headCol });
+  const length = await lineLength(next.line);
+  if (length === null) {
+    return;
+  }
+  block.headLine = next.line;
+  block.headCol = Math.max(0, Math.min(next.col, Math.max(0, length - 1)));
+  await drawVisualBlock();
+}
+
+async function vi_vblock_left() : Promise<void> {
+  const count = consumeCount();
+  await moveBlockHead(async (h) => ({ line: h.line, col: h.col - count }));
 }
 registerHandler("vi_vblock_left", vi_vblock_left);
 
-function vi_vblock_down() : void {
-  executeWithCount("select_down");
+async function vi_vblock_down() : Promise<void> {
+  const count = consumeCount();
+  await moveBlockHead(async (h) => {
+    let line = h.line;
+    for (let i = 0; i < count && (await lineLength(line + 1)) !== null; i++) {
+      line++;
+    }
+    return { line, col: h.col };
+  });
 }
 registerHandler("vi_vblock_down", vi_vblock_down);
 
-function vi_vblock_up() : void {
-  executeWithCount("select_up");
+async function vi_vblock_up() : Promise<void> {
+  const count = consumeCount();
+  await moveBlockHead(async (h) => ({ line: Math.max(0, h.line - count), col: h.col }));
 }
 registerHandler("vi_vblock_up", vi_vblock_up);
 
-function vi_vblock_right() : void {
-  executeWithCount("select_right");
+async function vi_vblock_right() : Promise<void> {
+  const count = consumeCount();
+  await moveBlockHead(async (h) => ({ line: h.line, col: h.col + count }));
 }
 registerHandler("vi_vblock_right", vi_vblock_right);
 
-function vi_vblock_line_start() : void {
+async function vi_vblock_line_start() : Promise<void> {
   consumeCount();
-  editor.executeAction("select_line_start");
+  await moveBlockHead(async (h) => ({ line: h.line, col: 0 }));
 }
 registerHandler("vi_vblock_line_start", vi_vblock_line_start);
 
-function vi_vblock_line_end() : void {
+async function vi_vblock_first_non_blank() : Promise<void> {
   consumeCount();
-  editor.executeAction("select_line_end");
+  await moveBlockHead(async (h) => {
+    const bufferId = editor.getActiveBufferId();
+    const start = await editor.getLineStartPosition(h.line);
+    if (start === null) {
+      return h;
+    }
+    return { line: h.line, col: (await firstNonBlankOffset(bufferId, start)) - start };
+  });
+}
+registerHandler("vi_vblock_first_non_blank", vi_vblock_first_non_blank);
+
+async function vi_vblock_line_end() : Promise<void> {
+  consumeCount();
+  await moveBlockHead(async (h) => ({ line: h.line, col: Number.MAX_SAFE_INTEGER }));
 }
 registerHandler("vi_vblock_line_end", vi_vblock_line_end);
 
-// Visual block delete - delete the selected block
-function vi_vblock_delete() : void {
-  editor.executeAction("cut");
+// The rectangle's top-left character, where the caret lands after an
+// operator, as in Vim.
+async function blockTopLeft(): Promise<number | null> {
+  const block = state.visual?.block ?? null;
+  if (block === null) {
+    return null;
+  }
+  const start = await editor.getLineStartPosition(Math.min(block.anchorLine, block.headLine));
+  return start === null ? null : start + Math.min(block.anchorCol, block.headCol);
+}
+
+// Visual block delete - delete the selected column. `copy` takes the block's
+// text; deleting through the editing path splits the rectangle into one
+// selection per line, so each line loses only its part.
+async function vi_vblock_delete() : Promise<void> {
+  const topLeft = await blockTopLeft();
+  editor.executeAction("copy");
+  editor.executeAction("delete_forward");
+  editor.executeAction("remove_secondary_cursors");
   memory.register = "charwise";
   switchMode("normal");
+  if (topLeft !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), topLeft);
+  }
 }
 registerHandler("vi_vblock_delete", vi_vblock_delete);
 
-// Visual block change - delete and enter insert mode
+// Visual block change - delete the column and type into every line of it:
+// the per-line cursors the delete leaves are what makes the insert land on
+// each line, as Vim's block `c` does.
 function vi_vblock_change() : void {
-  editor.executeAction("cut");
+  editor.executeAction("copy");
+  editor.executeAction("delete_forward");
+  memory.register = "charwise";
+  // Leave the visual mode by hand: `switchMode`'s exit from one nudges
+  // every cursor left and right to drop the selection, which the delete has
+  // already done, and the nudge would wrap a cursor at column 0 onto the
+  // line above.
+  state.mode = "normal";
   switchMode("insert");
 }
 registerHandler("vi_vblock_change", vi_vblock_change);
 
 // Visual block yank
-function vi_vblock_yank() : void {
+async function vi_vblock_yank() : Promise<void> {
+  const topLeft = await blockTopLeft();
   editor.executeAction("copy");
   memory.register = "charwise";
-  // Move cursor to start of selection
-  editor.executeAction("move_left");
   switchMode("normal");
+  if (topLeft !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), topLeft);
+  }
 }
 registerHandler("vi_vblock_yank", vi_vblock_yank);
 
-// Exit visual block mode
-function vi_vblock_escape() : void {
+// Exit visual block mode, leaving the caret on the head corner.
+async function vi_vblock_escape() : Promise<void> {
+  const block = state.visual?.block ?? null;
   switchMode("normal");
+  if (block === null) {
+    return;
+  }
+  const start = await editor.getLineStartPosition(block.headLine);
+  if (start !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), start + block.headCol);
+  }
 }
 registerHandler("vi_vblock_escape", vi_vblock_escape);
 
@@ -3225,14 +3429,32 @@ registerHandler("vi_vblock_toggle_line", vi_vblock_toggle_line);
 // vi_vblock_delete/yank act on, so applyVisualIndent (which drives the
 // editor's selection-aware indent/dedent) does exactly the right thing here.
 async function vi_vblock_indent() : Promise<void> {
-  await applyVisualIndent(">");
+  await applyBlockIndent(">");
 }
 registerHandler("vi_vblock_indent", vi_vblock_indent);
 
 async function vi_vblock_dedent() : Promise<void> {
-  await applyVisualIndent("<");
+  await applyBlockIndent("<");
 }
 registerHandler("vi_vblock_dedent", vi_vblock_dedent);
+
+async function applyBlockIndent(operator: string): Promise<void> {
+  const block = state.visual?.block ?? null;
+  if (block === null) {
+    await applyVisualIndent(operator);
+    return;
+  }
+  const firstLine = Math.min(block.anchorLine, block.headLine);
+  const lineCount = Math.abs(block.headLine - block.anchorLine) + 1;
+  const firstLineStart = await editor.getLineStartPosition(firstLine);
+  // Drop the rectangle before the lines move under it.
+  editor.executeAction("move_left");
+  if (firstLineStart === null) {
+    switchMode("normal");
+    return;
+  }
+  await applyIndentToLineRange(operator, firstLineStart, lineCount);
+}
 
 // Visual mode motions - these extend the selection
 // The charwise visual motions all compute a head and let
@@ -3776,9 +3998,16 @@ async function vi_vis_join() : Promise<void> {
 }
 registerHandler("vi_vis_join", vi_vis_join);
 
-// Exit visual mode without doing anything
+// Exit visual mode without doing anything. The caret stays on the head
+// character: the host's caret sits just past it (the selection's exclusive
+// end), and dropping the selection would leave it there, one column right of
+// where `v` started (#3797).
 function vi_vis_escape() : void {
+  const head = state.mode === "visual" ? visualHead() : null;
   switchMode("normal");
+  if (head !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), head);
+  }
 }
 registerHandler("vi_vis_escape", vi_vis_escape);
 
@@ -4756,6 +4985,7 @@ function defineViModes(): void {
     [":", "vi_command_mode"],
 
     // Pass through to standard editor shortcuts
+    ["C-c", "vi_copy"],
     ["C-p", "command_palette"],
     ["C-q", "quit"],
   ], true); // read_only = true to prevent character insertion
@@ -4986,7 +5216,7 @@ function defineViModes(): void {
       ["Right", "vi_vblock_right"],
     ]),
     ["$", "vi_vblock_line_end"],
-    ["^", "vi_vblock_line_start"],
+    ["^", "vi_vblock_first_non_blank"],
 
     // Switch to other visual modes
     ["v", "vi_vblock_toggle_char"],
@@ -5343,14 +5573,14 @@ async function executeCommand(
     case "quit": {
       // :q - quit editor (like vim)
       // :q! - force quit (discard unsaved changes)
+      //
+      // `force_quit` throws unsaved changes away (hot exit does not bring
+      // them back), so the plain form only reaches it with nothing unsaved.
       if (force) {
         editor.executeAction("force_quit");
         return {};
       }
-      // Check ALL buffers for unsaved changes
-      const buffers = editor.listBuffers() as Array<{ id: number; modified: boolean }>;
-      const hasModified = buffers.some((b) => b.modified);
-      if (hasModified) {
+      if (anyBufferModified()) {
         return { error: editor.t("error.no_write_since_change", { cmd: ":q!" }) };
       }
       editor.executeAction("force_quit");
@@ -5383,10 +5613,14 @@ async function executeCommand(
         editor.executeAction("save");
       }
 
-      // Check if any OTHER buffers have unsaved changes
-      const allBuffers = editor.listBuffers() as Array<{ id: number; modified: boolean }>;
-      const otherModified = allBuffers.some((b: { id: number; modified: boolean }) => b.id !== wqBufferId && b.modified);
-      if (otherModified) {
+      // Quit only once the write has landed: `force_quit` discards whatever
+      // is still unsaved, so a write that failed (or asked something) must
+      // keep the editor open. Its own status says why.
+      await editor.flush();
+      if (editor.getBufferInfo(wqBufferId)?.modified) {
+        return {};
+      }
+      if (anyBufferModified()) {
         return { error: editor.t("error.other_buffers_modified", { cmd: ":wqa" }) };
       }
       editor.executeAction("force_quit");
@@ -5405,10 +5639,7 @@ async function executeCommand(
       if (force) {
         editor.executeAction("force_quit");
       } else {
-        // Check if any buffer is modified
-        const allBufs = editor.listBuffers() as Array<{ id: number; modified: boolean }>;
-        const anyModified = allBufs.some((b) => b.modified);
-        if (anyModified) {
+        if (anyBufferModified()) {
           return { error: editor.t("error.no_write_since_change", { cmd: ":qa!" }) };
         }
         editor.executeAction("force_quit");
@@ -5417,8 +5648,13 @@ async function executeCommand(
     }
 
     case "wqall": {
-      // :wqa or :xa - save all and quit
+      // :wqa or :xa - save all and quit, unless something could not be
+      // written (`save_all`'s status says what).
       editor.executeAction("save_all");
+      await editor.flush();
+      if (anyBufferModified()) {
+        return {};
+      }
       editor.executeAction("force_quit");
       return {};
     }
@@ -5428,16 +5664,10 @@ async function executeCommand(
       // :e filename - open file
       // :e! - force reload (discard changes)
       if (!args) {
-        if (force) {
-          editor.executeAction("revert");
-          return { message: editor.t("status.file_reverted_discarded") };
-        }
-        const bufferId = editor.getActiveBufferId();
-        if (editor.isBufferModified(bufferId)) {
+        if (!force && editor.isBufferModified(editor.getActiveBufferId())) {
           return { error: editor.t("error.no_write_since_change", { cmd: ":e!" }) };
         }
-        editor.executeAction("revert");
-        return { message: editor.t("status.file_reverted") };
+        return revertActiveBuffer();
       }
       // Open the specified file
       const path = args.trim();
@@ -5453,14 +5683,13 @@ async function executeCommand(
           return { error: editor.t("error.no_write_since_change", { cmd: ":enew!" }) };
         }
       }
-      editor.executeAction("new_buffer");
+      editor.executeAction("new");
       return {};
     }
 
     case "revert": {
       // :revert - Fresh-specific command to reload file
-      editor.executeAction("revert");
-      return { message: editor.t("status.file_reverted") };
+      return revertActiveBuffer();
     }
 
     case "next": {
@@ -5577,7 +5806,7 @@ async function executeCommand(
     case "new": {
       // :new - create new buffer in horizontal split
       editor.executeAction("split_horizontal");
-      editor.executeAction("new_buffer");
+      editor.executeAction("new");
       if (args) {
         const path = args.trim();
         editor.openFile(path, 0, 0);
@@ -5588,7 +5817,7 @@ async function executeCommand(
     case "vnew": {
       // :vnew - create new buffer in vertical split
       editor.executeAction("split_vertical");
-      editor.executeAction("new_buffer");
+      editor.executeAction("new");
       if (args) {
         const path = args.trim();
         editor.openFile(path, 0, 0);
@@ -5598,24 +5827,27 @@ async function executeCommand(
 
     case "only": {
       // :only - close all other splits
-      editor.executeAction("close_other_splits");
+      const activeSplit = editor.getActiveSplitId();
+      for (const split of editor.listSplits()) {
+        if (split.splitId !== activeSplit) {
+          editor.closeSplit(split.splitId);
+        }
+      }
       return {};
     }
 
     case "close": {
-      // :close - close current split (same as :q for Fresh)
-      const bufferId = editor.getActiveBufferId();
-      if (!force && editor.isBufferModified(bufferId)) {
-        return { error: editor.t("error.no_write_since_change", { cmd: ":close!" }) };
-      }
-      editor.executeAction("close");
+      // :close - close the current split. Its buffers stay open (as tabs
+      // of the remaining splits), so nothing unsaved is lost and there is
+      // nothing to refuse; the last split is not closed.
+      editor.executeAction("close_split");
       return {};
     }
 
     case "tabnew":
     case "tabedit": {
       // :tabnew - new tab (creates new buffer in Fresh)
-      editor.executeAction("new_buffer");
+      editor.executeAction("new");
       if (args) {
         const path = args.trim();
         editor.openFile(path, 0, 0);
@@ -5624,9 +5856,10 @@ async function executeCommand(
     }
 
     case "tabclose": {
-      // :tabclose - close current tab/buffer
+      // :tabclose - close current tab/buffer. A buffer another split still
+      // shows loses nothing when this tab goes.
       const bufferId = editor.getActiveBufferId();
-      if (!force && editor.isBufferModified(bufferId)) {
+      if (!force && editor.isBufferModified(bufferId) && !shownInAnotherSplit(bufferId)) {
         return { error: editor.t("error.no_write_since_change", { cmd: ":tabclose!" }) };
       }
       editor.executeAction("close");
@@ -5647,7 +5880,7 @@ async function executeCommand(
 
     case "copen": {
       // :copen - open diagnostics panel (Fresh equivalent)
-      editor.executeAction("show_diagnostics");
+      editor.executeAction("show_diagnostics_panel");
       return {};
     }
 
@@ -5658,26 +5891,24 @@ async function executeCommand(
 
     case "cnext": {
       // :cnext - next diagnostic
-      editor.executeAction("goto_next_diagnostic");
+      editor.executeAction("jump_to_next_error");
       return {};
     }
 
     case "cprevious": {
       // :cprev - previous diagnostic
-      editor.executeAction("goto_prev_diagnostic");
+      editor.executeAction("jump_to_previous_error");
       return {};
     }
 
     case "cfirst": {
       // :cfirst - first diagnostic
-      editor.executeAction("goto_first_diagnostic");
-      return {};
+      return gotoDiagnostic("first");
     }
 
     case "clast": {
       // :clast - last diagnostic
-      editor.executeAction("goto_last_diagnostic");
-      return {};
+      return gotoDiagnostic("last");
     }
 
     case "nohlsearch": {
@@ -5860,6 +6091,44 @@ async function gotoLine(lineNum: number): Promise<CommandResult> {
   return { message: editor.t("status.line_beyond_end", { line: String(lineNum) }) };
 }
 
+// Whether any buffer of any window has unsaved changes. `force_quit`
+// discards them all, so a quit that must not lose work checks every window,
+// not just the active one.
+function anyBufferModified(): boolean {
+  return editor.listWindows().some((w) => editor.listBuffers(w.id).some((b) => b.modified));
+}
+
+function shownInAnotherSplit(bufferId: number): boolean {
+  const activeSplit = editor.getActiveSplitId();
+  return editor.listSplits().some((s) => s.splitId !== activeSplit && s.bufferId === bufferId);
+}
+
+// `revert` asks before throwing unsaved changes away; until it is answered
+// nothing has been reverted, so only an unmodified buffer reports it.
+function revertActiveBuffer(): CommandResult {
+  const modified = editor.isBufferModified(editor.getActiveBufferId());
+  editor.executeAction("revert");
+  return modified ? {} : { message: editor.t("status.file_reverted") };
+}
+
+// :cfirst / :clast - the first or last diagnostic, by file, line and column.
+function gotoDiagnostic(which: "first" | "last"): CommandResult {
+  const toPath = (uri: string) => editor.fileUriToPath(uri) || uri;
+  const diagnostics = editor.getAllDiagnostics().slice().sort((a, b) => {
+    const pa = toPath(a.uri);
+    const pb = toPath(b.uri);
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    if (a.range.start.line !== b.range.start.line) return a.range.start.line - b.range.start.line;
+    return a.range.start.character - b.range.start.character;
+  });
+  const target = which === "first" ? diagnostics[0] : diagnostics[diagnostics.length - 1];
+  if (target === undefined) {
+    return {};
+  }
+  editor.openFile(toPath(target.uri), target.range.start.line + 1, target.range.start.character + 1);
+  return {};
+}
+
 // Handle :set command options
 function handleSetCommand(args: string): CommandResult {
   const parts = args.split("=");
@@ -5883,16 +6152,11 @@ function handleSetCommand(args: string): CommandResult {
       return { message: editor.t("status.line_numbers_off") };
     }
 
-    case "wrap": {
-      // :set wrap - enable line wrap
-      editor.executeAction("toggle_wrap");
-      return { message: editor.t("status.line_wrap_toggled") };
-    }
-
+    case "wrap":
     case "nowrap": {
-      // :set nowrap - disable line wrap
-      editor.executeAction("toggle_wrap");
-      return { message: editor.t("status.line_wrap_toggled") };
+      // :set wrap / :set nowrap - set (not toggle) wrapping in this window
+      editor.setLineWrap(editor.getActiveBufferId(), editor.getActiveSplitId(), option === "wrap");
+      return {};
     }
 
     default: {
@@ -5903,6 +6167,10 @@ function handleSetCommand(args: string): CommandResult {
 
 // Register event handler for prompt confirmation
 editor.on("prompt_confirmed", async (args) => {
+  if (args.prompt_type === "vi-search-backward") {
+    await runBackwardSearch(args.input);
+    return true;
+  }
   if (args.prompt_type !== "vi-command") {
     return false; // Not our prompt, let other handlers process it
   }
