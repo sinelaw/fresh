@@ -2396,6 +2396,10 @@ impl Editor {
     pub fn fire_ready_hook(&mut self) {
         #[cfg(feature = "plugins")]
         if self.plugin_manager.read().unwrap().is_active() {
+            // Refresh the snapshot first so `ready` handlers see launch facts
+            // set since the last frame (e.g. `stdinLaunch()` after a piped
+            // buffer opened), as `fire_config_changed_hook` does.
+            self.update_plugin_state_snapshot();
             self.plugin_manager
                 .read()
                 .unwrap()
