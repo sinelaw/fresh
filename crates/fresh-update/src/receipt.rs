@@ -269,7 +269,7 @@ formula = "fresh-editor"
     }
 
     /// End-to-end over the real packaged layout: a receipt written where
-    /// `debian/rules` and the `generate-rpm` asset list put it must be found.
+    /// `packaging/release-deb/rules` and the `generate-rpm` asset list put it must be found.
     #[test]
     fn find_reads_packaged_receipt_from_share_package_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -278,7 +278,7 @@ formula = "fresh-editor"
         let exe = usr.join("bin").join("fresh");
         std::fs::write(&exe, b"not really a binary").unwrap();
 
-        // Exactly where debian/rules and [package.metadata.generate-rpm] ship it.
+        // Exactly where packaging/release-deb/rules and [package.metadata.generate-rpm] ship it.
         let share = usr.join("share").join(PACKAGE_DIR_NAME);
         std::fs::create_dir_all(&share).unwrap();
         std::fs::write(

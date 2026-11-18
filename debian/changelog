@@ -1,5 +1,7 @@
-fresh-editor (0.5.9-1) unstable; urgency=medium
+fresh-editor (0.5.8-1) unstable; urgency=medium
 
-  * Release 0.5.9. See upstream CHANGELOG.md for details.
+  * Initial release. (Closes: #1124035)
+    Built from Debian's packaged crates, with Debian's QuickJS running
+    plugins and esbuild compiling the bundled ones.
 
- -- Noam Lewis <jones.noamle@gmail.com>  Mon, 16 Nov 2026 21:52:51 +0000
+ -- Noam Lewis <jones.noamle@gmail.com>  Mon, 09 Nov 2026 20:04:52 +0000

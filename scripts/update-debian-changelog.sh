@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rewrite debian/changelog so the top entry matches the workspace version
+# Rewrite packaging/release-deb/changelog (the release .deb's) so the top entry matches the workspace version
 # in Cargo.toml. Run in CI (and locally) before `dpkg-buildpackage`.
 
 set -euo pipefail
@@ -20,7 +20,7 @@ fi
 DATE="$(date -u -R)"
 MAINTAINER="${DEBFULLNAME:-Noam Lewis} <${DEBEMAIL:-jones.noamle@gmail.com}>"
 
-cat > "${REPO_ROOT}/debian/changelog" <<EOF
+cat > "${REPO_ROOT}/packaging/release-deb/changelog" <<EOF
 fresh-editor (${VERSION}-1) unstable; urgency=medium
 
   * Release ${VERSION}. See upstream CHANGELOG.md for details.
@@ -28,4 +28,4 @@ fresh-editor (${VERSION}-1) unstable; urgency=medium
  -- ${MAINTAINER}  ${DATE}
 EOF
 
-echo "wrote ${REPO_ROOT}/debian/changelog at ${VERSION}-1"
+echo "wrote ${REPO_ROOT}/packaging/release-deb/changelog at ${VERSION}-1"

@@ -45,7 +45,7 @@ def print_usage():
     print("  3. Ask for confirmation")
     print("  4. Update Cargo.toml (workspace.package and workspace.dependencies)")
     print("  5. Update Cargo.lock")
-    print("  6. Regenerate debian/changelog to match the new version")
+    print("  6. Regenerate packaging/release-deb/changelog to match the new version")
     print("  7. Stamp the man page's version and date")
     print("  8. Optionally generate release notes")
     print("  9. Commit to a new branch, open a PR, and merge it, skipping required checks")
@@ -137,12 +137,12 @@ def update_cargo_lock() -> None:
         print(e.stderr)
 
 def update_debian_changelog(repo_root: Path) -> None:
-    """Regenerates debian/changelog so its strict-format top entry matches the
-    new Cargo.toml version. Without this, the committed debian/changelog drifts
+    """Regenerates packaging/release-deb/changelog so its strict-format top entry matches the
+    new Cargo.toml version. Without this, the committed packaging/release-deb/changelog drifts
     until CI's scripts/update-debian-changelog.sh runs it before dpkg-buildpackage."""
     script = repo_root / "scripts" / "update-debian-changelog.sh"
     if not script.exists():
-        print(f"{YELLOW}Warning:{NC} {script} not found; skipping debian/changelog regen")
+        print(f"{YELLOW}Warning:{NC} {script} not found; skipping packaging/release-deb/changelog regen")
         return
     run_command([str(script)])
 
@@ -287,9 +287,9 @@ def main() -> None:
         print(f"{GREEN}✓{NC} Updated Cargo.lock")
 
         print("")
-        print(f"{BLUE}Step: regenerate debian/changelog{NC}")
+        print(f"{BLUE}Step: regenerate packaging/release-deb/changelog{NC}")
         update_debian_changelog(cargo_toml_path.resolve().parent)
-        print(f"{GREEN}✓{NC} Updated debian/changelog")
+        print(f"{GREEN}✓{NC} Updated packaging/release-deb/changelog")
 
         print("")
         print(f"{BLUE}Step: stamp the man page{NC}")
@@ -300,7 +300,7 @@ def main() -> None:
         print(f"{BLUE}Step: summary of changes{NC}")
         print("")
         try:
-            diff_result = run_command(["git", "diff", "Cargo.toml", "Cargo.lock", "debian/changelog", str(MAN_PAGE)], capture_output=True)
+            diff_result = run_command(["git", "diff", "Cargo.toml", "Cargo.lock", "packaging/release-deb/changelog", str(MAN_PAGE)], capture_output=True)
             print("Git diff:")
             print(diff_result.stdout)
         except subprocess.CalledProcessError:
@@ -332,7 +332,7 @@ def main() -> None:
             print("")
             print(f"{BLUE}Step: commit changes to {bump_branch}{NC}")
             run_command(["git", "switch", "-c", bump_branch])
-            run_command(["git", "add", "Cargo.toml", "Cargo.lock", "debian/changelog", str(MAN_PAGE)])
+            run_command(["git", "add", "Cargo.toml", "Cargo.lock", "packaging/release-deb/changelog", str(MAN_PAGE)])
             run_command(["git", "commit", "-m", commit_title])
             print(f"{GREEN}✓{NC} Committed")
 

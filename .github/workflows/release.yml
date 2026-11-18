@@ -286,7 +286,7 @@ jobs:
     uses: ./.github/workflows/linux-packages.yml
     secrets: inherit
 
-  # The Debian-archive build (packaging/debian): built on debian:testing from
+  # The Debian-archive build (debian/): built on debian:testing from
   # Debian's own crates, QuickJS and esbuild, so it installs on Debian
   # testing/unstable only. Attached under its own names beside the main .deb;
   # a failure here does not stop the release (see `release`).

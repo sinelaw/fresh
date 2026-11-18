@@ -103,7 +103,7 @@ jobs:
           fi
           # `--features web`: the browser UI is opt-in in Cargo.toml, so the
           # .deb/.rpm would otherwise ship a `fresh` that rejects `--web`
-          # (#3316). Kept in step with debian/rules, which names the same
+          # (#3316). Kept in step with packaging/release-deb/rules, which names the same
           # feature when it has to build the binary itself.
           cargo build --release --features web --target ${{ matrix.target }}
 
@@ -122,8 +122,11 @@ jobs:
           # symlink so they resolve to the workspace target/.
           ln -s ../../target crates/fresh-editor/target
 
-      - name: Sync debian/changelog with Cargo.toml version
-        run: ./scripts/update-debian-changelog.sh
+      # debian/ is the Debian-archive packaging; this .deb's is packaging/release-deb.
+      - name: Use packaging/release-deb as debian/, at the Cargo.toml version
+        run: |
+          ./scripts/update-debian-changelog.sh
+          rm -rf debian && cp -r packaging/release-deb debian
 
       - name: Build .deb package
         env:
@@ -578,8 +581,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
-      - name: Sync debian/changelog with Cargo.toml version
-        run: ./scripts/update-debian-changelog.sh
+      # debian/ is the Debian-archive packaging; this .deb's is packaging/release-deb.
+      - name: Use packaging/release-deb as debian/, at the Cargo.toml version
+        run: |
+          ./scripts/update-debian-changelog.sh
+          rm -rf debian && cp -r packaging/release-deb debian
 
       - name: Vendor cargo dependencies
         run: |

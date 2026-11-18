@@ -4,8 +4,8 @@
 Usage: debian-salsa-update.py [--repo DIR] prepare VERSION [REVISION]
        debian-salsa-update.py [--repo DIR] release
 
-prepare  Import VERSION, replace debian/ with its packaging/debian, commit,
-         build and lintian. Pushes nothing.
+prepare  Import VERSION, set the changelog version, commit, build and
+         lintian. Salsa's debian/ is otherwise left alone. Pushes nothing.
 release  Sign, push, open a self-merging Salsa MR into debian/latest, wait
          for CI, upload to mentors and push the debian/<version> tag.
          Unlock the gpg key first.
@@ -100,20 +100,12 @@ def prepare(upstream, revision="1"):
         deb("gbp", "import-orig", "--no-interactive", "--pristine-tar", "--no-sign-tags",
             f"--upstream-version={upstream}", f"../fresh-editor_{upstream}.orig.tar.gz")
 
-    say(f"replacing debian/ with packaging/debian from upstream/{upstream}")
-    git("rm", "-rq", "debian")
-    archive = subprocess.Popen(["git", "-C", REPO, "archive", f"upstream/{upstream}", "packaging/debian"],
-                               stdout=subprocess.PIPE)
-    run("tar", "-x", "--strip-components=1", "-C", REPO, stdin=archive.stdout)
-    if archive.wait():
-        sys.exit(f"error: upstream/{upstream} has no packaging/debian")
-
-    # Keep HEAD's date unless something changed.
     changelog = REPO / "debian/changelog"
     def set_changelog(date):
         text = re.sub(r"\A(\S+) \([^)]*\)", rf"\1 ({upstream}-{revision})", changelog.read_text())
         changelog.write_text(re.sub(r"^( -- .*>  ).*$", lambda m: m[1] + date, text, count=1, flags=re.M))
-        git("add", "-A", "debian")
+        git("add", "debian/changelog")
+    # Keep HEAD's date unless the version changed.
     set_changelog(re.search(r"^ -- .*>  (.*)$", out("show", "HEAD:debian/changelog"), re.M)[1])
     if subprocess.run(["git", "-C", REPO, "diff", "--cached", "--quiet"]).returncode:
         set_changelog(formatdate(localtime=True))
