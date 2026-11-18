@@ -38,7 +38,7 @@ const editor = getEditor();
 //   another buffer, and never reopens because something else went away.
 //   A file launch (`fresh FILE`, `$EDITOR`) does not open it. Closing it
 //   is the reader's (Escape, or the tab's ×), and `Welcome` in the
-//   palette brings it back. `showOnStartup` (plugin setting, and the
+//   palette brings it back. `show_on_startup` (plugin setting, and the
 //   toggle at the bottom of the page) turns the startup open off.
 // ═════════════════════════════════════════════════════════════════════
 
@@ -123,7 +123,7 @@ function autoAttach(): boolean {
   return settingWithPending("auto_attach", coreConfig().auto_attach !== false);
 }
 
-editor.defineConfigBoolean("showOnStartup", {
+editor.defineConfigBoolean("show_on_startup", {
   default: true,
   description: "Open the welcome screen when Fresh starts, as a tab behind whatever is already open.",
 });
@@ -134,8 +134,8 @@ editor.defineConfigBoolean("showOnStartup", {
 function showOnStartup(): boolean {
   const override = editor.getGlobalState("showOnStartup");
   if (typeof override === "boolean") return override;
-  const cfg = (editor.getPluginConfig() ?? {}) as { showOnStartup?: boolean };
-  return cfg.showOnStartup !== false;
+  const cfg = (editor.getPluginConfig() ?? {}) as { show_on_startup?: boolean };
+  return cfg.show_on_startup !== false;
 }
 
 // ── Layout helpers ───────────────────────────────────────────────────

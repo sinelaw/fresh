@@ -25,7 +25,7 @@ fn config_with_dashboard() -> Config {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoOpen": true }),
+            settings: serde_json::json!({ "auto_open": true }),
         },
     );
     config

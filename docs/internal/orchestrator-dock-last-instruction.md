@@ -2,11 +2,11 @@
 
 **At startup the dock follows your last explicit instruction (showing or
 hiding it, or changing the Settings value), which overwrites the
-`autoOpenDock` setting each time.**
+`auto_open_dock` setting each time.**
 
 ## Problem
 
-Whether the dock opens at startup is `autoOpenDock` (`auto` / `always` /
+Whether the dock opens at startup is `auto_open_dock` (`auto` / `always` /
 `never`), read by the host before the first frame
 (`Editor::apply_startup_dock_chrome`, `app/chrome/dock.rs`). Under `auto` the
 host restores what `<data>/chrome.json` remembered at quit. `always` and
@@ -15,7 +15,7 @@ host restores what `<data>/chrome.json` remembered at quit. `always` and
 So under `never` an open from `View ▸ Orchestrator Dock` lasted only until the
 restart, and under `always` a close did the same, with nothing on screen
 explaining why. It is reachable without anyone choosing `never`: a bare
-`fresh` used to ignore `autoOpenDock: false`, so a `false` could sit in a
+`fresh` used to ignore `auto_open_dock: false`, so a `false` could sit in a
 config unnoticed. #3442 reads it as `never` and rewrites it on disk.
 
 ## Rule
@@ -26,9 +26,9 @@ Explicit instructions are:
   `toggle_dock_focus` (Alt+O) on a hidden dock.
 - **Hide:** the dock header's `×`, View ▸ Orchestrator Dock, or
   `Orchestrator: Toggle Dock`.
-- **Settings:** an edit to `autoOpenDock`.
+- **Settings:** an edit to `auto_open_dock`.
 
-A show writes `autoOpenDock: "always"` and a hide writes `"never"`. A Settings
+A show writes `auto_open_dock: "always"` and a hide writes `"never"`. A Settings
 edit to `always` / `never` also opens or closes the dock now; `auto` changes
 nothing now. The most recent instruction wins.
 
@@ -73,7 +73,7 @@ its mode.
   adopted value, never the config snapshot. `saveSetting` only queues the
   write, so the snapshot reads the old value for a tick or two, and a second
   toggle inside that window would otherwise skip its write.
-- `config_changed` compares `autoOpenDock` (normalised as the host reads it:
+- `config_changed` compares `auto_open_dock` (normalised as the host reads it:
   `false` → never, `true` / unknown → auto) with `lastDockMode`, adopts the
   new value, and on `always` shows the dock unfocused; on `never` it closes
   it. The plugin's own `saveSetting` does not fire `config_changed`. A modal
@@ -84,7 +84,7 @@ its mode.
   the next Settings save or config reload, opening or closing the dock then.
   That is the user's latest instruction, so it follows the rule.
 - `saveSetting` writes to whichever config layer already defines the key, the
-  same rule the Settings UI uses: a project that sets `autoOpenDock` keeps its
+  same rule the Settings UI uses: a project that sets `auto_open_dock` keeps its
   own value.
 
 `chrome.json`'s `open` and the quit-time `save_dock_chrome` stay: they serve

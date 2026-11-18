@@ -979,13 +979,13 @@ function pickerFocusKey(): string {
 let lastOpenScope: "current" | "all" = "all";
 // Remembered across opens, like `lastOpenScope`: whether the
 // discovered on-disk worktree rows are shown. `null` means "not touched
-// this session" — the dock then seeds it from the `showAllWorktrees`
+// this session" — the dock then seeds it from the `show_all_worktrees`
 // plugin setting (default false: worktrees hidden, surfacing them is
 // opt-in via "Show all worktrees" / Alt+T). Flipping the checkbox pins a
 // concrete value that wins for the rest of the session.
 let lastShowWorktrees: boolean | null = null;
 // Remembered across opens: whether "trivial" sessions are hidden.
-// `null` ⇒ seeded from the `showEmptyWorkspaces` setting, which defaults
+// `null` ⇒ seeded from the `show_empty_workspaces` setting, which defaults
 // to true (nothing hidden). A freshly created workspace starts empty, so
 // hiding trivial sessions made it vanish the instant it lost the
 // "active" exemption (issue: "new workspace immediately disappears").
@@ -996,7 +996,7 @@ let lastHideTrivial: boolean | null = null;
 // Dock card density. "compact" (default) shows one line per session;
 // "card" shows the three-line rounded pill. Read all over the render
 // path, so it stays a plain value rather than a config lookup; the dock
-// re-seeds it from the `defaultView` setting on open unless the user has
+// re-seeds it from the `default_view` setting on open unless the user has
 // hit the toolbar's "view" button this session (`dockViewOverride`).
 // Compact is the default because the dock is a *switcher* first: one
 // line per workspace fits several times as many rows in the same column,
@@ -1024,24 +1024,31 @@ let lastDockProjectFilter: string | null = null;
 // they just no longer decide where the dock starts.
 // Closed on a first run; once the user opens it, it comes back at every start
 // (unfocused, so the keyboard stays with the editor) until they close it.
-editor.defineConfigEnum("autoOpenDock", {
+editor.defineConfigEnum("auto_open_dock", {
   values: ["auto", "always", "never"] as const,
   default: "auto",
   description:
     "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) starts with it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
-editor.defineConfigEnum("defaultView", {
+editor.defineConfigEnum("default_view", {
   values: ["compact", "card"] as const,
   default: "compact",
   description:
     "Dock layout the panel opens with: 'compact' (one line per workspace) or 'card' (multi-line pill per workspace). The dock's 'view' button flips it for the current session.",
 });
-editor.defineConfigBoolean("showAllWorktrees", {
+editor.defineConfigBoolean("show_all_worktrees", {
   default: false,
   description:
     "Start the dock (and the Open picker) with 'all worktrees' checked, listing on-disk worktrees that have no open workspace.",
 });
-editor.defineConfigBoolean("showEmptyWorkspaces", {
+editor.defineConfigInteger("worktree_refresh_seconds", {
+  default: 30,
+  minimum: 0,
+  maximum: 3600,
+  description:
+    "How often, in seconds, an open dock (or Open picker) showing 'all worktrees' re-scans git for worktrees added or removed outside Fresh. 0 turns the periodic scan off; Refresh in a row's right-click menu still re-scans on demand.",
+});
+editor.defineConfigBoolean("show_empty_workspaces", {
   default: true,
   description:
     "Start the dock (and the Open picker) with 'show empty' checked, listing workspaces with no edited files (freshly created ones included).",
@@ -1052,25 +1059,26 @@ editor.defineConfigEnum("notifications", {
   description:
     "Announce a background workspace in the status bar when it needs you ('needs-you'), or also when it finishes a run ('all'). 'off' leaves only the dock's attention line.",
 });
-editor.defineConfigBoolean("notifySound", {
+editor.defineConfigBoolean("notify_sound", {
   default: false,
   description:
     "Ring the terminal bell with each notification (needs-you and finished). Off by default.",
 });
-editor.defineConfigString("detectionRulesUrl", {
+editor.defineConfigString("detection_rules_url", {
   default: "",
   description:
     "URL of a published detection-rules JSON ({version, blocked: [regex…]}). Fetched at startup and by Orchestrator: Reload Detection Rules; adopted when its version is newer than <data dir>/orchestrator/detection-rules.json. Empty = built-in rules (or the local file).",
 });
 
 interface DockSettings {
-  autoOpenDock?: "auto" | "always" | "never";
+  auto_open_dock?: "auto" | "always" | "never";
   notifications?: "all" | "needs-you" | "off";
-  notifySound?: boolean;
-  detectionRulesUrl?: string;
-  defaultView?: "card" | "compact";
-  showAllWorktrees?: boolean;
-  showEmptyWorkspaces?: boolean;
+  notify_sound?: boolean;
+  detection_rules_url?: string;
+  default_view?: "card" | "compact";
+  show_all_worktrees?: boolean;
+  worktree_refresh_seconds?: number;
+  show_empty_workspaces?: boolean;
 }
 
 // Re-read on demand rather than caching the values `defineConfigX`
@@ -1085,19 +1093,26 @@ function dockSettings(): DockSettings {
 // the user has hit it, otherwise the configured default.
 function configuredDockView(): "card" | "compact" {
   if (dockViewOverride !== null) return dockViewOverride;
-  return dockSettings().defaultView === "card" ? "card" : "compact";
+  return dockSettings().default_view === "card" ? "card" : "compact";
 }
 
 // The two Filters checkboxes, same precedence. `hideTrivial` is the
 // inverse of the user-facing "show empty" checkbox.
 function configuredShowWorktrees(): boolean {
   if (lastShowWorktrees !== null) return lastShowWorktrees;
-  return dockSettings().showAllWorktrees === true;
+  return dockSettings().show_all_worktrees === true;
 }
 
 function configuredHideTrivial(): boolean {
   if (lastHideTrivial !== null) return lastHideTrivial;
-  return dockSettings().showEmptyWorkspaces === false;
+  return dockSettings().show_empty_workspaces === false;
+}
+
+// Period of the background worktree re-scan, in ms; 0 = off.
+function configuredWorktreeRefreshMs(): number {
+  const v = dockSettings().worktree_refresh_seconds;
+  const secs = typeof v === "number" && Number.isFinite(v) ? v : 30;
+  return secs > 0 ? Math.round(secs * 1000) : 0;
 }
 
 // =============================================================================
@@ -1842,6 +1857,14 @@ function refreshExternal(): void {
   if (!feed) return;
   setExternalSessions(feed.snapshot());
   void feed.refresh();
+}
+
+// Re-read everything the dock lists from outside the editor: the git
+// worktrees on disk and the external sessions. What the right-click menu's
+// Refresh runs, on any row.
+function refreshDockSources(): void {
+  void refreshDiscoveredWorktrees();
+  refreshExternal();
 }
 
 // Sessions open outside this editor that no workspace here stands for, in
@@ -2965,6 +2988,33 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
   if (openPanel) refreshOpenDialog();
 }
 
+// Periodic re-scan. Discovery otherwise runs only when the dock or picker
+// opens, so a dock left open kept listing worktrees that had been removed
+// and never showed new ones until it was toggled. One host timer at the
+// configured period (`worktree_refresh_seconds`, 0 = off); each tick is a
+// no-op unless a panel is up with its discovered rows shown, so a closed
+// dock spawns no git.
+let worktreeRefreshTimer: number | null = null;
+let worktreeRefreshPeriodMs = 0;
+
+function syncWorktreeRefreshTimer(): void {
+  const want = configuredWorktreeRefreshMs();
+  if (want === worktreeRefreshPeriodMs) return;
+  if (worktreeRefreshTimer !== null) {
+    editor.clearInterval(worktreeRefreshTimer);
+    worktreeRefreshTimer = null;
+  }
+  worktreeRefreshPeriodMs = want;
+  if (want > 0) {
+    worktreeRefreshTimer = editor.setInterval(want, "orchestrator_worktree_refresh_tick");
+  }
+}
+
+registerHandler("orchestrator_worktree_refresh_tick", () => {
+  if (!openPanel || !openDialog?.showWorktrees) return;
+  void refreshDiscoveredWorktrees();
+});
+
 // =============================================================================
 // Session display helpers
 // =============================================================================
@@ -3079,7 +3129,7 @@ function parseDetectionRules(raw: string): Omit<DetectionRules, "source"> | null
 
 // Bounds on what a rules file may ask for. The patterns run on the plugin
 // thread against every terminal line of every session, and when
-// `detectionRulesUrl` is set the file is remote, mutable data — so the host
+// `detection_rules_url` is set the file is remote, mutable data — so the host
 // serving it decides what this plugin executes on every render.
 //
 // **Length and count bound volume, not cost.** They are here because a file
@@ -3171,7 +3221,7 @@ function applyDetectionRules(rules: DetectionRules): boolean {
 }
 
 // Load the rules file if there is one (else the built-ins), then — when
-// `detectionRulesUrl` is set — fetch the published set and adopt it if its
+// `detection_rules_url` is set — fetch the published set and adopt it if its
 // version is newer than what is on disk. Best-effort throughout: a missing
 // file, a bad download or an unreachable host leaves the current rules.
 // Set when the last load found a rules file it could not use, so a reload
@@ -3191,7 +3241,7 @@ async function loadDetectionRules(): Promise<DetectionRules> {
     detectionRulesProblem = editor.pathBasename(path);
     editor.warn(`orchestrator: ${path} is not a rules file, using built-in rules`);
   }
-  const url = (dockSettings().detectionRulesUrl ?? "").trim();
+  const url = (dockSettings().detection_rules_url ?? "").trim();
   if (url && /^https?:\/\//i.test(url)) {
     // The editor's own HTTP client, into a scratch file beside the rules;
     // the file only replaces the rules once it parses and is newer.
@@ -3227,7 +3277,7 @@ async function loadDetectionRules(): Promise<DetectionRules> {
       fetchInFlight = false;
     }
   } else if (url) {
-    editor.warn(`orchestrator: detectionRulesUrl must be http(s): ${url}`);
+    editor.warn(`orchestrator: detection_rules_url must be http(s): ${url}`);
   }
   return detectionRules;
 }
@@ -3498,7 +3548,7 @@ function sweepAttention(): void {
   if (announce) {
     lastNotice = { id: announce.s.id, state: announce.st, windowId: active };
     showNotice(noticeText(announce.s, announce.st));
-    if (settings.notifySound) ringBell();
+    if (settings.notify_sound) ringBell();
   }
   if (lastNotice) {
     const s = orchestratorSessions.get(lastNotice.id);
@@ -5746,7 +5796,7 @@ function openControlRoom(
       heightPct: 100,
       asDock: true,
       mode: DOCK_MODE,
-      // "Stay put" callers (autoOpenDock, placeholder rows) must never
+      // "Stay put" callers (auto_open_dock, placeholder rows) must never
       // put the keyboard in the dock, not even for the tick between a
       // focused mount and a follow-up blur command.
       startBlurred,
@@ -5795,6 +5845,9 @@ function openControlRoom(
   // project); the dialog renders immediately with live sessions and
   // gains the discovered rows when the scan lands.
   void refreshDiscoveredWorktrees();
+  // And keeps re-scanning while it stays up (also catches a plugin reload,
+  // which gets no `ready`).
+  syncWorktreeRefreshTimer();
   // The external sessions group, the same way: what the feed already has now, a
   // fresh listing when it lands.
   if (asDock) refreshExternal();
@@ -6941,6 +6994,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     return contextMenuSpec(label, [
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename", intent: "primary" },
       { label: editor.t("dock.ctx_new_subfolder"), key: "ctx-new-subfolder" },
+      { label: editor.t("dock.ctx_refresh"), key: "ctx-refresh" },
       { label: editor.t("dock.ctx_delete_folder"), key: "ctx-delete-folder", intent: "danger" },
     ]);
   }
@@ -6973,6 +7027,10 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       { label: editor.t("dock.ctx_visit"), key: "ctx-visit", intent: "primary" },
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename-session" },
       { label: editor.t("dock.ctx_move"), key: "ctx-move" },
+      // Re-scans the whole list, not just this row: a worktree added or
+      // removed outside the editor shows up (or goes) without reopening the
+      // dock.
+      { label: editor.t("dock.ctx_refresh"), key: "ctx-refresh" },
     ];
   if (pending && pendingActionable(pending)) {
     items.push({ label: editor.t("dock.ctx_retry"), key: "ctx-retry" });
@@ -7601,19 +7659,19 @@ function toggleDock(): void {
 
 registerHandler("orchestrator_dock_toggle", toggleDock);
 
-// `autoOpenDock` as the host reads it at startup (`DockOpenPolicy::read`):
+// `auto_open_dock` as the host reads it at startup (`DockOpenPolicy::read`):
 // the pre-#3442 booleans are `false` → never, `true` → auto, and anything
 // unrecognised is auto. The host rewrites a boolean on disk at startup, but
 // this module can load before that rewrite lands in memory.
 function configuredDockMode(): "auto" | "always" | "never" {
-  const v = dockSettings().autoOpenDock as unknown;
+  const v = dockSettings().auto_open_dock as unknown;
   if (v === false || v === "never") return "never";
   if (v === "always") return "always";
   return "auto";
 }
 
 // The user's last explicit open or close is what the next start follows, so
-// it is written to `autoOpenDock` as `always` / `never` — the setting the host
+// it is written to `auto_open_dock` as `always` / `never` — the setting the host
 // obeys before the first frame (`Editor::apply_startup_dock_chrome`) and the
 // Settings UI shows. Without this, `never` silently undid an open from the
 // View menu at every restart, and `always` a close.
@@ -7631,11 +7689,11 @@ function rememberDockOpen(open: boolean): void {
   // compare against a value already superseded and skip its write.
   if (lastDockMode === mode) return;
   lastDockMode = mode;
-  editor.saveSetting("plugins.orchestrator.settings.autoOpenDock", mode);
+  editor.saveSetting("plugins.orchestrator.settings.auto_open_dock", mode);
 }
 
 // The last mode this plugin wrote or adopted, so a `config_changed` that did
-// not touch `autoOpenDock` is not mistaken for one that did.
+// not touch `auto_open_dock` is not mistaken for one that did.
 let lastDockMode = configuredDockMode();
 
 // Stop every process one session owns. Sends SIGTERM first via the
@@ -9094,12 +9152,18 @@ interface ParsedWorktree {
   path: string;
   branch: string;
   detached: boolean;
+  // git still has metadata for the worktree (`.git/worktrees/<id>`) but its
+  // directory is gone — deleted with `rm -rf` rather than
+  // `git worktree remove`. git keeps listing it, with a `prunable` line,
+  // until someone runs `git worktree prune`.
+  prunable: boolean;
 }
 
 /// Parse `git worktree list --porcelain` output. Blocks are
 /// separated by blank lines; the first block is the main worktree,
 /// the rest are linked. Each block has a `worktree <path>` line
-/// plus `branch refs/heads/<name>` or `detached`.
+/// plus `branch refs/heads/<name>` or `detached`, and a `prunable
+/// <reason>` line when the worktree's directory no longer exists.
 function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
   const out: ParsedWorktree[] = [];
   let cur: ParsedWorktree | null = null;
@@ -9107,12 +9171,14 @@ function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
     const line = raw.trimEnd();
     if (line.startsWith("worktree ")) {
       if (cur) out.push(cur);
-      cur = { path: line.slice("worktree ".length), branch: "", detached: false };
+      cur = { path: line.slice("worktree ".length), branch: "", detached: false, prunable: false };
     } else if (cur && line.startsWith("branch ")) {
       const ref = line.slice("branch ".length);
       cur.branch = ref.replace(/^refs\/heads\//, "");
     } else if (cur && line === "detached") {
       cur.detached = true;
+    } else if (cur && (line === "prunable" || line.startsWith("prunable "))) {
+      cur.prunable = true;
     } else if (line === "" && cur) {
       out.push(cur);
       cur = null;
@@ -9123,7 +9189,8 @@ function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
 }
 
 /// Enumerate the *linked* worktrees of `repoRoot` (excludes the
-/// main worktree, which is the repo's own checkout). Returns the
+/// main worktree, which is the repo's own checkout, and prunable
+/// entries, whose directory is already gone). Returns the
 /// parsed entries with the main-repo root resolved so callers can
 /// tag discovered sessions with the right `projectPath`.
 async function listLinkedWorktrees(
@@ -9139,7 +9206,10 @@ async function listLinkedWorktrees(
   if (all.length === 0) return null;
   // The first entry is always the main worktree.
   const mainRoot = all[0].path;
-  const worktrees = all.slice(1);
+  // A prunable entry is a worktree whose directory was deleted without
+  // `git worktree remove`. There is nothing on disk to open, so listing it
+  // would leave a row that lingers until the user runs `git worktree prune`.
+  const worktrees = all.slice(1).filter((wt) => !wt.prunable);
   return { mainRoot, worktrees };
 }
 
@@ -15403,7 +15473,7 @@ async function startPendingWorkspace(
 
 // Ensure the dock is visible without stealing keyboard focus — the user
 // asked to keep working ("stay put"). Used for a just-created placeholder
-// (so it's seen), and for the `autoOpenDock` setting at startup.
+// (so it's seen), and for the `auto_open_dock` setting at startup.
 function showDockUnfocused(): void {
   // Open the dock if nothing is up yet. (Structured so the module-level
   // `openPanel`'s narrowing survives the `openControlRoom` reassignment —
@@ -17412,7 +17482,7 @@ function apiSetDockView(view: "card" | "compact"): void {
   }
   dockView = view;
   // Pin it for the rest of the session, exactly as the toolbar's "view"
-  // button does — the `defaultView` setting only decides where the dock
+  // button does — the `default_view` setting only decides where the dock
   // *starts*, so without the override a later re-open would undo this.
   dockViewOverride = view;
   refreshOpenDialog();
@@ -18005,7 +18075,7 @@ editor.on("widget_event", (e) => {
       if (target.kind === "folder" && isExternalFolder(target.id)) {
         if (e.widget_key === "ctx-external-refresh") {
           closeDockContextMenu();
-          refreshExternal();
+          refreshDockSources();
         }
         return;
       }
@@ -18063,9 +18133,19 @@ editor.on("widget_event", (e) => {
           closeDockContextMenu();
           return;
         }
+        if (e.widget_key === "ctx-refresh") {
+          closeDockContextMenu();
+          refreshDockSources();
+          return;
+        }
         return;
       }
       const id = target.id;
+      if (e.widget_key === "ctx-refresh") {
+        closeDockContextMenu();
+        refreshDockSources();
+        return;
+      }
       if (e.widget_key === "ctx-retry") {
         closeDockContextMenu();
         retryPending(id);
@@ -18989,6 +19069,7 @@ editor.on("window_closed", (args) => {
 // editor last quit. They come back as paused placeholder rows the user
 // resumes (Enter) or dismisses — nothing auto-runs (§ recoverPendingWorkspaces).
 editor.on("ready", () => {
+  syncWorktreeRefreshTimer();
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
@@ -19015,6 +19096,8 @@ editor.on("ready", () => {
 // Settings save or config reload. That is still the user's latest
 // instruction, so acting on it then is the rule, not a leak.
 editor.on("config_changed", () => {
+  // A Settings edit to the re-scan period takes effect now.
+  syncWorktreeRefreshTimer();
   const mode = configuredDockMode();
   if (mode === lastDockMode) return;
   lastDockMode = mode;

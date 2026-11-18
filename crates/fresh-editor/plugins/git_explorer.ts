@@ -7,7 +7,7 @@ const editor = getEditor();
  * Git Explorer Decorations
  *
  * Adds VS Code-style status badges (M/A/U/D/...) to the file explorer.
- * Optional filename coloring via plugins.git_explorer.settings.colorNames.
+ * Optional filename coloring via plugins.git_explorer.settings.color_names.
  */
 
 const NAMESPACE = "git-explorer";
@@ -30,7 +30,7 @@ const PRIORITY = {
   untracked: 30,
 };
 
-editor.defineConfigBoolean("colorNames", {
+editor.defineConfigBoolean("color_names", {
   default: false,
   description: "Color file explorer entry names by git status",
 });
@@ -204,8 +204,8 @@ async function refreshGitExplorerDecorations() {
     } else {
       editor.setFileExplorerDecorations(NAMESPACE, allDecorations);
 
-      const cfg = (editor.getPluginConfig() ?? {}) as { colorNames?: boolean };
-      if (cfg.colorNames) {
+      const cfg = (editor.getPluginConfig() ?? {}) as { color_names?: boolean };
+      if (cfg.color_names) {
         const allSlots = repoGroups.flatMap(g => buildNameColorSlots(g.decorations, g.root));
         editor.setFileExplorerSlots(NAMESPACE, allSlots);
       } else {
@@ -246,7 +246,7 @@ editor.on("editor_initialized", () => {
 editor.on("focus_gained", () => {
   refreshGitExplorerDecorations();
 });
-// `colorNames` is read inside the refresh, so without this the setting
+// `color_names` is read inside the refresh, so without this the setting
 // changes nothing until the next file open/save/explorer change — the
 // user ticks the box in Settings and the explorer just sits there.
 editor.on("config_changed", () => {

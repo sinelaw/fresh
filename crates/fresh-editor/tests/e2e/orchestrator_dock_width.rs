@@ -60,7 +60,7 @@ impl Project {
             PluginConfig {
                 enabled: true,
                 path: None,
-                settings: serde_json::json!({ "autoOpenDock": "always" }),
+                settings: serde_json::json!({ "auto_open_dock": "always" }),
             },
         );
         let options = HarnessOptions::new()

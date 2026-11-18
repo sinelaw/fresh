@@ -32,7 +32,7 @@ struct Setup {
     _temp: tempfile::TempDir,
 }
 
-/// vi_mode with `autoStart`, the scope test plugin, and `a.txt` open in the
+/// vi_mode with `auto_start`, the scope test plugin, and `a.txt` open in the
 /// first window. A second project directory holding `b.txt` is ready for a
 /// window created later.
 fn setup() -> Setup {
@@ -71,7 +71,7 @@ fn setup_with(extra_plugins: &[&str], auto_start: bool) -> Setup {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoStart": auto_start }),
+            settings: serde_json::json!({ "auto_start": auto_start }),
         },
     );
     let mut h =
@@ -87,7 +87,7 @@ fn setup_with(extra_plugins: &[&str], auto_start: bool) -> Setup {
             })
     })
     .unwrap();
-    // autoStart enables vi from the plugin's top-level body; wait for it to
+    // auto_start enables vi from the plugin's top-level body; wait for it to
     // say so before driving keys.
     if auto_start {
         h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))

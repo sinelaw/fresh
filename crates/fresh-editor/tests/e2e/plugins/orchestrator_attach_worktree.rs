@@ -1303,8 +1303,8 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
         .unwrap();
 
     // Open the row's right-click context menu (F2 is its keyboard
-    // equivalent), then pick Delete: Visit / Rename / Move / Archive /
-    // Delete, so four Downs land on Delete.
+    // equivalent), then pick Delete: Visit / Rename / Move / Refresh /
+    // Archive / Delete, so five Downs land on Delete.
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Delete"))
@@ -1315,7 +1315,7 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
                 harness.screen_to_string()
             )
         });
-    for _ in 0..4 {
+    for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness

@@ -44,39 +44,39 @@ editor.defineConfigBoolean("enabled", {
   description:
     "Show Claude and Codex sessions that are open outside this editor (another terminal, a background job, the cloud) in the orchestrator dock, grouped as Claude and Codex.",
 });
-editor.defineConfigBoolean("claudeLocal", {
+editor.defineConfigBoolean("claude_local", {
   default: true,
   description: "List Claude sessions running on this machine, from `claude agents --json`.",
 });
-editor.defineConfigBoolean("claudeCloud", {
+editor.defineConfigBoolean("claude_cloud", {
   default: true,
   description:
     "List your Claude Code cloud and Remote Control sessions (claude.ai/code). Reads the Claude CLI's sign-in (~/.claude/.credentials.json, or the macOS Keychain, which may ask once) and calls the session list `claude --teleport` uses — not a published API, so it may change with any Claude Code release. Also a checkbox in the dock's Menu.",
 });
-editor.defineConfigBoolean("codexLocal", {
+editor.defineConfigBoolean("codex_local", {
   default: true,
   description: "List Codex sessions running on this machine, found among running processes (not on Windows).",
 });
-editor.defineConfigBoolean("codexCloud", {
+editor.defineConfigBoolean("codex_cloud", {
   default: true,
   description: "List open Codex Cloud tasks, from `codex cloud list --json`.",
 });
-editor.defineConfigString("claudeCommand", {
+editor.defineConfigString("claude_command", {
   default: "claude",
   description: "The Claude Code CLI to run: a name on PATH or a full path.",
 });
-editor.defineConfigString("codexCommand", {
+editor.defineConfigString("codex_command", {
   default: "codex",
   description: "The Codex CLI to run: a name on PATH or a full path.",
 });
-editor.defineConfigInteger("cloudMaxAgeDays", {
+editor.defineConfigInteger("cloud_max_age_days", {
   default: 0,
   minimum: 0,
   maximum: 365,
   description:
     "Hide cloud sessions with no activity for this many days. 0 (the default) shows every session still active; archived ones are never shown.",
 });
-editor.defineConfigInteger("pollSeconds", {
+editor.defineConfigInteger("poll_seconds", {
   default: 60,
   minimum: 5,
   maximum: 3600,
@@ -84,31 +84,44 @@ editor.defineConfigInteger("pollSeconds", {
     "How often sessions are re-listed while the dock is open (and once when it opens; the group's Refresh re-lists at once). Cloud lists are fetched at most once a minute.",
 });
 
-interface Settings {
+// The settings as `config.json` holds them.
+interface RawSettings {
   enabled?: boolean;
-  claudeLocal?: boolean;
-  claudeCloud?: boolean;
-  codexLocal?: boolean;
-  codexCloud?: boolean;
-  claudeCommand?: string;
-  codexCommand?: string;
-  cloudMaxAgeDays?: number;
-  pollSeconds?: number;
+  claude_local?: boolean;
+  claude_cloud?: boolean;
+  codex_local?: boolean;
+  codex_cloud?: boolean;
+  claude_command?: string;
+  codex_command?: string;
+  cloud_max_age_days?: number;
+  poll_seconds?: number;
+}
+
+interface Settings {
+  enabled: boolean;
+  claudeLocal: boolean;
+  claudeCloud: boolean;
+  codexLocal: boolean;
+  codexCloud: boolean;
+  claudeCommand: string;
+  codexCommand: string;
+  cloudMaxAgeDays: number;
+  pollSeconds: number;
 }
 
 // Re-read every poll so a Settings edit applies without a reload.
-function settings(): Required<Settings> {
-  const s = (editor.getPluginConfig() ?? {}) as Settings;
+function settings(): Settings {
+  const s = (editor.getPluginConfig() ?? {}) as RawSettings;
   return {
     enabled: s.enabled ?? true,
-    claudeLocal: s.claudeLocal ?? true,
-    claudeCloud: s.claudeCloud ?? true,
-    codexLocal: s.codexLocal ?? true,
-    codexCloud: s.codexCloud ?? true,
-    claudeCommand: s.claudeCommand?.trim() || "claude",
-    codexCommand: s.codexCommand?.trim() || "codex",
-    cloudMaxAgeDays: s.cloudMaxAgeDays ?? 0,
-    pollSeconds: s.pollSeconds ?? 60,
+    claudeLocal: s.claude_local ?? true,
+    claudeCloud: s.claude_cloud ?? true,
+    codexLocal: s.codex_local ?? true,
+    codexCloud: s.codex_cloud ?? true,
+    claudeCommand: s.claude_command?.trim() || "claude",
+    codexCommand: s.codex_command?.trim() || "codex",
+    cloudMaxAgeDays: s.cloud_max_age_days ?? 0,
+    pollSeconds: s.poll_seconds ?? 60,
   };
 }
 
@@ -509,7 +522,7 @@ registerHandler("live_sessions_refresh", async () => {
 editor.registerCommand("%cmd.refresh", "%cmd.refresh_desc", "live_sessions_refresh");
 
 async function setClaudeCloud(on: boolean): Promise<void> {
-  editor.saveSetting("plugins.live_sessions.settings.claudeCloud", on);
+  editor.saveSetting("plugins.live_sessions.settings.claude_cloud", on);
   // The write is applied asynchronously; the source is switched by the
   // re-read in `settings()`, so wait for it before re-listing.
   for (let i = 0; i < 20 && settings().claudeCloud !== on; i++) await editor.delay(50);

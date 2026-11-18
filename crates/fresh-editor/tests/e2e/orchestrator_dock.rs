@@ -85,7 +85,7 @@ fn card_config() -> Config {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "defaultView": "card" }),
+            settings: serde_json::json!({ "default_view": "card" }),
         },
     );
     config

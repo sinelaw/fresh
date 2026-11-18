@@ -329,7 +329,7 @@ Today a manifest declares one thing, chrome:
 ```json
 { "chrome": { "dock": {
     "open": false,
-    "open_setting": "autoOpenDock",
+    "open_setting": "auto_open_dock",
     "width": { "fraction": 0.28, "min": 24, "max": 40 } } } }
 ```
 

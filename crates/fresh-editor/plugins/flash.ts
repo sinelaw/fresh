@@ -33,22 +33,22 @@ const VTEXT_PREFIX = "flash-";
 // the closest jump targets get the most comfortable keys.  All
 // lowercase: case-sensitive matching keeps the label letter from also
 // being a valid pattern continuation, which matters for the skip rule.
-editor.defineConfigString("labelPool", {
+editor.defineConfigString("label_pool", {
   default: "asdfghjklqwertyuiopzxcvbnm",
   description: "Characters used as jump labels, in comfort order. Labels are assigned to matches by distance from the cursor, so leftmost characters here land on the nearest matches.",
 });
-editor.defineConfigBoolean("skipRule", {
+editor.defineConfigBoolean("skip_rule", {
   default: true,
   description: "Skip a label character if it is also the next character after a match — prevents ambiguity between extending the search pattern and jumping.",
 });
 
 function flashSettings(): { labelPool: string; skipRule: boolean } {
-  const cfg = (editor.getPluginConfig() ?? {}) as { labelPool?: string; skipRule?: boolean };
+  const cfg = (editor.getPluginConfig() ?? {}) as { label_pool?: string; skip_rule?: boolean };
   return {
-    labelPool: cfg.labelPool && cfg.labelPool.length > 0
-      ? cfg.labelPool
+    labelPool: cfg.label_pool && cfg.label_pool.length > 0
+      ? cfg.label_pool
       : "asdfghjklqwertyuiopzxcvbnm",
-    skipRule: cfg.skipRule ?? true,
+    skipRule: cfg.skip_rule ?? true,
   };
 }
 
