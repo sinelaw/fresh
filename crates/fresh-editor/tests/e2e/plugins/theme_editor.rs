@@ -4368,3 +4368,56 @@ fn test_f1_shows_theme_editor_help() {
         .wait_until(|h| h.screen_to_string().contains("discard changes"))
         .unwrap();
 }
+
+/// #3802: the color prompt takes `#rgb` hex and a color name in any letter
+/// case, as the theme loader reads them.
+#[test]
+fn test_color_prompt_accepts_short_hex_and_any_case_name() {
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "theme_editor");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+    harness.render().unwrap();
+    open_theme_editor(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("editor"))
+        .unwrap();
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    for (typed, shown) in [("#0f0", "#00FF00"), ("lightblue", "LightBlue")] {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("#RRGGBB"))
+            .unwrap();
+        harness
+            .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.type_text(typed).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness
+            .wait_until(|h| {
+                let screen = h.screen_to_string();
+                !screen.contains("#RRGGBB")
+                    && screen
+                        .lines()
+                        .any(|l| l.contains('\u{25B8}') && l.contains(shown))
+            })
+            .unwrap();
+        harness.assert_screen_not_contains("Hex color must be");
+        harness.assert_screen_not_contains("Unknown color format");
+    }
+}

@@ -53,7 +53,8 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
 
 3. **Editing Colors**:
    - Press `Enter` on any color field to edit it
-   - Enter a hex color (`#RRGGBB`) or named color (e.g., `red`, `blue`)
+   - Enter a hex color (`#RRGGBB` or `#RGB`) or a named color in any letter
+     case (e.g., `red`, `LightBlue`)
    - A color's text attributes (`bold`, `italic`, …) are on its picker
      panel: `Tab` to the panel, `↑` to **Attributes**, `Enter`. The tree shows
      them after the color (`#6E7080 +italic`)
@@ -319,7 +320,8 @@ both.
 
 A key Fresh does not know (a typo, or a key from another editor's theme
 format) is ignored, with a warning naming it. So is a color Fresh can't read:
-that key falls back as if it were left out. Colors can be `[r, g, b]`, `"#rrggbb"`
+that key falls back as if it were left out (attributes bundled with it in a
+`{"color": …, "modifier": […]}` object still apply). Colors can be `[r, g, b]`, `"#rrggbb"`
 (or `"#rgb"`), or a terminal color name such as `"Red"` or `"default"`. A value
 of the wrong type (a number where a color goes, say) stops the theme from
 loading, with a warning naming the file and the key.

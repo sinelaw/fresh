@@ -2334,11 +2334,21 @@ fn first_invalid_key(raw: &serde_json::Value) -> Option<(String, String)> {
     })
 }
 
+/// A color [`strip_unknown_color_names`] removed from a theme: the key, the
+/// name it could not read, and the text attributes bundled with it
+/// (`{"color": …, "modifier": […]}`), which still apply to the key.
+struct StrippedColor {
+    key: String,
+    name: String,
+    modifier: Option<Modifier>,
+}
+
 /// Remove from the theme JSON `raw` every color Fresh can't read — a theme
-/// key's value, bundled or not, or a file icon's `color` — returning each as
-/// `(key, name)`. The key then takes the value it would have without it
-/// (the base theme's, or its fallback's), not White.
-fn strip_unknown_color_names(raw: &mut serde_json::Value) -> Vec<(String, String)> {
+/// key's value, bundled or not, or a file icon's `color`. The key then takes
+/// the color it would have without it (the base theme's, or its
+/// fallback's), not White; a bundle's modifiers are returned with it, to be
+/// applied over that.
+fn strip_unknown_color_names(raw: &mut serde_json::Value) -> Vec<StrippedColor> {
     let unknown = |color: Option<&serde_json::Value>| {
         let name = color?.as_str()?;
         ColorDef::named_color(name)
@@ -2355,13 +2365,21 @@ fn strip_unknown_color_names(raw: &mut serde_json::Value) -> Vec<(String, String
             if Theme::is_modifier_only_key(&key) {
                 return true;
             }
-            let color = match value {
+            let color = match &*value {
                 serde_json::Value::Object(o) => o.get("color"),
-                other => Some(&*other),
+                other => Some(other),
             };
             match unknown(color) {
                 Some(name) => {
-                    removed.push((key, name));
+                    let modifier = value
+                        .get("modifier")
+                        .and_then(|m| serde_json::from_value::<ModifierDef>(m.clone()).ok())
+                        .map(Modifier::from);
+                    removed.push(StrippedColor {
+                        key,
+                        name,
+                        modifier,
+                    });
                     false
                 }
                 None => true,
@@ -2386,7 +2404,11 @@ fn strip_unknown_color_names(raw: &mut serde_json::Value) -> Vec<(String, String
                 };
                 if let Some(name) = unknown(entry.get("color")) {
                     entry.remove("color");
-                    removed.push((format!("{key}.color"), name));
+                    removed.push(StrippedColor {
+                        key: format!("{key}.color"),
+                        name,
+                        modifier: None,
+                    });
                 }
             }
         }
@@ -2625,7 +2647,8 @@ impl Theme {
             .and_then(|n| n.as_str())
             .unwrap_or("")
             .to_string();
-        for (key, name) in strip_unknown_color_names(&mut raw) {
+        let stripped = strip_unknown_color_names(&mut raw);
+        for StrippedColor { key, name, .. } in &stripped {
             tracing::warn!(
                 "Theme '{}': `{}` has unknown color {:?} and is ignored",
                 theme_name,
@@ -2649,17 +2672,25 @@ impl Theme {
             );
         }
 
-        match resolve_base_theme(&theme_file, &raw)? {
+        let mut theme = match resolve_base_theme(&theme_file, &raw)? {
             Some(mut theme) => {
                 apply_theme_overrides(&mut theme, &theme_file, &raw);
-                Ok(theme)
+                theme
             }
             None => {
                 let mut theme: Theme = theme_file.into();
                 theme.fill_fallbacks(&raw);
-                Ok(theme)
+                theme
+            }
+        };
+        // Only the unreadable color was dropped: the modifiers bundled with
+        // it still style the key.
+        for StrippedColor { key, modifier, .. } in stripped {
+            if let Some(modifier) = modifier {
+                theme.set_modifier_key(&key, modifier);
             }
         }
+        Ok(theme)
     }
 
     /// Give every color key the theme JSON `raw` leaves out the style of its
@@ -5030,6 +5061,42 @@ mod tests {
         let err =
             Theme::from_json(&extending_dark_with("editor.bg", serde_json::json!(5))).unwrap_err();
         assert!(err.contains("editor.bg"), "{err}");
+    }
+
+    /// #3802: an unknown color in a `{color, modifier}` bundle drops only
+    /// the color; the key keeps its base color and takes the modifiers.
+    #[test]
+    fn unknown_color_in_a_bundle_keeps_its_modifiers() {
+        let dark = Theme::load_builtin("dark").unwrap();
+        assert!(!dark
+            .resolve_modifier_key("syntax.keyword")
+            .contains(Modifier::ITALIC));
+        let theme = Theme::from_json(&extending_dark_with(
+            "syntax.keyword",
+            serde_json::json!({ "color": "#zzz", "modifier": ["italic", "bold"] }),
+        ))
+        .unwrap();
+        assert_eq!(
+            theme.resolve_theme_key("syntax.keyword"),
+            dark.resolve_theme_key("syntax.keyword"),
+            "the color is the base theme's"
+        );
+        assert_eq!(
+            theme.resolve_modifier_key("syntax.keyword"),
+            Modifier::ITALIC | Modifier::BOLD,
+            "the modifiers still apply"
+        );
+
+        // A standalone theme too.
+        let theme = Theme::from_json(
+            r#"{"name": "s", "editor": {"fg": [9, 9, 9]},
+                "syntax": {"comment": {"color": "Bluish", "modifier": ["italic"]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            theme.resolve_modifier_key("syntax.comment"),
+            Modifier::ITALIC
+        );
     }
 
     /// #3802: hex strings and any letter case load, as ported themes use them.

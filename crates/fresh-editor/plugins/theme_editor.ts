@@ -54,6 +54,16 @@ const NAMED_COLOR_LIST = Object.keys(NAMED_COLORS);
 const ALL_COLOR_NAMES = [...NAMED_COLOR_LIST, ...SPECIAL_COLORS];
 
 /**
+ * The spelling Fresh lists for a color name, matched in any letter case as
+ * the theme loader matches it ("lightblue" -> "LightBlue"), or null for a
+ * string that names no color.
+ */
+function canonicalColorName(value: string): string | null {
+  const lower = value.toLowerCase();
+  return ALL_COLOR_NAMES.find(name => name.toLowerCase() === lower) ?? null;
+}
+
+/**
  * Color value - either RGB array or named color string
  */
 type ColorValue = RGB | string;
@@ -785,7 +795,11 @@ function parseColorToRgb(value: ColorValue): RGB | null {
     return value as RGB;
   }
   if (typeof value === "string") {
-    return NAMED_COLORS[value] || null;
+    if (value.startsWith("#")) {
+      return hexToRgb(value);
+    }
+    const name = canonicalColorName(value);
+    return name !== null ? NAMED_COLORS[name] ?? null : null;
   }
   return null;
 }
@@ -803,8 +817,13 @@ function colorValueToOverlaySpec(value: ColorValue): OverlayColorSpec | null {
   if (typeof value === "string") {
     // For recognized named colors, send the name directly so the editor
     // uses native ANSI rendering (matching actual theme output)
-    if (NAMED_COLORS[value] !== undefined) {
-      return value;
+    const name = canonicalColorName(value);
+    if (name !== null && NAMED_COLORS[name] !== undefined) {
+      return name;
+    }
+    // A "#rrggbb" / "#rgb" string, as theme files may hold.
+    if (value.startsWith("#")) {
+      return hexToRgb(value);
     }
     return null;
   }
@@ -820,7 +839,8 @@ function rgbToHex(r: number, g: number, b: number): string {
 }
 
 /**
- * Parse hex string to RGB
+ * Parse a hex string (`#rrggbb`, or `#rgb` as the theme loader reads it,
+ * each digit doubled) to RGB
  */
 function hexToRgb(hex: string): RGB | null {
   const match = hex.match(/^#?([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$/);
@@ -829,6 +849,14 @@ function hexToRgb(hex: string): RGB | null {
       parseInt(match[1], 16),
       parseInt(match[2], 16),
       parseInt(match[3], 16),
+    ];
+  }
+  const short = hex.match(/^#?([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/);
+  if (short) {
+    return [
+      parseInt(short[1], 16) * 17,
+      parseInt(short[2], 16) * 17,
+      parseInt(short[3], 16) * 17,
     ];
   }
   return null;
@@ -852,7 +880,7 @@ function formatModifierValue(value: ModifierValue): string {
  * Check if a color is a named color (including special colors like Default/Reset)
  */
 function isNamedColor(value: ColorValue): boolean {
-  return typeof value === "string" && (value in NAMED_COLORS || SPECIAL_COLORS.includes(value));
+  return typeof value === "string" && canonicalColorName(value) !== null;
 }
 
 /** A map key as one path segment: map keys are the user's (`Cargo.toml`)
@@ -1450,9 +1478,9 @@ function buildPickerLines(): PickerLine[] {
   }
 
   // Color value display
-  const isNamed = typeof field.value === "string" && NAMED_COLORS[field.value] !== undefined;
-  if (isNamed) {
-    lines.push({ text: `Color: ${field.value} (terminal native)`, type: "picker-hex" });
+  const namedAs = typeof field.value === "string" ? canonicalColorName(field.value) : null;
+  if (namedAs !== null && NAMED_COLORS[namedAs] !== undefined) {
+    lines.push({ text: `Color: ${namedAs} (terminal native)`, type: "picker-hex" });
   } else {
     const colorStr = formatColorValue(field.value as ColorValue);
     const rgb = parseColorToRgb(field.value as ColorValue);
@@ -1546,9 +1574,7 @@ function styleForLeftEntry(item: TreeLine | undefined): { style?: Partial<Overla
     // how the theme actually renders: named colors (e.g. "Yellow") should use
     // the terminal's native ANSI color, not an RGB approximation.
     const swatchColor: OverlayColorSpec | null = colorValue !== undefined
-      ? (typeof colorValue === "string" && NAMED_COLORS[colorValue] !== undefined
-        ? colorValue as OverlayColorSpec  // Send named color string directly
-        : parseColorToRgb(colorValue))    // Send RGB for array values
+      ? colorValueToOverlaySpec(colorValue)
       : null;
 
     if (swatchColor && swatchIdx >= 0) {
@@ -1786,7 +1812,9 @@ function isBackgroundColorField(path: string): boolean {
  * Check if a color is a special color (Default/Reset)
  */
 function isSpecialColor(value: ColorValue): boolean {
-  return typeof value === "string" && SPECIAL_COLORS.includes(value);
+  if (typeof value !== "string") return false;
+  const name = canonicalColorName(value);
+  return name !== null && SPECIAL_COLORS.includes(name);
 }
 
 /**
@@ -2260,23 +2288,20 @@ function parseColorInput(input: string): ParseColorResult {
     return { error: "empty" };
   }
 
-  // Check for special colors (Default/Reset - use terminal's native color)
-  if (SPECIAL_COLORS.includes(input)) {
-    return { value: input };
+  // A named color, or Default/Reset (the terminal's native color), in any
+  // letter case as the theme loader reads it; stored as Fresh spells it.
+  const name = canonicalColorName(input);
+  if (name !== null) {
+    return { value: name };
   }
 
-  // Check for named color
-  if (input in NAMED_COLORS) {
-    return { value: input };
-  }
-
-  // Try to parse as hex color #RRGGBB
+  // Try to parse as hex color #RRGGBB or #RGB
   if (input.startsWith("#")) {
     const hex = input.slice(1);
-    if (hex.length !== 6) {
+    if (hex.length !== 6 && hex.length !== 3) {
       return { error: "hex_length" };
     }
-    if (!/^[0-9A-Fa-f]{6}$/.test(hex)) {
+    if (!/^[0-9A-Fa-f]+$/.test(hex)) {
       return { error: "hex_invalid" };
     }
     const hexResult = hexToRgb(input);
