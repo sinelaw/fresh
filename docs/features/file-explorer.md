@@ -2,7 +2,7 @@
 
 Fresh includes a built-in file explorer.
 
-![The file explorer beside an open file: modified files are marked M, an untracked file U, folders with changes carry a dot, and the gitignored build and target folders are dimmed](/images/explorer-git-status.png)
+![The file explorer beside an open file: modified files are marked M, an untracked folder U, folders with changes carry a dot, and the gitignored build and node_modules folders are dimmed](/images/explorer-git-status.png)
 
 *Git status at a glance: M for modified, U for untracked, a dot on folders with changes, and gitignored folders dimmed.*
 

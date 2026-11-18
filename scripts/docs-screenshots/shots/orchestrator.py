@@ -108,7 +108,7 @@ SHOTS = [
             ("settle",), ("shot", "orchestrator-new-workspace")],
     },
     {
-        "id": "workboard", **INV, **WIDE, "args": ["src/routes/items.js"],
+        "id": "workboard", **INV, "cols": 150, "rows": 22, "args": ["src/routes/items.js"],
         "steps": [("wait", "itemsRouter")] + build + palette("Workboard: Open") + [
             ("wait", "Inbox"), ("wait", "fix/adjust-validation · 1 changed", 120), ("settle",),
             ("shot", "workboard-inbox"), ("key", "4"), ("settle",), ("shot", "workboard-board")],
@@ -119,9 +119,9 @@ SHOTS = [
         + sh("fresh --cmd script run review.ts") + [("wait", '["command_access.rs"'), ("settle",),
                                                      ("shot", "scripting-layout-after")]
         + sh("clear") + sh(DESCRIBE) + [("wait", '"terminal"]'), ("settle",)]
-        + sh(JUMP) + [("wait", "\ntrue"), ("settle",), ("dump",), ("shot", "scripting-cmd-run")]
+        + sh(JUMP) + [("wait", "\ntrue"), ("settle",), ("shot", "scripting-cmd-run")]
         # openFileInSplit moved focus to the editor pane: click back into the terminal.
-        + [("click", 30, 33), ("settle",)] + sh("clear") + sh(TOUR) + [("wait", "Step 1 of 3"), ("settle",), ("key", "n"), ("settle",), ("dump",),
+        + [("click", 30, 33), ("settle",)] + sh("clear") + sh(TOUR) + [("wait", "Step 1 of 3"), ("settle",), ("key", "n"), ("settle",),
                                     ("shot", "scripting-tour-handoff")],
     },
     {
@@ -132,12 +132,12 @@ SHOTS = [
             ("click_text", "claude   "), ("settle",), ("click_text", "Describe the task"), ("settle",),
             ("text", "Fix the flaky drain() test"), ("settle",), ("click_text", "Details"), ("settle",),
             ("click_text", "fresh-1", 1), ("key", "End", *["BackSpace"] * 8), ("text", "fix/flaky-drain"),
-            ("settle",), ("dump",), ("shot", "scripting-run-agent-dialog")],
+            ("settle",), ("shot", "scripting-run-agent-dialog")],
     },
     {
         "id": "scripting-orchestrator-dock", **FRESH, **WIDE, "args": ["crates/fresh-editor/src/server/command_access.rs"],
         "steps": [("wait", "Capability"), ("key", "ctrl+p"), ("text", "Docs: Agent Workspaces"),
                   ("wait", "Stage the Scripting"), ("settle",), ("key", "Return"),
-                  ("wait", "flaky-repro"), ("sleep", 8), ("settle",), ("dump",), ("shot", "scripting-orchestrator-dock")],
+                  ("wait", "flaky-repro"), ("sleep", 8), ("settle",), ("shot", "scripting-orchestrator-dock")],
     },
 ]
