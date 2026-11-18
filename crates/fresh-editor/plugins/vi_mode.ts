@@ -108,6 +108,11 @@ interface BlockCorners {
   anchorCol: number;
   headLine: number;
   headCol: number;
+  // The column `j`/`k` aim the head at (Vim's curswant): `headCol` is
+  // clamped to the line the head is on, this is not, so a short line on
+  // the way does not narrow the block on the longer lines past it.
+  // `Number.MAX_SAFE_INTEGER` after `$`.
+  headWant: number;
 }
 
 // An operator waiting for the range it will consume. `d`, `c`, `y`, `>` and
@@ -3222,7 +3227,7 @@ async function vi_visual_block() : Promise<void> {
     return;
   }
   const col = charColumnOfByte(text, visual.anchor - lineStart);
-  visual.block = { anchorLine: line, anchorCol: col, headLine: line, headCol: col };
+  visual.block = { anchorLine: line, anchorCol: col, headLine: line, headCol: col, headWant: col };
   await drawVisualBlock();
 }
 registerHandler("vi_visual_block", vi_visual_block);
@@ -3294,22 +3299,32 @@ async function lineLength(line: number): Promise<number | null> {
   return text === null ? null : Array.from(text).length;
 }
 
-// Move the block's head and redraw it. `to` gets the head and returns its
-// new place; columns are clamped to the head line's last character.
+// Move the block's head and redraw it. `to` gets the head (its column and
+// its wanted column) and returns its new place; the column is clamped to the
+// head line's last character. A move that keeps `want` (`j`/`k`) leaves the
+// wanted column as it was; any other sets it to where the head landed, or
+// keeps it past every line's end after `$`.
 async function moveBlockHead(
-  to: (head: { line: number; col: number }) => Promise<{ line: number; col: number }>,
+  to: (head: { line: number; col: number; want: number }) => Promise<{
+    line: number;
+    col: number;
+    keepWant?: boolean;
+  }>,
 ): Promise<void> {
   const block = state.visual?.block ?? null;
   if (block === null) {
     return;
   }
-  const next = await to({ line: block.headLine, col: block.headCol });
+  const next = await to({ line: block.headLine, col: block.headCol, want: block.headWant });
   const length = await lineLength(next.line);
   if (length === null) {
     return;
   }
   block.headLine = next.line;
   block.headCol = Math.max(0, Math.min(next.col, Math.max(0, length - 1)));
+  if (!next.keepWant) {
+    block.headWant = next.col === Number.MAX_SAFE_INTEGER ? next.col : block.headCol;
+  }
   await drawVisualBlock();
 }
 
@@ -3326,14 +3341,18 @@ async function vi_vblock_down() : Promise<void> {
     for (let i = 0; i < count && (await lineLength(line + 1)) !== null; i++) {
       line++;
     }
-    return { line, col: h.col };
+    return { line, col: h.want, keepWant: true };
   });
 }
 registerHandler("vi_vblock_down", vi_vblock_down);
 
 async function vi_vblock_up() : Promise<void> {
   const count = consumeCount();
-  await moveBlockHead(async (h) => ({ line: Math.max(0, h.line - count), col: h.col }));
+  await moveBlockHead(async (h) => ({
+    line: Math.max(0, h.line - count),
+    col: h.want,
+    keepWant: true,
+  }));
 }
 registerHandler("vi_vblock_up", vi_vblock_up);
 
