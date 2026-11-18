@@ -265,7 +265,15 @@ impl Editor {
                 // follows exactly the same normalization/merge path as restart
                 // and manual reload. This matters for schema text fields whose
                 // saved representation may be normalized before persistence.
-                if let Ok(resolved_config) = resolver.resolve() {
+                if let Ok(mut resolved_config) = resolver.resolve() {
+                    // The files hold neither `setSetting` values nor plugin
+                    // defaults; lay them back on (#3791).
+                    let changed: Vec<String> = pending_changes
+                        .keys()
+                        .cloned()
+                        .chain(pending_deletions.iter().cloned())
+                        .collect();
+                    self.reapply_session_config(&mut resolved_config, &changed);
                     self.set_config(resolved_config);
                     self.refresh_open_buffer_settings_from_config();
                     // Again, now the config is normalized: the earlier pass saw
