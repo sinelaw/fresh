@@ -63,7 +63,7 @@ fn chrome_left_edge(h: &EditorTestHarness) -> usize {
         .unwrap()
 }
 
-/// A config whose `autoOpenDock` asks for the dock at every start.
+/// A config whose `auto_open_dock` asks for the dock at every start.
 fn dock_always_config() -> Config {
     let mut config = Config::default();
     config.plugins.insert(
@@ -71,7 +71,7 @@ fn dock_always_config() -> Config {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoOpenDock": "always" }),
+            settings: serde_json::json!({ "auto_open_dock": "always" }),
         },
     );
     config
@@ -159,7 +159,7 @@ fn an_ordinary_launch_starts_without_the_dock_on_a_first_launch() {
 
 /// Closed on a first launch. Opened with Toggle Dock, quit, relaunched: the
 /// column is back on the first frame. Closed again, quit, relaunched: no
-/// column and `ready` mounts nothing. Each open or close is recorded as `autoOpenDock` (`never` /
+/// column and `ready` mounts nothing. Each open or close is recorded as `auto_open_dock` (`never` /
 /// `always`), and every launch reads the config back from disk, so the walk
 /// covers the setting the next real start obeys.
 ///
@@ -167,7 +167,7 @@ fn an_ordinary_launch_starts_without_the_dock_on_a_first_launch() {
 /// regardless (#3442).
 fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     let (_tmp, root) = setup_project();
-    // No `autoOpenDock`: `auto`, the state before any instruction.
+    // No `auto_open_dock`: `auto`, the state before any instruction.
     let user = UserConfig::new(serde_json::json!({}));
 
     // First launch: closed by default. Open it.
@@ -228,7 +228,7 @@ fn orchestrator_mode_remembers_the_dock_across_launches() {
 }
 
 /// The user config every launch of the walk below resolves, and the
-/// `autoOpenDock` in it.
+/// `auto_open_dock` in it.
 struct UserConfig {
     dir_context: fresh::config_io::DirectoryContext,
     _home: tempfile::TempDir,
@@ -270,7 +270,7 @@ impl UserConfig {
         EditorTestHarness::create(COLS, ROWS, options).unwrap()
     }
 
-    /// Wait for `autoOpenDock` on disk to read `want`. A file, not a model
+    /// Wait for `auto_open_dock` on disk to read `want`. A file, not a model
     /// accessor (CONTRIBUTING §2): it is what the next launch reads, and the
     /// plugin's write is queued behind its thread, so this waits rather than
     /// sampling once.
@@ -281,12 +281,12 @@ impl UserConfig {
                 .ok()
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
                 .and_then(|v| {
-                    v.pointer("/plugins/orchestrator/settings/autoOpenDock")
+                    v.pointer("/plugins/orchestrator/settings/auto_open_dock")
                         .cloned()
                 })
                 == Some(serde_json::json!(want))
         })
-        .unwrap_or_else(|e| panic!("`autoOpenDock` never reached {want:?}: {e}"));
+        .unwrap_or_else(|e| panic!("`auto_open_dock` never reached {want:?}: {e}"));
     }
 }
 
@@ -338,13 +338,16 @@ fn assert_no_dock_after_ready(h: &mut EditorTestHarness) {
     );
 }
 
-/// The reported bug: a config holding the pre-#3442 `autoOpenDock: false`
+/// The reported bug: a config holding the pre-#3442 `auto_open_dock: false`
 /// (read, and rewritten, as `never`) kept the dock closed at every launch, and
 /// opening it from `View ▸ Orchestrator Dock` lasted only until the restart.
 /// The open is the user's latest instruction, so the next launch follows it.
 #[test]
 fn an_open_from_the_view_menu_outlives_never() {
     let (_tmp, root) = setup_project();
+    // Written under the setting's pre-snake_case name too, as a config from
+    // before both renames would hold it: it is still read, and the plugin's
+    // write below lands on today's key.
     let user = UserConfig::new(serde_json::json!({ "autoOpenDock": false }));
 
     let mut h = user.launch(&root, true);
@@ -379,7 +382,7 @@ fn an_open_from_the_view_menu_outlives_never() {
 #[test]
 fn a_close_with_the_x_outlives_always() {
     let (_tmp, root) = setup_project();
-    let user = UserConfig::new(serde_json::json!({ "autoOpenDock": "always" }));
+    let user = UserConfig::new(serde_json::json!({ "auto_open_dock": "always" }));
 
     let mut h = user.launch(&root, true);
     h.render().unwrap();

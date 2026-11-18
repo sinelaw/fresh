@@ -421,8 +421,67 @@ pub fn rename_legacy_keys(value: &mut Value) {
                 map.entry(new).or_insert(v);
             }
         }
+        if let Some(Value::Object(plugins)) = map.get_mut("plugins") {
+            for (plugin, old, new) in RENAMED_PLUGIN_SETTINGS {
+                let settings = plugins
+                    .get_mut(*plugin)
+                    .and_then(|p| p.get_mut("settings"))
+                    .and_then(|s| s.as_object_mut());
+                if let Some(settings) = settings {
+                    if let Some(v) = settings.remove(*old) {
+                        settings.entry(*new).or_insert(v);
+                    }
+                }
+            }
+        }
     }
 }
+
+/// Settings of the bundled plugins that were declared in camelCase, before
+/// they moved to the snake_case every other config key uses:
+/// `(plugin, old key, new key)` under `plugins.<plugin>.settings`.
+///
+/// A file still using an old key is read under the new one (every layer
+/// goes through [`migrate_config`]), and is rewritten with the new key the
+/// first time a setting is saved to it. A file that has both keeps the new
+/// one's value.
+pub const RENAMED_PLUGIN_SETTINGS: &[(&str, &str, &str)] = &[
+    ("dashboard", "autoOpen", "auto_open"),
+    ("dashboard", "weatherLocation", "weather_location"),
+    ("dashboard", "weatherUnits", "weather_units"),
+    ("flash", "labelPool", "label_pool"),
+    ("flash", "skipRule", "skip_rule"),
+    ("git_explorer", "colorNames", "color_names"),
+    ("live_sessions", "claudeCloud", "claude_cloud"),
+    ("live_sessions", "claudeCommand", "claude_command"),
+    ("live_sessions", "claudeLocal", "claude_local"),
+    ("live_sessions", "cloudMaxAgeDays", "cloud_max_age_days"),
+    ("live_sessions", "codexCloud", "codex_cloud"),
+    ("live_sessions", "codexCommand", "codex_command"),
+    ("live_sessions", "codexLocal", "codex_local"),
+    ("live_sessions", "pollSeconds", "poll_seconds"),
+    ("markdown_toc", "autoOpen", "auto_open"),
+    ("markdown_toc", "foldBuffer", "fold_buffer"),
+    ("orchestrator", "autoOpenDock", "auto_open_dock"),
+    ("orchestrator", "defaultView", "default_view"),
+    ("orchestrator", "detectionRulesUrl", "detection_rules_url"),
+    ("orchestrator", "notifySound", "notify_sound"),
+    ("orchestrator", "showAllWorktrees", "show_all_worktrees"),
+    (
+        "orchestrator",
+        "showEmptyWorkspaces",
+        "show_empty_workspaces",
+    ),
+    ("vi_mode", "arrowKeys", "arrow_keys"),
+    ("vi_mode", "autoStart", "auto_start"),
+    (
+        "vi_mode",
+        "searchWordUnderCursor",
+        "search_word_under_cursor",
+    ),
+    ("welcome_screen", "showOnStartup", "show_on_startup"),
+    ("workboard", "statusBarBeacon", "status_bar_beacon"),
+];
 
 /// Represents a configuration layer in the 4-level hierarchy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -897,7 +956,13 @@ impl Config {
         for path in Self::config_search_paths(working_dir) {
             if let Ok(contents) = std::fs::read_to_string(&path) {
                 match crate::config::parse_config_jsonc(&contents) {
-                    Ok(value) => return value,
+                    // Under today's key names, like the resolved config, so a
+                    // plugin reading what the user set finds it under the key
+                    // it declares.
+                    Ok(mut value) => {
+                        crate::config_io::rename_legacy_keys(&mut value);
+                        return value;
+                    }
                     Err(e) => {
                         tracing::warn!("Failed to parse config from {}: {}", path.display(), e);
                     }
@@ -2194,6 +2259,108 @@ mod tests {
         assert_eq!(written.get("auto_attach"), Some(&serde_json::json!(false)));
         assert!(written.get("orchestrator_mode").is_none());
         assert!(!resolver.resolve().unwrap().auto_attach);
+        drop(temp);
+    }
+
+    /// A bundled plugin's setting written under its old camelCase key is read
+    /// under the snake_case one; a file holding both keeps the new key's
+    /// value. Other plugins' settings, and keys not in the table, are left
+    /// alone.
+    #[test]
+    fn migration_renames_camelcase_plugin_settings() {
+        let migrated = migrate_config(serde_json::json!({
+            "version": CURRENT_CONFIG_VERSION,
+            "plugins": {
+                "orchestrator": { "enabled": true, "settings": {
+                    "showAllWorktrees": true,
+                    "autoOpenDock": "never",
+                    "defaultView": "card",
+                    "default_view": "compact",
+                }},
+                "my_plugin": { "settings": { "someFlag": true } },
+            },
+        }))
+        .unwrap();
+        let orch = &migrated["plugins"]["orchestrator"]["settings"];
+        assert_eq!(orch["show_all_worktrees"], serde_json::json!(true));
+        assert_eq!(orch["auto_open_dock"], serde_json::json!("never"));
+        assert_eq!(orch["default_view"], serde_json::json!("compact"));
+        for old in ["showAllWorktrees", "autoOpenDock", "defaultView"] {
+            assert!(orch.get(old).is_none(), "{old} should be renamed");
+        }
+        assert_eq!(
+            migrated["plugins"]["orchestrator"]["enabled"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            migrated["plugins"]["my_plugin"]["settings"]["someFlag"],
+            serde_json::json!(true)
+        );
+    }
+
+    /// Every entry renames a camelCase key to its snake_case spelling, and
+    /// no key is listed twice for a plugin.
+    #[test]
+    fn renamed_plugin_settings_table_is_consistent() {
+        let mut seen = std::collections::HashSet::new();
+        for (plugin, old, new) in RENAMED_PLUGIN_SETTINGS {
+            let mut snake = String::new();
+            for c in old.chars() {
+                if c.is_ascii_uppercase() {
+                    snake.push('_');
+                    snake.push(c.to_ascii_lowercase());
+                } else {
+                    snake.push(c);
+                }
+            }
+            assert_eq!(&snake, new, "{plugin}.{old}");
+            assert!(seen.insert((plugin, old)), "{plugin}.{old} listed twice");
+        }
+    }
+
+    /// An old file keeps working: the value under the camelCase key is what
+    /// the editor resolves, and the first save to that file moves it to the
+    /// snake_case key instead of leaving both side by side.
+    #[test]
+    fn a_legacy_camelcase_plugin_setting_is_read_and_rewritten() {
+        let (temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"plugins": {"orchestrator": {"settings": {"showAllWorktrees": true}}}}"#,
+        )
+        .unwrap();
+
+        let setting = |config: &crate::config::Config| {
+            config
+                .plugins
+                .get("orchestrator")
+                .and_then(|p| p.settings.get("show_all_worktrees"))
+                .cloned()
+        };
+        assert_eq!(
+            setting(&resolver.resolve().unwrap()),
+            Some(serde_json::json!(true))
+        );
+
+        let changes = std::collections::HashMap::from([(
+            "/plugins/orchestrator/settings/notify_sound".to_string(),
+            serde_json::json!(true),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        let settings = &written["plugins"]["orchestrator"]["settings"];
+        assert_eq!(settings["show_all_worktrees"], serde_json::json!(true));
+        assert_eq!(settings["notify_sound"], serde_json::json!(true));
+        assert!(settings.get("showAllWorktrees").is_none());
+        assert_eq!(
+            setting(&resolver.resolve().unwrap()),
+            Some(serde_json::json!(true))
+        );
         drop(temp);
     }
 

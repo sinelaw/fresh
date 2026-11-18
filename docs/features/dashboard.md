@@ -18,7 +18,7 @@ The dashboard is off by default. Turn it on from the Settings UI (**Open Setting
 }
 ```
 
-Once enabled, the dashboard auto-opens at startup and after the last buffer is closed. To keep the plugin loaded but skip those ambient open paths — leaving `Show Dashboard` as the only entry point — set `plugins.dashboard.auto-open` to `false`. The default is `true`.
+Once enabled, `Show Dashboard` opens it. To have it open by itself — at startup and after the last buffer is closed — turn on **Auto Open** (`plugins.dashboard.settings.auto_open`, off by default).
 
 ## Tips
 

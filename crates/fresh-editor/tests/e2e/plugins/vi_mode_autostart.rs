@@ -1,8 +1,8 @@
-//! E2E: the vi_mode plugin's `autoStart` config field.
+//! E2E: the vi_mode plugin's `auto_start` config field.
 //!
-//! When `plugins.vi_mode.settings.autoStart = true` lands in the
+//! When `plugins.vi_mode.settings.auto_start = true` lands in the
 //! resolved config BEFORE the plugin runs, the plugin's
-//! `editor.defineConfigBoolean("autoStart", { default: false })` call
+//! `editor.defineConfigBoolean("auto_start", { default: false })` call
 //! sees the user-set `true` (via the snapshot) and enables vi mode
 //! immediately.
 //!
@@ -31,14 +31,14 @@ fn build_harness(auto_start: bool) -> (EditorTestHarness, tempfile::TempDir) {
 
     let mut config = Config::default();
     // Preset the plugin's config slot so `editor.defineConfigBoolean`
-    // sees `autoStart=<auto_start>` via the state snapshot the first
+    // sees `auto_start=<auto_start>` via the state snapshot the first
     // time the plugin runs.
     config.plugins.insert(
         "vi_mode".to_string(),
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoStart": auto_start }),
+            settings: serde_json::json!({ "auto_start": auto_start }),
         },
     );
 
@@ -51,7 +51,7 @@ fn build_harness(auto_start: bool) -> (EditorTestHarness, tempfile::TempDir) {
 /// Drive `iX<Esc>` on an open empty file and return the rendered
 /// screen. Includes a `wait_until` for the vi_mode plugin command to
 /// be registered, so the plugin's top-level body (including the
-/// `if (autoStart) enableVi()` line) is guaranteed to have run.
+/// `if (auto_start) enableVi()` line) is guaranteed to have run.
 fn rendered_after_ix_esc(h: &mut EditorTestHarness) -> String {
     use fresh::input::keybindings::Action::PluginAction;
     h.wait_until(|h| {
@@ -67,7 +67,7 @@ fn rendered_after_ix_esc(h: &mut EditorTestHarness) -> String {
     h.screen_to_string()
 }
 
-/// autoStart=true → vi mode is on at first render; `iX<Esc>` leaves
+/// auto_start=true → vi mode is on at first render; `iX<Esc>` leaves
 /// just `X` in the buffer (the `i` was the vi insert command).
 #[test]
 fn vi_mode_autostart_true_enables_vi_immediately() {
@@ -98,16 +98,16 @@ fn vi_mode_autostart_true_enables_vi_immediately() {
         .trim();
     assert_eq!(
         content, "X",
-        "autoStart=true: vi-normal `i` should swallow the keystroke, \
+        "auto_start=true: vi-normal `i` should swallow the keystroke, \
          leaving only the trailing `X`. Got buffer content {content:?}. \
          Screen:\n{screen}"
     );
 }
 
-/// autoStart=false (default) → vi mode stays dormant; the same
+/// auto_start=false (default) → vi mode stays dormant; the same
 /// keystrokes type both letters: `iX<Esc>` leaves `iX` in the buffer.
 /// Same plugin, same harness setup, just the opposite flag — proves
-/// the autoStart field is wired and isn't a no-op.
+/// the auto_start field is wired and isn't a no-op.
 #[test]
 fn vi_mode_autostart_false_leaves_vi_dormant() {
     let (mut harness, _tmp) = build_harness(false);
@@ -135,13 +135,13 @@ fn vi_mode_autostart_false_leaves_vi_dormant() {
         .trim();
     assert_eq!(
         content, "iX",
-        "autoStart=false: vi mode should stay off, both `i` and `X` \
+        "auto_start=false: vi mode should stay off, both `i` and `X` \
          get inserted as text. Got buffer content {content:?}. \
          Screen:\n{screen}"
     );
 }
 
-/// vi_mode (autoStart) and the Orchestrator together, the dock mounted from
+/// vi_mode (auto_start) and the Orchestrator together, the dock mounted from
 /// `ready` and `two_lines.txt` open in the editor.
 fn vi_with_orchestrator_dock() -> (EditorTestHarness, tempfile::TempDir) {
     use crate::common::harness::HarnessOptions;
@@ -172,7 +172,7 @@ fn vi_with_orchestrator_dock() -> (EditorTestHarness, tempfile::TempDir) {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoStart": true }),
+            settings: serde_json::json!({ "auto_start": true }),
         },
     );
     // The dock starts closed for a new user; this one asked for it.
@@ -181,7 +181,7 @@ fn vi_with_orchestrator_dock() -> (EditorTestHarness, tempfile::TempDir) {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoOpenDock": "always" }),
+            settings: serde_json::json!({ "auto_open_dock": "always" }),
         },
     );
     let mut h = EditorTestHarness::create(
@@ -241,7 +241,7 @@ fn focus_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
 }
 
-/// autoStart with the Orchestrator dock up: the dock's mount (from `ready`,
+/// auto_start with the Orchestrator dock up: the dock's mount (from `ready`,
 /// after vi_mode has enabled itself at load) used to reset the editor mode
 /// to none, so the status bar said vi was on while `j` typed a `j`
 /// (issue #3305).
@@ -375,7 +375,7 @@ fn vi_mode_survives_the_discover_dialog() {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoStart": true }),
+            settings: serde_json::json!({ "auto_start": true }),
         },
     );
     let mut h =

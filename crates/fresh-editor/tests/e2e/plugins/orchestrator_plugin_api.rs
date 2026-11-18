@@ -420,7 +420,7 @@ fn reported_rule_source(rules: &str) -> String {
 }
 
 /// **A rules file cannot hand the plugin a pattern that never finishes.**
-/// `detectionRulesUrl` makes the rule set remote, mutable data that runs on
+/// `detection_rules_url` makes the rule set remote, mutable data that runs on
 /// the plugin thread against every terminal line, and JavaScript gives a regex
 /// no deadline — so `(x+x+)+y`, six characters, would hang the editor on a
 /// line of thirty `x`s. The plugin refuses a quantified group that contains a

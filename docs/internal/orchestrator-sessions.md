@@ -333,7 +333,7 @@ part of the persistence model.
 The "question on screen" rules are data, not code: the built-in set (v1) can
 be replaced by `<data dir>/orchestrator/detection-rules.json` — `{ "version":
 N, "blocked": ["regex", …], "workMinMs"?, "idleAfterMs"?, "recentLines"? }` —
-and, when `detectionRulesUrl` is set, by a published file fetched at startup
+and, when `detection_rules_url` is set, by a published file fetched at startup
 (and by `Orchestrator: Reload Detection Rules`) whenever its version is newer
 than the local one. `Orchestrator: Explain State` (and `fresh --cmd agent
 explain <ID>`) prints the decision chain — which line matched which rule,
@@ -396,7 +396,7 @@ What the mode is, end to end:
   store's editor is still running.
 - **The dock starts closed** — in every launch mode, a bare `fresh`
   included: the manifest declares `"open": false`, and nothing about the
-  launch mode overrides it. Under `autoOpenDock: "auto"` a dock remembered as
+  launch mode overrides it. Under `auto_open_dock: "auto"` a dock remembered as
   open at quit does not reopen (older builds opened it by default); only a
   remembered close counts. A file launch (`fresh FILE`, `--simple`) never
   opens it. `never` and `always` settle it outright — and the user's own open or close
@@ -465,14 +465,16 @@ the generated settings widgets.
 
 | Setting               | Default  | Effect                                              |
 | --------------------- | -------- | --------------------------------------------------- |
-| `autoOpenDock`        | `"auto"` | Whether the dock opens (unfocused) on the `ready` event: `never`, `always`, or `auto` — as the user left it, else closed. Opening or closing the dock yourself writes `always` / `never`, so a start follows your last instruction; editing it to `always` / `never` opens or closes the dock now. The pre-#3442 booleans are read as `never` / `auto` and rewritten. |
-| `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
-| `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
+| `auto_open_dock`        | `"auto"` | Whether the dock opens (unfocused) on the `ready` event: `never`, `always`, or `auto` — as the user left it, else closed. Opening or closing the dock yourself writes `always` / `never`, so a start follows your last instruction; editing it to `always` / `never` opens or closes the dock now. The pre-#3442 booleans are read as `never` / `auto` and rewritten. |
+| `default_view`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
+| `show_all_worktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `worktree_refresh_seconds` | `30`  | How often an open dock / Open picker with "all worktrees" on re-scans `git worktree list`, so worktrees added or removed outside Fresh show up without reopening it. `0` turns the periodic scan off; **Refresh** in any row's right-click menu still re-scans on demand. Worktrees git reports as `prunable` (directory deleted without `git worktree remove`) are never listed. |
-| `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+| `show_empty_workspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !show_empty_workspaces`). |
 | `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
-| `notifySound`         | `false`  | Ring the terminal bell with each notice.             |
-| `detectionRulesUrl`   | `""`     | URL of a published detection-rules JSON; adopted when newer than the local file. |
+| `notify_sound`         | `false`  | Ring the terminal bell with each notice.             |
+| `detection_rules_url`   | `""`     | URL of a published detection-rules JSON; adopted when newer than the local file. |
+
+These keys were camelCase (`autoOpenDock`, `showAllWorktrees`, …) until plugin settings moved to the snake_case every other config key uses. A config still holding an old key is read under the new one, and the first save rewrites it (`RENAMED_PLUGIN_SETTINGS` in `config_io.rs`).
 
 Each is a *default*, not a lock: the dock's own "view" button and the two
 Filters checkboxes still override it for the rest of the session
@@ -566,7 +568,7 @@ tools' transcript *history*: this answers "what is open", automatically, and
 includes cloud sessions this machine never saw.
 
 - **Feed** — `live_sessions.ts`, a plugin of its own, polls while the dock is
-  open (every `pollSeconds`, default 60, and when it opens; cloud at most once a
+  open (every `poll_seconds`, default 60, and when it opens; cloud at most once a
   minute) and pushes to the orchestrator's `setExternalSessions`. Opening the
   dock asks for a fresh listing (`refreshExternal`). Parsing and the
   open-a-row rules are pure, in `lib/live_sessions.ts`
@@ -597,7 +599,7 @@ includes cloud sessions this machine never saw.
   command line, and is never refreshed here: refreshing rotates the refresh
   token and would sign the CLI out; an expired sign-in reads as a problem
   line ("run `claude` once") until the CLI next runs. Every active session is
-  listed; `cloudMaxAgeDays` (default 0 = none) can hide idle ones, and
+  listed; `cloud_max_age_days` (default 0 = none) can hide idle ones, and
   archived ones are never shown.
 - **Rows** are kept apart from `orchestratorSessions` (they are not
   workspaces, so none of Stop / Archive / Delete / rename apply). Each group

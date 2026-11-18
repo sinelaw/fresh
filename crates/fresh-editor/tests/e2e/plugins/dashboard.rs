@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 /// Config that opts the dashboard back into auto-open.
 ///
-/// `autoOpen` defaults to `false` (the dashboard no longer pops on
+/// `auto_open` defaults to `false` (the dashboard no longer pops on
 /// startup), so tests that exercise the ambient open path must enable it
 /// explicitly via the same `plugins.dashboard.settings` channel a user
 /// would use in `config.json` / the Settings UI.
@@ -24,7 +24,7 @@ fn config_with_dashboard_autoopen() -> Config {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "autoOpen": true }),
+            settings: serde_json::json!({ "auto_open": true }),
         },
     );
     config
@@ -748,7 +748,7 @@ impl WeatherFixture {
         let pin = crate::common::global_state::pin_path_with_dir_first(&fake_bin);
 
         let mut settings = extra_settings;
-        settings["autoOpen"] = serde_json::json!(true);
+        settings["auto_open"] = serde_json::json!(true);
         let mut config = Config::default();
         config.plugins.insert(
             "dashboard".to_string(),
@@ -825,13 +825,13 @@ fn weather_defaults_to_ip_geolocation_and_metric() {
     }
 }
 
-/// `weatherLocation` pins the location in the URL path, replacing the
+/// `weather_location` pins the location in the URL path, replacing the
 /// IP-geolocation lookup. Surrounding whitespace is ignored.
 #[cfg(unix)]
 #[test]
 fn weather_location_setting_pins_the_wttr_path() {
     let fx = WeatherFixture::open(
-        serde_json::json!({ "weatherLocation": "  LAX " }),
+        serde_json::json!({ "weather_location": "  LAX " }),
         "12°..24°C · Rain",
     );
     fx.assert_requested_only("https://wttr.in/LAX?format=j1");
@@ -843,7 +843,7 @@ fn weather_location_setting_pins_the_wttr_path() {
 #[test]
 fn weather_location_is_url_encoded() {
     let fx = WeatherFixture::open(
-        serde_json::json!({ "weatherLocation": "New York" }),
+        serde_json::json!({ "weather_location": "New York" }),
         "12°..24°C · Rain",
     );
     fx.assert_requested_only("https://wttr.in/New%20York?format=j1");
@@ -855,19 +855,19 @@ fn weather_location_is_url_encoded() {
 #[test]
 fn weather_blank_location_falls_back_to_ip_geolocation() {
     let fx = WeatherFixture::open(
-        serde_json::json!({ "weatherLocation": "   " }),
+        serde_json::json!({ "weather_location": "   " }),
         "12°..24°C · Rain",
     );
     fx.assert_requested_only("https://wttr.in?format=j1");
 }
 
-/// `weatherUnits = "Imperial"` renders every weather row — now, 5pm and
+/// `weather_units = "Imperial"` renders every weather row — now, 5pm and
 /// tomorrow — in °F and mph, with no metric values left over.
 #[cfg(unix)]
 #[test]
 fn weather_imperial_units_render_fahrenheit_and_mph() {
     let fx = WeatherFixture::open(
-        serde_json::json!({ "weatherUnits": "Imperial" }),
+        serde_json::json!({ "weather_units": "Imperial" }),
         "54°..75°F · Rain",
     );
 
@@ -893,7 +893,7 @@ fn weather_imperial_units_render_fahrenheit_and_mph() {
 #[test]
 fn weather_explicit_metric_units_render_celsius_and_kmh() {
     let fx = WeatherFixture::open(
-        serde_json::json!({ "weatherUnits": "Metric" }),
+        serde_json::json!({ "weather_units": "Metric" }),
         "12°..24°C · Rain",
     );
 

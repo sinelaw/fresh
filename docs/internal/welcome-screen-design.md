@@ -526,7 +526,7 @@ underline stays an honest affordance.
       "enabled": true,
       "settings": {
         // false: never open on its own; `Welcome` in the palette still works
-        "showOnStartup": true
+        "show_on_startup": true
       }
     }
   },
@@ -539,7 +539,7 @@ underline stays an honest affordance.
 }
 ```
 
-`showOnStartup` governs the one automatic path: launch. Not "launch with
+`show_on_startup` governs the one automatic path: launch. Not "launch with
 nothing to restore" — the page opens either way, as a tab behind whatever
 is already there, and it never comes to the front on its own. Emptying the
 workspace later is not a path at all; see "When it opens" below, so the two

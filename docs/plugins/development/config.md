@@ -15,12 +15,12 @@ return type is inferred from the call, so plugin code is type-safe
 without any cast.
 
 ```ts
-const autoEnable = editor.defineConfigBoolean("autoEnable", {
+const autoEnable = editor.defineConfigBoolean("auto_enable", {
   default: false,
   description: "Auto-enable the plugin on startup",
 });
 
-const maxItems = editor.defineConfigInteger("maxItems", {
+const maxItems = editor.defineConfigInteger("max_items", {
   default: 5,
   minimum: 1,
   maximum: 50,
@@ -39,13 +39,17 @@ const patterns = editor.defineConfigStringArray("patterns", {
 // `autoEnable: boolean`, `maxItems: number`, `patterns: string[]`.
 ```
 
+Name settings in snake_case (`auto_enable`, `max_items`), like every core
+config key: the name is the key in `config.json`, and the Settings UI shows
+it as words ("Auto Enable").
+
 Each call returns the **current** merged value (user override if any,
 otherwise the declared `default`). For values that may change while the
 plugin is running, re-read on demand:
 
 ```ts
-const cfg = editor.getPluginConfig() as { autoEnable?: boolean };
-if (cfg.autoEnable) { /* ... */ }
+const cfg = editor.getPluginConfig() as { auto_enable?: boolean };
+if (cfg.auto_enable) { /* ... */ }
 ```
 
 ## Reacting to changes
@@ -56,11 +60,11 @@ point of use, subscribe to `config_changed` — otherwise your setting
 will appear to do nothing until the editor restarts:
 
 ```ts
-let autoEnable = editor.defineConfigBoolean("autoEnable", { default: false });
+let autoEnable = editor.defineConfigBoolean("auto_enable", { default: false });
 
 editor.on("config_changed", () => {
-  const cfg = (editor.getPluginConfig() ?? {}) as { autoEnable?: boolean };
-  autoEnable = cfg.autoEnable === true;
+  const cfg = (editor.getPluginConfig() ?? {}) as { auto_enable?: boolean };
+  autoEnable = cfg.auto_enable === true;
 });
 ```
 

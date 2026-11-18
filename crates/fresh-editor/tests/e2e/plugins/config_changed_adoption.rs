@@ -4,9 +4,9 @@
 //! Two shapes are covered, because "re-read the setting" is necessary
 //! but not sufficient in either:
 //!
-//! * `vi_mode` bakes `arrowKeys` / `searchWordUnderCursor` into mode
+//! * `vi_mode` bakes `arrow_keys` / `search_word_under_cursor` into mode
 //!   binding tables at `defineMode` time, so it has to re-emit the modes.
-//! * `git_explorer` already re-reads `colorNames`, but only inside its
+//! * `git_explorer` already re-reads `color_names`, but only inside its
 //!   decoration refresh — nothing re-ran that refresh on a settings save,
 //!   so the explorer kept its old colors until the next file event.
 
@@ -76,7 +76,7 @@ fn status_col(h: &EditorTestHarness) -> usize {
         .unwrap_or_else(|_| panic!("unparsable column readout. Screen:\n{screen}"))
 }
 
-/// vi_mode: turning `arrowKeys` off must stop Left/Right driving the
+/// vi_mode: turning `arrow_keys` off must stop Left/Right driving the
 /// cursor in vi-normal *without an editor restart*. The setting is baked
 /// into the `vi-normal` binding table at load, so this only passes if the
 /// plugin re-emits its modes from the `config_changed` handler.
@@ -99,7 +99,7 @@ fn vi_mode_arrow_keys_setting_applies_without_restart() {
             path: None,
             // vi on from the start, arrows bound — the state the user is
             // in when they go turn arrows off.
-            settings: serde_json::json!({ "autoStart": true, "arrowKeys": true }),
+            settings: serde_json::json!({ "auto_start": true, "arrow_keys": true }),
         },
     );
 
@@ -110,14 +110,14 @@ fn vi_mode_arrow_keys_setting_applies_without_restart() {
     harness.open_file(&file).unwrap();
     harness.render().unwrap();
 
-    // `autoStart` runs at the very end of the plugin body, after the mode
+    // `auto_start` runs at the very end of the plugin body, after the mode
     // definitions and command registrations, so the enabled banner is a
     // sound barrier for "vi-normal is live and its bindings exist".
     harness
         .wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
         .unwrap();
 
-    // Arrow keys are live while `arrowKeys` is on.
+    // Arrow keys are live while `arrow_keys` is on.
     let before = status_col(&harness);
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
@@ -126,10 +126,10 @@ fn vi_mode_arrow_keys_setting_applies_without_restart() {
     let moved = status_col(&harness);
     assert!(
         moved > before,
-        "with arrowKeys on, Right should move the cursor ({before} -> {moved})"
+        "with arrow_keys on, Right should move the cursor ({before} -> {moved})"
     );
 
-    // Turn `arrowKeys` off. Fields render alphabetically: arrowKeys is
+    // Turn `arrow_keys` off. Fields render alphabetically: arrow_keys is
     // the first, so no Down steps.
     toggle_plugin_setting(&mut harness, "vi_mode", 0);
 
@@ -143,13 +143,13 @@ fn vi_mode_arrow_keys_setting_applies_without_restart() {
     assert_eq!(
         status_col(&harness),
         after_save,
-        "after turning arrowKeys off and saving, Right must no longer move \
+        "after turning arrow_keys off and saving, Right must no longer move \
          the cursor — the vi modes should have been re-emitted. Screen:\n{}",
         harness.screen_to_string()
     );
 }
 
-/// git_explorer: flipping `colorNames` must repaint the explorer on save.
+/// git_explorer: flipping `color_names` must repaint the explorer on save.
 /// The plugin re-reads the setting, but only during a decoration refresh,
 /// so before the hook the names kept their old color until the next file
 /// open/save/explorer change.
@@ -193,18 +193,18 @@ fn git_explorer_color_names_setting_repaints_on_save() {
         h.buffer()[(col as u16, row as u16)].style().fg
     };
 
-    // `colorNames` defaults off: the name paints in the explorer's normal
+    // `color_names` defaults off: the name paints in the explorer's normal
     // foreground, not the git-status color.
     let plain = name_fg(&harness);
 
-    // Turn `colorNames` on — the plugin's only setting, so no Down steps.
+    // Turn `color_names` on — the plugin's only setting, so no Down steps.
     toggle_plugin_setting(&mut harness, "git_ex", 0);
 
     harness
         .wait_until(|h| name_fg(h) != plain)
         .unwrap_or_else(|_| {
             panic!(
-                "enabling colorNames must repaint the modified file's name on \
+                "enabling color_names must repaint the modified file's name on \
                  save (fg stayed {plain:?}). Screen:\n{}",
                 harness.screen_to_string()
             )

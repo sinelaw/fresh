@@ -66,7 +66,7 @@ fn config(refresh_secs: u64) -> Config {
             enabled: true,
             path: None,
             settings: serde_json::json!({
-                "showAllWorktrees": true,
+                "show_all_worktrees": true,
                 "worktree_refresh_seconds": refresh_secs,
             }),
         },

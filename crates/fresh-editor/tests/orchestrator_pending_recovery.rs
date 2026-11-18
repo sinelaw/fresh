@@ -41,7 +41,7 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
         fresh::config::PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "defaultView": "card" }),
+            settings: serde_json::json!({ "default_view": "card" }),
         },
     );
 
