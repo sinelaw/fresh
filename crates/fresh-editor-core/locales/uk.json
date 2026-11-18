@@ -2443,5 +2443,7 @@
   "dialog.title.permission_denied": "Доступ заборонено",
   "dialog.title.name_conflict": "Конфлікт імен",
   "dialog.title.large_file": "Великий файл",
-  "dialog.title.go_to_line": "Перейти до рядка"
+  "dialog.title.go_to_line": "Перейти до рядка",
+  "prompt.cancelled": "Скасовано.",
+  "explorer.title": "Провідник файлів"
 }

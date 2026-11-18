@@ -2416,5 +2416,7 @@
   "dialog.title.permission_denied": "Quyền bị từ chối",
   "dialog.title.name_conflict": "Trùng tên",
   "dialog.title.large_file": "Tệp lớn",
-  "dialog.title.go_to_line": "Đến dòng"
+  "dialog.title.go_to_line": "Đến dòng",
+  "prompt.cancelled": "Đã hủy.",
+  "explorer.title": "Trình duyệt tệp"
 }

@@ -3398,7 +3398,7 @@ impl Editor {
                     .unwrap_or(host);
                 format!(" [{}]{} ", name, suffix)
             }
-            None => format!(" File Explorer{} ", suffix),
+            None => format!(" {}{} ", t!("explorer.title"), suffix),
         }
     }
 

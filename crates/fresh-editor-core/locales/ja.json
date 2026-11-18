@@ -1268,7 +1268,7 @@
   "menu.explorer.cut": "切り取り",
   "menu.explorer.delete": "削除",
   "menu.explorer.new_file": "新規ファイル",
-  "menu.explorer.new_folder": "新規フォルダ",
+  "menu.explorer.new_folder": "新規フォルダー",
   "menu.explorer.open": "開く",
   "menu.explorer.paste": "貼り付け",
   "menu.explorer.refresh": "更新",
@@ -2416,5 +2416,7 @@
   "dialog.title.permission_denied": "アクセスが拒否されました",
   "dialog.title.name_conflict": "名前の衝突",
   "dialog.title.large_file": "大きなファイル",
-  "dialog.title.go_to_line": "行へ移動"
+  "dialog.title.go_to_line": "行へ移動",
+  "prompt.cancelled": "キャンセルしました。",
+  "explorer.title": "ファイルエクスプローラー"
 }

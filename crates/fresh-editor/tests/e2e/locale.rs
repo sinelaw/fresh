@@ -80,6 +80,25 @@ fn test_locale_from_config_german_search_options() {
     harness.assert_screen_contains("Ganzes Wort");
 }
 
+/// The file explorer's title follows the locale (#3805): it was a literal
+/// "File Explorer" under every locale.
+#[test]
+fn test_locale_from_config_german_file_explorer_title() {
+    let _lock = pin_config_globals();
+    let config = Config {
+        locale: LocaleName(Some("de".to_string())),
+        ..Default::default()
+    };
+
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("Datei-Explorer");
+    harness.assert_screen_not_contains("File Explorer");
+}
+
 #[test]
 fn test_locale_from_config_french_search_options() {
     let _lock = pin_config_globals();

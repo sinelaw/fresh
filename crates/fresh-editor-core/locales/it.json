@@ -1268,7 +1268,7 @@
   "menu.explorer.cut": "Taglia",
   "menu.explorer.delete": "Elimina",
   "menu.explorer.new_file": "Nuovo File",
-  "menu.explorer.new_folder": "Nuova Cartella",
+  "menu.explorer.new_folder": "Nuova cartella",
   "menu.explorer.open": "Apri",
   "menu.explorer.paste": "Incolla",
   "menu.explorer.refresh": "Aggiorna",
@@ -2425,5 +2425,7 @@
   "dialog.title.permission_denied": "Permesso negato",
   "dialog.title.name_conflict": "Conflitto di nomi",
   "dialog.title.large_file": "File di grandi dimensioni",
-  "dialog.title.go_to_line": "Vai alla riga"
+  "dialog.title.go_to_line": "Vai alla riga",
+  "prompt.cancelled": "Annullato.",
+  "explorer.title": "Esplora File"
 }

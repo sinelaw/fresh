@@ -955,8 +955,8 @@ fn test_menu_arrow_navigation_skips_hidden_menus() {
 
     // Should show LSP menu items, not Explorer menu items
     // LSP menu has "Restart Server" and "Stop Server"
-    // Explorer menu has "New Folder" which should NOT be visible
-    harness.assert_screen_not_contains("New Folder");
+    // Explorer menu has "New Directory" which should NOT be visible
+    harness.assert_screen_not_contains("New Directory");
     harness.assert_screen_contains("Restart Server");
 }
 
