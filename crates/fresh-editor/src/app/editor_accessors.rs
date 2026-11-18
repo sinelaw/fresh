@@ -335,6 +335,10 @@ impl Editor {
         // A macro replay parked on a plugin step resumes from the loop, so the
         // loop has to come straight back rather than sleep its idle poll.
         let macro_replay_deadline = self.macro_replay_parked().then(std::time::Instant::now);
+        // Likewise keys held behind a plugin handler (`plugin_key_hold`).
+        #[cfg(feature = "plugins")]
+        let macro_replay_deadline = macro_replay_deadline
+            .or_else(|| self.holds_keys_for_plugin().then(std::time::Instant::now));
         [
             lsp_progress_deadline,
             anim_deadline,

@@ -73,6 +73,8 @@ mod plugin_commands;
 #[cfg(feature = "plugins")]
 mod plugin_dispatch;
 #[cfg(feature = "plugins")]
+mod plugin_key_hold;
+#[cfg(feature = "plugins")]
 mod plugin_offloop;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin_timers;
@@ -1209,6 +1211,22 @@ pub struct Editor {
     /// order once it ends (`resume_macro_replay`).
     #[cfg(feature = "plugins")]
     deferred_replay_input: std::collections::VecDeque<crate::app::macro_actions::DeferredInput>,
+
+    /// The plugin handler that keys are queued behind while it runs; see
+    /// `plugin_key_hold`.
+    #[cfg(feature = "plugins")]
+    plugin_key_hold: Option<crate::app::plugin_key_hold::PluginKeyHold>,
+
+    /// Keys that arrived while `plugin_key_hold` was set, run in order once
+    /// it lifts (`run_held_plugin_keys`).
+    #[cfg(feature = "plugins")]
+    held_plugin_keys: std::collections::VecDeque<crate::app::plugin_key_hold::HeldKey>,
+
+    /// True while `handle_key` is routing a keystroke, so a plugin action
+    /// dispatched from it can be told apart from one a command, a macro or
+    /// a plugin started.
+    #[cfg(feature = "plugins")]
+    dispatching_key: bool,
 
     /// True while dispatching actions that are a plugin's doing rather than
     /// the user's (a timer tick, an `executeActions` step), so
