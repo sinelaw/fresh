@@ -967,7 +967,12 @@ impl PersistedFileWorkspace {
         let canonical = source_path
             .canonicalize()
             .unwrap_or_else(|_| source_path.to_path_buf());
-        let filename = format!("{}.json", encode_path_for_filename(&canonical));
+        // A deep path's encoding can pass `NAME_MAX` (#3787): such a name is
+        // folded as a workspace file's root is. Every name that fits keeps its
+        // exact spelling, and one that doesn't could never have been saved,
+        // so this one key finds both what older releases wrote and new files.
+        let encoded = encode_path_for_filename(&canonical);
+        let filename = format!("{}.json", workspace_root_key(&encoded, ".json"));
         Ok(Self::states_dir()?.join(filename))
     }
 
@@ -2311,6 +2316,42 @@ mod tests {
         let loaded = Workspace::load(&root).unwrap().expect("found by root");
         assert_eq!(loaded.stable_id.as_deref(), Some(id.as_str()));
         assert!(workspace_ids_for_root(&root).contains(&id));
+    }
+
+    /// #3787: a file under a deep path keeps its per-file state, instead of
+    /// failing to save it with "File name too long".
+    #[test]
+    fn file_state_under_a_deep_path_saves_and_loads() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let _guard = DataDirGuard::new(temp.path());
+        let state = |position: usize| -> SerializedFileState {
+            serde_json::from_value(serde_json::json!({
+                "cursor": {"position": position},
+                "scroll": {"top_byte": 0},
+            }))
+            .unwrap()
+        };
+
+        let deep = root_of_encoded_len(250).join("f.txt");
+        PersistedFileWorkspace::save(&deep, state(7), &[]);
+        let loaded = PersistedFileWorkspace::load(&deep, &[]).expect("saved and found");
+        assert_eq!(loaded.cursor.position, 7);
+        let name = PersistedFileWorkspace::state_file_path(&deep).unwrap();
+        let name = name.file_name().unwrap().to_str().unwrap();
+        assert!(name.len() + 4 <= 255, "{} bytes: {name}", name.len());
+
+        // A path whose name fits keeps the exact name older releases wrote.
+        let shallow = PathBuf::from("/w/short/f.txt");
+        PersistedFileWorkspace::save(&shallow, state(3), &[]);
+        let expected = format!("{}.json", encode_path_for_filename(&shallow));
+        assert!(temp.path().join("file_states").join(expected).exists());
+        assert_eq!(
+            PersistedFileWorkspace::load(&shallow, &[])
+                .unwrap()
+                .cursor
+                .position,
+            3
+        );
     }
 
     /// The fold only touches names that could not be saved: a name an earlier
