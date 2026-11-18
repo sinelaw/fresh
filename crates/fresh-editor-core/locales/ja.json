@@ -1130,7 +1130,7 @@
   "keybinding_editor.instr_capturing_special": "任意のキーを押してキャプチャ（Esc、Tab、Enter含む）...",
   "keybinding_editor.instr_editing_action": "アクション名を入力 (Tab/Enterで確定)",
   "keybinding_editor.instr_editing_context": "コンテキストを選択...",
-  "keybinding_editor.instr_recording_key": "目的のキーの組み合わせを押してください...",
+  "keybinding_editor.instr_recording_key": "Enter を押してから、記録するキーの組み合わせを押してください",
   "keybinding_editor.key_none": "(なし)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "アクション:",

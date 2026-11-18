@@ -607,8 +607,9 @@ impl Editor {
 
     /// Start the keybinding map selection prompt with available maps
     pub(super) fn start_select_keybinding_map_prompt(&mut self) {
-        // Built-in keybinding maps
-        let builtin_maps = vec!["default", "emacs", "vscode", "macos"];
+        // Built-in keybinding maps: the same list the Settings dropdown and
+        // View > Keybinding Style offer.
+        let builtin_maps: Vec<&str> = crate::config::KeybindingMapName::BUILTIN_OPTIONS.to_vec();
 
         // Collect user-defined keybinding maps from config
         let user_maps: Vec<&str> = self

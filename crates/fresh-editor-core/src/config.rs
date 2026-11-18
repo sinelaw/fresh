@@ -3519,6 +3519,17 @@ impl MenuConfig {
                                 checkbox: Some(context_keys::KEYMAP_VSCODE.to_string()),
                             },
                             MenuItem::Action {
+                                label: "macOS".to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("macos"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: Some(context_keys::KEYMAP_MACOS.to_string()),
+                            },
+                            MenuItem::Action {
                                 label: "macOS GUI (⌘)".to_string(),
                                 action: "switch_keybinding_map".to_string(),
                                 args: {
@@ -8484,6 +8495,30 @@ pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// View > Keybinding Style offers every built-in keymap, the same list
+    /// the Settings dropdown and Select Keybinding Map show (#3803).
+    #[test]
+    fn keybinding_style_menu_lists_every_builtin_keymap() {
+        fn switch_targets(items: &[MenuItem], out: &mut Vec<String>) {
+            for item in items {
+                match item {
+                    MenuItem::Action { action, args, .. } if action == "switch_keybinding_map" => {
+                        if let Some(map) = args.get("map").and_then(|v| v.as_str()) {
+                            out.push(map.to_string());
+                        }
+                    }
+                    MenuItem::Submenu { items, .. } => switch_targets(items, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut maps = Vec::new();
+        for menu in MenuConfig::translated_menus() {
+            switch_targets(&menu.items, &mut maps);
+        }
+        assert_eq!(maps, KeybindingMapName::BUILTIN_OPTIONS);
+    }
 
     #[test]
     fn search_nav_status_bar_element_round_trips_through_its_config_string() {

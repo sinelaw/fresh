@@ -1130,7 +1130,7 @@
   "keybinding_editor.instr_capturing_special": "Premi QUALSIASI tasto per catturare (inclusi Esc, Tab, Invio)...",
   "keybinding_editor.instr_editing_action": "Digitare nome azione (Tab/Invio per accettare)",
   "keybinding_editor.instr_editing_context": "Seleziona contesto...",
-  "keybinding_editor.instr_recording_key": "Premere la combinazione di tasti desiderata...",
+  "keybinding_editor.instr_recording_key": "Premere Invio, poi la combinazione di tasti da registrare",
   "keybinding_editor.key_none": "(nessuno)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Azione:",

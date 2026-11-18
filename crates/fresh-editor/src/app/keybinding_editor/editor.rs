@@ -20,6 +20,9 @@ pub struct KeybindingEditor {
     pub bindings: Vec<ResolvedBinding>,
     /// Issues the rows' ids; see `BindingId`.
     binding_ids: BindingIds,
+    /// The keymap or plugin binding a custom row stands in for, by the row's
+    /// id: deleting the custom row shows the binding underneath again.
+    shadowed: HashMap<BindingId, ResolvedBinding>,
     /// Indices into `bindings` after filtering/searching
     pub filtered_indices: Vec<usize>,
     /// The selected display row, held by what the row is (see
@@ -107,12 +110,14 @@ impl KeybindingEditor {
         menu_names: &[String],
     ) -> Self {
         let mut binding_ids = BindingIds::default();
+        let mut shadowed = HashMap::new();
         let bindings = Self::resolve_all_bindings(
             config,
             resolver,
             mode_registry,
             command_registry,
             &mut binding_ids,
+            &mut shadowed,
         );
         let filtered_indices: Vec<usize> = (0..bindings.len()).collect();
 
@@ -177,6 +182,7 @@ impl KeybindingEditor {
         let mut editor = Self {
             bindings,
             binding_ids,
+            shadowed,
             filtered_indices,
             selection: Default::default(),
             pager: fresh_ui::behavior::Pager::new(),
@@ -216,6 +222,7 @@ impl KeybindingEditor {
         mode_registry: &crate::input::buffer_mode::ModeRegistry,
         command_registry: &CommandRegistry,
         ids: &mut BindingIds,
+        shadowed: &mut HashMap<BindingId, ResolvedBinding>,
     ) -> Vec<ResolvedBinding> {
         let mut bindings: Vec<ResolvedBinding> = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
@@ -274,7 +281,10 @@ impl KeybindingEditor {
                     // Override the existing binding: the same row, so the
                     // same identity.
                     entry.id = bindings[existing_idx].id;
-                    bindings[existing_idx] = entry;
+                    let replaced = std::mem::replace(&mut bindings[existing_idx], entry);
+                    if replaced.source != BindingSource::Custom {
+                        shadowed.insert(replaced.id, replaced);
+                    }
                 } else {
                     let idx = bindings.len();
                     seen.insert(key, idx);
@@ -949,7 +959,17 @@ impl KeybindingEditor {
         let action_name = self.bindings[idx].action.clone();
         self.retire_custom_config_entry(idx);
 
-        self.bindings.remove(idx);
+        // A custom row that stood in for a keymap or plugin binding gives
+        // the row back to it: with the override gone, that binding is live
+        // again.
+        if let Some(underneath) = self.shadowed.remove(&self.bindings[idx].id) {
+            let restored_action = underneath.action.clone();
+            self.bindings[idx] = underneath;
+            self.bindings
+                .retain(|b| !(b.source == BindingSource::Unbound && b.action == restored_action));
+        } else {
+            self.bindings.remove(idx);
+        }
         self.has_changes = true;
 
         self.readd_as_unbound_if_orphaned(action_name);
@@ -1044,7 +1064,12 @@ impl KeybindingEditor {
         let noop_kb = self.config_entry_for_builtin(idx, "noop");
         self.pending_adds.push(noop_kb);
 
-        // Replace the entry with a noop custom entry in the display.
+        // Replace the entry with a noop custom entry in the display,
+        // remembering what it covers.
+        if self.bindings[idx].source != BindingSource::Custom {
+            self.shadowed
+                .insert(self.bindings[idx].id, self.bindings[idx].clone());
+        }
         let noop_display = KeybindingResolver::format_action_from_str("noop");
         self.bindings[idx] = ResolvedBinding {
             // Disabled in place: the same row.
@@ -1603,6 +1628,59 @@ mod tests {
             vec!["x", "s"],
             "the override must name the chord it disables"
         );
+    }
+
+    /// Deleting a custom `noop` row gives the row back to the keymap binding
+    /// it disabled — that binding is live again — whether the noop was saved
+    /// in the config or added this session (#3803).
+    #[test]
+    fn deleting_a_noop_override_shows_the_keymap_binding_again() {
+        let mut config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        config.keybindings.push(
+            serde_json::from_value(serde_json::json!({
+                "keys": [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}],
+                "action": "noop", "when": "normal"
+            }))
+            .unwrap(),
+        );
+        let mut editor = make_editor_with_config(config, &[]);
+        let idx = editor
+            .bindings
+            .iter()
+            .position(|b| b.is_chord && b.action == "noop")
+            .expect("the saved noop override is a row");
+        let id = editor.bindings[idx].id;
+        editor.select(select_row(&editor, idx));
+        assert_eq!(editor.delete_selected(), DeleteResult::CustomRemoved);
+        let restored = editor
+            .bindings
+            .iter()
+            .find(|b| b.id == id)
+            .expect("the row stays, showing the keymap binding");
+        assert_eq!(restored.action, "save");
+        assert_eq!(restored.source, BindingSource::Keymap);
+        assert!(
+            !editor
+                .bindings
+                .iter()
+                .any(|b| b.action == "save" && b.source == BindingSource::Unbound),
+            "save is bound again, not listed as unbound"
+        );
+
+        // The same within one session: disable, then delete the override.
+        let mut editor = make_emacs_editor();
+        let idx = emacs_save_chord(&editor);
+        let id = editor.bindings[idx].id;
+        editor.select(select_row(&editor, idx));
+        assert_eq!(editor.disable_selected(), DeleteResult::Disabled);
+        editor.select(select_row(&editor, idx));
+        assert_eq!(editor.delete_selected(), DeleteResult::CustomRemoved);
+        let restored = editor.bindings.iter().find(|b| b.id == id).unwrap();
+        assert_eq!(restored.action, "save");
+        assert!(editor.get_custom_bindings().is_empty());
     }
 
     #[test]

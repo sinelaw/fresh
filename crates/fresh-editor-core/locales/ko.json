@@ -1130,7 +1130,7 @@
   "keybinding_editor.instr_capturing_special": "아무 키나 눌러 캡처하세요 (Esc, Tab, Enter 포함)...",
   "keybinding_editor.instr_editing_action": "액션 이름 입력 (Tab/Enter로 확인)",
   "keybinding_editor.instr_editing_context": "컨텍스트 선택...",
-  "keybinding_editor.instr_recording_key": "원하는 키 조합을 누르세요...",
+  "keybinding_editor.instr_recording_key": "Enter를 누른 다음 기록할 키 조합을 누르세요",
   "keybinding_editor.key_none": "(없음)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "액션:",

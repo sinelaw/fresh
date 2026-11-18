@@ -1130,7 +1130,7 @@
   "keybinding_editor.instr_capturing_special": "Нажмите ЛЮБУЮ клавишу для захвата (включая Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "Введите название действия (Tab/Enter для подтверждения)",
   "keybinding_editor.instr_editing_context": "Выберите контекст...",
-  "keybinding_editor.instr_recording_key": "Нажмите нужную комбинацию клавиш...",
+  "keybinding_editor.instr_recording_key": "Нажмите Enter, затем комбинацию клавиш для записи",
   "keybinding_editor.key_none": "(нет)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Действие:",
