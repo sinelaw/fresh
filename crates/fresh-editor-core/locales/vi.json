@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "Nhấn phím BẤT KỲ để bắt (bao gồm Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "Nhập tên hành động (Tab/Enter để chấp nhận)",
   "keybinding_editor.instr_editing_context": "Chọn ngữ cảnh...",
-  "keybinding_editor.instr_recording_key": "Nhấn tổ hợp phím mong muốn...",
+  "keybinding_editor.instr_recording_key": "Nhấn Enter, rồi nhấn tổ hợp phím cần ghi",
   "keybinding_editor.key_none": "(không có)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Hành động:",

@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "กดปุ่มใดก็ได้เพื่อจับ (รวมถึง Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "พิมพ์ชื่อการกระทำ (Tab/Enter เพื่อยืนยัน)",
   "keybinding_editor.instr_editing_context": "เลือกบริบท...",
-  "keybinding_editor.instr_recording_key": "กดคีย์ผสมที่ต้องการ...",
+  "keybinding_editor.instr_recording_key": "กด Enter แล้วกดคีย์ผสมที่จะบันทึก",
   "keybinding_editor.key_none": "(ไม่มี)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "การกระทำ:",

@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "Pressione QUALQUER tecla para capturar (incluindo Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "Digite o nome da ação (Tab/Enter para aceitar)",
   "keybinding_editor.instr_editing_context": "Selecionar contexto...",
-  "keybinding_editor.instr_recording_key": "Pressione a combinação de teclas desejada...",
+  "keybinding_editor.instr_recording_key": "Pressione Enter e depois a combinação de teclas a gravar",
   "keybinding_editor.key_none": "(nenhuma)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Ação:",

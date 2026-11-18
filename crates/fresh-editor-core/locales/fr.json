@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "Appuyez sur N'IMPORTE QUELLE touche (y compris Échap, Tab, Entrée)...",
   "keybinding_editor.instr_editing_action": "Saisir le nom de l'action (Tab/Entrée pour valider)",
   "keybinding_editor.instr_editing_context": "Sélectionner le contexte...",
-  "keybinding_editor.instr_recording_key": "Appuyez sur la combinaison de touches souhaitée...",
+  "keybinding_editor.instr_recording_key": "Appuyez sur Entrée, puis sur la combinaison de touches à enregistrer",
   "keybinding_editor.key_none": "(aucune)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Action :",

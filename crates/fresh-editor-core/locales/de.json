@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "BELIEBIGE Taste drücken zum Erfassen (auch Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "Aktionsname eingeben (Tab/Enter zum Übernehmen)",
   "keybinding_editor.instr_editing_context": "Kontext auswählen...",
-  "keybinding_editor.instr_recording_key": "Gewünschte Tastenkombination drücken...",
+  "keybinding_editor.instr_recording_key": "Enter drücken, dann die aufzunehmende Tastenkombination",
   "keybinding_editor.key_none": "(keine)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Aktion:",

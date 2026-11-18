@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "按任意键进行捕获（包括 Esc、Tab、Enter）...",
   "keybinding_editor.instr_editing_action": "输入操作名称（Tab/Enter 确认）",
   "keybinding_editor.instr_editing_context": "选择上下文...",
-  "keybinding_editor.instr_recording_key": "请按下所需的组合键...",
+  "keybinding_editor.instr_recording_key": "先按 Enter，再按要录制的组合键",
   "keybinding_editor.key_none": "（无）",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "操作：",

@@ -1178,7 +1178,7 @@
   "keybinding_editor.instr_capturing_special": "Натиснете ПРОИЗВОЛЕН клавиш за прихващане (вкл. Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "Въведете име на действието (Tab/Enter за приемане)",
   "keybinding_editor.instr_editing_context": "Изберете контекст...",
-  "keybinding_editor.instr_recording_key": "Натиснете желаната клавишна комбинация...",
+  "keybinding_editor.instr_recording_key": "Натиснете Enter, след това клавишната комбинация за запис",
   "keybinding_editor.key_none": "(няма)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Действие:",

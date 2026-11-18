@@ -1128,7 +1128,7 @@
   "keybinding_editor.instr_capturing_special": "Stiskněte LIBOVOLNOU klávesu (včetně Esc, Tab, Enter)...",
   "keybinding_editor.instr_editing_action": "Zadejte název akce (Tab/Enter pro potvrzení)",
   "keybinding_editor.instr_editing_context": "Vyberte kontext...",
-  "keybinding_editor.instr_recording_key": "Stiskněte požadovanou kombinaci kláves...",
+  "keybinding_editor.instr_recording_key": "Stiskněte Enter a potom kombinaci kláves k zaznamenání",
   "keybinding_editor.key_none": "(žádná)",
   "keybinding_editor.key_recording": "...",
   "keybinding_editor.label_action": "Akce:",
