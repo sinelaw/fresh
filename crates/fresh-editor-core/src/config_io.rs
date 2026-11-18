@@ -766,10 +766,26 @@ impl ConfigResolver {
             set_json_pointer(&mut config_value, pointer, value.clone());
         }
 
-        // Validate before writing.
-        let _: PartialConfig = serde_json::from_value(config_value.clone()).map_err(|e| {
-            ConfigError::ValidationError(format!("Result config would be invalid: {}", e))
-        })?;
+        // Validate before writing. Invalid fields the file already had (the
+        // loader ignores them with a warning) don't block the save and are
+        // left in place; only a change that is itself invalid is refused.
+        if let Err(e) = serde_json::from_value::<PartialConfig>(config_value.clone()) {
+            let mut pruned = config_value.clone();
+            let removed = prune_invalid_fields(&mut pruned);
+            let overlaps = |a: &str, b: &str| {
+                a == b || a.starts_with(&format!("{}/", b)) || b.starts_with(&format!("{}/", a))
+            };
+            let only_preexisting = !removed.is_empty()
+                && removed
+                    .iter()
+                    .all(|(p, _)| !changes.keys().any(|c| overlaps(p, c)));
+            if !only_preexisting || serde_json::from_value::<PartialConfig>(pruned).is_err() {
+                return Err(ConfigError::ValidationError(format!(
+                    "Result config would be invalid: {}",
+                    e
+                )));
+            }
+        }
 
         write_clean_value_to_path(&path, config_value)
     }
@@ -913,54 +929,75 @@ const MAX_PRUNED_FIELDS: usize = 32;
 /// [`PartialConfig`], returning each removed field's JSON pointer with the
 /// error it caused.
 ///
-/// serde reports only the first error, without a path, so the culprit is
-/// found by descent: a key holds the error when removing it changes (or
-/// clears) the error. The deepest such key is removed and the search
-/// repeats until the value deserializes. When no single key can be blamed
-/// (the root itself is wrong, or two siblings fail identically) the search
-/// stops at the nearest blamable ancestor, or gives up at the root.
+/// serde reports only the first error, without a path, so the object is
+/// built back up key by key: a key is kept when the result still
+/// deserializes with it added. An object that doesn't fit as a whole is
+/// rebuilt the same way, one level down, when an empty object fits in its
+/// place (otherwise, e.g. a struct with a required field, it is dropped
+/// whole). Arrays and scalars are kept or dropped whole. When the root
+/// isn't an object, or more than [`MAX_PRUNED_FIELDS`] fields would go,
+/// nothing is removed and the layer fails as a whole.
 fn prune_invalid_fields(value: &mut Value) -> Vec<(String, String)> {
-    let mut removed: Vec<(String, String)> = Vec::new();
-    while removed.len() < MAX_PRUNED_FIELDS {
-        let err = match serde_json::from_value::<PartialConfig>(value.clone()) {
-            Ok(_) => break,
-            Err(e) => e.to_string(),
-        };
-        let path = locate_invalid_field(value, &err);
-        if path.is_empty() {
-            break;
-        }
-        let pointer = json_pointer(&path);
-        remove_path(value, &path);
-        // Removing a field can expose an error on its parent (e.g. a struct
-        // left without a required field); report only the outermost removal.
-        removed.retain(|(p, _)| !p.starts_with(&format!("{}/", pointer)));
-        removed.push((pointer, err));
+    if serde_json::from_value::<PartialConfig>(value.clone()).is_ok() {
+        return Vec::new();
     }
+    let Value::Object(original) = value.clone() else {
+        return Vec::new();
+    };
+    let mut built = Value::Object(serde_json::Map::new());
+    let mut removed = Vec::new();
+    rebuild_valid_object(&mut built, &mut Vec::new(), original, &mut removed);
+    if removed.is_empty() || removed.len() > MAX_PRUNED_FIELDS {
+        return Vec::new();
+    }
+    *value = built;
     removed
 }
 
-/// Find the path of the deepest key in `root` whose removal changes the
-/// deserialization error `err` (see [`prune_invalid_fields`]).
-fn locate_invalid_field(root: &Value, err: &str) -> Vec<String> {
-    let mut path: Vec<String> = Vec::new();
-    loop {
-        let Some(Value::Object(map)) = root.pointer(&json_pointer(&path)) else {
-            return path;
-        };
-        let culprit = map.keys().find(|key| {
-            let mut candidate = root.clone();
-            let mut key_path = path.clone();
-            key_path.push((*key).clone());
-            remove_path(&mut candidate, &key_path);
-            match serde_json::from_value::<PartialConfig>(candidate) {
-                Ok(_) => true,
-                Err(e) => e.to_string() != err,
-            }
-        });
-        match culprit {
-            Some(key) => path.push(key.clone()),
-            None => return path,
+/// Add the keys of `original` one by one to the (empty) object at `path` in
+/// `root`, keeping those with which `root` still deserializes (see
+/// [`prune_invalid_fields`]). Dropped keys are appended to `removed`.
+fn rebuild_valid_object(
+    root: &mut Value,
+    path: &mut Vec<String>,
+    original: serde_json::Map<String, Value>,
+    removed: &mut Vec<(String, String)>,
+) {
+    for (key, child) in original {
+        path.push(key);
+        match try_insert_path(root, path, child.clone()) {
+            Ok(()) => {}
+            Err(err) => match child {
+                Value::Object(child_map)
+                    if !child_map.is_empty()
+                        && try_insert_path(root, path, Value::Object(Default::default()))
+                            .is_ok() =>
+                {
+                    rebuild_valid_object(root, path, child_map, removed);
+                }
+                _ => removed.push((json_pointer(path), err)),
+            },
+        }
+        path.pop();
+    }
+}
+
+/// Set the key at `path` in `root` to `value` if `root` still deserializes
+/// as a [`PartialConfig`]; otherwise leave `root` as it was and return the
+/// error.
+fn try_insert_path(root: &mut Value, path: &[String], value: Value) -> Result<(), String> {
+    let Some((last, parents)) = path.split_last() else {
+        return Err("empty path".to_string());
+    };
+    let Some(Value::Object(map)) = root.pointer_mut(&json_pointer(parents)) else {
+        return Err("parent is not an object".to_string());
+    };
+    map.insert(last.clone(), value);
+    match serde_json::from_value::<PartialConfig>(root.clone()) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            remove_path(root, path);
+            Err(e.to_string())
         }
     }
 }
@@ -2203,6 +2240,75 @@ mod tests {
         assert_eq!(value["editor"]["line_numbers"], false);
         assert_eq!(value["theme"], "light");
         assert!(serde_json::from_value::<PartialConfig>(value).is_ok());
+    }
+
+    #[test]
+    fn issue_3776_siblings_with_identical_errors_keep_their_parent() {
+        let mut value = serde_json::json!({
+            "theme": "light",
+            "editor": {"tab_size": 3, "line_numbers": "false", "relative_line_numbers": "false"},
+            "languages": {"rust": {"formatter": {"args": ["-x"]}, "tab_size": 6}},
+        });
+        let removed = prune_invalid_fields(&mut value);
+        let pointers: Vec<&str> = removed.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(pointers.len(), 3, "{:?}", pointers);
+        assert!(pointers.contains(&"/editor/line_numbers"), "{:?}", pointers);
+        assert!(
+            pointers.contains(&"/editor/relative_line_numbers"),
+            "{:?}",
+            pointers
+        );
+        assert!(
+            pointers.contains(&"/languages/rust/formatter"),
+            "{:?}",
+            pointers
+        );
+        assert_eq!(value["editor"]["tab_size"], 3);
+        assert_eq!(value["languages"]["rust"]["tab_size"], 6);
+        assert_eq!(value["theme"], "light");
+    }
+
+    #[test]
+    fn issue_3776_save_works_with_invalid_fields_and_keeps_them() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"theme": "light", "editor": {"tab_size": 3, "line_numbers": "false"}}"#,
+        )
+        .unwrap();
+        assert_eq!(resolver.resolve().unwrap().editor.tab_size, 3);
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert("/editor/rulers".to_string(), serde_json::json!([80]));
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .expect("an unrelated save goes through");
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        assert_eq!(saved["editor"]["rulers"], serde_json::json!([80]));
+        assert_eq!(
+            saved["editor"]["line_numbers"], "false",
+            "the user's invalid field is left for them to fix"
+        );
+
+        // A save that writes an invalid value itself is still refused.
+        let mut changes = std::collections::HashMap::new();
+        changes.insert("/editor/tab_size".to_string(), serde_json::json!("wide"));
+        let result =
+            resolver.save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User);
+        assert!(result.is_err());
+
+        // Writing the invalid key itself fixes it.
+        let mut changes = std::collections::HashMap::new();
+        changes.insert("/editor/line_numbers".to_string(), serde_json::json!(false));
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let config = resolver.resolve().unwrap();
+        assert!(!config.editor.line_numbers);
+        assert_eq!(config.editor.rulers, vec![80]);
     }
 
     #[test]
