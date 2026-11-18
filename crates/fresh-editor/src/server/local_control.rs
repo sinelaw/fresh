@@ -243,6 +243,8 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
                         crate::app::workspace::ExplorerOnEntry::Directory,
                         false,
                     );
+                    // Same trust gate as a first launch in this folder.
+                    editor.maybe_prompt_workspace_trust_for_opened_directory();
                     editor.relayout();
                     changed = true;
                 } else {
@@ -1005,5 +1007,41 @@ mod tests {
         }
 
         bound.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// Opening another folder on a running editor (a nested `fresh <dir>`)
+    /// raises the same trust prompt a first launch in that folder does, with
+    /// Cancel as the secondary so the other workspaces survive (#3779).
+    #[test]
+    fn opening_a_folder_with_markers_raises_the_trust_prompt() {
+        let (mut editor, _temp) = pump_test_editor();
+        let project = TempDir::new().unwrap();
+        std::fs::write(project.path().join("Cargo.toml"), "[package]\n").unwrap();
+
+        let (req_tx, req_rx) = mpsc::channel::<LocalControlRequest>();
+        let shared = Shared {
+            req_rx: Mutex::new(req_rx),
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            command_replies: Arc::new(Mutex::new(HashMap::new())),
+        };
+        req_tx
+            .send(LocalControlRequest::OpenWindow {
+                path: project.path().to_path_buf(),
+            })
+            .unwrap();
+        pump_shared(&shared, &mut editor);
+
+        assert_eq!(editor.working_dir(), project.path());
+        assert!(
+            editor.global_popups().top().is_some_and(|p| matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )),
+            "switching to an undecided folder with a manifest must ask for trust"
+        );
+        assert_eq!(
+            editor.authority().workspace_trust.level(),
+            crate::services::workspace_trust::TrustLevel::Restricted
+        );
     }
 }

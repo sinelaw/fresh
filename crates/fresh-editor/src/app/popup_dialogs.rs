@@ -1440,6 +1440,25 @@ impl Editor {
         );
     }
 
+    /// Run the workspace-trust decision for a window a running editor just
+    /// switched to because a directory was opened on it — a bare `fresh` typed
+    /// in another folder while the background editor is up, or a nested
+    /// `fresh <dir>` from the embedded terminal. Without this, the new folder
+    /// stayed Restricted without ever asking (#3779), unlike a first launch in
+    /// the same folder. Secondary is Cancel: the other workspaces must survive
+    /// a dismissal. Local only, like the Orchestrator's New Session path:
+    /// a remote window manages trust through its own connect flow.
+    pub fn maybe_prompt_workspace_trust_for_opened_directory(&mut self) {
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_none()
+        {
+            self.maybe_prompt_workspace_trust(true);
+        }
+    }
+
     /// Show the trust prompt if this workspace is undecided and contains
     /// content whose execution trust matters (env files, project manifests,
     /// `.sln`/`.csproj`, …). No-op once a decision is recorded or when there's
