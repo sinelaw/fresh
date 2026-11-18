@@ -1663,7 +1663,7 @@ fn test_deleted_binding_appears_as_unbound() {
 }
 
 /// Test the full delete flow end-to-end:
-/// 1. Add a custom binding (Ctrl+Shift+D → duplicate_line), save
+/// 1. Add a custom binding (Ctrl+Shift+Y → duplicate_line), save
 /// 2. Verify the binding works (key performs the action) and appears in the table
 /// 3. Delete the binding, save
 /// 4. Verify the table shows the action without a bound key
@@ -1672,7 +1672,7 @@ fn test_deleted_binding_appears_as_unbound() {
 fn test_delete_binding_full_flow() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
-    // === Phase 1: Add a custom binding Ctrl+Shift+D → duplicate_line ===
+    // === Phase 1: Add a custom binding Ctrl+Shift+Y → duplicate_line ===
     open_keybinding_editor(&mut harness);
 
     // Press 'a' to open Add dialog
@@ -1682,18 +1682,18 @@ fn test_delete_binding_full_flow() {
     harness.render().unwrap();
     harness.assert_screen_contains("Add Keybinding");
 
-    // Enter capture mode, then record key: Ctrl+Shift+D
+    // Enter capture mode, then record key: Ctrl+Shift+Y
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
         .send_key(
-            KeyCode::Char('d'),
+            KeyCode::Char('y'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         )
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Ctrl+Shift+D");
+    harness.assert_screen_contains("Ctrl+Shift+Y");
 
     // Tab to Action field
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -1736,10 +1736,10 @@ fn test_delete_binding_full_flow() {
         .unwrap();
     harness.render().unwrap();
 
-    // Press Ctrl+Shift+D to duplicate the line
+    // Press Ctrl+Shift+Y to duplicate the line
     harness
         .send_key(
-            KeyCode::Char('d'),
+            KeyCode::Char('y'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         )
         .unwrap();
@@ -1748,7 +1748,7 @@ fn test_delete_binding_full_flow() {
     let buffer_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_content, "aaa\naaa",
-        "Before delete: Ctrl+Shift+D should duplicate the line (binding is active)"
+        "Before delete: Ctrl+Shift+Y should duplicate the line (binding is active)"
     );
 
     // === Phase 3: Verify binding in table, then delete it ===
@@ -1772,8 +1772,8 @@ fn test_delete_binding_full_flow() {
     // Verify the custom binding appears in the table
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ctrl+Shift+D"),
-        "Before delete: table should show Ctrl+Shift+D for the binding"
+        screen.contains("Ctrl+Shift+Y"),
+        "Before delete: table should show Ctrl+Shift+Y for the binding"
     );
     assert!(
         screen.contains("custom"),
@@ -1815,8 +1815,8 @@ fn test_delete_binding_full_flow() {
         "After delete (before save): action should still be listed"
     );
     assert!(
-        !screen.contains("Ctrl+Shift+D"),
-        "After delete (before save): Ctrl+Shift+D should be gone from the table immediately"
+        !screen.contains("Ctrl+Shift+Y"),
+        "After delete (before save): Ctrl+Shift+Y should be gone from the table immediately"
     );
     assert!(
         !screen.contains("custom"),
@@ -1852,8 +1852,8 @@ fn test_delete_binding_full_flow() {
     );
     // The key should NOT appear in the table
     assert!(
-        !screen.contains("Ctrl+Shift+D"),
-        "After delete: Ctrl+Shift+D should NOT appear in the table (binding was deleted)"
+        !screen.contains("Ctrl+Shift+Y"),
+        "After delete: Ctrl+Shift+Y should NOT appear in the table (binding was deleted)"
     );
     // The source should NOT show "custom"
     assert!(
@@ -1870,10 +1870,10 @@ fn test_delete_binding_full_flow() {
     // key and verify the buffer is unchanged (binding no longer active).
     let buffer_before = harness.get_buffer_content().unwrap();
 
-    // Press Ctrl+Shift+D - should have NO effect since the binding was deleted
+    // Press Ctrl+Shift+Y - should have NO effect since the binding was deleted
     harness
         .send_key(
-            KeyCode::Char('d'),
+            KeyCode::Char('y'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         )
         .unwrap();
@@ -1882,7 +1882,7 @@ fn test_delete_binding_full_flow() {
     let buffer_after = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_after, buffer_before,
-        "After delete: Ctrl+Shift+D should have no effect (binding was removed)"
+        "After delete: Ctrl+Shift+Y should have no effect (binding was removed)"
     );
 }
 
