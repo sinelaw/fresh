@@ -248,42 +248,39 @@ impl crate::app::window::Window {
             .scroll_sync_manager
             .get_group_mut(group_id)
             .and_then(|g| g.row_sync);
-        let record = |mgr: &mut crate::view::scroll_sync::ScrollSyncManager, other_top: u32| {
-            if let Some(group) = mgr.get_group_mut(group_id) {
-                group.row_sync = Some(RowSyncState {
-                    active: active.into(),
-                    active_top: a.top,
-                    other_top,
-                });
-            }
-        };
 
-        // Nothing has scrolled since the last sync: the pair is where it put
-        // it, and stays there — whichever pane drives now. The focus moving to
-        // the other pane is one way to get here; a frame with nothing new
-        // (a redraw, an idle tick) is the other. Re-deriving the partner then
-        // undid a scroll of the taller pane, which can stop between two of the
-        // curve's values (`inverse_synced_top`): the next frame driven from the
-        // focused pane put it back on the curve, a notch of the wheel lasted
-        // one frame, and the preview could not be scrolled through a drawing.
-        if let Some(last) = last {
-            let unmoved = if last.active == SplitId::from(active) {
-                a.top == last.active_top && o.top == last.other_top
-            } else {
-                a.top == last.other_top
-            };
-            if unmoved {
-                record(&mut self.scroll_sync_manager, o.top);
-                return true;
+        // Which pane leads: the one that moved since the last sync, else the
+        // one that led then. `active` — the focused pane, or the one the
+        // pointer scrolled — is only a guess at it: on a frame where neither
+        // pane moved (a redraw, an idle tick, the focus moving across) the
+        // lead stays with the pane the user last scrolled. Deriving from the
+        // focused pane instead undid a scroll of the taller pane, which can
+        // stop between two of the curve's values (`inverse_synced_top`): the
+        // next frame put it back on the curve, so a notch of the wheel lasted
+        // a frame. Deriving again from the leader is a no-op while nothing
+        // changed, and lines the pair up again when the layout did.
+        let active_leads = match last {
+            None => true,
+            Some(l) if l.driver == SplitId::from(active) => {
+                a.top != l.driver_top || o.top == l.partner_top
             }
-        }
+            Some(l) => a.top != l.partner_top,
+        };
+        let (driver, partner, d, p, driver_is_left) = if active_leads {
+            (active, other, &a, &o, left_is_active)
+        } else {
+            (other, active, &o, &a, !left_is_active)
+        };
+        // The leader's previous top, when it led the last sync too and has
+        // moved since: what "against the scroll" is measured from.
+        let previous = last.filter(|l| l.driver == SplitId::from(driver) && l.driver_top != d.top);
 
         let Some(state) = self.buffers.get(&buffer_id) else {
             return false;
         };
-        let (Some(index_a), Some(index_o)) = (
-            state.wrap_indices.get(&a.geometry),
-            state.wrap_indices.get(&o.geometry),
+        let (Some(index_d), Some(index_p)) = (
+            state.wrap_indices.get(&d.geometry),
+            state.wrap_indices.get(&p.geometry),
         ) else {
             return false;
         };
@@ -291,50 +288,63 @@ impl crate::app::window::Window {
         // source): the right pane's top for each left top. Scrolling the right
         // pane inverts it, so the pair sits on the same curve whichever pane
         // the user scrolls.
-        let (left, right, index_l, index_r) = if left_is_active {
-            (&a, &o, index_a, index_o)
+        let (left, right, index_l, index_r) = if driver_is_left {
+            (d, p, index_d, index_p)
         } else {
-            (&o, &a, index_o, index_a)
+            (p, d, index_p, index_d)
         };
         let curve = |top: u32| {
             synced_top(top, left.max_top, left.height, right.max_top, |row| {
                 map_row(index_l, index_r, &state.buffer, row)
             })
         };
-        let mut target = if left_is_active {
-            curve(a.top)
-        } else if a.top == 0 {
+        let mut target = if driver_is_left {
+            curve(d.top)
+        } else if d.top == 0 {
             0
-        } else if a.top >= a.max_top {
-            o.max_top
+        } else if d.top >= d.max_top {
+            p.max_top
         } else {
-            inverse_synced_top(a.top, o.max_top, curve)
+            inverse_synced_top(d.top, p.max_top, curve)
         };
-        // Never against the scroll: the driver went down, so the partner does
+        // Never against the scroll: the leader went down, so the partner does
         // not go up, and the other way round. The curve is monotonic, but the
         // aligned row slides with the window and a line laid out shorter in the
         // partner could still pull it back a row.
-        if let Some(last) = last.filter(|l| l.active == SplitId::from(active)) {
-            if a.top > last.active_top {
-                target = target.max(last.other_top.min(o.max_top));
-            } else if a.top < last.active_top {
-                target = target.min(last.other_top);
+        if let Some(last) = previous {
+            if d.top > last.driver_top {
+                target = target.max(last.partner_top.min(p.max_top));
+            } else {
+                target = target.min(last.partner_top);
             }
         }
-        let addr = index_o.byte_of_row(&state.buffer, target);
-        let line_start = state.buffer.line_start_offset(addr.line).unwrap_or(0);
-
-        if let Some(vs) = self
-            .buffers
-            .split_view_states_mut()
-            .and_then(|vs_map| vs_map.get_mut(&other))
-        {
-            let viewport = &mut vs.buffer_tab_state_mut().viewport;
-            viewport.set_top_byte(line_start);
-            viewport.set_top_view_line_offset(addr.row_in_line);
-            viewport.set_skip_ensure_visible();
+        // Moved only when it must. The hold that keeps the partner where the
+        // sync puts it lasts until a key or a jump releases it; set again on
+        // every frame, it held the focused pane against its own cursor — a
+        // key released it, the next sync put it back, and arrowing past the
+        // bottom of the source after scrolling the preview left the cursor
+        // off screen.
+        if target != p.top {
+            let addr = index_p.byte_of_row(&state.buffer, target);
+            let line_start = state.buffer.line_start_offset(addr.line).unwrap_or(0);
+            if let Some(vs) = self
+                .buffers
+                .split_view_states_mut()
+                .and_then(|vs_map| vs_map.get_mut(&partner))
+            {
+                let viewport = &mut vs.buffer_tab_state_mut().viewport;
+                viewport.set_top_byte(line_start);
+                viewport.set_top_view_line_offset(addr.row_in_line);
+                viewport.set_skip_ensure_visible();
+            }
         }
-        record(&mut self.scroll_sync_manager, target);
+        if let Some(group) = self.scroll_sync_manager.get_group_mut(group_id) {
+            group.row_sync = Some(RowSyncState {
+                driver: driver.into(),
+                driver_top: d.top,
+                partner_top: target,
+            });
+        }
         true
     }
 

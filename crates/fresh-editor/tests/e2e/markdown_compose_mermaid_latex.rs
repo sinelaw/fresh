@@ -633,4 +633,223 @@ printf '\033[44mBLUE\033[49m\n'"#,
             "each notch should bring the next row of the drawing to the top: {tops:?}"
         );
     }
+
+    /// In dual mode, a drawing that arrives inside the window — the tool
+    /// answering after the panes were synced — lines the preview up with the
+    /// source again on the frames that follow, as the source's scroll would
+    /// have. Once leaving the pair alone on a frame where neither pane moved,
+    /// the sync kept the preview where the old layout put it: a wheel notch and
+    /// a notch back then moved it somewhere else, not back to where it stood.
+    #[test]
+    fn a_drawing_arriving_in_a_dual_view_lines_the_panes_up_again() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let slow = stub(
+            tools.path(),
+            "stub-slow",
+            r#"sleep 1; for i in $(seq 1 14); do printf 'ROW %s\n' $i; done"#,
+        );
+        let mut md = String::from("# Doc\n\n");
+        for i in 0..40 {
+            md.push_str(&format!("Pre {i}\n\n"));
+        }
+        md.push_str("```mermaid\ngraph TD\n    A --> B\n```\n\n");
+        for i in 0..40 {
+            md.push_str(&format!("After {i}\n\n"));
+        }
+        let (mut h, _tmp) = harness_with_renderers(
+            &md,
+            serde_json::json!({ "mermaid": { "command": slow, "args": ["{file}"] } }),
+        );
+        run(&mut h, "Markdown: Source/Compose Dual Mode");
+        h.wait_until(|h| screen_has(h, "Pre 0")).unwrap();
+
+        // Wheel the source until the block's fence is in its upper part.
+        let half = (WIDTH / 2) as usize;
+        let left_row_of = |h: &EditorTestHarness, text: &str| -> Option<usize> {
+            h.screen_to_string()
+                .lines()
+                .position(|l| l.chars().take(half).collect::<String>().contains(text))
+        };
+        for _ in 0..40 {
+            if left_row_of(&h, "```mermaid").is_some_and(|r| (4..12).contains(&r)) {
+                break;
+            }
+            h.mouse_scroll_down(10, 15).unwrap();
+        }
+        assert!(left_row_of(&h, "```mermaid").is_some_and(|r| (4..12).contains(&r)));
+        // The drawing arrives a moment later, taller than the source block.
+        h.wait_until(|h| screen_has(h, "ROW 14")).unwrap();
+        for _ in 0..3 {
+            h.render().unwrap();
+        }
+        let before = h.screen_to_string();
+
+        h.mouse_scroll_down(10, 15).unwrap();
+        h.mouse_scroll_up(10, 15).unwrap();
+        for _ in 0..3 {
+            h.render().unwrap();
+        }
+        assert_eq!(
+            h.screen_to_string(),
+            before,
+            "a notch down and back up should leave both panes where they were"
+        );
+    }
+
+    /// A compose pane wide enough to keep a desk margin draws its gutter in
+    /// the margin, not across the text: the wheel steps a row a notch through
+    /// a drawing there as well, the row index counting the page's own width.
+    #[test]
+    fn the_wheel_scrolls_a_wide_compose_pane_a_row_a_notch_through_a_drawing() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let tall = stub(
+            tools.path(),
+            "stub-tall",
+            r#"for i in 1 2 3 4 5 6 7 8; do printf 'ROW %s\n' $i; done"#,
+        );
+        let mut md = String::from("# Doc\n\nBefore.\n\n```mermaid\ngraph TD\n    A --> B\n```\n\n");
+        for i in 0..60 {
+            md.push_str(&format!("After {i}\n\n"));
+        }
+        let (mut h, _tmp) = harness_with_renderers(
+            &md,
+            serde_json::json!({ "mermaid": { "command": tall, "args": ["{file}"] } }),
+        );
+        h.editor_mut().config_mut().editor.mouse_wheel_scroll_lines = 1;
+        run(&mut h, "Markdown: Toggle Compose");
+        h.wait_until(|h| screen_has(h, "ROW 8")).unwrap();
+        let top = |h: &EditorTestHarness| -> String {
+            let screen = h.screen_to_string();
+            let row = screen.lines().nth(2).unwrap().to_string();
+            row.replace(['▌', '│'], " ").trim().to_string()
+        };
+        let mut tops = Vec::new();
+        for _ in 0..16 {
+            h.mouse_scroll_down(WIDTH / 2, 15).unwrap();
+            for _ in 0..3 {
+                h.render().unwrap();
+            }
+            tops.push(top(&h));
+        }
+        let drawing: Vec<&str> = tops
+            .iter()
+            .map(String::as_str)
+            .filter(|t| t.starts_with("ROW "))
+            .collect();
+        assert_eq!(
+            drawing,
+            (1..=8).map(|i| format!("ROW {i}")).collect::<Vec<_>>(),
+            "each notch should bring the next row of the drawing to the top: {tops:?}"
+        );
+    }
+
+    /// In dual mode the wheel scrolls the pane under the pointer: over the
+    /// source, a line a notch (the preview following it), whichever pane has
+    /// the keyboard.
+    #[test]
+    fn the_wheel_over_a_dual_views_source_scrolls_the_source() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let tall = stub(
+            tools.path(),
+            "stub-tall",
+            r#"for i in 1 2 3 4 5 6 7 8; do printf 'ROW %s\n' $i; done"#,
+        );
+        let mut md = String::from("# Doc\n\nBefore.\n\n```mermaid\ngraph TD\n    A --> B\n```\n\n");
+        for i in 0..60 {
+            md.push_str(&format!("After {i}\n\n"));
+        }
+        let (mut h, _tmp) = harness_with_renderers(
+            &md,
+            serde_json::json!({ "mermaid": { "command": tall, "args": ["{file}"] } }),
+        );
+        h.editor_mut().config_mut().editor.mouse_wheel_scroll_lines = 1;
+        run(&mut h, "Markdown: Source/Compose Dual Mode");
+        h.wait_until(|h| screen_has(h, "ROW 8")).unwrap();
+        // The source's top line, read off its gutter.
+        let half = (WIDTH / 2) as usize;
+        let source_top = |h: &EditorTestHarness| -> usize {
+            let screen = h.screen_to_string();
+            let row: String = screen.lines().nth(2).unwrap().chars().take(half).collect();
+            // The number before the gutter's `│`; a fold arrow may sit by it.
+            let gutter = row.split('│').next().unwrap();
+            gutter
+                .chars()
+                .filter(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap_or_else(|_| panic!("no line number in {row:?}"))
+        };
+        let start = source_top(&h);
+        for notch in 1..=20 {
+            h.mouse_scroll_down(10, 15).unwrap();
+            for _ in 0..3 {
+                h.render().unwrap();
+            }
+            assert_eq!(
+                source_top(&h),
+                start + notch,
+                "notch {notch} over the source"
+            );
+        }
+        for notch in 1..=20 {
+            h.mouse_scroll_up(10, 15).unwrap();
+            for _ in 0..3 {
+                h.render().unwrap();
+            }
+            assert_eq!(
+                source_top(&h),
+                start + 20 - notch,
+                "notch {notch} up over the source"
+            );
+        }
+    }
+
+    /// After the wheel scrolled the preview, the source still follows its
+    /// cursor: arrowing down past the bottom of the source scrolls it, and the
+    /// preview with it. The preview leads the sync while it is the pane the
+    /// user last scrolled, but a cursor the source must keep on screen moves
+    /// the source, and the source leads again.
+    #[test]
+    fn the_source_follows_its_cursor_after_the_wheel_scrolled_the_preview() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let tall = stub(
+            tools.path(),
+            "stub-tall",
+            r#"for i in 1 2 3 4 5 6 7 8; do printf 'ROW %s\n' $i; done"#,
+        );
+        let mut md = String::from("# Doc\n\nBefore.\n\n```mermaid\ngraph TD\n    A --> B\n```\n\n");
+        for i in 0..60 {
+            md.push_str(&format!("After {i}\n\n"));
+        }
+        let (mut h, _tmp) = harness_with_renderers(
+            &md,
+            serde_json::json!({ "mermaid": { "command": tall, "args": ["{file}"] } }),
+        );
+        h.editor_mut().config_mut().editor.mouse_wheel_scroll_lines = 1;
+        run(&mut h, "Markdown: Source/Compose Dual Mode");
+        h.wait_until(|h| screen_has(h, "ROW 8")).unwrap();
+        for _ in 0..5 {
+            h.mouse_scroll_down(WIDTH - 20, 15).unwrap();
+        }
+        // Down through the source, the pane with the keyboard, well past
+        // the bottom of its window.
+        for _ in 0..80 {
+            h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        h.render().unwrap();
+        // The cursor is on line 81, between `After 35` and `After 36`; the
+        // source shows it.
+        let half = (WIDTH / 2) as usize;
+        let screen = h.screen_to_string();
+        let source_shows = screen.lines().any(|l| {
+            l.chars()
+                .take(half)
+                .collect::<String>()
+                .contains("After 36")
+        });
+        assert!(
+            source_shows,
+            "the source should show its cursor's line:\n{screen}"
+        );
+    }
 }
