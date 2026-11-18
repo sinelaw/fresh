@@ -21,7 +21,7 @@ You can open multiple terminal tabs and switch between them like regular file bu
 
 ## Clickable Paths
 
-`Ctrl+Click` (or `Ctrl`-hover, which underlines the target) opens file paths from terminal output, including scrollback. Paths resolve as absolute (with `~` expansion), then relative to the terminal's working directory, then relative to Fresh's working directory. The shell's working directory is tracked via OSC 7, so relative paths resolve correctly after `cd` — and resolution works over SSH.
+`Ctrl+Click` (or `Ctrl`-hover, which underlines the target) opens file paths from terminal output, including scrollback. Paths resolve as absolute (with `~` expansion), then relative to the terminal's working directory, then relative to Fresh's working directory. When the shell reports its working directory with OSC 7 (many prompt setups do; stock bash does not), relative paths also resolve after `cd`, over SSH too.
 
 ## Restarting an Exited Terminal
 
@@ -53,11 +53,11 @@ In a terminal pane, `Ctrl+V` pastes the system clipboard's text. When the clipbo
 
 ## Terminal Modes
 
-The terminal has two modes, indicated in the status bar:
+The terminal has two modes, and a status message announces each switch:
 
-1.  **Terminal Mode** (status bar shows "Terminal"): Your keyboard input goes directly to the shell. The scrollbar is hidden and the grid uses the full split width.
+1.  **Terminal Mode**: Your keyboard input goes directly to the shell. The scrollbar is hidden and the grid uses the full split width.
 
-2.  **Scrollback Mode** (status bar shows "Terminal (read only)"): The terminal output becomes a read-only buffer that you can scroll through, search, and copy text from.
+2.  **Scrollback Mode**: The terminal output becomes a read-only buffer that you can scroll through, search, and copy text from.
 
 **Per-split:** The mode is a property of each split, not the terminal as a whole. If you show the same terminal in two splits, one can sit in scrollback (frozen at some point in history) while the other keeps streaming the live output — and each split keeps its own mode even when it isn't focused. Disable **Automatic Scroll** (below) to hold a split in scrollback while output keeps arriving.
 
@@ -65,6 +65,7 @@ The terminal has two modes, indicated in the status bar:
 
 *   **`Ctrl+Space`**: Toggle between terminal mode and scrollback mode
 *   **`Ctrl+]`**: Exit terminal mode (same as `Ctrl+Space`)
+*   Typing a character in scrollback mode also returns to terminal mode, and the character goes to the program.
 
 ## Keyboard Capture
 
@@ -73,7 +74,7 @@ While a terminal has focus, only the editor's top-level keys reach the editor, s
 To send the remaining editor keys to the terminal too:
 
 *   **`F9`**: Toggle keyboard capture mode
-*   When keyboard capture is enabled (status bar shows "Terminal [capture]"), all keys except `F9` are sent to the terminal
+*   When keyboard capture is enabled, all keys except `F9` are sent to the terminal
 *   **Visual indicator:** The UI dims (menu bar, status bar, other splits) to clearly show focus is exclusively on the terminal
 
 To hand one particular key to the program for good, bind it to `noop` in the `terminal` context with the [Keybinding Editor](./keybinding-editor.md). In a terminal, a `noop` binding passes the key through rather than swallowing it.

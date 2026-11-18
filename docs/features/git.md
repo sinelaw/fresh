@@ -1,6 +1,6 @@
 # Git
 
-> **Palette:** `Review Diff`, `Review Diff: Range (Commit or Branch)`, `Review Diff: Stash`, `Git Log`, `Git Log: PR Branch`, `Next Diff Chunk`, `Previous Diff Chunk`. Run **Keybinding Editor** to see or change the keys.
+> **Palette:** `Review Diff`, `Review Diff: Range (Commit or Branch)`, `Review Diff: Stash`, `Git Log`, `Git Log: PR Branch`, `Next Change`, `Previous Change`. Run **Keybinding Editor** to see or change the keys.
 
 Fresh has built-in tooling for reviewing diffs, navigating git history, and jumping between changes. Everything here is driven from the command palette.
 
@@ -8,7 +8,7 @@ Fresh has built-in tooling for reviewing diffs, navigating git history, and jump
 *   **Review Diff: Range / Stash** — same buffer against an arbitrary range, a branch, or a stash entry.
 *   **Git Log** — magit-style log with a live-preview diff panel on the right, over the repo, one file, or a PR branch.
 *   **Git Blame** — magit-style blame for the current file.
-*   **Diff Chunk Navigation** — jump between hunks from git *or* saved diff files with the same commands.
+*   **Change Navigation** — jump between changes from git, Live Diff, or your unsaved edits with the same commands.
 *   **Compare Files** — any two files side by side, both editable; `fresh --diff A B` is a `git difftool`. See [Compare Files](./compare-files.md).
 
 ## Review Diff
@@ -56,14 +56,14 @@ The gutter marks lines that differ from git: added, modified, and deleted lines 
 
 ## Live Diff
 
-**Live Diff** marks changed lines in the gutter as you edit, comparing the buffer against a reference. Toggle it with **Live Diff: Toggle**, and choose the reference with **Live Diff: vs HEAD**, **vs Disk**, or **vs Branch…**. When a changed line closely matches its original, the change is shown inline with word-level highlighting rather than as a separate removal and addition.
+**Live Diff** marks changed lines in the gutter as you edit, comparing the buffer against a reference. Toggle it for the current buffer with **Live Diff: Toggle (Buffer)** or everywhere with **Live Diff: Toggle (Global)**, and choose the reference with **Live Diff: vs HEAD**, **vs Disk (unsaved changes)**, **vs Branch...**, or **vs Default Branch**. Removed lines appear above the edit, and word-level highlighting marks exactly which words changed.
 
 ## Monorepos and Nested Repositories
 
-Git features work inside nested repositories even when the folder you opened is not itself a repository. Each sub-project gets file-explorer git decorations, its own branch in the status bar's optional **Git: branch** element, **Git Blame**, **Git Log**, **Git Grep** and **Git Find File**.
+Git features work inside nested repositories even when the folder you opened is not itself a repository. Each sub-project gets file-explorer git decorations, its own branch in the status bar's optional **Git: branch** element (`{git_statusbar:branch}`), **Git Blame**, **Git Log**, **Git Grep** and **Git Find File**.
 
-## Diff Chunk Navigation
+## Change Navigation
 
-The built-in **Diff Chunk Navigation** plugin merges two sources of hunks — the active git diff and any saved diff files — so you can jump between changes the same way in either context. It adds commands like **Next Diff Chunk** and **Previous Diff Chunk** to the palette.
+**Next Change** and **Previous Change** jump between the changed regions of the current buffer. They merge the git gutter's hunks, Live Diff's hunks, and your unsaved edits into one list, so the same two commands work whichever is showing; the status bar reports where you are (`Change 2/6`).
 
 See it in action: [Review Diff](/blog/fresh-0.3.0/#review-diff-rewrite) and [Git Log](/blog/fresh-0.3.0/#git-log) in the 0.3.0 blog post.
