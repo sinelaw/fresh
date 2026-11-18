@@ -838,33 +838,28 @@ fn resolve_build_anchor(
 }
 
 /// The width a pane lays its text out in and the gutter beside it, as the
-/// renderer resolves them for the frame: `(width, gutter_width)`, the pair
-/// `build_view_data` wraps with.
+/// renderer resolves them for the frame (`compute_buffer_layout`): the
+/// `(width, gutter_width)` pair `build_view_data` wraps with.
 ///
-/// A source pane wraps at its own width, less the line-number gutter. A
-/// compose pane wraps in the compose layout's area, and keeps a gutter only
-/// where the desk margin has room for it ([`resolve_gutter_layout`]): a
-/// preview narrower than its compose width — one half of the Markdown dual
-/// view — has no margin, so it drops the gutter and lays text out at the full
-/// width. Counting it as a source pane wrapped every row within a gutter's
-/// width of the edge onto two rows in the row index while the pane drew one,
-/// and the wheel and the scroll sync then stepped through rows that are not
-/// on screen.
+/// Both come from [`resolve_gutter_layout`], as the frame's do: the area is
+/// the page column when a page width is set (`compose_width`), and the gutter
+/// is the one the pane draws — none with line numbers off in a source pane, a
+/// diff stream's own, and in a compose pane only where the desk margin has
+/// room for it. A compose preview narrower than its compose width (one half
+/// of the Markdown dual view) has none and lays text out at the full width.
+/// Reading the line-number gutter and the whole pane instead wrapped rows
+/// within a gutter's width of the edge onto two rows in the index while the
+/// pane drew one, and the wheel, the scrollbar and the scroll sync then
+/// stepped through rows that were not on screen.
 pub(crate) fn wrap_area_for(
     viewport: &Viewport,
     state: &EditorState,
-    compose: bool,
+    view_mode: &ViewMode,
 ) -> (usize, usize) {
-    if !compose {
-        return (
-            viewport.width as usize,
-            viewport.gutter_width(&state.buffer),
-        );
-    }
     let gutter = resolve_gutter_layout(
         &state.margins,
         viewport.show_line_numbers,
-        &ViewMode::PageView,
+        view_mode,
         Rect::new(0, 0, viewport.width, viewport.height),
         viewport.compose_width,
         super::reconcile::gutter_estimated_lines(state),
@@ -893,8 +888,7 @@ pub(crate) fn wrap_index_geometry_for(
             cols: viewport.grid_cols().max(1),
         }
     } else if line_wrap {
-        let (width, gutter_width) =
-            wrap_area_for(viewport, state, matches!(view_mode, ViewMode::PageView));
+        let (width, gutter_width) = wrap_area_for(viewport, state, view_mode);
         let wrap_config = WrapConfig::new(
             viewport.wrap_area_width(width, gutter_width),
             gutter_width,

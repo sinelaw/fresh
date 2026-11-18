@@ -8,6 +8,11 @@
 //!   as the user drags, preserving the click offset on the thumb so the
 //!   cursor stays pinned to the same spot on the thumb.
 //!
+//! Both take the pane's [`WrapIndexGeometry`] from
+//! [`wrap_index_geometry_for`](crate::view::ui::split_rendering::wrap_index_geometry_for),
+//! the key the renderer and every other scroll path use, so a click or drag
+//! counts the rows the thumb was drawn for.
+//!
 //! Both run in O(log N_lines) per call by reading from
 //! [`WrapIndex`](crate::view::wrap_index::WrapIndex) —
 //! the whole-buffer prefix-sum index over per-line visual row counts.
@@ -16,60 +21,8 @@
 //! index; subsequent calls (the steady state during a drag) are pure
 //! lookups.
 
-use crate::primitives::line_wrapping::WrapConfig;
 use crate::state::EditorState;
-use crate::view::line_wrap_cache::CacheViewMode;
 use crate::view::wrap_index::WrapIndexGeometry;
-use crate::view::wrap_machine::WrapRule;
-
-/// Geometry scroll math uses for these viewport dimensions, and the wrap index
-/// built for it.
-///
-/// Repeated calls during a drag with unchanged geometry are O(1): the index is
-/// already built for that geometry and an edit repaired it rather than
-/// invalidating it, so nothing is recomputed.
-///
-/// `wrap_width` is the renderer's effective wrap width — the compose-clamped
-/// width when `composeWidth` is set, otherwise the pane width.
-fn scroll_geometry(
-    state: &EditorState,
-    wrap_width: usize,
-    grid_cols: Option<usize>,
-    fold_signature: u64,
-    view_mode: CacheViewMode,
-) -> WrapIndexGeometry {
-    let rule = if let Some(cols) = grid_cols {
-        // Terminal scroll-back counts exact-column rows at the grid width — the
-        // same row model the renderer and the viewport scroll math use.
-        WrapRule::Grid { cols: cols.max(1) }
-    } else {
-        // The renderer's gutter, not an estimate of it: `render_buffer` and
-        // `split_rendering::scrollbar` build their `WrapConfig` around this
-        // same number, and a gutter one cell off here wraps the scroll math at
-        // a different column than the pane.
-        let gutter_width = crate::view::viewport::gutter_width(
-            &state.buffer,
-            state.margins.gutter_separator_drawn(),
-        );
-        let wrap_config = WrapConfig::new(wrap_width, gutter_width, true, true);
-        let effective_width = wrap_config
-            .first_line_width
-            .saturating_add(gutter_width)
-            .max(2);
-        WrapRule::Word {
-            content_width: effective_width,
-            gutter_width,
-            hanging_indent: wrap_config.hanging_indent,
-        }
-    };
-    WrapIndexGeometry {
-        // The pane's own mode: a composing pane counts compose's frame lines
-        // and soft breaks, a source pane beside it (dual mode) does not.
-        rule,
-        view_mode,
-        fold_signature,
-    }
-}
 
 /// Total visual rows under `geometry`, building the index if needed.
 fn total_rows(
@@ -101,18 +54,14 @@ pub(crate) fn scrollbar_jump_visual(
     state: &mut EditorState,
     ratio: f64,
     viewport_height: usize,
-    wrap_width: usize,
-    grid_cols: Option<usize>,
+    geometry: WrapIndexGeometry,
     pipeline_inputs_ver: crate::view::line_wrap_cache::PipelineInputs,
     fold_ranges: Vec<std::ops::Range<usize>>,
-    view_mode: CacheViewMode,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 {
         return (0, 0);
     }
 
-    let fold_sig = crate::view::wrap_index::fold_signature(&fold_ranges);
-    let geometry = scroll_geometry(state, wrap_width, grid_cols, fold_sig, view_mode);
     let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver, fold_ranges);
     if total_visual_rows == 0 {
         return (0, 0);
@@ -150,18 +99,14 @@ pub(crate) fn scrollbar_drag_relative_visual(
     drag_start_top_byte: usize,
     drag_start_view_line_offset: usize,
     viewport_height: usize,
-    wrap_width: usize,
-    grid_cols: Option<usize>,
+    geometry: WrapIndexGeometry,
     pipeline_inputs_ver: crate::view::line_wrap_cache::PipelineInputs,
     fold_ranges: Vec<std::ops::Range<usize>>,
-    view_mode: CacheViewMode,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 
-    let fold_sig = crate::view::wrap_index::fold_signature(&fold_ranges);
-    let geometry = scroll_geometry(state, wrap_width, grid_cols, fold_sig, view_mode);
     let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver, fold_ranges);
     if total_visual_rows == 0 {
         return (0, 0);

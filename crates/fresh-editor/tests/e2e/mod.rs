@@ -463,6 +463,7 @@ pub mod virtual_space;
 pub mod visual_regression;
 pub mod warning_indicators;
 #[cfg(feature = "plugins")]
+pub mod wheel_rows_match_drawn_rows;
 pub mod widget_panel_ownership;
 pub mod window_switch_explorer_first_frame;
 pub mod word_drag_selection;
