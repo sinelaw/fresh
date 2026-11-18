@@ -347,6 +347,7 @@
   "action.show_warnings": "显示警告",
   "action.smart_home": "智能 Home（切换行首/首个非空白字符）",
   "action.select_smart_home": "智能选择到行首（首个非空白字符/行首）",
+  "action.move_to_indentation": "移到缩进处（行首第一个非空白字符）",
   "action.sort_lines": "排序行",
   "action.split_horizontal": "水平分割",
   "action.split_vertical": "垂直分割",

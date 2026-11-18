@@ -3839,6 +3839,7 @@ pub fn action_to_events(
         | Action::ClearWarnings
         | Action::SmartHome
         | Action::SelectSmartHome
+        | Action::MoveToIndentation
         | Action::ToggleComment
         | Action::DabbrevExpand
         | Action::ToggleFold

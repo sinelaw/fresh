@@ -500,6 +500,9 @@ pub enum Action {
     SmartHome,
     /// `SmartHome` extending the selection instead of moving the cursor.
     SelectSmartHome,
+    /// Move to the first non-whitespace character of the line, without
+    /// toggling (Emacs `back-to-indentation`).
+    MoveToIndentation,
     DedentSelection,
     ToggleComment,
     DabbrevExpand,
@@ -1105,6 +1108,7 @@ impl Action {
 
             "smart_home" => SmartHome,
             "select_smart_home" => SelectSmartHome,
+            "move_to_indentation" => MoveToIndentation,
             "dedent_selection" => DedentSelection,
             "toggle_comment" => ToggleComment,
             "dabbrev_expand" => DabbrevExpand,
@@ -1554,6 +1558,7 @@ impl Action {
                 | Action::MoveLeftInLine
                 | Action::MoveRightInLine
                 | Action::MoveLineStart
+                | Action::MoveToIndentation
                 | Action::MoveLineEnd
                 | Action::MovePageUp
                 | Action::MovePageDown
@@ -3152,6 +3157,7 @@ impl KeybindingResolver {
             Action::JumpToPreviousError => t!("action.jump_to_previous_error"),
             Action::SmartHome => t!("action.smart_home"),
             Action::SelectSmartHome => t!("action.select_smart_home"),
+            Action::MoveToIndentation => t!("action.move_to_indentation"),
             Action::DedentSelection => t!("action.dedent_selection"),
             Action::ToggleComment => t!("action.toggle_comment"),
             Action::DabbrevExpand => std::borrow::Cow::Borrowed("Expand abbreviation (dabbrev)"),

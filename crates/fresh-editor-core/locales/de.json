@@ -347,6 +347,7 @@
   "action.show_warnings": "Warnungen anzeigen",
   "action.smart_home": "Intelligentes Home (Zeilenanfang/erstes Nicht-Leerzeichen)",
   "action.select_smart_home": "Intelligent bis Zeilenanfang auswählen (erstes Nicht-Leerzeichen/Zeilenanfang)",
+  "action.move_to_indentation": "Zur Einrückung (erstes Nicht-Leerzeichen der Zeile)",
   "action.sort_lines": "Zeilen sortieren",
   "action.split_horizontal": "Horizontal teilen",
   "action.split_vertical": "Vertikal teilen",

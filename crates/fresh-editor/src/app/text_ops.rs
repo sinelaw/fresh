@@ -19,6 +19,22 @@ impl Editor {
     /// the selection is extended to the same target instead
     /// (`select_smart_home`).
     pub(super) fn smart_home(&mut self, select: bool) {
+        self.home_to_indentation(select, true);
+    }
+
+    /// Back to indentation (Emacs `M-m`): move every cursor to the first
+    /// non-whitespace character of its physical line. Unlike smart home it
+    /// never toggles, so pressing it again leaves the cursor where it is.
+    pub(super) fn move_to_indentation(&mut self) {
+        self.home_to_indentation(false, false);
+    }
+
+    /// Shared driver for [`Self::smart_home`] and
+    /// [`Self::move_to_indentation`]. With `toggle` a cursor already on the
+    /// first non-whitespace character goes to the line start, and soft-wrapped
+    /// lines are handled per visual row; without it the target is always the
+    /// physical line's indentation.
+    fn home_to_indentation(&mut self, select: bool, toggle: bool) {
         let estimated_line_length = self.config.editor.estimated_line_length;
         let line_wrap = self.config.editor.line_wrap;
 
@@ -30,7 +46,7 @@ impl Editor {
             .map(|(id, c)| (id, *c))
             .collect();
 
-        let split_id = if line_wrap {
+        let split_id = if line_wrap && toggle {
             Some(self.active_window().split_manager().active_split())
         } else {
             None
@@ -74,7 +90,7 @@ impl Editor {
                 let first_non_ws =
                     super::smart_home::first_non_whitespace_offset(&head, usize::MAX)
                         .map_or(line_start, |offset| line_start + offset);
-                if cursor.position == first_non_ws {
+                if toggle && cursor.position == first_non_ws {
                     line_start
                 } else {
                     first_non_ws

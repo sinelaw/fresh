@@ -347,6 +347,7 @@
   "action.show_warnings": "Mostra avvisi",
   "action.smart_home": "Inizio riga intelligente (alterna inizio riga / primo carattere non vuoto)",
   "action.select_smart_home": "Selezione intelligente fino all'inizio (primo carattere non vuoto / inizio riga)",
+  "action.move_to_indentation": "Vai al rientro (primo carattere non spazio della riga)",
   "action.sort_lines": "Ordina righe",
   "action.split_horizontal": "Dividi orizzontalmente",
   "action.split_vertical": "Dividi verticalmente",

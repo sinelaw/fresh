@@ -1286,6 +1286,19 @@ impl Editor {
                 }
                 self.smart_home(true);
             }
+            Action::MoveToIndentation => {
+                // Composite (diff) views have no indentation-aware movement;
+                // they move to the line start, as smart_home does there.
+                let buffer_id = self.active_buffer();
+                if self.active_window().is_composite_buffer(buffer_id) {
+                    if let Some(_handled) =
+                        self.handle_composite_action(buffer_id, &Action::MoveToIndentation)
+                    {
+                        return Ok(());
+                    }
+                }
+                self.move_to_indentation();
+            }
             Action::ToggleComment => {
                 self.toggle_comment();
             }
