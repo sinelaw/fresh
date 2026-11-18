@@ -14,7 +14,7 @@ Fresh picks a language for a buffer in this order:
 
 The built-in set grows with most releases. Beyond mainstream languages, shells, and config and data formats, it covers more specialised ones such as shader languages (Slang, CUDA, HIP, Metal, GLSL), Fortran, LLVM IR and MLIR, assembly, the LaTeX family, Bazel/Starlark and CMake.
 
-To see every built-in language in the version you have installed, run `fresh --cmd grammar list`, or open **Open Settings** from the command palette and look under **Syntax & Languages → Languages**.
+To see every built-in language in the version you have installed, run **Open Settings** from the command palette and look under **Syntax & Languages → Languages**. `fresh --cmd grammar list` lists the syntax grammars available for highlighting.
 
 ## Language servers
 
@@ -34,7 +34,7 @@ Each language can be wired to an LSP server under `lsp.<language-id>` in config:
 }
 ```
 
-`enabled` defaults to `true`; `auto_start` defaults to `false`, so some servers must be started manually (run **Show LSP Status** from the palette). Language servers only run in a [trusted workspace](./workspace-trust.md). See [LSP Integration](./lsp.md) for the editor-side features.
+`enabled` defaults to `true`. Built-in servers do not start on their own: start one from the LSP status popup (run **Show LSP Status** from the palette), choosing **(always)** to keep it starting automatically. A server entry you write yourself starts automatically unless you set `"auto_start": false`. Language servers only run in a [trusted workspace](./workspace-trust.md). See [LSP Integration](./lsp.md) for the editor-side features.
 
 ### Assembly (asm-lsp)
 

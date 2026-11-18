@@ -26,8 +26,10 @@ The `theme` field in `config.json` accepts several forms, so you can point at a 
 { "theme": "my-theme.json" }                     // relative to ~/.config/fresh/themes
 { "theme": "subdir/dark.json" }                  // nested is fine
 
-{ "theme": "file://${HOME}/themes/x.json" }      // absolute path; ${HOME} and
-                                                  // ${XDG_CONFIG_HOME} are expanded
+{ "theme": "file://${HOME}/.config/fresh/themes/x.json" }
+                                                 // absolute path to a theme in the
+                                                 // themes directory; ${HOME} and
+                                                 // ${XDG_CONFIG_HOME} are expanded
 
 { "theme": "https://github.com/foo/themes#dark" } // URL-packaged theme; fragment
                                                    // picks one theme from the repo
@@ -46,7 +48,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
 2. **The Theme Editor Interface**:
    - Color fields show a preview swatch next to each value
    - Sections can be collapsed/expanded with `Enter`
-   - Navigate with `Up/Down` arrows, `Tab/Shift+Tab`, or mouse scroll
+   - Navigate with `Up/Down` arrows or mouse scroll; `Tab`/`Shift+Tab` switches between the tree and the color picker panel
    - Click color swatches to edit them directly
 
 3. **Editing Colors**:
@@ -79,7 +81,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    | Save As | `Ctrl+Shift+S` |
    | Delete theme | `Ctrl+D` |
    | Reset value / remove icon entry | `Delete` |
-   | Close | `Ctrl+Q` or `Escape` |
+   | Close | `Escape` |
    | Help | `F1` |
 
 5. **Working with Built-in Themes**:

@@ -85,10 +85,10 @@ Fresh merges all layers. Merge behavior depends on the setting type:
 Higher layers override lower layers. If a setting is not specified in a higher layer, it falls through to the next lower layer.
 
 ```
-System: theme = "default"    ← Base default
-User:   theme = "dark"       ← Overrides system
-Project: (not set)           ← Falls through
-Session: theme = "light"     ← Final value: "light"
+System:  theme = "high-contrast"  ← Base default
+User:    theme = "dark"           ← Overrides system
+Project: (not set)                ← Falls through
+Session: theme = "light"          ← Final value: "light"
 ```
 
 ### Nested Objects (editor, terminal, file_explorer)
@@ -221,7 +221,7 @@ For complex configurations (like LSP args or custom keybindings), click the `[ E
   },
   "languages": {
     "javascript": {
-      "formatter": "prettier --write"
+      "format_on_save": true
     }
   }
 }
@@ -489,8 +489,8 @@ Elements you can place:
 
 - **Workspace Trust** — whether this workspace is trusted; click to change it (see [Workspace Trust](../features/workspace-trust.md)). Leads the left side by default.
 - **Remote Indicator** — lights up when you're attached to an SSH remote or a devcontainer; click for connection actions.
-- **Filename** and **Read-Only** — the file's path, and an `[RO]` badge while the buffer is read-only.
-- **Cursor**, **Cursor Count** and **Search Navigation** — the cursor position, the number of cursors when there's more than one, and clickable `↓` / `↑` arrows while a search is active (like F3 / Shift+F3).
+- **Filename** and **Read-Only** — the file's path (not shown by default, since the tab already names the file), and an `[RO]` badge while the buffer is read-only.
+- **Cursor** (or the shorter **Cursor (compact)**), **Cursor Count** and **Search Navigation** — the cursor position, the number of cursors when there's more than one, and clickable `↓` / `↑` arrows while a search is active (like F3 / Shift+F3).
 - **Diagnostics** and **Warnings** — error and warning counts.
 - **Line Ending**, **Encoding** and **Language** — click to change each one.
 - **LSP** — language server status; click for the server popup (see [LSP](../features/lsp.md)).
@@ -639,7 +639,7 @@ To prevent LSP servers from consuming too many resources, Fresh can limit their 
       "command": "rust-analyzer",
       "enabled": true,
       "process_limits": {
-        "max_memory_mb": 4096,
+        "max_memory_percent": 25,
         "max_cpu_percent": 200
       }
     }
@@ -647,4 +647,4 @@ To prevent LSP servers from consuming too many resources, Fresh can limit their 
 }
 ```
 
-The `max_memory_mb` limit is enforced via platform-specific mechanisms. `max_cpu_percent` is relative to one core (e.g. 200 = two full cores).
+`max_memory_percent` is a share of total system memory. `max_cpu_percent` is relative to one core (e.g. 200 = two full cores).
