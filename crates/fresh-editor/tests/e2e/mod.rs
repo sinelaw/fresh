@@ -27,6 +27,7 @@ pub mod command_palette;
 pub mod compose_only_decorations;
 pub mod conceal_spanning_line_break;
 pub mod config_language_selector;
+pub mod config_save_with_invalid_fields;
 pub mod confirm_dialog;
 pub mod copy_buffer_path;
 pub mod crash_repro;

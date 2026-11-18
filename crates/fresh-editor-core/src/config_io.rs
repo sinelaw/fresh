@@ -540,14 +540,7 @@ impl ConfigResolver {
     pub fn resolve(&self) -> Result<Config, ConfigError> {
         // Load one layer, skipping it (with a warning) when it can't be read
         // or parsed, so one bad file never resets the others to defaults.
-        let lenient = |name: &str, loaded: Result<Option<PartialConfig>, ConfigError>| match loaded
-        {
-            Ok(partial) => partial,
-            Err(e) => {
-                tracing::warn!("Ignoring the {} config layer: {}", name, e);
-                None
-            }
-        };
+        let lenient = skip_unloadable_layer;
 
         // Start with highest precedence layer (Session)
         let mut merged = lenient("session", self.load_session_layer()).unwrap_or_default();
@@ -721,26 +714,29 @@ impl ConfigResolver {
         // Preserve any manual edits made externally; delta takes precedence.
         // Fail loudly on an unparseable existing file rather than discarding it
         // (which would clobber the user's whole config on write).
-        let existing: PartialConfig = if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-            if content.trim().is_empty() {
-                PartialConfig::default()
-            } else {
-                let mut value = crate::config::parse_config_jsonc(&content)
-                    .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
-                rename_legacy_keys(&mut value);
-                serde_json::from_value(value)
-                    .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?
-            }
-        } else {
-            PartialConfig::default()
-        };
+        let mut original = read_existing_json(&path)?;
+        rename_legacy_keys(&mut original);
+        // Invalid fields the file already has (the loader ignores them with a
+        // warning) don't block the save: the rest of the file is merged, and
+        // they are put back afterwards for the user to fix.
+        let mut pruned = original.clone();
+        let removed = prune_invalid_fields(&mut pruned);
+        let existing: PartialConfig = serde_json::from_value(pruned)
+            .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
+        let existing_value = serde_json::to_value(&existing)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
         let mut merged = delta;
         merged.merge_from(&existing);
 
-        let merged_value = serde_json::to_value(&merged)
+        let mut merged_value = serde_json::to_value(&merged)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        restore_invalid_fields(
+            &mut merged_value,
+            &original,
+            &existing_value,
+            &removed,
+            &path,
+        );
         write_clean_value_to_path(&path, merged_value)
     }
 
@@ -758,6 +754,24 @@ impl ConfigResolver {
 
         let mut config_value = read_existing_json(&path)?;
         rename_legacy_keys(&mut config_value);
+
+        // A change that replaces a whole array or object the file had an
+        // invalid entry in drops that entry: say so, since the user's file
+        // loses something they wrote.
+        let mut existing_pruned = config_value.clone();
+        for (pointer, _) in prune_invalid_fields(&mut existing_pruned) {
+            if let Some(change) = changes
+                .keys()
+                .find(|c| pointer.starts_with(&format!("{}/", c)))
+            {
+                tracing::warn!(
+                    "{}: dropping invalid setting \"{}\" as \"{}\" is replaced",
+                    path.display(),
+                    pointer,
+                    change
+                );
+            }
+        }
 
         for pointer in deletions {
             remove_json_pointer(&mut config_value, pointer);
@@ -824,6 +838,10 @@ impl ConfigResolver {
 
     /// Resolve config by merging layers below the target layer.
     /// Used to calculate the "parent" config for delta serialization.
+    ///
+    /// A layer that can't be loaded is skipped with a warning, as
+    /// [`ConfigResolver::resolve`] skips it, so it doesn't block saves to the
+    /// layers above it.
     fn resolve_up_to_layer(&self, layer: ConfigLayer) -> Result<PartialConfig, ConfigError> {
         let mut merged = PartialConfig::default();
 
@@ -832,23 +850,24 @@ impl ConfigResolver {
         // Project layer: parent includes UserPlatform + User
         // User layer: parent is empty (system defaults applied during resolve)
 
+        let lenient = skip_unloadable_layer;
         if layer == ConfigLayer::Session {
             // Session's parent is Project + UserPlatform + User
-            if let Some(project) = self.load_project_layer()? {
+            if let Some(project) = lenient("project", self.load_project_layer()) {
                 merged = project;
             }
-            if let Some(platform) = self.load_user_platform_layer()? {
+            if let Some(platform) = lenient("user platform", self.load_user_platform_layer()) {
                 merged.merge_from(&platform);
             }
-            if let Some(user) = self.load_user_layer()? {
+            if let Some(user) = lenient("user", self.load_user_layer()) {
                 merged.merge_from(&user);
             }
         } else if layer == ConfigLayer::Project {
             // Project's parent is UserPlatform + User
-            if let Some(platform) = self.load_user_platform_layer()? {
+            if let Some(platform) = lenient("user platform", self.load_user_platform_layer()) {
                 merged = platform;
             }
-            if let Some(user) = self.load_user_layer()? {
+            if let Some(user) = lenient("user", self.load_user_layer()) {
                 merged.merge_from(&user);
             }
         }
@@ -921,6 +940,105 @@ where
     }
 }
 
+/// A loaded layer, or `None` (with a warning) when it couldn't be read or
+/// parsed: one bad file is skipped rather than resetting the others or
+/// blocking saves to them.
+fn skip_unloadable_layer(
+    name: &str,
+    loaded: Result<Option<PartialConfig>, ConfigError>,
+) -> Option<PartialConfig> {
+    match loaded {
+        Ok(partial) => partial,
+        Err(e) => {
+            tracing::warn!("Ignoring the {} config layer: {}", name, e);
+            None
+        }
+    }
+}
+
+/// Put the invalid fields `removed` (pruned from the layer file `original`,
+/// leaving `existing`, as serialized from its [`PartialConfig`]) back into
+/// `merged`, the value about to be written to `path`, so a save doesn't
+/// silently delete what the user wrote. A field
+/// the save itself sets keeps the saved value. An invalid array element goes
+/// back at its index when the save left that array as the file had it
+/// (less the invalid elements); when the save replaced the array, the
+/// element is dropped with a warning.
+fn restore_invalid_fields(
+    merged: &mut Value,
+    original: &Value,
+    existing: &Value,
+    removed: &[(String, String)],
+    path: &Path,
+) {
+    // Whether each array that lost elements was saved as the file had it,
+    // decided before any element goes back in.
+    let mut arrays_kept = std::collections::HashMap::new();
+    for (pointer, _) in removed {
+        let Some((parent, _)) = pointer.rsplit_once('/') else {
+            continue;
+        };
+        if let Some(Value::Array(_)) = existing.pointer(parent) {
+            arrays_kept
+                .entry(parent.to_string())
+                .or_insert_with(|| merged.pointer(parent) == existing.pointer(parent));
+        }
+    }
+    for (pointer, _) in removed {
+        let Some(value) = original.pointer(pointer) else {
+            continue;
+        };
+        let Some((parent, last)) = pointer.rsplit_once('/') else {
+            continue;
+        };
+        match arrays_kept.get(parent) {
+            Some(true) => {
+                if let (Some(Value::Array(items)), Ok(index)) =
+                    (merged.pointer_mut(parent), last.parse::<usize>())
+                {
+                    items.insert(index.min(items.len()), value.clone());
+                }
+            }
+            Some(false) => tracing::warn!(
+                "{}: dropping invalid setting \"{}\" as \"{}\" is replaced",
+                path.display(),
+                pointer,
+                parent
+            ),
+            None => {
+                if merged.pointer(pointer).is_none_or(Value::is_null) {
+                    insert_at_pointer(merged, pointer, value.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Set the object key at JSON pointer `pointer` (escaped segments) in
+/// `root` to `value`, creating intermediate objects as needed.
+fn insert_at_pointer(root: &mut Value, pointer: &str, value: Value) {
+    let segments: Vec<String> = pointer
+        .split('/')
+        .skip(1)
+        .map(|seg| seg.replace("~1", "/").replace("~0", "~"))
+        .collect();
+    let Some((last, parents)) = segments.split_last() else {
+        return;
+    };
+    let mut current = root;
+    for seg in parents {
+        let Value::Object(map) = current else {
+            return;
+        };
+        current = map
+            .entry(seg.clone())
+            .or_insert_with(|| Value::Object(Default::default()));
+    }
+    if let Value::Object(map) = current {
+        map.insert(last.clone(), value);
+    }
+}
+
 /// Upper bound on the fields [`prune_invalid_fields`] drops from one layer,
 /// so a file that is wrong throughout stops early and fails as a whole.
 const MAX_PRUNED_FIELDS: usize = 32;
@@ -934,9 +1052,12 @@ const MAX_PRUNED_FIELDS: usize = 32;
 /// deserializes with it added. An object that doesn't fit as a whole is
 /// rebuilt the same way, one level down, when an empty object fits in its
 /// place (otherwise, e.g. a struct with a required field, it is dropped
-/// whole). Arrays and scalars are kept or dropped whole. When the root
-/// isn't an object, or more than [`MAX_PRUNED_FIELDS`] fields would go,
-/// nothing is removed and the layer fails as a whole.
+/// whole). An array that doesn't fit is rebuilt element by element when an
+/// empty array fits, so one bad entry (say a keybinding with `"key": 5`)
+/// goes on its own, reported at its index in the original array. Scalars
+/// and array elements are kept or dropped whole. When the root isn't an
+/// object, or more than [`MAX_PRUNED_FIELDS`] fields would go, nothing is
+/// removed and the layer fails as a whole.
 fn prune_invalid_fields(value: &mut Value) -> Vec<(String, String)> {
     if serde_json::from_value::<PartialConfig>(value.clone()).is_ok() {
         return Vec::new();
@@ -975,10 +1096,40 @@ fn rebuild_valid_object(
                 {
                     rebuild_valid_object(root, path, child_map, removed);
                 }
+                Value::Array(items)
+                    if !items.is_empty()
+                        && try_insert_path(root, path, Value::Array(Vec::new())).is_ok() =>
+                {
+                    rebuild_valid_array(root, path, items, removed);
+                }
                 _ => removed.push((json_pointer(path), err)),
             },
         }
         path.pop();
+    }
+}
+
+/// Append the elements of `original` one by one to the (empty) array at
+/// `path` in `root`, keeping those with which `root` still deserializes.
+/// Dropped elements are appended to `removed` at their index in `original`.
+fn rebuild_valid_array(
+    root: &mut Value,
+    path: &mut Vec<String>,
+    original: Vec<Value>,
+    removed: &mut Vec<(String, String)>,
+) {
+    let pointer = json_pointer(path);
+    for (index, item) in original.into_iter().enumerate() {
+        let Some(Value::Array(items)) = root.pointer_mut(&pointer) else {
+            return;
+        };
+        items.push(item);
+        if let Err(e) = serde_json::from_value::<PartialConfig>(root.clone()) {
+            if let Some(Value::Array(items)) = root.pointer_mut(&pointer) {
+                items.pop();
+            }
+            removed.push((format!("{}/{}", pointer, index), e.to_string()));
+        }
     }
 }
 
@@ -2323,6 +2474,141 @@ mod tests {
         let config = resolver.resolve().unwrap();
         assert_eq!(&*config.theme, "light");
         assert_eq!(config.editor.tab_size, 2);
+    }
+
+    #[test]
+    fn issue_3776_save_to_layer_works_with_invalid_fields_and_keeps_them() {
+        // Select Keybinding Map (and the other `save_to_layer` callers)
+        // with an invalid field in the file: the save goes through and the
+        // invalid field stays for the user to fix.
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"theme": "light", "editor": {"tab_size": "four", "line_numbers": false}}"#,
+        )
+        .unwrap();
+
+        let mut config = resolver.resolve().unwrap();
+        config.active_keybinding_map = "emacs".to_string().into();
+        resolver
+            .save_to_layer(&config, ConfigLayer::User)
+            .expect("an unrelated save goes through");
+
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        assert_eq!(saved["active_keybinding_map"], "emacs", "{saved}");
+        assert_eq!(saved["theme"], "light", "{saved}");
+        assert_eq!(saved["editor"]["line_numbers"], false, "{saved}");
+        assert_eq!(
+            saved["editor"]["tab_size"], "four",
+            "the user's invalid field is left for them to fix: {saved}"
+        );
+        assert_eq!(&*resolver.resolve().unwrap().active_keybinding_map, "emacs");
+
+        // Setting the invalid key itself replaces it.
+        let mut config = resolver.resolve().unwrap();
+        config.editor.tab_size = 2;
+        resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
+        assert_eq!(resolver.resolve().unwrap().editor.tab_size, 2);
+    }
+
+    #[test]
+    fn issue_3776_unparseable_lower_layer_does_not_block_saves_above_it() {
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(&resolver, r#"{"theme": "#, r#"{}"#);
+
+        let mut config = resolver.resolve().unwrap();
+        config.editor.tab_size = 7;
+        resolver
+            .save_to_layer(&config, ConfigLayer::Project)
+            .expect("the unparseable user layer is skipped, as resolve() skips it");
+        resolver
+            .save_setting_to_layer(&config, "/editor/tab_size", ConfigLayer::Project)
+            .expect("so is save_setting_to_layer");
+        assert_eq!(resolver.resolve().unwrap().editor.tab_size, 7);
+        assert_eq!(
+            std::fs::read_to_string(resolver.user_config_path()).unwrap(),
+            r#"{"theme": "#,
+            "the broken user layer is not touched"
+        );
+    }
+
+    const KEYBINDINGS_WITH_ONE_BAD: &str = r#"{"keybindings": [
+        {"key": "a", "modifiers": ["alt"], "action": "move_left"},
+        {"key": 5, "action": "move_right"},
+        {"key": "b", "modifiers": ["alt"], "action": "move_up"}
+    ]}"#;
+
+    #[test]
+    fn issue_3776_one_bad_array_element_drops_only_that_element() {
+        let mut value: Value = serde_json::from_str(KEYBINDINGS_WITH_ONE_BAD).unwrap();
+        let removed = prune_invalid_fields(&mut value);
+        let pointers: Vec<&str> = removed.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(pointers, vec!["/keybindings/1"]);
+
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(&resolver, KEYBINDINGS_WITH_ONE_BAD, "{}");
+        let config = resolver.resolve().unwrap();
+        let actions: Vec<&str> = config
+            .keybindings
+            .iter()
+            .map(|k| k.action.as_str())
+            .collect();
+        assert_eq!(actions, vec!["move_left", "move_up"]);
+    }
+
+    #[test]
+    fn issue_3776_bad_array_element_survives_unrelated_save() {
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(&resolver, KEYBINDINGS_WITH_ONE_BAD, "{}");
+        let path = resolver.user_config_path();
+        let before: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        let mut config = resolver.resolve().unwrap();
+        config.active_keybinding_map = "emacs".to_string().into();
+        resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
+
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["active_keybinding_map"], "emacs");
+        assert_eq!(
+            saved["keybindings"], before["keybindings"],
+            "the bindings, the invalid one too, stay as written"
+        );
+    }
+
+    #[test]
+    fn issue_3776_keybinding_editor_save_keeps_valid_bindings() {
+        // The keybinding editor writes `/keybindings` from memory: the
+        // valid bindings are there, so only the invalid one is lost.
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(&resolver, KEYBINDINGS_WITH_ONE_BAD, "{}");
+        let mut config = resolver.resolve().unwrap();
+        let mut added = config.keybindings[0].clone();
+        added.key = "c".to_string();
+        added.action = "move_down".to_string();
+        config.keybindings.push(added);
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "/keybindings".to_string(),
+            serde_json::to_value(&config.keybindings).unwrap(),
+        );
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(resolver.user_config_path()).unwrap())
+                .unwrap();
+        let actions: Vec<&str> = saved["keybindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(actions, vec!["move_left", "move_up", "move_down"]);
     }
 
     #[test]
