@@ -184,6 +184,9 @@ fn test_prev_pane_two_splits_reverse() {
     // We're on split1 (B). PrevPane goes to (split1, A).
     prev_pane(&mut harness);
     assert_eq!(harness.get_buffer_content().unwrap(), "content of A");
+    // The status names the command, not its locale key (#3797).
+    harness.assert_screen_contains("Previous Pane");
+    harness.assert_screen_not_contains("cmd.prev_pane");
 
     // From (split1, A), PrevPane wraps to (split0, A).
     prev_pane(&mut harness);
