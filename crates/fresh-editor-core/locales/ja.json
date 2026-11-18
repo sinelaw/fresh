@@ -2418,6 +2418,6 @@
   "dialog.title.name_conflict": "名前の衝突",
   "dialog.title.large_file": "大きなファイル",
   "dialog.title.go_to_line": "行へ移動",
-  "prompt.cancelled": "キャンセルしました。",
+  "prompt.cancelled": "キャンセルしました",
   "explorer.title": "ファイルエクスプローラー"
 }

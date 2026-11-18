@@ -2418,6 +2418,6 @@
   "dialog.title.name_conflict": "이름 충돌",
   "dialog.title.large_file": "큰 파일",
   "dialog.title.go_to_line": "줄로 이동",
-  "prompt.cancelled": "취소되었습니다.",
+  "prompt.cancelled": "취소되었습니다",
   "explorer.title": "파일 탐색기"
 }

@@ -2436,6 +2436,6 @@
   "dialog.title.name_conflict": "Konflikt názvů",
   "dialog.title.large_file": "Velký soubor",
   "dialog.title.go_to_line": "Přejít na řádek",
-  "prompt.cancelled": "Zrušeno.",
+  "prompt.cancelled": "Zrušeno",
   "explorer.title": "Průzkumník souborů"
 }

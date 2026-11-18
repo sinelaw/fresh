@@ -2445,6 +2445,6 @@
   "dialog.title.name_conflict": "Конфлікт імен",
   "dialog.title.large_file": "Великий файл",
   "dialog.title.go_to_line": "Перейти до рядка",
-  "prompt.cancelled": "Скасовано.",
+  "prompt.cancelled": "Скасовано",
   "explorer.title": "Провідник файлів"
 }
