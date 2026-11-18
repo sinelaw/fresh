@@ -2509,8 +2509,11 @@ impl Editor {
     }
 
     /// Handle UnregisterCommand command
-    pub(super) fn handle_unregister_command(&self, name: String) {
-        self.command_registry.read().unwrap().unregister(&name);
+    pub(super) fn handle_unregister_command(&self, name: String, plugin_name: String) {
+        self.command_registry
+            .read()
+            .unwrap()
+            .unregister_from_plugin(&name, &plugin_name);
     }
 
     /// Handle DefineMode command
