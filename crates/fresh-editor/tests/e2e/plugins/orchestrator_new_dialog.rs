@@ -2248,3 +2248,38 @@ fn a_config_alias_is_handed_to_ssh_as_the_alias() {
             )
         });
 }
+
+/// A repository whose `origin` was added by hand has no
+/// `refs/remotes/origin/HEAD` (only a clone sets it). The Branch-from note
+/// says that, not "no origin configured" (#3804).
+#[test]
+fn branch_from_note_tells_a_missing_origin_head_from_no_origin() {
+    let (_temp, workspace) = set_up_workspace();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&workspace)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+    };
+    git(&["init", "-q"]);
+    fs::write(workspace.join("README"), "x").unwrap();
+    git(&["add", "README"]);
+    git(&["commit", "-q", "-m", "init"]);
+    git(&["remote", "add", "origin", "https://example.com/repo.git"]);
+
+    let mut harness = open_form_on(&workspace);
+    set_details(&mut harness, true);
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("origin has no default branch set")
+        })
+        .unwrap();
+    harness.assert_screen_not_contains("no origin configured");
+}

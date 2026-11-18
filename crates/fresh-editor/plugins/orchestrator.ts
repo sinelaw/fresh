@@ -267,6 +267,9 @@ type CreateSpec =
       // Row label + project shown on the pending dock row.
       displayLabel: string;
       displayProject: string;
+      // Requested by a script (`newWorkspace`), not the dialog: its agent
+      // is not the user's choice, so the dialog does not reopen on it.
+      fromScript?: boolean;
     }
   | {
       backend: "ssh" | "kubernetes";
@@ -603,11 +606,12 @@ interface NewSessionForm {
   // the exact base ref the worktree will fork off if they
   // leave the field blank.
   defaultBranch: string;
-  // True when the default branch fell through to bare `HEAD`
-  // because no `origin` is configured. Surfaced in the
-  // placeholder as `HEAD  (no origin configured)` so the user
-  // knows why.
-  defaultBranchIsHeadFallback: boolean;
+  // Why the default branch fell through to bare `HEAD`, or null when
+  // it did not: no `origin` is configured, or `origin` is but its
+  // `refs/remotes/origin/HEAD` is not set. Surfaced in the
+  // placeholder (`HEAD  (no origin configured)`) so the user knows
+  // why.
+  defaultBranchFallback: HeadFallback | null;
   // True when this form was opened from the picker (Alt+N or
   // the "+ New Session" button). On cancel (Esc / Cancel
   // button) we re-open the picker so the user lands back where
@@ -3563,12 +3567,30 @@ function sweepAttention(): void {
 // the order the dock lists them, never the one they are already in.
 function attentionTarget(): number | null {
   const active = editor.activeWindow();
+  // A create that failed waits on the user (retry or dismiss) just as a
+  // blocked agent does, and the Workboard's beacon counts it as waiting.
+  const failed = (s: AgentSession): boolean => s.pending?.phase === "error";
   const live = [...orchestratorSessions.values()].filter(
-    (s) => !s.discovered && !s.pending && s.id > 0 && s.id !== active && !jumpVisited.has(s.id),
+    (s) =>
+      !s.discovered && (!s.pending || failed(s)) && s.id > 0 && s.id !== active &&
+      !jumpVisited.has(s.id),
   );
   const pick = (st: AgentState): number | null =>
-    live.find((s) => sessionState(s) === st)?.id ?? null;
+    live.find((s) => (failed(s) ? "blocked" : sessionState(s)) === st)?.id ?? null;
   return pick("blocked") ?? pick("done");
+}
+
+// Remember where a jump to `target` came from, so Jump Back returns there.
+// A fresh chain starts from wherever the user is; a continued one keeps its
+// original return point.
+function recordJump(target: number): void {
+  const from = editor.activeWindow();
+  if (!jumpVisited.has(from)) {
+    jumpReturnId = from;
+    jumpVisited.clear();
+    jumpVisited.add(from);
+  }
+  jumpVisited.add(target);
 }
 
 // Jump to what needs you; with nothing pending, the same command returns
@@ -3584,15 +3606,7 @@ function jumpToAttention(): void {
     jumpBack();
     return;
   }
-  const from = editor.activeWindow();
-  // A fresh chain starts from wherever the user is; a continued one keeps
-  // its original return point.
-  if (!jumpVisited.has(from)) {
-    jumpReturnId = from;
-    jumpVisited.clear();
-    jumpVisited.add(from);
-  }
-  jumpVisited.add(target);
+  recordJump(target);
   editor.setActiveWindow(target);
 }
 
@@ -9005,14 +9019,17 @@ async function detectDefaultBranch(repoRoot: string): Promise<string> {
   return (await detectDefaultBranchWithFallback(repoRoot)).ref;
 }
 
-/// Like `detectDefaultBranch` but also reports whether we had to
-/// fall back to bare `HEAD` because no `origin` is configured. The
-/// caller uses that to surface a context note in the placeholder
-/// ("HEAD  (no origin configured)") so the user isn't confused
-/// about why their repo's default isn't being detected.
+/// Why the default branch is bare `HEAD`: there is no `origin`, or there
+/// is one whose default branch (`refs/remotes/origin/HEAD`) was never set.
+type HeadFallback = "no_origin" | "origin_head_unset";
+
+/// Like `detectDefaultBranch` but also reports why we had to fall back
+/// to bare `HEAD`, if we did. The caller uses that to surface a context
+/// note in the placeholder ("HEAD  (no origin configured)") so the user
+/// isn't confused about why their repo's default isn't being detected.
 async function detectDefaultBranchWithFallback(
   repoRoot: string,
-): Promise<{ ref: string; isHeadFallback: boolean }> {
+): Promise<{ ref: string; fallback: HeadFallback | null }> {
   const res = await spawnCollect(
     "git",
     ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
@@ -9025,10 +9042,17 @@ async function detectDefaultBranchWithFallback(
       // e.g. "refs/remotes/origin/main" → "origin/main". This is
       // what the new worktree is forked off, so the user sees the
       // exact ref name they'd otherwise have to type by hand.
-      return { ref: trimmed.slice(prefix.length), isHeadFallback: false };
+      return { ref: trimmed.slice(prefix.length), fallback: null };
     }
   }
-  return { ref: "HEAD", isHeadFallback: true };
+  // `origin/HEAD` is only set by a clone (or `git remote set-head`), so an
+  // `origin` added by hand has none: say that, not "no origin".
+  const origin = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "remote", "get-url", "origin"],
+    repoRoot,
+  );
+  return { ref: "HEAD", fallback: origin.code === 0 ? "origin_head_unset" : "no_origin" };
 }
 
 /// Resolve a directory to the *main* worktree's root if it's
@@ -13628,8 +13652,10 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
     branch = { placeholder: "", note: editor.t("form.branch_checkout_inplace") };
   } else if (!f.defaultBranch) {
     branch = { placeholder: editor.t("form.detecting_default_branch"), note: "" };
-  } else if (f.defaultBranchIsHeadFallback) {
+  } else if (f.defaultBranchFallback === "no_origin") {
     branch = splitPlaceholder(editor.t("form.branch_head_fallback"));
+  } else if (f.defaultBranchFallback === "origin_head_unset") {
+    branch = splitPlaceholder(editor.t("form.branch_head_origin_unset"));
   } else {
     branch = { placeholder: f.defaultBranch, note: "" };
   }
@@ -14488,7 +14514,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     projectPathIsLinkedWorktree: null,
     defaultSessionName: "",
     defaultBranch: "",
-    defaultBranchIsHeadFallback: false,
+    defaultBranchFallback: null,
     fromPicker: !!options?.fromPicker,
     probeToken: 0,
     historyCursor: { project_path: -1, name: -1, cmd: -1, branch: -1 },
@@ -14689,13 +14715,13 @@ async function probeProjectPathDefaults(): Promise<void> {
   //     surfaces a "no git — N/A" branch placeholder, and the
   //     session name still works against the counter alone).
   if (isGit) {
-    const [{ ref, isHeadFallback }, sessionName] = await Promise.all([
+    const [{ ref, fallback }, sessionName] = await Promise.all([
       detectDefaultBranchWithFallback(effectivePath),
       nextAutoSessionName(effectivePath),
     ]);
     if (!form || form.probeToken !== token) return;
     form.defaultBranch = ref;
-    form.defaultBranchIsHeadFallback = isHeadFallback;
+    form.defaultBranchFallback = fallback;
     form.defaultSessionName = sessionName;
   } else {
     // Non-git: still surface a numeric placeholder for Session
@@ -14705,7 +14731,7 @@ async function probeProjectPathDefaults(): Promise<void> {
     const sessionName = await nextAutoSessionName(effectivePath);
     if (!form || form.probeToken !== token) return;
     form.defaultBranch = "";
-    form.defaultBranchIsHeadFallback = false;
+    form.defaultBranchFallback = null;
     form.defaultSessionName = sessionName;
   }
   renderForm();
@@ -15880,8 +15906,9 @@ async function runLocalCreate(id: number): Promise<void> {
   }
 
   // Remembered even when empty: the terminal is a choice too, and a stored
-  // choice is what spares the next launch from asking (`agentUnset`).
-  editor.setGlobalState("orchestrator.last_cmd", cmd);
+  // choice is what spares the next launch from asking (`agentUnset`). Not
+  // for a script's create, which the user did not choose in the dialog.
+  if (!spec.fromScript) editor.setGlobalState("orchestrator.last_cmd", cmd);
 
   // Attach-to-existing-worktree classification for the no-worktree path
   // (a linked worktree the user pointed at directly).
@@ -16818,8 +16845,12 @@ export type OrchestratorApi = DiscoveryHost & {
    *  the list returns.
    *
    *  Resolves `true` once the workspace is active, `false` if no workspace
-   *  matches. */
-  focusWorkspace(target: string | number): Promise<boolean>;
+   *  matches.
+   *
+   *  `asJump` counts the switch as a jump to attention, so
+   *  **Orchestrator: Jump Back** returns to the workspace you were in (the
+   *  Workboard's Next Waiting Agent does this). */
+  focusWorkspace(target: string | number, options?: { asJump?: boolean }): Promise<boolean>;
 
   // ── organising the dock ────────────────────────────────────────────────
   // The headless twins of the dock's row context menu and its "New Task… ▾"
@@ -17107,7 +17138,9 @@ function specForNewWorkspace(options: NewWorkspaceOptions): CreateSpec {
     // The dialog keeps itself open on a bad host and shows the message; a
     // caller gets the same message as a thrown error.
     if (!built.ok) throw new Error(built.error);
-    return built.spec;
+    // A script's agent is not the user's choice: the dialog's remembered
+    // command stays as the user left it.
+    return built.spec.backend === "local" ? built.spec : { ...built.spec, persistCmd: "" };
   }
 
   const requestedPath = trimmed(options.path);
@@ -17119,7 +17152,7 @@ function specForNewWorkspace(options: NewWorkspaceOptions): CreateSpec {
   if (requestedPath && !editor.fileExists(editor.localPath(requestedPath))) {
     throw new Error(`project path does not exist: ${requestedPath}`);
   }
-  return buildLocalSpec({
+  const local = buildLocalSpec({
     ...agentOptions,
     projectPath,
     // "" ⇒ `runLocalCreate` allocates the next `<project>-N` name, the same
@@ -17132,6 +17165,8 @@ function specForNewWorkspace(options: NewWorkspaceOptions): CreateSpec {
     // it to false on its own when the path isn't a git tree.
     createWorktree: options.worktree ?? true,
   });
+  if (local.backend === "local") local.fromScript = true;
+  return local;
 }
 
 async function newWorkspace(
@@ -17233,7 +17268,10 @@ function workspaceOrder(): { windowId: number; name: string }[] {
 /// from listWorkspaces()" operation has to know how to *make* the window when
 /// there isn't one. That is what `attachToWorktree` does, and doing it behind
 /// one verb means a caller never has to learn the distinction.
-async function focusWorkspace(target: string | number): Promise<boolean> {
+async function focusWorkspace(
+  target: string | number,
+  options?: { asJump?: boolean },
+): Promise<boolean> {
   const match = resolveWorkspace(target);
   if (!match) return false;
 
@@ -17251,7 +17289,10 @@ async function focusWorkspace(target: string | number): Promise<boolean> {
   }
 
   if (match.id <= 0) return false;
-  if (match.id !== editor.activeWindow()) editor.setActiveWindow(match.id);
+  if (match.id !== editor.activeWindow()) {
+    if (options?.asJump) recordJump(match.id);
+    editor.setActiveWindow(match.id);
+  }
   return true;
 }
 
