@@ -500,7 +500,7 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Line numbers | Show line numbers in gutter | on |
-| Line wrap | Soft-wrap long lines | off |
+| Line wrap | Soft-wrap long lines | on |
 | Rulers | Column positions for vertical ruler lines | none |
 | Indentation guides | Draw all guides, the active guide, or none | none |
 | Rainbow indentation | Color indentation-guide levels using theme `indent_rainbow_*` colors | off |

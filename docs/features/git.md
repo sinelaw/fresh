@@ -54,7 +54,7 @@ The gutter marks lines that differ from git: added, modified, and deleted lines 
 
 ## Monorepos and Nested Repositories
 
-Git features work inside nested repositories even when the folder you opened is not itself a repository. Each sub-project gets file-explorer git decorations, its branch in the status bar, **Git Blame**, **Git Log**, **Git Grep** and **Git Find File**.
+Git features work inside nested repositories even when the folder you opened is not itself a repository. Each sub-project gets file-explorer git decorations, its own branch in the status bar's optional **Git: branch** element, **Git Blame**, **Git Log**, **Git Grep** and **Git Find File**.
 
 ## Diff Chunk Navigation
 
