@@ -1,1 +1,4 @@
-../default/.gitignore
+__pycache__/
+*.pyc
+node_modules/
+build/
