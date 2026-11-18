@@ -2,7 +2,7 @@
 
 > **Palette:** `Workboard: Open`, `Workboard: Next Waiting Agent` · **Menu:** View → Workboard
 >
-> **Needs:** the Orchestrator plugin, which provides the workspaces it shows.
+> **Needs:** the [Orchestrator](./orchestrator.md) plugin, which provides the workspaces it shows.
 
 The Workboard puts every Orchestrator workspace and its coding agent on one full-screen board, together with the agent sessions running outside the editor and the ones found in your agents' history, so you can see at a glance which agents are waiting on you, which have finished, and which are still working. Press `Enter` on a card to open that workspace.
 
