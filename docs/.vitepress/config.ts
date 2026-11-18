@@ -62,6 +62,7 @@ export default defineConfig({
         items: [
           { text: "Overview", link: "/features/" },
           { text: "Editing", link: "/features/editing" },
+          { text: "Markdown", link: "/features/markdown" },
           { text: "Command Palette", link: "/features/command-palette" },
           { text: "Navigation", link: "/features/navigation" },
           { text: "File Explorer", link: "/features/file-explorer" },

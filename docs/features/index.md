@@ -1,6 +1,7 @@
 # Features
 
 - [Editing](./editing.md) - Multiple cursors, advanced selection, unlimited undo/redo
+- [Markdown](./markdown.md) - Compose and dual source/rendered views, Mermaid and math previews, a Contents outline
 - [Command Palette](./command-palette.md) - Quick access to commands, files, and navigation
 - [Navigation](./navigation.md) - Go to definition, position history
 - [File Explorer](./file-explorer.md) - Browse and manage project files
