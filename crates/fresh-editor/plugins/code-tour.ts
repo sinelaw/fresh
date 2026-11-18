@@ -1,6 +1,6 @@
 /// <reference path="./lib/fresh.d.ts" />
 
-import { git, resolveGitRepo } from "./lib/git_repo.ts";
+import { git, resolveGitRepoForPath } from "./lib/git_repo.ts";
 import {
   button,
   col,
@@ -275,28 +275,38 @@ function buildHeader(t: TourInstance): WidgetSpec {
       button(editor.t("btn.rehighlight"), { key: "rehighlight" }),
     ];
 
+  // The title (and drift notice) gets what the controls leave over, so a
+  // long notice is cut short instead of pushing `[ Exit ]` off the row.
+  const prevLabel = compact ? "◀" : editor.t("btn.prev");
+  const nextLabel = compact ? "▶" : editor.t("btn.next");
+  const exitLabel = compact
+    ? (last ? "✓" : "✕")
+    : (last ? editor.t("btn.finish") : editor.t("btn.exit"));
+  const BUTTON_CHROME = 4;
+  const controlsWidth = 1 + charLen(counter) + 2 + actionsWidth(t) +
+    1 + charLen(prevLabel) + BUTTON_CHROME +
+    1 + charLen(nextLabel) + BUTTON_CHROME +
+    1 + charLen(exitLabel) + BUTTON_CHROME + 1;
+
   return row(
     spacer(1),
     raw([styledRow(titleSegments, {
-      truncateToChars: Math.max(8, t.dockWidth - 42 - actionsWidth(t)),
+      truncateToChars: Math.max(8, hostPanelWidth(t) - controlsWidth - 1),
     })], "title"),
     flexSpacer(),
     raw([styledRow([{ text: counter, style: { fg: C.dim } }])], "progress"),
     spacer(2),
     ...actions,
     spacer(1),
-    button(compact ? "◀" : editor.t("btn.prev"), { key: "prev", disabled: t.step === 0 }),
+    button(prevLabel, { key: "prev", disabled: t.step === 0 }),
     spacer(1),
-    button(compact ? "▶" : editor.t("btn.next"), {
+    button(nextLabel, {
       key: "next",
       intent: "primary",
       disabled: last,
     }),
     spacer(1),
-    button(
-      compact ? (last ? "✓" : "✕") : (last ? editor.t("btn.finish") : editor.t("btn.exit")),
-      { key: "exit", intent: last ? "primary" : "normal" },
-    ),
+    button(exitLabel, { key: "exit", intent: last ? "primary" : "normal" }),
     spacer(1),
   );
 }
@@ -505,6 +515,13 @@ async function lineRangeBytes(
     offset += editor.utf8ByteLength(lines[i]) + (i < last - 1 ? 1 : 0);
   }
   return [start, offset];
+}
+
+/** A manifest path as given by a caller, absolute: a relative one is the
+ * workspace's (`getCwd()`), as `splitWindow({ file })` reads it, not the
+ * directory the editor process was started in. */
+function absoluteManifestPath(path: string): string {
+  return editor.pathIsAbsolute(path) ? path : editor.pathJoin(editor.getCwd(), path);
 }
 
 /** Directory of the tour manifest, absolute — the base a tour's relative
@@ -796,9 +813,14 @@ function findPatternLine(
 }
 
 /** `recorded at <a> · you are on <b>`, or null when there is nothing to say. */
-async function commitDrift(manifest: TourManifest): Promise<string | null> {
+/** Compared in the manifest's own repository: the focused pane (a terminal,
+ * a file from another project) says nothing about where the tour lives. */
+async function commitDrift(
+  manifest: TourManifest,
+  manifestPath: string,
+): Promise<string | null> {
   if (!manifest.commit_hash) return null;
-  const repo = await resolveGitRepo(editor);
+  const repo = await resolveGitRepoForPath(editor, manifestPath);
   if (!repo) return null;
   const result = await git(editor, repo, ["rev-parse", "--short", "HEAD"]);
   if (!result || result.code !== 0) return null;
@@ -812,9 +834,10 @@ async function commitDrift(manifest: TourManifest): Promise<string | null> {
 // ============================================================================
 
 async function openTour(
-  manifestPath: string,
+  requestedPath: string,
   options: { step?: number; visited?: number[]; railOpen?: boolean; focus?: boolean } = {},
 ): Promise<boolean> {
+  const manifestPath = absoluteManifestPath(requestedPath);
   const existing = tours.get(manifestPath);
   if (existing) {
     // Already open — focus its tab rather than minting a second buffer. The
@@ -832,7 +855,7 @@ async function openTour(
     return false;
   }
   const manifest = parsed;
-  const drift = await commitDrift(manifest);
+  const drift = await commitDrift(manifest, manifestPath);
 
   const name = tabName(manifest.title);
   // The pane the reader was in when they started the tour is where its code
@@ -1511,7 +1534,7 @@ editor.exportPluginApi("code-tour", {
     return t ? goToStep(t, t.step - 1) : Promise.resolve();
   },
   closeTour: (path: string) => {
-    const t = tours.get(path);
+    const t = tours.get(absoluteManifestPath(path));
     if (t) closeTour(t, true);
     return !!t;
   },
