@@ -517,6 +517,15 @@ impl ThemeLoader {
 
         for entry in entries.flatten() {
             let path = entry.path();
+            // Dotfiles and dot-directories are never themes: a package's
+            // install receipt (`.fresh-source.json`), `.git`, editor backups
+            // (#3795).
+            if path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
 
             if path.is_dir() {
                 let subdir_name = path.file_name().unwrap().to_string_lossy();
@@ -533,7 +542,10 @@ impl ThemeLoader {
                     format!("{}/{}", pack, subdir_name)
                 };
                 self.scan_directory(&path, &new_pack, repository, themes, theme_list);
-            } else if path.extension().is_some_and(|ext| ext == "json") {
+            } else if path.extension().is_some_and(|ext| ext == "json")
+                // A package's manifest, scanned when it lists no themes.
+                && path.file_name().is_some_and(|n| n != "package.json")
+            {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Some(theme) = parse_theme_file(&path, &content) {
                         let name = normalize_theme_name(&theme.name);
@@ -916,6 +928,39 @@ mod tests {
     }
 
     /// Test that themes in subdirectories of the user themes directory are loaded.
+    #[test]
+    fn test_dotfiles_and_manifests_are_not_read_as_themes() {
+        // #3795: an installed package keeps its install receipt
+        // (`.fresh-source.json`) next to its themes; the loader read it as a
+        // theme and warned on every start. A file that parses as a theme is
+        // used here so "read it" and "skipped it" are distinguishable.
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+        let pkg_dir = themes_dir.join("packages").join("catppuccin");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let theme = |name: &str| {
+            format!(
+                r#"{{"name": "{name}", "editor": {{}}, "ui": {{}}, "search": {{}},
+                    "diagnostic": {{}}, "syntax": {{}}}}"#
+            )
+        };
+        std::fs::write(pkg_dir.join("mocha.json"), theme("pkg-mocha")).unwrap();
+        std::fs::write(pkg_dir.join(".fresh-source.json"), theme("receipt")).unwrap();
+        std::fs::write(themes_dir.join(".backup.json"), theme("hidden-user")).unwrap();
+        let git_dir = themes_dir.join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("in-git.json"), theme("in-git")).unwrap();
+
+        let registry = ThemeLoader::new(themes_dir).load_all(&[]);
+        assert!(registry.contains("pkg-mocha"));
+        for skipped in ["receipt", "hidden-user", "in-git"] {
+            assert!(
+                !registry.contains(skipped),
+                "{skipped} lives in a dotfile and must not be loaded"
+            );
+        }
+    }
+
     #[test]
     fn test_custom_theme_in_subdirectory() {
         // Create isolated temp directory for this test
