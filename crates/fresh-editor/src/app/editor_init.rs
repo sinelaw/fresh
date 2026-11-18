@@ -749,6 +749,7 @@ impl Editor {
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
             file_launch: parts.file_launch,
+            stdin_launch: false,
             diff_launch: None,
             diff_launch_hold: None,
             all_workspaces_loaded: parts.all_workspaces_loaded,
@@ -1787,6 +1788,14 @@ impl Editor {
     /// positions work as in any launch.
     pub fn file_launch(&self) -> bool {
         self.file_launch
+    }
+
+    /// Whether this launch opened piped standard input (`cmd | fresh`,
+    /// `fresh -`). The piped content is what the launch is about, as the
+    /// named files are for [`Editor::file_launch`], so startup pages stay out
+    /// of its way; unlike a file launch it still restores the session.
+    pub fn stdin_launch(&self) -> bool {
+        self.stdin_launch
     }
 
     /// The two files of a `fresh --diff LEFT RIGHT` launch, if this is one.

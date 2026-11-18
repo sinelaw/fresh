@@ -244,6 +244,17 @@ as startup pages.
 fileLaunch(): boolean;
 ```
 
+### `stdinLaunch`
+
+Whether the launch opened piped standard input (`cmd | fresh`,
+`fresh -`). The piped content is what such a launch is about, so,
+as for `fileLaunch()`, plugins leave out startup pages; the session
+is still restored.
+
+```typescript
+stdinLaunch(): boolean;
+```
+
 ### `diffLaunch`
 
 The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths

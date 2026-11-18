@@ -431,6 +431,7 @@ impl Editor {
         snapshot.env_active = self.authority().env_provider.is_active();
         snapshot.orchestrator_mode = self.orchestrator_mode();
         snapshot.file_launch = self.file_launch();
+        snapshot.stdin_launch = self.stdin_launch();
         if snapshot.release_notes.is_none() {
             snapshot.release_notes =
                 crate::release_notes::latest().map(|(version, items)| ReleaseNotes {

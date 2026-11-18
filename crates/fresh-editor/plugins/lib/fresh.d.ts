@@ -5939,6 +5939,13 @@ interface EditorAPI {
 	*/
 	fileLaunch(): boolean;
 	/**
+	* Whether the launch opened piped standard input (`cmd | fresh`,
+	* `fresh -`). The piped content is what such a launch is about, so,
+	* as for `fileLaunch()`, plugins leave out startup pages; the session
+	* is still restored.
+	*/
+	stdinLaunch(): boolean;
+	/**
 	* The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
 	* `[left, right]`; empty for any other launch. The editor doesn't open
 	* them: the plugin that reads this at `ready` does (the bundled

@@ -1795,6 +1795,10 @@ pub struct EditorStateSnapshot {
     /// `fresh --simple`) rather than a session. Read via `editor.fileLaunch()`.
     #[serde(default)]
     pub file_launch: bool,
+    /// The launch opened piped standard input (`cmd | fresh`, `fresh -`).
+    /// Read via `editor.stdinLaunch()`.
+    #[serde(default)]
+    pub stdin_launch: bool,
     /// The two files of a `fresh --diff LEFT RIGHT` launch, absolute; empty
     /// for every other launch. Read via `editor.diffLaunch()`.
     #[serde(default)]
@@ -2018,6 +2022,7 @@ impl EditorStateSnapshot {
             env_active: false,
             orchestrator_mode: false,
             file_launch: false,
+            stdin_launch: false,
             diff_launch: Vec::new(),
             release_notes: None,
             dock_open: false,

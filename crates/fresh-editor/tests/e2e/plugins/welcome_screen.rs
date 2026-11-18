@@ -211,6 +211,77 @@ fn show_on_startup_off_opens_nothing_until_asked() {
         .expect("the palette command still opens the page");
 }
 
+/// **Piped input is what the launch is about** (#3805). `cmd | fresh` and
+/// `fresh -` open the piped content; like `fresh FILE`, that launch gets no
+/// Welcome tab.
+#[test]
+fn piped_input_gets_no_welcome_tab() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    let spool = std::sync::Arc::new(
+        fresh::services::stdin_spool::StdinSpool::with_contents(b"piped line\n").unwrap(),
+    );
+    harness.editor_mut().open_stdin_buffer(spool, None).unwrap();
+    let before = harness.editor().all_buffer_ids_for_tests();
+
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+    assert_eq!(
+        harness.editor().all_buffer_ids_for_tests(),
+        before,
+        "the welcome page opened over piped input. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// **The page's "Show this screen on startup" checkbox is the
+/// `show_on_startup` setting** (#3805). It used to write a separate
+/// override that outranked the setting, so Settings showed it still on and
+/// could not turn the page back on. Unticking it now saves the setting.
+#[test]
+fn the_startup_checkbox_saves_the_show_on_startup_setting() {
+    let (mut harness, tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    // The checkbox is at the foot of the page.
+    for _ in 0..120 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+    settle(&mut harness);
+    let (col, row) = harness
+        .find_text_on_screen("[v] Show this screen on startup")
+        .unwrap_or_else(|| {
+            panic!(
+                "the startup checkbox is on the page, ticked:\n{}",
+                harness.screen_to_string()
+            )
+        });
+    harness.mouse_click(col + 1, row).unwrap();
+
+    let saved = |tmp: &tempfile::TempDir| {
+        walk_for_config(&tmp.path().join("state"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|j| {
+                j.pointer("/plugins/welcome_screen/settings/show_on_startup")
+                    .cloned()
+            })
+    };
+    harness
+        .wait_until(|_| saved(&tmp) == Some(serde_json::json!(false)))
+        .expect("unticking saves show_on_startup = false to the user config");
+    let settings = harness
+        .editor()
+        .config()
+        .plugins
+        .get("welcome_screen")
+        .map(|p| p.settings.clone());
+    assert_eq!(
+        settings.and_then(|s| s.get("show_on_startup").cloned()),
+        Some(serde_json::json!(false)),
+        "the running editor's setting follows the checkbox"
+    );
+}
+
 /// **Startup means startup — not "startup that found an empty
 /// workspace".** The page asked whether anything else was open and gave
 /// up if anything was, so restoring a session, or plain `fresh
