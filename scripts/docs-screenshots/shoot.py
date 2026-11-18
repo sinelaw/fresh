@@ -250,7 +250,8 @@ def make_project(name: str, dest: Path, home: Path, config_dir: Path):
     """
     src = HERE / "projects" / name
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dest, ignore=shutil.ignore_patterns("setup.sh"))
+    # copy, not copy2: fresh mtimes, so file lists don't say "21 min ago"
+    shutil.copytree(src, dest, ignore=shutil.ignore_patterns("setup.sh"), copy_function=shutil.copy)
     setup = src / "setup.sh"
     if setup.exists():
         env = dict(os.environ, DOCSHOT_HOME=str(home), DOCSHOT_CONFIG_DIR=str(config_dir),
