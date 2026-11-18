@@ -502,6 +502,23 @@ fn read_msg(
     }
 }
 
+/// Whether `name` is a session id made by [`generate_session_id`] — a
+/// directly launched editor's control socket rather than a daemon. Matched on
+/// the whole `local-<pid>-<hex>` shape, so a daemon the user named `local-…`
+/// is still a daemon.
+pub fn is_local_session_id(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("local-") else {
+        return false;
+    };
+    let Some((pid, nanos)) = rest.split_once('-') else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+        && !nanos.is_empty()
+        && nanos.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// A unique-per-process session id: `local-<pid>-<nanos>`. The nanosecond
 /// component guards against pid reuse across quick successive runs.
 ///
@@ -527,6 +544,16 @@ fn generate_session_id() -> String {
 mod tests {
     use super::*;
     use crate::server::ipc::ClientConnection;
+
+    #[test]
+    fn local_session_ids_are_told_apart_from_daemon_names() {
+        assert!(is_local_session_id(&generate_session_id()));
+        assert!(is_local_session_id("local-1234-ab12cd34ef"));
+        assert!(!is_local_session_id("local"));
+        assert!(!is_local_session_id("local-dev"));
+        assert!(!is_local_session_id("local-12-notes"));
+        assert!(!is_local_session_id("work"));
+    }
     use crate::server::protocol::{ClientHello, TermSize};
     use tempfile::TempDir;
 

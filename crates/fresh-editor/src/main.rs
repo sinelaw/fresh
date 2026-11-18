@@ -462,7 +462,7 @@ impl From<Cli> for Args {
                 | ["session", "k", "--all"]
                 | ["s", "k", "--all"] => (
                     false,
-                    Some(Some("--all".to_string())),
+                    Some(Some(KILL_ALL_DAEMONS.to_string())),
                     false,
                     None,
                     false,
@@ -3084,6 +3084,14 @@ fn list_sessions_command() -> AnyhowResult<()> {
             // Get socket paths for this session to check if server is alive
             let socket_paths = SocketPaths::for_session_name(name)?;
 
+            // A directly launched editor's own control socket, not a daemon:
+            // `fresh -a` can't attach to it, so it isn't listed. Its files
+            // are still removed once that editor is gone.
+            if fresh::server::local_control::is_local_session_id(name) {
+                socket_paths.cleanup_if_stale();
+                continue;
+            }
+
             // Check if server is actually running, clean up if stale
             if socket_paths.cleanup_if_stale() {
                 stale_cleaned += 1;
@@ -3149,10 +3157,14 @@ fn list_sessions_command() -> AnyhowResult<()> {
     Ok(())
 }
 
+/// The `daemon kill --all` argument, passed on as the daemon "name".
+const KILL_ALL_DAEMONS: &str = "--all";
+
 /// Kill a daemon (terminate the daemon process)
 fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> {
-    use fresh::server::ipc::ClientConnection;
-    use fresh::server::protocol::ClientControl;
+    if session == Some(KILL_ALL_DAEMONS) {
+        return kill_all_daemons_command();
+    }
 
     let working_dir = std::env::current_dir()?;
 
@@ -3167,8 +3179,69 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
         return Ok(());
     }
 
+    // A crashed daemon leaves its sockets behind with nothing listening:
+    // remove them, as `daemon list` does, instead of failing to connect.
+    if socket_paths.cleanup_if_stale() {
+        println!("Daemon was not running; removed its stale sockets.");
+        return Ok(());
+    }
+
+    quit_daemon(&socket_paths)?;
+    println!("Daemon terminated.");
+    Ok(())
+}
+
+/// `daemon kill --all`: terminate every running daemon (not the control
+/// sockets of directly launched editors) and remove stale ones.
+fn kill_all_daemons_command() -> AnyhowResult<()> {
+    let socket_dir = SocketPaths::socket_directory()?;
+    let mut killed = 0;
+    let mut stale_cleaned = 0;
+    if socket_dir.exists() {
+        for entry in std::fs::read_dir(&socket_dir)? {
+            let path = entry?.path();
+            let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let Some(name) = filename.strip_suffix(".ctrl.sock") else {
+                continue;
+            };
+            let socket_paths = SocketPaths::for_session_name(name)?;
+            if fresh::server::local_control::is_local_session_id(name) {
+                socket_paths.cleanup_if_stale();
+                continue;
+            }
+            if socket_paths.cleanup_if_stale() {
+                stale_cleaned += 1;
+                continue;
+            }
+            if !socket_paths.is_server_alive() {
+                continue;
+            }
+            match quit_daemon(&socket_paths) {
+                Ok(()) => killed += 1,
+                Err(e) => eprintln!("Failed to terminate daemon {}: {}", name, e),
+            }
+        }
+    }
+
+    if stale_cleaned > 0 {
+        eprintln!("Cleaned up {} stale daemon(s).", stale_cleaned);
+    }
+    if killed == 0 {
+        println!("No running daemons.");
+    } else {
+        println!("Terminated {} daemon(s).", killed);
+    }
+    Ok(())
+}
+
+/// Ask the daemon at `socket_paths` to quit, wait for it to close the
+/// connection, and remove any socket files it left behind.
+fn quit_daemon(socket_paths: &SocketPaths) -> AnyhowResult<()> {
+    use fresh::server::ipc::ClientConnection;
+    use fresh::server::protocol::ClientControl;
+
     // Connect and send quit command
-    let conn = ClientConnection::connect(&socket_paths)?;
+    let conn = ClientConnection::connect(socket_paths)?;
 
     // We need to do a minimal handshake first
     use fresh::server::protocol::{ClientHello, TermSize};
@@ -3212,7 +3285,6 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
         let _ = std::fs::remove_file(&socket_paths.control);
     }
 
-    println!("Daemon terminated.");
     Ok(())
 }
 
