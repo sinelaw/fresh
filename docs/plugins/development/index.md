@@ -9,14 +9,14 @@ Fresh supports three types of packages:
 | Type | Description | Guide |
 |------|-------------|-------|
 | **Plugin** | TypeScript code extending editor functionality | This page |
-| **Theme** | Color schemes for the editor | See `:pkg init theme` |
+| **Theme** | Color schemes for the editor | `fresh --cmd init theme` |
 | **Language Pack** | Syntax highlighting, language config, and LSP | [Language Packs](./language-packs.md) |
 
 Use `fresh --cmd init` to scaffold any package type. To get TypeScript types, autocomplete and live reload for a plugin project, follow [Project Setup](./setup.md).
 
 ## Introduction
 
-Fresh plugins are written in **TypeScript** and run in a sandboxed QuickJS environment (transpiled via oxc_transformer). Plugins have access to a TypeScript API for extending the editor.
+Fresh plugins are written in **TypeScript** and run in a sandboxed QuickJS environment. Plugins have access to a TypeScript API for extending the editor.
 
 API reference: **[Plugin API](../api/)**
 
@@ -24,17 +24,18 @@ API reference: **[Plugin API](../api/)**
 
 Let's start by creating a simple "Hello, World!" plugin.
 
-1.  **Create a new file:** Create a new TypeScript file in the `plugins/` directory (e.g., `my_plugin.ts`).
+1.  **Create a new file:** Create a new TypeScript file in your plugins folder, `~/.config/fresh/plugins/` (e.g., `my_plugin.ts`).
 2.  **Add the following code:**
 
     ```typescript
     /// <reference path="../types/fresh.d.ts" />
+    const editor = getEditor();
 
     // Register a command that inserts text at the cursor
-    globalThis.my_plugin_say_hello = function(): void {
+    registerHandler("my_plugin_say_hello", () => {
       editor.insertAtCursor("Hello from my new plugin!\n");
       editor.setStatus("My plugin says hello!");
-    };
+    });
 
     editor.registerCommand(
       "my_plugin_say_hello",
@@ -45,10 +46,7 @@ Let's start by creating a simple "Hello, World!" plugin.
     editor.setStatus("My first plugin loaded!");
     ```
 
-3.  **Run Fresh:**
-    ```bash
-    cargo run
-    ```
+3.  **Start Fresh:** run `fresh`.
 4.  **Open the command palette:** Press `Ctrl+P` and search for "my_plugin_say_hello".
 5.  **Run the command:** You should see the text "Hello from my new plugin!" inserted into the buffer.
 
@@ -56,11 +54,11 @@ Let's start by creating a simple "Hello, World!" plugin.
 
 ### Plugin Lifecycle
 
-Plugins are loaded automatically when Fresh starts. There is no explicit activation step. All `.ts` files in the `plugins/` directory are transpiled via oxc_transformer and executed in the QuickJS runtime.
+Plugins are loaded automatically when Fresh starts. There is no explicit activation step. Every `.ts` file in `~/.config/fresh/plugins/`, and every installed plugin package, is loaded.
 
 ### The `editor` Object
 
-The global `editor` object is the main entry point for the Fresh plugin API. It provides methods for:
+The `editor` object (from `getEditor()`) is the main entry point for the Fresh plugin API. It provides methods for:
 - Registering commands
 - Reading and modifying buffers
 - Adding visual overlays
@@ -72,14 +70,14 @@ The global `editor` object is the main entry point for the Fresh plugin API. It 
 Commands are actions that can be triggered from the command palette or bound to keys. Register them with `editor.registerCommand()`:
 
 ```typescript
-globalThis.my_action = function(): void {
+registerHandler("my_action", () => {
   // Do something
-};
+});
 
 editor.registerCommand(
   "my_command_name",      // Display name in command palette
   "Human readable desc",   // Description for command palette
-  "my_action"             // Global function to call
+  "my_action"             // Handler to call
 );
 ```
 
@@ -110,28 +108,26 @@ The context parameter is for **plugin-defined** contexts only. Values like `"nor
 Many API calls return `Promise`s. Use `async/await` to work with them:
 
 ```typescript
-globalThis.search_files = async function(): Promise<void> {
+registerHandler("search_files", async () => {
   const result = await editor.runOnTarget("rg", ["TODO", "."], editor.getCwd());
   if (result.code === 0) {
     editor.setStatus(`Found matches`);
   }
-};
+});
 ```
 
 ### Event Handlers
 
-Subscribe to editor events with `editor.on()`. Handlers must be global functions:
+Subscribe to editor events with `editor.on()`. The handler is a function, or the name of a handler registered with `registerHandler`:
 
 ```typescript
-globalThis.onSave = function(data: { buffer_id: number, path: string }): void {
+editor.on("after_file_save", (data) => {
   editor.debug(`Saved: ${data.path}`);
-};
-
-editor.on("buffer_save", "onSave");
+});
 ```
 
-**Available Events:**
-- `buffer_save` - After a buffer is saved
+**Common Events** (see [Events & Hooks](../api/events.md) for all of them):
+- `after_file_save` - After a buffer is saved
 - `buffer_closed` - When a buffer is closed
 - `cursor_moved` - When cursor position changes
 - `render_start` - Before screen renders

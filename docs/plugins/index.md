@@ -7,12 +7,13 @@ Fresh's functionality can be extended with packages:
 *   **Language Packs:** Syntax highlighting, language configuration, and LSP support for new languages
 *   **Bundles:** Combine multiple languages and plugins into a single package
 
-Bundled plugins:
+Bundled plugins include:
 
-*   **TODO Highlighter:** Highlights `TODO`, `FIXME`, and other keywords in your comments.
 *   **Git Grep:** Interactively search through your Git repository.
 *   **Git Find File:** Quickly find and open files in your Git repository.
-*   **Diff Chunk Navigation:** Navigate between diff chunks in the current buffer.
+*   **Next Change / Previous Change:** Jump between changed regions in the current buffer.
+
+More, such as a TODO highlighter and a color highlighter, are available as packages from the [Package Manager](#package-manager).
 
 ## Load Plugin from Buffer
 
@@ -44,8 +45,8 @@ Installed and updated packages load immediately, without restarting Fresh.
 
 ![The package browser: filter buttons across the top, the registry's packages on the left, and the selected theme's details with an Install action on the right](/images/packages-browser.png)
 
-- Press `/` to search, or use `Tab` to reach the filter buttons (**All**, **Installed**, **Plugins**, **Themes**, **Languages**, **Bundles**).
-- Press `Enter` on a package to see its details and actions: **Install**, **Update** or **Uninstall**.
+- Press `/`, type, and press `Enter` to search. `Tab` moves from the list to the selected package's actions, then the search field, then the filter buttons (**All**, **Installed**, **Plugins**, **Themes**, **Languages**, **Bundles**).
+- Press `Enter` on a package to reach its actions: **Install**, **Update** or **Uninstall**.
 - The registry syncs in the background when the browser opens. The **Sync** button fetches the latest package lists on demand.
 
 ### Installing from a URL or Local Directory
@@ -149,4 +150,4 @@ Bundles are shown with a "B" tag in the package manager. `fresh --cmd init` does
 
 ## Clangd helper plugin
 
-Fresh ships `plugins/clangd_support.ts` with the source tree; see `plugins/clangd_support.md` for an overview of the plugin commands and how it surfaces clangd-specific notifications in the status bar.
+Fresh bundles a clangd helper plugin. It adds **Clangd: Switch Source/Header**, **Clangd: Open Project Config** and **Clangd: Project Setup** (a readiness check for `compile_commands.json` and `.clangd`), and shows clangd's file status in the status bar.

@@ -3,7 +3,7 @@ const editor = getEditor();
 
 // 5. Popup
 // Shows a short message with a few choices.
-// The choice comes in action_popup_result.
+// The choice comes in action_popup_result. Esc sends "dismissed".
 
 registerHandler("ask_action_popup", () => {
   editor.showActionPopup({
@@ -20,7 +20,8 @@ registerHandler("ask_action_popup", () => {
 
 editor.on("action_popup_result", (r) => {
   if (r.popup_id !== "ask-popup") return true;
-  editor.setStatus(`You chose: ${r.action_id}`);
+  const choice = r.action_id === "dismissed" ? "none" : r.action_id;
+  editor.setStatus(`You chose: ${choice}`);
   return true;
 });
 

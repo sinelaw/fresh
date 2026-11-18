@@ -56,7 +56,7 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 | **Productivity** | command palette, menu bar, keyboard macros, diagnostics panel |
 | **Multitasking (Orchestrator)** | one workspace per git worktree, terminals and long-running commands per workspace, coding agents (claude, codex, opencode, aider) with resumable sessions, import of agent sessions started outside Fresh, Workboard overview, dock switcher, remote/SSH workspaces |
 | **Background editor** | `fresh` runs in a background editor you can detach from and reattach to (Auto Attach) |
-| **Extensibility** | TypeScript plugins (sandboxed QuickJS), color highlighter, TODO highlighter, merge conflicts, path complete, keymaps |
+| **Extensibility** | TypeScript plugins (sandboxed QuickJS), merge conflicts, path complete, keymaps; color and TODO highlighters available as packages |
 | **Internationalization** | Multiple language support (see [`locales/`](crates/fresh-editor-core/locales)), plugin translation system |
 
 ## Installation
@@ -291,7 +291,7 @@ flatpak install --user fresh-editor-VERSION-x86_64.flatpak
 flatpak run io.github.sinelaw.fresh
 ```
 
-See [flatpak/README.md](flatpak/README.md) for building from source.
+See [crates/fresh-editor/flatpak/README.md](crates/fresh-editor/flatpak/README.md) for building from source.
 
 ### Fresh Desktop
 

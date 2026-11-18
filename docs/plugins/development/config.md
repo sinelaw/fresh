@@ -92,8 +92,9 @@ the change on the next read.
 
 All methods accept `description` (string). Numeric methods accept
 `minimum` / `maximum`. Each method's `options` parameter is strictly
-typed — unknown keys (`defualt` → "Did you mean 'default'?"), wrong
-default types, and out-of-range defaults are all compile-time errors.
+typed — unknown keys (`defualt` → "Did you mean 'default'?") and wrong
+default types are compile-time errors. A default outside
+`minimum` / `maximum` throws when the plugin loads.
 
 ## Map settings
 
@@ -182,7 +183,7 @@ editor:
   in the user's config (cheap; harmless). Reinstalling restores the
   values.
 - **Reloading a plugin** re-runs its `defineConfigX(...)` calls, so
-  plugin authors iterating with `Reload Plugin` see updated schemas
-  immediately.
+  plugin authors iterating with **Load Plugin from Buffer** see updated
+  schemas immediately.
 - The Settings UI rebuilds its category list every time it opens, so
   newly-registered schemas show up without an editor restart.
