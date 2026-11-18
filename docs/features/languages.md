@@ -34,7 +34,7 @@ Each language can be wired to an LSP server under `lsp.<language-id>` in config:
 }
 ```
 
-`enabled` defaults to `true`; `auto_start` defaults to `false`, so some servers must be started manually (run **LSP: Server Status** from the palette). Language servers only run in a [trusted workspace](./workspace-trust.md). See [LSP Integration](./lsp.md) for the editor-side features.
+`enabled` defaults to `true`; `auto_start` defaults to `false`, so some servers must be started manually (run **Show LSP Status** from the palette). Language servers only run in a [trusted workspace](./workspace-trust.md). See [LSP Integration](./lsp.md) for the editor-side features.
 
 ### Assembly (asm-lsp)
 

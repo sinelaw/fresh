@@ -13,7 +13,7 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides. It is independent of `auto_close`: either can be on with the other off.
 - **Markdown types delimiters literally** — Markdown ships with both `languages.markdown.auto_close` and `languages.markdown.auto_surround` set to `false`, because prose types backticks, quotes and brackets as literal text far more often than as pairs. Set either to `true` to opt back in.
 - **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
-- **Bracket matching** — Matching brackets are highlighted, and nested brackets are colored by depth (rainbow brackets, on by default; turn it off with **Rainbow Brackets** in Settings). Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
+- **Bracket matching** — Matching brackets are highlighted, and nested brackets are colored by depth (rainbow brackets, on by default; turn it off with **Rainbow Brackets** in Settings). Use "Go to Matching Bracket" from the command palette to jump. Bracket highlighting itself is on by default (**Highlight Matching Brackets** in Settings).
 - **Paragraph motion** — "Go to Next Paragraph" / "Go to Previous Paragraph" (command palette, or **Go → Next/Previous Paragraph**) move the cursor to the next or previous empty line. The default keymap gives them no key (the emacs keymap binds them to M-} / M-{); bind `move_to_paragraph_down` / `move_to_paragraph_up` in the [Keybinding Editor](./keybinding-editor.md) if you want one. Ctrl+Shift+Down/Up extend the selection the same way.
 
 ## Vertical Rulers
@@ -274,7 +274,7 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 
 ### Compose Mode
 
-"Markdown: Toggle Compose/Preview" from the command palette turns the current file into a distraction-free, preview-style page: markup (`**`, `*`, `[]()`, `#`, `>`) is hidden, headings, block quotes and horizontal rules are styled, list items get bullets, code blocks are framed and highlighted with their language's own syntax, and tables are rendered. The text is soft-wrapped in a centered column; adjust its width with "Markdown: Set Compose Width" (or **Page Width** in Settings, 80 columns by default). Headings are also marked on the scrollbar. "Markdown: Toggle Compose/Preview (All Files)" does the same for every open and future Markdown file.
+"Markdown: Toggle Compose/Preview" from the command palette turns the current file into a distraction-free, preview-style page: markup is hidden and headings, lists, quotes, code blocks (highlighted in their own language) and tables are styled, in a centered column; adjust its width with "Markdown: Set Compose Width" (or **Page Width** in Settings, 80 columns by default). Headings are also marked on the scrollbar. "Markdown: Toggle Compose/Preview (All Files)" does the same for every open and future Markdown file.
 
 Three commands switch the pane in focus between views of a Markdown file:
 
@@ -428,6 +428,6 @@ Fresh offers buffer-word completions without needing a language server — candi
 
 See [LSP Integration](./lsp.md) for richer completions when a language server is available.
 
-## Vim Mode
+## Vi Mode
 
 Fresh has a vi mode with Normal, Insert, Visual and command-line modes, operators, text objects, counts and `.` repeat. Turn it on with **Toggle Vi mode** from the command palette. See [Vi Mode](./vi-mode.md) for what it supports.

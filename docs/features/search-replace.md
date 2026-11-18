@@ -113,7 +113,7 @@ list opens each location in a
 With **All workspaces** on, the results of every workspace come in one list,
 grouped under a header row per workspace (`api · 3 matches`): the workspace
 you are in first, then the others in the order the
-[Orchestrator dock](./session-persistence.md) lists them. The rows under a
+[Orchestrator dock](./orchestrator.md) lists them. The rows under a
 header read as they do in their own workspace — `src/x.rs:4`,
 `[buf] src/x.rs:4`, `[term] claude:12`. Files, unsaved buffers and terminal
 output are searched in each workspace. A workspace the dock lists that you

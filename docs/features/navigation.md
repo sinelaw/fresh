@@ -19,7 +19,7 @@ A file counts as large when it is over 10 MB; change the threshold in Settings u
 
 When opening a large file, the gutter shows **byte offsets** instead of line numbers. To get exact line numbers, use "Go to Line" from the command palette — Fresh will offer to scan the file. Only the line index is kept in memory, not the file contents. Over SSH, the scan runs server-side and only the index is transferred. You can also trigger this directly with "Scan Line Index" from the command palette.
 
-**Tip:** for minified or single-line files (a large JSON or JS bundle on one line), turn on line wrap with **Toggle Line Wrap (Current Buffer)** so the text fits the window instead of running off to the right.
+**Tip:** lines wrap by default, so a minified or single-line file (a large JSON or JS bundle on one line) fits the window. If you turned wrapping off, **Toggle Line Wrap (Current Buffer)** brings it back for that file.
 
 ## Split View
 

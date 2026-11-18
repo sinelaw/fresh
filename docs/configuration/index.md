@@ -479,7 +479,24 @@ In the Settings UI, each setting shows where its current value comes from:
 
 ## Status Bar
 
-The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder, or use the keyboard: ←→ switches column, Shift+←→ moves an item across, Shift+↑↓ reorders, and Esc finishes. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, a clickable palette hint that opens the command palette, a clickable `{update}` indicator that appears when a new Fresh version is available and starts the update, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, a `{search_nav}` pair of `↓` / `↑` arrows, shown while a search is active, that you can click to go to the next or previous match (like F3 / Shift+F3), a clickable `{terminal_restart}` indicator that appears when the active terminal buffer's process has quit (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)), and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
+The left and right sides of the status bar are configurable in the Settings UI. Each side is a picker with an **Available** column and an **Included** column: move elements across to show or hide them, and reorder the Included list with its arrow buttons or the keyboard (the picker shows the keys). A separator drawn between elements can also be set there.
+
+Elements you can place:
+
+- **Workspace Trust** — whether this workspace is trusted; click to change it (see [Workspace Trust](../features/workspace-trust.md)). Leads the left side by default.
+- **Remote Indicator** — lights up when you're attached to an SSH remote or a devcontainer; click for connection actions.
+- **Filename** and **Read-Only** — the file's path, and an `[RO]` badge while the buffer is read-only.
+- **Cursor**, **Cursor Count** and **Search Navigation** — the cursor position, the number of cursors when there's more than one, and clickable `↓` / `↑` arrows while a search is active (like F3 / Shift+F3).
+- **Diagnostics** and **Warnings** — error and warning counts.
+- **Line Ending**, **Encoding** and **Language** — click to change each one.
+- **LSP** — language server status; click for the server popup (see [LSP](../features/lsp.md)).
+- **Messages** and **Chord** — status messages, and a key chord in progress.
+- **Terminal Restart** — appears when a terminal's process has quit; click to restart it (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)).
+- **Update** — appears when a newer Fresh is available; click for the update menu.
+- **Palette** — the command palette hint; click to open the palette.
+- **Clock** — the time, with a blinking colon.
+
+Plugins can add their own elements too, such as **Git: branch**.
 
 The `{remote}` indicator is clickable — activate it to open a context-aware menu for the current authority (detach, show container logs, retry attach, etc.). It also reflects connection state: `Connecting`, `Connected`, or `FailedAttach`.
 

@@ -1830,7 +1830,7 @@
   "settings.field.file_explorer.preview_tabs": "Abas de pré-visualização",
   "settings.field.file_explorer.preview_tabs_desc": "Um clique simples abre uma aba temporária de pré-visualização, que o próximo clique substitui. Editar, clicar duas vezes, pressionar Enter ou arrastar a aba a torna permanente. Padrão: true",
   "settings.field.file_explorer.respect_gitignore": "Respeitar .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Aplica as regras do `.gitignore`. Desativado, os arquivos ignorados não são ocultados nem esmaecidos. Padrão: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Aplica as regras do `.gitignore`. Desativado, os arquivos ignorados são sempre exibidos, mas continuam esmaecidos. Padrão: true",
   "settings.field.file_explorer.show_gitignored": "Mostrar gitignored",
   "settings.field.file_explorer.show_gitignored_desc": "Mostra arquivos gitignored por padrão.",
   "settings.field.file_explorer.show_hidden": "Mostrar ocultos",

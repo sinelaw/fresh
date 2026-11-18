@@ -13,7 +13,7 @@ Language packs add syntax highlighting, language configuration, and LSP support 
 Use the CLI to scaffold a new language pack:
 
 ```bash
-fresh --init language
+fresh --cmd init language
 ```
 
 This creates a directory with the basic structure:

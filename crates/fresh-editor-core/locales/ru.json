@@ -1844,7 +1844,7 @@
   "settings.field.file_explorer.preview_tabs": "Вкладки предпросмотра",
   "settings.field.file_explorer.preview_tabs_desc": "Одиночный щелчок открывает временную вкладку предпросмотра, которую заменяет следующий щелчок. Редактирование, двойной щелчок, Enter или перетаскивание вкладки делают её постоянной. По умолчанию: true",
   "settings.field.file_explorer.respect_gitignore": "Учитывать .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Применять правила `.gitignore`. Если выключено, игнорируемые файлы не скрываются и не выделяются серым. По умолчанию: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Применять правила `.gitignore`. Если выключено, игнорируемые файлы всегда показываются, но остаются серыми. По умолчанию: true",
   "settings.field.file_explorer.show_gitignored": "Показать игнорируемые файлы",
   "settings.field.file_explorer.show_gitignored_desc": "Показывать файлы, игнорируемые gitignore, по умолчанию.",
   "settings.field.file_explorer.show_hidden": "Показать скрытые",

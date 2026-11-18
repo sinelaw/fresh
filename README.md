@@ -71,8 +71,9 @@ root, and it updates itself — `fresh --update`, or the update prompt in the
 editor. On macOS it uses Homebrew.
 
 `fresh --update` asks before installing (`--yes` skips the question). However
-you installed Fresh — Homebrew, a package, cargo, npm, Flatpak and so on — it
-updates through that same channel.
+you installed Fresh — Homebrew, a package, cargo, npm and so on — it updates
+through that same channel; for Flatpak and a few others it tells you the command
+to run.
 
 Prefer your distro's package manager? Ask for it explicitly:
 
@@ -119,8 +120,7 @@ curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scr
 A single static (musl) binary for `x86_64` and `aarch64` with every feature
 compiled in, including plugins. It unpacks to `~/.local/share/fresh-editor` and
 symlinks `~/.local/bin/fresh`; set `FRESH_INSTALL_DIR` / `FRESH_BIN_DIR` to put
-them elsewhere (the installer only replaces a `FRESH_INSTALL_DIR` that is empty
-or already holds Fresh). Ensure `~/.local/bin` is in your `PATH`.
+them elsewhere. Ensure `~/.local/bin` is in your `PATH`.
 
 Because nothing else owns these files, this is the one Linux install that can
 replace itself: `fresh --update` downloads the next release, verifies it
@@ -201,8 +201,7 @@ curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scr
 ```
 
 Or download the `.deb` file manually from the [releases page](https://github.com/sinelaw/fresh/releases)
-(`fresh-editor_VERSION-1_ARCH.deb`; the `.debian-testing.deb` next to it is a build
-made the way the Debian archive builds it, with Debian's own toolchain and libraries).
+(`fresh-editor_VERSION-1_ARCH.deb`).
 
 ### Fedora/RHEL (.rpm)
 

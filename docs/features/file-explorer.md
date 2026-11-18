@@ -69,7 +69,7 @@ Dragging the divider preserves whichever form you configured — a sidebar set u
 - When gitignored entries are shown, they are drawn dimmed so they stand out from tracked files.
 - **Custom Ignore Patterns** (Settings → File Explorer) hides more on top of `.gitignore`. Write them the way you would write `.gitignore` lines, relative to the project root — `build/`, `/dist`, `*.log`, `!keep.log`.
 
-The same hidden and ignored rules apply beyond the explorer: Quick Open, project search and Live Grep leave out the same files (Live Grep can't bring back a file a `!` pattern re-includes), and Quick Open follows the explorer's hidden and gitignored toggles (dotfiles that git tracks are always listed).
+The same hidden and ignored rules apply beyond the explorer: Quick Open, project search and Live Grep leave out the same files, and Quick Open follows the explorer's hidden and gitignored toggles (dotfiles that git tracks are always listed).
 
 ## Sorting
 

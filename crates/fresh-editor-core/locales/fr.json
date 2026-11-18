@@ -1830,7 +1830,7 @@
   "settings.field.file_explorer.preview_tabs": "Onglets d'aperçu",
   "settings.field.file_explorer.preview_tabs_desc": "Un simple clic ouvre un onglet d'aperçu temporaire, remplacé au clic suivant. Modifier le fichier, double-cliquer, appuyer sur Entrée ou faire glisser l'onglet le rend permanent. Par défaut : true",
   "settings.field.file_explorer.respect_gitignore": "Respecter .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Appliquer les règles de `.gitignore`. Désactivé, les fichiers ignorés ne sont ni masqués ni grisés. Par défaut : true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Appliquer les règles de `.gitignore`. Désactivé, les fichiers ignorés sont toujours affichés, mais restent grisés. Par défaut : true",
   "settings.field.file_explorer.show_gitignored": "Afficher les fichiers ignorés",
   "settings.field.file_explorer.show_gitignored_desc": "Afficher par défaut les fichiers ignorés par Git.",
   "settings.field.file_explorer.show_hidden": "Afficher les fichiers cachés",

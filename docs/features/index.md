@@ -20,5 +20,5 @@
 - [Keybinding Editor](./keybinding-editor.md) - Visual keybinding browser and editor
 - [Emacs Keymap](./emacs-keymap.md) - The Emacs keybinding style, key by key
 - [Vi Mode](./vi-mode.md) - Modal vi-style editing: motions, operators, text objects and ex commands
-- [Dashboard](./dashboard.md) - Startup dashboard with weather, git, PRs, disk
+- [Dashboard](./dashboard.md) - A dashboard of git, disk and optional weather and PR widgets
 - [Workboard](./workboard.md) - Every Orchestrator workspace and agent on one board: an attention inbox, project and folder views, a self-sorting kanban
