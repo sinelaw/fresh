@@ -3845,6 +3845,29 @@ fn test_vi_find_char_in_one_burst() {
     harness.wait_for_buffer_content("a b] \n").unwrap();
 }
 
+/// `:set nowrap⏎` typed in one burst right after startup runs the command:
+/// the keys after `:` reach the prompt `:` opens, none of them run as
+/// Normal-mode commands first.
+#[test]
+fn test_vi_ex_command_in_one_burst_after_startup() {
+    let (mut harness, _td, _fixture) = open_vi("one two\n");
+
+    send_burst(&mut harness, ":set nowrap");
+    harness
+        .send_key_without_drain(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.editor().input_mode() == Some("vi-normal".to_string())
+                && !h.editor().is_prompting()
+                && !h.editor().holds_keys_for_plugin()
+        })
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Unknown command");
+    assert_eq!(harness.get_buffer_content().unwrap(), "one two\n");
+}
+
 // =============================================================================
 // #3797: commands that did nothing or the wrong thing
 // =============================================================================
