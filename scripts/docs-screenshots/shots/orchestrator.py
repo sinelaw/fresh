@@ -121,7 +121,7 @@ SHOTS = [
         + sh("clear") + sh(DESCRIBE) + [("wait", '"terminal"]'), ("settle",)]
         + sh(JUMP) + [("wait", "\ntrue"), ("settle",), ("shot", "scripting-cmd-run")]
         # openFileInSplit moved focus to the editor pane: click back into the terminal.
-        + [("click", 30, 33), ("settle",)] + sh("clear") + sh(TOUR) + [("wait", "Step 1 of 3"), ("settle",), ("key", "n"), ("settle",),
+        + [("click_text", "fresh$", 2), ("settle",)] + sh("clear") + sh(TOUR) + [("wait", "Step 1 of 3"), ("settle",), ("key", "n"), ("settle",),
                                     ("shot", "scripting-tour-handoff")],
     },
     {
