@@ -324,7 +324,8 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
         .unwrap();
     harness.type_text("AutoOpen").unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("AutoOpen");
+    // The key is camelCase; the label reads as words.
+    harness.assert_screen_contains("Auto Open");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -339,10 +340,10 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
         harness.screen_to_string()
     );
 
-    let (_label_x, chip_x, row) =
-        find_setting_label_and_chip(&harness, "AutoOpen").unwrap_or_else(|| {
+    let (_label_x, chip_x, row) = find_setting_label_and_chip(&harness, "Auto Open")
+        .unwrap_or_else(|| {
             panic!(
-                "could not find dashboard AutoOpen toggle. Screen:\n{}",
+                "could not find dashboard Auto Open toggle. Screen:\n{}",
                 harness.screen_to_string()
             )
         });
@@ -363,7 +364,7 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
         "clicking the plugin toggle again should restore the schema default and clear dirty markers. Screen:\n{screen}"
     );
     assert!(
-        !screen.contains(">● AutoOpen"),
+        !screen.contains(">● Auto Open"),
         "plugin setting row dirty marker should clear after restoring the schema default. Screen:\n{screen}"
     );
 }

@@ -892,9 +892,37 @@ pub fn section_display_name(section: &str) -> String {
         .unwrap_or_else(|| section.to_string())
 }
 
-/// Convert snake_case to Title Case
+/// A settings key as words in Title Case: `tab_size` → "Tab Size".
+///
+/// Core config keys are snake_case, but plugin settings
+/// (`plugins.<name>.settings.*`) are mostly camelCase (`showAllWorktrees`),
+/// so a case change also starts a word: "Show All Worktrees", not
+/// "ShowAllWorktrees". Only the label changes; the key in `config.json`, and
+/// the path that settings search also matches, stay as written. An acronym
+/// stays one word (`detectionRulesURL` → "Detection Rules URL") unless a
+/// lowercase run follows it (`URLPath` → "URL Path").
 fn humanize_name(name: &str) -> String {
-    name.split('_')
+    let mut words: Vec<String> = Vec::new();
+    for part in name.split('_') {
+        let chars: Vec<char> = part.chars().collect();
+        let mut word = String::new();
+        for (i, &c) in chars.iter().enumerate() {
+            if i > 0 && c.is_uppercase() {
+                let prev = chars[i - 1];
+                let next_is_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+                if prev.is_lowercase()
+                    || prev.is_ascii_digit()
+                    || (prev.is_uppercase() && next_is_lower)
+                {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            word.push(c);
+        }
+        words.push(word);
+    }
+    words
+        .iter()
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
@@ -1157,6 +1185,18 @@ mod tests {
         assert_eq!(humanize_name("line_numbers"), "Line Numbers");
         assert_eq!(humanize_name("check_for_updates"), "Check For Updates");
         assert_eq!(humanize_name("lsp"), "Lsp");
+        // Plugin settings are camelCase.
+        assert_eq!(humanize_name("showAllWorktrees"), "Show All Worktrees");
+        assert_eq!(humanize_name("autoOpen"), "Auto Open");
+        assert_eq!(humanize_name("cloudMaxAgeDays"), "Cloud Max Age Days");
+        assert_eq!(humanize_name("detectionRulesUrl"), "Detection Rules Url");
+        assert_eq!(humanize_name("detectionRulesURL"), "Detection Rules URL");
+        assert_eq!(humanize_name("URLPath"), "URL Path");
+        assert_eq!(humanize_name("utf8Bom"), "Utf8 Bom");
+        assert_eq!(
+            humanize_name("worktree_refresh_seconds"),
+            "Worktree Refresh Seconds"
+        );
     }
 
     #[test]
