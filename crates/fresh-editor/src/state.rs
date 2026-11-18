@@ -190,6 +190,13 @@ pub struct BufferSettings {
     /// `editor.highlight_occurrences` setting. Persisted in the per-file
     /// workspace state.
     pub highlight_occurrences_override: Option<bool>,
+
+    /// Indentation resolved from the file's `.editorconfig` when it was
+    /// opened. It wins over the global + per-language config (but not over
+    /// `use_tabs_override`), and `apply_config` keeps applying it, so
+    /// re-stamping the config — e.g. when a CLI-opened file is re-detected
+    /// once the grammars finish loading — doesn't drop it.
+    pub editorconfig: crate::services::editorconfig::EditorConfigSettings,
 }
 
 impl Default for BufferSettings {
@@ -209,6 +216,7 @@ impl Default for BufferSettings {
             word_characters: String::new(),
             indentation_guide: true,
             highlight_occurrences_override: None,
+            editorconfig: Default::default(),
         }
     }
 }
@@ -229,8 +237,11 @@ impl BufferSettings {
     /// on `BufferViewState` — per split — and are consulted at render time,
     /// so re-stamping the language gate below can't clear them.)
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
-        self.tab_size = resolved.tab_size;
-        self.use_tabs = self.use_tabs_override.unwrap_or(resolved.use_tabs);
+        self.tab_size = self.editorconfig.tab_size.unwrap_or(resolved.tab_size);
+        self.use_tabs = self
+            .use_tabs_override
+            .or(self.editorconfig.use_tabs)
+            .unwrap_or(resolved.use_tabs);
         self.auto_close = resolved.auto_close;
         self.auto_surround = resolved.auto_surround;
         self.virtual_space = self
