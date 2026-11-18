@@ -769,7 +769,7 @@
           "maxItems": 3
         },
         {
-          "description": "Named color",
+          "description": "Named color (e.g. `\"Blue\"`, any letter case) or hex (`\"#rrggbb\"`,\n`\"#rgb\"`)",
           "type": "string"
         }
       ]

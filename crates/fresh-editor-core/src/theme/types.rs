@@ -115,34 +115,53 @@ pub fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
 pub enum ColorDef {
     /// RGB color as [r, g, b]
     Rgb(u8, u8, u8),
-    /// Named color
+    /// Named color (e.g. `"Blue"`, any letter case) or hex (`"#rrggbb"`,
+    /// `"#rgb"`)
     Named(String),
 }
 
 impl ColorDef {
-    /// The color a name stands for, or `None` for a name Fresh does not know.
+    /// The color a name (any letter case) or a `#rrggbb` / `#rgb` hex string
+    /// stands for, or `None` for one Fresh does not know.
     pub fn named_color(name: &str) -> Option<Color> {
-        Some(match name {
-            "Black" => Color::Black,
-            "Red" => Color::Red,
-            "Green" => Color::Green,
-            "Yellow" => Color::Yellow,
-            "Blue" => Color::Blue,
-            "Magenta" => Color::Magenta,
-            "Cyan" => Color::Cyan,
-            "Gray" => Color::Gray,
-            "DarkGray" => Color::DarkGray,
-            "LightRed" => Color::LightRed,
-            "LightGreen" => Color::LightGreen,
-            "LightYellow" => Color::LightYellow,
-            "LightBlue" => Color::LightBlue,
-            "LightMagenta" => Color::LightMagenta,
-            "LightCyan" => Color::LightCyan,
-            "White" => Color::White,
+        if let Some(hex) = name.strip_prefix('#') {
+            return hex_color(hex);
+        }
+        Some(match name.to_ascii_lowercase().as_str() {
+            "black" => Color::Black,
+            "red" => Color::Red,
+            "green" => Color::Green,
+            "yellow" => Color::Yellow,
+            "blue" => Color::Blue,
+            "magenta" => Color::Magenta,
+            "cyan" => Color::Cyan,
+            "gray" => Color::Gray,
+            "darkgray" => Color::DarkGray,
+            "lightred" => Color::LightRed,
+            "lightgreen" => Color::LightGreen,
+            "lightyellow" => Color::LightYellow,
+            "lightblue" => Color::LightBlue,
+            "lightmagenta" => Color::LightMagenta,
+            "lightcyan" => Color::LightCyan,
+            "white" => Color::White,
             // Default/Reset uses the terminal's default color (preserves transparency)
-            "Default" | "Reset" => Color::Reset,
+            "default" | "reset" => Color::Reset,
             _ => return None,
         })
+    }
+}
+
+/// The color of a hex string without its `#`: `rrggbb` or `rgb`.
+fn hex_color(hex: &str) -> Option<Color> {
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let digit = |i: usize| u8::from_str_radix(&hex[i..i + 1], 16).ok();
+    let pair = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    match hex.len() {
+        6 => Some(Color::Rgb(pair(0)?, pair(2)?, pair(4)?)),
+        3 => Some(Color::Rgb(digit(0)? * 17, digit(1)? * 17, digit(2)? * 17)),
+        _ => None,
     }
 }
 
@@ -150,9 +169,9 @@ impl From<ColorDef> for Color {
     fn from(def: ColorDef) -> Self {
         match def {
             ColorDef::Rgb(r, g, b) => Color::Rgb(r, g, b),
-            // A theme file naming an unknown color is rejected when it is
-            // loaded (`Theme::from_json`); White only covers a `ColorDef`
-            // built some other way.
+            // A theme file's unknown colors are dropped (with a warning) when
+            // it is loaded (`Theme::from_json`); White only covers a
+            // `ColorDef` built some other way.
             ColorDef::Named(name) => ColorDef::named_color(&name).unwrap_or(Color::White),
         }
     }
@@ -2315,42 +2334,64 @@ fn first_invalid_key(raw: &serde_json::Value) -> Option<(String, String)> {
     })
 }
 
-/// The first color in the theme JSON `raw` — a theme key's value, bundled
-/// or not, or a file icon's `color` — that names no color Fresh knows, as
-/// `(key, name)`.
-fn first_unknown_color_name(raw: &serde_json::Value) -> Option<(String, String)> {
-    let unknown = |key: String, color: Option<&serde_json::Value>| {
+/// Remove from the theme JSON `raw` every color Fresh can't read — a theme
+/// key's value, bundled or not, or a file icon's `color` — returning each as
+/// `(key, name)`. The key then takes the value it would have without it
+/// (the base theme's, or its fallback's), not White.
+fn strip_unknown_color_names(raw: &mut serde_json::Value) -> Vec<(String, String)> {
+    let unknown = |color: Option<&serde_json::Value>| {
         let name = color?.as_str()?;
         ColorDef::named_color(name)
             .is_none()
-            .then(|| (key, name.to_string()))
+            .then(|| name.to_string())
     };
-    let from_keys = named_values(raw).into_iter().find_map(|(key, value)| {
-        if Theme::is_modifier_only_key(&key) {
-            return None;
-        }
-        let color = match value {
-            serde_json::Value::Object(o) => o.get("color"),
-            other => Some(other),
+    let mut removed = Vec::new();
+    for section in THEME_SECTIONS {
+        let Some(obj) = raw.get_mut(section).and_then(|v| v.as_object_mut()) else {
+            continue;
         };
-        unknown(key, color)
-    });
-    from_keys.or_else(|| {
-        let icons = raw.get("file_icons")?.as_object()?;
-        icons.iter().find_map(|(group, value)| {
-            let entries: Vec<(String, &serde_json::Value)> = match group.as_str() {
-                "by_name" | "by_extension" => value
-                    .as_object()?
-                    .iter()
-                    .map(|(k, v)| (format!("file_icons.{group}.{k}"), v))
-                    .collect(),
+        obj.retain(|field, value| {
+            let key = Theme::canonical_key(&format!("{}.{}", section, field)).to_string();
+            if Theme::is_modifier_only_key(&key) {
+                return true;
+            }
+            let color = match value {
+                serde_json::Value::Object(o) => o.get("color"),
+                other => Some(&*other),
+            };
+            match unknown(color) {
+                Some(name) => {
+                    removed.push((key, name));
+                    false
+                }
+                None => true,
+            }
+        });
+    }
+    if let Some(icons) = raw.get_mut("file_icons").and_then(|v| v.as_object_mut()) {
+        for (group, value) in icons.iter_mut() {
+            let entries: Vec<(String, &mut serde_json::Value)> = match group.as_str() {
+                "by_name" | "by_extension" => match value.as_object_mut() {
+                    Some(map) => map
+                        .iter_mut()
+                        .map(|(k, v)| (format!("file_icons.{group}.{k}"), v))
+                        .collect(),
+                    None => Vec::new(),
+                },
                 _ => vec![(format!("file_icons.{group}"), value)],
             };
-            entries
-                .into_iter()
-                .find_map(|(key, entry)| unknown(format!("{key}.color"), entry.get("color")))
-        })
-    })
+            for (key, entry) in entries {
+                let Some(entry) = entry.as_object_mut() else {
+                    continue;
+                };
+                if let Some(name) = unknown(entry.get("color")) {
+                    entry.remove("color");
+                    removed.push((format!("{key}.color"), name));
+                }
+            }
+        }
+    }
+    removed
 }
 
 /// The base theme a parsed `ThemeFile` is layered on, or `None` for a
@@ -2571,8 +2612,27 @@ impl Theme {
         // the theme names, including modifier-only keys and `null`s.
         // JSONC, as `config.json` is: `//` and `/* */` comments and trailing
         // commas are accepted.
-        let raw: serde_json::Value = jsonc_parser::parse_to_serde_value(json, &Default::default())
-            .map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
+        let mut raw: serde_json::Value =
+            jsonc_parser::parse_to_serde_value(json, &Default::default())
+                .map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
+        // A color name Fresh cannot read (a string, so the type check
+        // accepts it) is ignored with a warning naming the key: the key keeps
+        // the value it would have without it, rather than turning White, and
+        // the rest of the theme still loads. A ported theme with one odd
+        // color stays usable.
+        let theme_name = raw
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string();
+        for (key, name) in strip_unknown_color_names(&mut raw) {
+            tracing::warn!(
+                "Theme '{}': `{}` has unknown color {:?} and is ignored",
+                theme_name,
+                key,
+                name
+            );
+        }
         let theme_file: ThemeFile = serde_json::from_value(raw.clone()).map_err(|e| {
             // An untagged value's error does not say where it is, so name
             // the first key whose value is the problem.
@@ -2581,14 +2641,6 @@ impl Theme {
                 None => format!("Failed to parse theme: {}", e),
             }
         })?;
-        // A color name the type check accepts as a string but Fresh cannot
-        // read: refuse the theme, as for a value of the wrong type, rather
-        // than painting it White.
-        if let Some((key, name)) = first_unknown_color_name(&raw) {
-            return Err(format!(
-                "Failed to parse theme: invalid `{key}`: unknown color name {name:?}"
-            ));
-        }
         for key in Theme::unknown_keys(&raw) {
             tracing::warn!(
                 "Theme '{}': `{}` is not a theme key and is ignored",
@@ -4933,10 +4985,12 @@ mod tests {
         assert_eq!(Theme::unknown_keys(&raw), vec!["foo".to_string()]);
     }
 
-    /// #3802: a color name Fresh cannot read refuses the theme, as a value of
-    /// the wrong type does, rather than loading it as White.
+    /// #3802: a color name Fresh cannot read is ignored (with a warning):
+    /// the key keeps what it would be without it, not White, and the rest of
+    /// the theme still loads.
     #[test]
-    fn unknown_color_name_refuses_the_theme() {
+    fn unknown_color_name_is_ignored_for_that_key() {
+        let dark = Theme::load_builtin("dark").unwrap();
         for (key, value) in [
             ("editor.bg", serde_json::json!("notacolor")),
             (
@@ -4944,18 +4998,60 @@ mod tests {
                 serde_json::json!({ "color": "Purple", "modifier": ["bold"] }),
             ),
         ] {
-            let err = Theme::from_json(&extending_dark_with(key, value)).unwrap_err();
-            assert!(err.contains(key), "{key}: {err}");
+            let mut raw: serde_json::Value =
+                serde_json::from_str(&extending_dark_with(key, value)).unwrap();
+            raw["ui"]["tab_active_fg"] = serde_json::json!([1, 2, 3]);
+            let theme = Theme::from_json(&raw.to_string()).unwrap_or_else(|e| panic!("{key}: {e}"));
+            assert_eq!(
+                theme.resolve_theme_key(key),
+                dark.resolve_theme_key(key),
+                "{key} keeps the base theme's value"
+            );
+            assert_eq!(theme.tab_active_fg, Color::Rgb(1, 2, 3), "the rest loads");
         }
-        let err = Theme::from_json(
-            r#"{"name": "x", "file_icons": {"by_extension": {"rs": {"color": "Rust"}}}}"#,
+
+        // A standalone theme: the key falls back as if it were left out.
+        let without = Theme::from_json(r#"{"name": "s", "editor": {"fg": [9, 9, 9]}}"#).unwrap();
+        let with_bad =
+            Theme::from_json(r#"{"name": "s", "editor": {"fg": [9, 9, 9], "bg": "Bluish"}}"#)
+                .unwrap();
+        assert_eq!(with_bad.editor_bg, without.editor_bg);
+        assert_ne!(with_bad.editor_bg, Color::White);
+
+        let theme = Theme::from_json(
+            r#"{"name": "x", "file_icons": {"by_extension": {"rs": {"glyph": "R", "color": "Rust"}}}}"#,
         )
-        .unwrap_err();
-        assert!(err.contains("file_icons.by_extension.rs.color"), "{err}");
-        // Every name Fresh documents still loads.
-        for name in ["Default", "Reset", "LightBlue", "DarkGray", "White"] {
-            Theme::from_json(&extending_dark_with("editor.bg", serde_json::json!(name)))
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+        .unwrap();
+        let rs = &theme.file_icons.by_extension["rs"];
+        assert_eq!(rs.glyph.as_deref(), Some("R"));
+        assert_eq!(rs.color, None);
+
+        // A value of the wrong JSON type still refuses the theme.
+        let err =
+            Theme::from_json(&extending_dark_with("editor.bg", serde_json::json!(5))).unwrap_err();
+        assert!(err.contains("editor.bg"), "{err}");
+    }
+
+    /// #3802: hex strings and any letter case load, as ported themes use them.
+    #[test]
+    fn hex_and_case_insensitive_color_names_load() {
+        for (value, expected) in [
+            ("#ff8000", Color::Rgb(255, 128, 0)),
+            ("#FF8000", Color::Rgb(255, 128, 0)),
+            ("#f80", Color::Rgb(255, 136, 0)),
+            ("lightblue", Color::LightBlue),
+            ("DARKGRAY", Color::DarkGray),
+            ("Default", Color::Reset),
+            ("reset", Color::Reset),
+            ("White", Color::White),
+        ] {
+            let theme =
+                Theme::from_json(&extending_dark_with("editor.bg", serde_json::json!(value)))
+                    .unwrap_or_else(|e| panic!("{value}: {e}"));
+            assert_eq!(theme.editor_bg, expected, "{value}");
+        }
+        for bad in ["#ff80", "#gggggg", "#", "#ff80001"] {
+            assert_eq!(ColorDef::named_color(bad), None, "{bad}");
         }
     }
 
