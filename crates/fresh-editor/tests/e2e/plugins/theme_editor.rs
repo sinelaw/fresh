@@ -4306,3 +4306,65 @@ fn test_theme_editor_terminal_builtin_renders_field_rows() {
             )
         });
 }
+
+/// A theme editor over an empty user themes dir that the test can add to.
+fn theme_editor_with_themes_dir() -> (tempfile::TempDir, EditorTestHarness, std::path::PathBuf) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "theme_editor");
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let themes_dir = dir_context.themes_dir();
+    fs::create_dir_all(&themes_dir).unwrap();
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Default::default())
+            .with_working_dir(project_root)
+            .without_empty_plugins_dir()
+            .with_shared_dir_context(dir_context),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_theme_editor(&mut harness);
+    (temp_dir, harness, themes_dir)
+}
+
+/// Ctrl+O reads the theme registry afresh, so a theme saved (here: added and
+/// reloaded, as Save does) after the editor opened is listed (#3802).
+#[test]
+fn test_open_lists_a_theme_saved_after_the_editor_opened() {
+    let (_tmp, mut harness, themes_dir) = theme_editor_with_themes_dir();
+
+    fs::write(
+        themes_dir.join("zz-fresh-saved.json"),
+        r#"{"name": "zz-fresh-saved", "editor": {}, "ui": {}, "search": {}, "diagnostic": {}, "syntax": {}}"#,
+    )
+    .unwrap();
+    harness.editor_mut().reload_themes();
+
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Open theme"))
+        .unwrap();
+    harness.type_text("zz-fresh").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("zz-fresh-saved"))
+        .unwrap();
+}
+
+/// F1 shows the editor's keys, not nothing (#3802).
+#[test]
+fn test_f1_shows_theme_editor_help() {
+    let (_tmp, mut harness, _themes_dir) = theme_editor_with_themes_dir();
+    harness.send_key(KeyCode::F(1), KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("discard changes"))
+        .unwrap();
+}
