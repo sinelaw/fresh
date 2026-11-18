@@ -1608,3 +1608,56 @@ fn test_live_diff_crlf_blob_against_lf_worktree_diffs_per_line() {
         "a pure insertion must not render any deletion rows; screen:\n{screen}"
     );
 }
+
+/// Git Gutter and Live Diff both name their refresh command `%cmd.refresh`.
+/// The key is scoped to each plugin, so both commands are in the palette;
+/// whichever plugin loaded second used to replace the other's (#3781).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_gutter_and_live_diff_refresh_are_both_listed() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_live_diff_plugin();
+    repo.setup_git_gutter_plugin();
+
+    let _guard = repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness
+        .send_key(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Refresh").unwrap();
+    // Plugin commands register while the editor starts, and the list is only
+    // re-filtered on input, so retype the last character until both are in.
+    let both = |h: &EditorTestHarness| {
+        let screen = h.screen_to_string();
+        screen.contains("Git Gutter: Refresh") && screen.contains("Live Diff: Refresh")
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !both(&harness) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both refresh commands should be listed:\n{}",
+            harness.screen_to_string()
+        );
+        harness.tick_and_render().unwrap();
+        harness
+            .send_key(
+                crossterm::event::KeyCode::Backspace,
+                crossterm::event::KeyModifiers::NONE,
+            )
+            .unwrap();
+        harness.type_text("h").unwrap();
+    }
+}

@@ -1688,7 +1688,10 @@ impl JsEditorApi {
             .borrow_mut()
             .remove(&tracking_key);
         self.command_sender
-            .send(PluginCommand::UnregisterCommand { name })
+            .send(PluginCommand::UnregisterCommand {
+                name,
+                plugin_name: self.plugin_name.clone(),
+            })
             .is_ok()
     }
 

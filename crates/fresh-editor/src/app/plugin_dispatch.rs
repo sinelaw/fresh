@@ -1444,8 +1444,8 @@ impl Editor {
             } => {
                 self.handle_set_status_bar_value(buffer_id, key, value);
             }
-            PluginCommand::UnregisterCommand { name } => {
-                self.handle_unregister_command(name);
+            PluginCommand::UnregisterCommand { name, plugin_name } => {
+                self.handle_unregister_command(name, plugin_name);
             }
             PluginCommand::DefineMode {
                 name,
