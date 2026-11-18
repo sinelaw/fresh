@@ -20,6 +20,10 @@ Fresh has built-in tooling for reviewing diffs, navigating git history, and jump
 
 The diff can be shown **stacked** (one unified column) or **side by side** (old and new in two columns); press `1`, `2`, or `0` to pick stacked, side by side, or automatic by window width. Press `?` inside a review for the full list of keys.
 
+![Review Diff showing a file side by side, old version on the left and working copy on the right, with the Files sidebar listing unstaged and untracked files](/images/git-review-diff.png)
+
+*Review Diff, side by side, with the Files sidebar open.*
+
 Entry points (all in the command palette):
 
 - **Review Diff** — everything staged, unstaged, and untracked in the working tree right now.
@@ -39,6 +43,8 @@ Inside a review:
 ## Git Log
 
 **Git Log** opens a live-preview commit history. Moving through the log updates the right panel with the syntax-highlighted diff for the selected commit — no need to open each one to see what it touched. Commit messages wrap, columns align, and the toolbar is clickable. **Git Log: Current File** scopes the history to the active buffer's file, and **Git Log: PR Branch** scopes it to the commits on the current branch against a base ref, with a side-by-side `git show` for the selected commit (**Git Log: Close PR Branch** and **Git Log: Refresh PR Branch** act on that panel). To *review* those commits rather than browse them, use **Review Diff: Range**.
+
+![Git Log with the commit list on the left and the selected commit's message and diff on the right](/images/git-log.png)
 
 ## Git Blame
 

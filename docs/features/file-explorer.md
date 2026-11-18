@@ -2,6 +2,10 @@
 
 Fresh includes a built-in file explorer.
 
+![The file explorer beside an open file: modified files are marked M, an untracked file U, folders with changes carry a dot, and the gitignored build and target folders are dimmed](/images/explorer-git-status.png)
+
+*Git status at a glance: M for modified, U for untracked, a dot on folders with changes, and gitignored folders dimmed.*
+
 *   **Toggle Sidebar:** Use `Ctrl+B` to show/hide the file explorer sidebar. When a nested file is active, toggling on expands the tree and reveals the file.
 *   **Focus:** Use `Ctrl+E` to switch focus between the file explorer and editor.
 *   **Sidebar sections:** Plugins can add sections under the file tree — the Markdown **Contents** outline, for example. `Alt+Shift+N` cycles the keyboard through the sidebar (file explorer, then each section, then back to the editor) and `Alt+Shift+P` runs the cycle the other way; both work from inside the tree, a section, the dock or a terminal (in a terminal these two chords go to the editor, not to the program running in it). A hidden sidebar is shown first. A section belongs to the window — or the file — it was made for, so another workspace's outline never appears in yours.
@@ -21,6 +25,8 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 ## Managing Files
 
 **Right-click** an entry for a context menu with New File, New Directory, Rename, Cut, Copy, Paste, Duplicate, Delete and Copy Full/Relative Path. It acts on the entry under the pointer; right-clicking empty space offers New File, New Directory and Paste in the project root. While the explorer has focus, an **Explorer** menu in the menu bar offers the main file actions plus Refresh and the hidden/gitignored toggles.
+
+![The file explorer's right-click menu: New File, New Directory, Rename, Cut, Copy, Paste, Delete, Duplicate, Copy Full Path and Copy Relative Path](/images/explorer-context-menu.png)
 
 - **New File / New Directory** (`Ctrl+N` / `Ctrl+Shift+N`) — prompts for a name; nothing is created until you confirm it.
 - **Rename** (`F2`) — type a new name, or a relative path such as `../lib/util.rs` to move the entry elsewhere in the project. Rename never overwrites an existing file.

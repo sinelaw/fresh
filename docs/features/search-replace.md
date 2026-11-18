@@ -110,6 +110,8 @@ a snippet. **Find References** results work the same way: moving through the
 list opens each location in a
 [preview tab](./file-explorer.md#opening-files) you can scroll and read.
 
+![Universal Search for open_only: the scope and match toggles at the top, the matching lines on the left, and the selected match shown in its file on the right](/images/search-live-grep.png)
+
 With **All workspaces** on, the results of every workspace come in one list,
 grouped under a header row per workspace (`api · 3 matches`): the workspace
 you are in first, then the others in the order the
