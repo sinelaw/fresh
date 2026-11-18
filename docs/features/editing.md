@@ -13,7 +13,7 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides. It is independent of `auto_close`: either can be on with the other off.
 - **Markdown types delimiters literally** — Markdown ships with both `languages.markdown.auto_close` and `languages.markdown.auto_surround` set to `false`, because prose types backticks, quotes and brackets as literal text far more often than as pairs. Set either to `true` to opt back in.
 - **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
-- **Bracket matching** — Matching brackets are highlighted. Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
+- **Bracket matching** — Matching brackets are highlighted, and nested brackets are colored by depth (rainbow brackets, on by default; turn it off with **Rainbow Brackets** in Settings). Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
 - **Paragraph motion** — "Go to Next Paragraph" / "Go to Previous Paragraph" (command palette, or **Go → Next/Previous Paragraph**) move the cursor to the next or previous empty line. The default keymap gives them no key (the emacs keymap binds them to M-} / M-{); bind `move_to_paragraph_down` / `move_to_paragraph_up` in the [Keybinding Editor](./keybinding-editor.md) if you want one. Ctrl+Shift+Down/Up extend the selection the same way.
 
 ## Vertical Rulers
@@ -57,6 +57,10 @@ Every occurrence of the word under the cursor is highlighted in the viewport. Wh
 
 Rows past the end of the buffer keep the theme's editor background, so the empty space below a short file reads as the same surface as the text above it; the end of the buffer is marked by the `~` tildes (`show_tilde`, on by default). A theme that wants that space called out with a shade of its own sets the `editor.after_eof_bg` key - in a custom theme JSON, or in the graphical theme editor under **Editor -> After End-of-File Background** - and those rows use it instead.
 
+## Saving
+
+**Save All** (in the **File** menu and the command palette) saves every modified file at once. If a file changed on disk since Fresh last read it, Save All, auto-save and save-on-quit skip it rather than overwrite someone else's change, and the status bar names the files that weren't saved and why.
+
 ## Auto-Save
 
 Enable `auto_save_enabled` in settings to automatically save modified buffers to disk at a configurable interval (default 30 seconds). This is separate from the crash-recovery auto-save, which runs independently every 2 seconds to a recovery directory.
@@ -84,7 +88,7 @@ Control visibility of space (`·`) and tab (`→`) characters. Configure indepen
 
 **Toggle Whitespace Indicators (Current Buffer)** in the command palette flips the master toggle for the active buffer. Switching it on marks every space, whatever the configured per-position settings say — otherwise the command looks inert in a space-indented file with the default settings (spaces off, tabs on). Tab and line-ending indicators follow the configuration, so a language that hides tab arrows keeps hiding them. "Reset Buffer Settings" drops the per-buffer choice.
 
-Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle.
+Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle. New files use LF line endings unless you pick another in Settings (**Default Line Ending**: LF, CRLF or CR); opened files keep their own.
 
 Inside a selection the indicators appear regardless of the settings above, so selected runs of spaces and tabs stay legible without turning indicators on for the whole buffer. Set `whitespace_in_selection` to `false` to switch that off; it is independent of the master toggle and of the per-buffer whitespace overrides. Selected indicators are drawn in `whitespace_indicator_selected_fg`, a subdued color that a theme may set explicitly and that is otherwise derived from `selection_bg` — without it they would take the selected text's own foreground and read as content rather than as marks.
 
@@ -99,6 +103,10 @@ When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines 
 Lines wrap at the window edge, or at `wrap_column` when it is set and the window is wider. `wrap_column` counts text columns, not the line-number gutter: `"wrap_column": 80` fits 80 characters on a row with or without line numbers. It can be set per language, e.g. to wrap Markdown at 80 while code wraps at the window edge.
 
 **Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else and save it to your config. See [Per-Buffer Overrides](../configuration/index.md#per-buffer-overrides) for the naming convention every settings toggle follows.
+
+## Virtual Space
+
+Virtual space lets the cursor move past the end of a line, as in Visual Studio or Vim's `virtualedit`; typing there fills the gap with spaces. Choose it in Settings under **Virtual Space**: off (the default), only for block selections, or everywhere. **Toggle Virtual Space (Current Buffer)** in the command palette flips it for the active buffer only.
 
 ## Multiple Cursors
 
@@ -116,7 +124,7 @@ Edit multiple locations simultaneously:
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+W` | Select word under cursor |
-| `Ctrl+L` | Select current line |
+| `Ctrl+L` | Select current line; press again to extend by another line |
 | `Ctrl+A` | Select all |
 | `Shift+Arrow` | Extend selection in direction |
 | `Ctrl+Shift+←/→` | Select word left/right |
@@ -124,6 +132,8 @@ Edit multiple locations simultaneously:
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
 | Double-click, then drag | Extend the selection a whole word at a time (a plain click-drag extends it by single characters) |
+
+Dragging a selection past the top or bottom of the pane scrolls the view so you can keep selecting.
 
 Selected line breaks are drawn too: every line break inside the selection highlights the single column it occupies — column 0 on an empty line, just past the text otherwise — so a selection that spans blank lines is visible instead of leaving them looking untouched. Whitespace inside the selection also gets its `·` / `→` indicators (see [Whitespace Indicators](#whitespace-indicators)).
 
@@ -155,6 +165,8 @@ Drop a selection anchor and extend the selection as you move, without holding `S
 | `Shift+Tab` | Dedent |
 | `Ctrl+/` | Toggle comment |
 | `Ctrl+T` | Transpose characters |
+
+**Duplicate Line** and **Duplicate Line Above** (command palette) copy the current line, or every selected line, below or above it.
 
 ### Deletion
 
@@ -262,7 +274,7 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 
 ### Compose Mode
 
-"Markdown: Toggle Compose" from the command palette enables a distraction-free mode that conceals markup (`**`, `*`, `[]()`), applies soft line breaks at a configurable width, and renders tables. Use "Markdown: Set Compose Width" to adjust the width. Open the same file in a vertical split to see source and composed views side by side.
+"Markdown: Toggle Compose/Preview" from the command palette turns the current file into a distraction-free, preview-style page: markup (`**`, `*`, `[]()`, `#`, `>`) is hidden, headings, block quotes and horizontal rules are styled, list items get bullets, code blocks are framed and highlighted with their language's own syntax, and tables are rendered. The text is soft-wrapped in a centered column; adjust its width with "Markdown: Set Compose Width" (or **Page Width** in Settings, 80 columns by default). Headings are also marked on the scrollbar. "Markdown: Toggle Compose/Preview (All Files)" does the same for every open and future Markdown file.
 
 Three commands switch the pane in focus between views of a Markdown file:
 
@@ -418,10 +430,4 @@ See [LSP Integration](./lsp.md) for richer completions when a language server is
 
 ## Vim Mode
 
-A Vim emulation plugin is available, providing modal editing with normal, insert, and visual modes. To enable it, open the command palette (`Ctrl+P`) and search for "vi mode".
-
-`:set` commands work inside vi mode for common options, e.g. `:set number` / `:set nonumber` and `:set wrap`. The plugin also has settings (in the `vi_mode` plugin config):
-
-- `autoStart` (default `false`) — enable vi mode on startup.
-- `arrowKeys` (default `true`) — allow arrow keys for navigation.
-- `searchWordUnderCursor` (default `true`) — `*` / `#` search for the word under the cursor.
+Fresh has a vi mode with Normal, Insert, Visual and command-line modes, operators, text objects, counts and `.` repeat. Turn it on with **Toggle Vi mode** from the command palette. See [Vi Mode](./vi-mode.md) for what it supports.
