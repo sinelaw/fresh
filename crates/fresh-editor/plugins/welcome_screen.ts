@@ -36,7 +36,8 @@ const editor = getEditor();
 //   launches, the page opens as a tab *behind* whatever is already
 //   there. It never takes the foreground on its own, never closes
 //   another buffer, and never reopens because something else went away.
-//   A file launch (`fresh FILE`, `$EDITOR`) does not open it. Closing it
+//   A file launch (`fresh FILE`, `$EDITOR`) or piped input (`cmd | fresh`,
+//   `fresh -`) does not open it. Closing it
 //   is the reader's (Escape, or the tab's ×), and `Welcome` in the
 //   palette brings it back. `show_on_startup` (plugin setting, and the
 //   toggle at the bottom of the page) turns the startup open off.
@@ -128,15 +129,29 @@ editor.defineConfigBoolean("show_on_startup", {
   description: "Open the welcome screen when Fresh starts, as a tab behind whatever is already open.",
 });
 
-/** The page's toggle writes plugin global state, which persists across
- *  restarts; the declared config field is the fallback, so the Settings
- *  UI still owns the setting for anyone who never touches the toggle. */
+/** Where `show_on_startup` lives in the config: the page's toggle saves it
+ *  there, as Settings → Plugins → welcome_screen does, so the two are the
+ *  same setting. */
+const STARTUP_SETTING = "plugins.welcome_screen.settings.show_on_startup";
+
 function showOnStartup(): boolean {
-  const override = editor.getGlobalState("showOnStartup");
-  if (typeof override === "boolean") return override;
   const cfg = (editor.getPluginConfig() ?? {}) as { show_on_startup?: boolean };
-  return cfg.show_on_startup !== false;
+  return settingWithPending(STARTUP_SETTING, cfg.show_on_startup !== false);
 }
+
+/** The toggle used to write a separate global-state override, which then
+ *  outranked the setting for good — Settings could not turn the page back
+ *  on. Carry a choice made that way over to the setting, once. */
+function migrateStartupOverride(): void {
+  const legacy = editor.getGlobalState("showOnStartup");
+  if (typeof legacy !== "boolean") return;
+  editor.setGlobalState("showOnStartup", null);
+  if (legacy !== showOnStartup()) {
+    pending.set(STARTUP_SETTING, legacy);
+    editor.saveSetting(STARTUP_SETTING, legacy);
+  }
+}
+migrateStartupOverride();
 
 // ── Layout helpers ───────────────────────────────────────────────────
 
@@ -405,7 +420,7 @@ async function openWelcome(force: boolean): Promise<void> {
   }
   if (opening) return;
   if (!force && !showOnStartup()) return;
-  if (!force && editor.fileLaunch()) return;
+  if (!force && (editor.fileLaunch() || editor.stdinLaunch())) return;
   opening = true;
   try {
     const res = await editor.createVirtualBuffer({
@@ -571,13 +586,14 @@ function activate(k: string, checked?: boolean): void {
     case "autoAttachToggle":
       saveToggle("auto_attach", checked ?? !autoAttach(), "status.attach_on", "status.attach_off");
       return;
-    case "startupToggle": {
-      const next = checked ?? !showOnStartup();
-      editor.setGlobalState("showOnStartup", next);
-      editor.setStatus(editor.t(next ? "status.startup_on" : "status.startup_off"));
-      render();
+    case "startupToggle":
+      saveToggle(
+        STARTUP_SETTING,
+        checked ?? !showOnStartup(),
+        "status.startup_on",
+        "status.startup_off",
+      );
       return;
-    }
   }
 }
 

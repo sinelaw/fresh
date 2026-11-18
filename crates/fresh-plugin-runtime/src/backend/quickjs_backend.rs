@@ -2925,6 +2925,17 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
+    /// Whether the launch opened piped standard input (`cmd | fresh`,
+    /// `fresh -`). The piped content is what such a launch is about, so,
+    /// as for `fileLaunch()`, plugins leave out startup pages; the session
+    /// is still restored.
+    pub fn stdin_launch(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.stdin_launch)
+            .unwrap_or(false)
+    }
+
     /// The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
     /// `[left, right]`; empty for any other launch. The editor doesn't open
     /// them: the plugin that reads this at `ready` does (the bundled

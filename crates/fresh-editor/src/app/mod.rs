@@ -1132,6 +1132,11 @@ pub struct Editor {
     /// construction.
     file_launch: bool,
 
+    /// This launch opened piped standard input (`cmd | fresh`, `fresh -`):
+    /// set by [`Editor::open_stdin_buffer`], which only the launch calls.
+    /// Read through [`Editor::stdin_launch`].
+    stdin_launch: bool,
+
     /// The two files of a `fresh --diff LEFT RIGHT` launch, absolute. Read
     /// through [`Editor::diff_launch`]; set once, before the `ready` hook,
     /// by [`Editor::set_diff_launch`].

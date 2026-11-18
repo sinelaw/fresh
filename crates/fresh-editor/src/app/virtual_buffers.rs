@@ -32,6 +32,7 @@ impl Editor {
         spool: std::sync::Arc<crate::services::stdin_spool::StdinSpool>,
         thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     ) -> AnyhowResult<BufferId> {
+        self.stdin_launch = true;
         // The spool has no name, so the editor's filesystem cannot see it.
         // This view can, and it is what the buffer keeps for its lazy chunk
         // loads — including under a remote authority, where the spool is
