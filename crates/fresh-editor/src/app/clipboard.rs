@@ -320,24 +320,28 @@ impl Editor {
                 if let Some((_offset, line_content)) = iter.next_line() {
                     // Extract the column range from this line
                     // Remove trailing newline for column calculation
-                    let content_without_newline = line_content.trim_end_matches(&['\n', '\r'][..]);
-                    let chars: Vec<char> = content_without_newline.chars().collect();
+                    let text = line_content.trim_end_matches(&['\n', '\r'][..]);
 
-                    // Extract characters from min_col to max_col (exclusive)
-                    let mut extracted: String = chars
-                        .iter()
-                        .skip(min_col)
-                        .take(max_col.saturating_sub(min_col))
-                        .collect();
+                    // Extract min_col..max_col (exclusive). The columns are
+                    // byte offsets within the line, as the rectangle's
+                    // painter and `convert_block_selection_to_cursors` read
+                    // them, so a copy takes what a delete removes even on a
+                    // line with multi-byte characters.
+                    let floor = |col: usize| {
+                        let mut i = col.min(text.len());
+                        while !text.is_char_boundary(i) {
+                            i -= 1;
+                        }
+                        i
+                    };
+                    let start = floor(min_col);
+                    let mut extracted = text[start..floor(max_col).max(start)].to_string();
 
                     // Virtual space: block copies are true rectangles — pad
                     // short lines out to the rectangle's width.
                     if block_virtual {
-                        let want = max_col.saturating_sub(min_col);
-                        let have = extracted.chars().count();
-                        if have < want {
-                            extracted.extend(std::iter::repeat_n(' ', want - have));
-                        }
+                        let pad = max_col.saturating_sub(text.len().max(min_col));
+                        extracted.extend(std::iter::repeat_n(' ', pad));
                     }
 
                     lines_text.push(extracted);
