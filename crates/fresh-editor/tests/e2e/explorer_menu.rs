@@ -10,7 +10,7 @@ fn test_alt_x_opens_explorer_menu() {
     harness.render().unwrap();
 
     // Explorer menu dropdown should not be visible initially
-    harness.assert_screen_not_contains("New Folder");
+    harness.assert_screen_not_contains("New Directory");
 
     // Press Alt+X to open Explorer menu
     harness
@@ -20,7 +20,7 @@ fn test_alt_x_opens_explorer_menu() {
 
     // Explorer menu dropdown should now be visible with its items
     harness.assert_screen_contains("New File");
-    harness.assert_screen_contains("New Folder");
+    harness.assert_screen_contains("New Directory");
     harness.assert_screen_contains("Refresh");
 }
 
@@ -38,7 +38,7 @@ fn test_explorer_menu_items() {
 
     // Verify all expected menu items are present
     harness.assert_screen_contains("New File");
-    harness.assert_screen_contains("New Folder");
+    harness.assert_screen_contains("New Directory");
     harness.assert_screen_contains("Open");
     harness.assert_screen_contains("Rename");
     harness.assert_screen_contains("Delete");
@@ -93,7 +93,7 @@ fn test_explorer_menu_checkbox_updates_on_toggle() {
 
     // Navigate to Show Hidden Files and select it. Menu items with
     // separators skipped (clipboard is empty so Paste is hidden):
-    //   New File, New Folder, Open, Rename, Delete, Cut, Copy,
+    //   New File, New Directory, Open, Rename, Delete, Cut, Copy,
     //   Refresh, Show Hidden Files
     // That's 8 Down presses to land on "Show Hidden Files" from the
     // initial highlight on "New File".
@@ -132,14 +132,14 @@ fn test_escape_closes_explorer_menu() {
         .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("New Folder");
+    harness.assert_screen_contains("New Directory");
 
     // Press Escape to close
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Menu should be closed
-    harness.assert_screen_not_contains("New Folder");
+    harness.assert_screen_not_contains("New Directory");
 }
 
 /// Test Explorer menu navigation with arrow keys
@@ -167,7 +167,7 @@ fn test_explorer_menu_navigation() {
 
     // Menu should still be visible
     harness.assert_screen_contains("New File");
-    harness.assert_screen_contains("New Folder");
+    harness.assert_screen_contains("New Directory");
 }
 
 /// Test navigating from Explorer menu to other menus
@@ -185,7 +185,7 @@ fn test_explorer_menu_left_right_navigation() {
         .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("New Folder");
+    harness.assert_screen_contains("New Directory");
 
     // Navigate right to Help menu
     harness
@@ -195,14 +195,14 @@ fn test_explorer_menu_left_right_navigation() {
 
     // Should now show Help menu items
     harness.assert_screen_contains("Show Fresh Manual");
-    harness.assert_screen_not_contains("New Folder");
+    harness.assert_screen_not_contains("New Directory");
 
     // Navigate left back to Explorer menu
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Should now show Explorer menu items again
-    harness.assert_screen_contains("New Folder");
+    harness.assert_screen_contains("New Directory");
     harness.assert_screen_not_contains("Show Fresh Manual");
 }
 
@@ -332,7 +332,7 @@ fn test_explorer_menu_new_file_action() {
         .unwrap();
 }
 
-/// Test executing New Folder action from Explorer menu
+/// Test executing New Directory action from Explorer menu
 #[test]
 fn test_explorer_menu_new_folder_action() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -355,7 +355,7 @@ fn test_explorer_menu_new_folder_action() {
         .unwrap();
     harness.render().unwrap();
 
-    // Navigate to "New Folder" (second item)
+    // Navigate to "New Directory" (second item)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
@@ -435,7 +435,7 @@ fn test_explorer_menu_toggle_hidden_via_menu() {
 
     // Navigate to "Show Hidden Files". With separators auto-skipped and
     // an empty clipboard (Paste hidden), the Explorer menu shows:
-    //   New File -> New Folder -> Open -> Rename -> Delete -> Cut
+    //   New File -> New Directory -> Open -> Rename -> Delete -> Cut
     //   -> Copy -> Refresh -> Show Hidden Files
     // That's 8 Down presses from New File to Show Hidden Files.
     for _ in 0..8 {
@@ -616,9 +616,9 @@ fn test_explorer_menu_items_disabled_when_not_focused() {
     );
 }
 
-/// New Folder asks for a name and writes nothing until it gets one.
+/// New Directory asks for a name and writes nothing until it gets one.
 ///
-/// It used to create `New Folder <timestamp>` on disk first and then offer a
+/// It used to create `New Directory <timestamp>` on disk first and then offer a
 /// rename, which is two of the things #3427 reported: the placeholder was
 /// briefly the entry's real name, and cancelling left it behind for good.
 #[test]
@@ -682,7 +682,7 @@ fn test_new_folder_uses_the_name_it_was_given() {
     assert!(
         !dir_names(&project_root)
             .iter()
-            .any(|n| n.starts_with("New Folder")),
+            .any(|n| n.starts_with("New Directory")),
         "and no placeholder should have been left: {:?}",
         dir_names(&project_root)
     );
@@ -995,13 +995,13 @@ fn test_new_folder_via_menu_affects_filesystem() {
         .filter(|e| e.path().is_dir())
         .collect();
 
-    // Open Explorer menu and select New Folder
+    // Open Explorer menu and select New Directory
     harness
         .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
-    // Navigate to New Folder (second item)
+    // Navigate to New Directory (second item)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
