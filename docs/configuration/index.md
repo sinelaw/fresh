@@ -85,10 +85,10 @@ Fresh merges all layers. Merge behavior depends on the setting type:
 Higher layers override lower layers. If a setting is not specified in a higher layer, it falls through to the next lower layer.
 
 ```
-System: theme = "default"    ← Base default
-User:   theme = "dark"       ← Overrides system
-Project: (not set)           ← Falls through
-Session: theme = "light"     ← Final value: "light"
+System:  theme = "high-contrast"  ← Base default
+User:    theme = "dark"           ← Overrides system
+Project: (not set)                ← Falls through
+Session: theme = "light"          ← Final value: "light"
 ```
 
 ### Nested Objects (editor, terminal, file_explorer)
@@ -192,6 +192,8 @@ To configure Fresh through the Settings UI:
 4. **Choose Target Layer**: Click the layer button (e.g., `[ User ]`) to switch between User/Project/Session
 5. **Save**: Press Enter on the Save button or use `Ctrl+S`
 
+![The Settings UI open on Editor › Display: categories on the left, each setting with its description and current value on the right](/images/settings-editor.png)
+
 **Advanced: Edit Config File Directly**
 
 For complex configurations (like LSP args or custom keybindings), click the `[ Edit ]` button in the Settings footer to open the raw JSON config file for the selected layer.
@@ -219,7 +221,7 @@ For complex configurations (like LSP args or custom keybindings), click the `[ E
   },
   "languages": {
     "javascript": {
-      "formatter": "prettier --write"
+      "format_on_save": true
     }
   }
 }
@@ -479,7 +481,26 @@ In the Settings UI, each setting shows where its current value comes from:
 
 ## Status Bar
 
-The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, palette hint, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, a `{search_nav}` pair of `↓` / `↑` arrows, shown while a search is active, that you can click to go to the next or previous match (like F3 / Shift+F3), a clickable `{terminal_restart}` indicator that appears when the active terminal buffer's process has quit (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)), and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
+The left and right sides of the status bar are configurable in the Settings UI. Each side is a picker with an **Available** column and an **Included** column: move elements across to show or hide them, and reorder the Included list with its arrow buttons or the keyboard (the picker shows the keys). A separator drawn between elements can also be set there.
+
+![The status bar picker for the left side: Git: branch has just been moved from Available into Included, with the picker's keys shown below](/images/settings-status-bar.png)
+
+Elements you can place:
+
+- **Workspace Trust** — whether this workspace is trusted; click to change it (see [Workspace Trust](../features/workspace-trust.md)). Leads the left side by default.
+- **Remote Indicator** — lights up when you're attached to an SSH remote or a devcontainer; click for connection actions.
+- **Filename** and **Read-Only** — the file's path (not shown by default, since the tab already names the file), and an `[RO]` badge while the buffer is read-only.
+- **Cursor** (or the shorter **Cursor (compact)**), **Cursor Count** and **Search Navigation** — the cursor position, the number of cursors when there's more than one, and clickable `↓` / `↑` arrows while a search is active (like F3 / Shift+F3).
+- **Diagnostics** and **Warnings** — error and warning counts.
+- **Line Ending**, **Encoding** and **Language** — click to change each one.
+- **LSP** — language server status; click for the server popup (see [LSP](../features/lsp.md)).
+- **Messages** and **Chord** — status messages, and a key chord in progress.
+- **Terminal Restart** — appears when a terminal's process has quit; click to restart it (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)).
+- **Update** — appears when a newer Fresh is available; click for the update menu.
+- **Palette** — the command palette hint; click to open the palette.
+- **Clock** — the time, with a blinking colon.
+
+Plugins can add their own elements too, such as **Git: branch**.
 
 The `{remote}` indicator is clickable — activate it to open a context-aware menu for the current authority (detach, show container logs, retry attach, etc.). It also reflects connection state: `Connecting`, `Connected`, or `FailedAttach`.
 
@@ -500,16 +521,20 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Line numbers | Show line numbers in gutter | on |
-| Line wrap | Soft-wrap long lines | off |
+| Line wrap | Soft-wrap long lines | on |
 | Rulers | Column positions for vertical ruler lines | none |
 | Indentation guides | Draw all guides, the active guide, or none | none |
 | Rainbow indentation | Color indentation-guide levels using theme `indent_rainbow_*` colors | off |
 | Vertical scrollbar | Show vertical scrollbar | on |
 | Horizontal scrollbar | Show horizontal scrollbar | off |
+| Viewport edge fade | Fade the top and bottom rows of a pane when there is more text beyond that edge | on |
 | Terminal background | Let terminal background show through | off |
 | Bracket matching | Highlight matching bracket pairs | on |
 | Status bar | Show/hide the status bar | on |
-| Whitespace indicators | Show space/tab characters (leading, inner, trailing) | off |
+| Auto-hide tab bar | Hide the tab bar while the window shows a single file in a single pane | off |
+| Nerd Font icons | Use Nerd Font icons in the UI. Turn on only if your terminal uses a Nerd Font | off |
+| Whitespace indicators | Show markers for tabs, spaces and line endings (leading, inner, trailing) | tabs on; spaces and line endings off |
+| Whitespace in selection | Show whitespace markers inside a selection, even where they are hidden elsewhere | on |
 | Diagnostics inline text | Show diagnostics at end of line | off |
 | Show tilde | Show `~` markers after end of file | on |
 | Menu bar mnemonics | Enable Alt+key shortcuts for menu bar | on |
@@ -522,6 +547,18 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Auto-surround | Wrap selection when typing a delimiter | on |
 | Trim trailing whitespace on save | Remove trailing whitespace when saving | off |
 | Ensure final newline on save | Add trailing newline when saving | off |
+| Virtual space | Let the cursor go past the end of a line: never, only in block selections, or always | off |
+| Large file threshold | Files over this size load lazily and skip language servers | 10 MB |
+
+### Mouse
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Smooth scroll | Scroll a wheel notch one line at a time instead of jumping (needs animations on) | on |
+| Mouse wheel scroll lines | Lines scrolled per wheel notch | 3 |
+| Mouse hover | Show documentation when hovering the mouse over code | on (off on Windows) |
+
+Shift+wheel scrolls sideways.
 
 ### Auto-Save
 
@@ -578,7 +615,9 @@ its prompt toolbar (click it, or Tab to it and press Space); bind
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Show prompt line | Show the prompt line at the bottom | on |
+| Show prompt line | Always show the prompt line at the bottom; otherwise it appears only while a prompt is open | off |
+| Empty tab on last close | Open an empty `[No Name]` tab when the last tab is closed | on |
+| Explorer on last close | Focus the file explorer when the last tab is closed | on |
 
 ### Clipboard
 
@@ -600,7 +639,7 @@ To prevent LSP servers from consuming too many resources, Fresh can limit their 
       "command": "rust-analyzer",
       "enabled": true,
       "process_limits": {
-        "max_memory_mb": 4096,
+        "max_memory_percent": 25,
         "max_cpu_percent": 200
       }
     }
@@ -608,4 +647,4 @@ To prevent LSP servers from consuming too many resources, Fresh can limit their 
 }
 ```
 
-The `max_memory_mb` limit is enforced via platform-specific mechanisms. `max_cpu_percent` is relative to one core (e.g. 200 = two full cores).
+`max_memory_percent` is a share of total system memory. `max_cpu_percent` is relative to one core (e.g. 200 = two full cores).

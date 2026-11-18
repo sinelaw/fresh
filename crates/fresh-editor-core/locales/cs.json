@@ -1842,7 +1842,7 @@
   "settings.field.file_explorer.preview_tabs": "Karty náhledu",
   "settings.field.file_explorer.preview_tabs_desc": "Jedno kliknutí otevře dočasnou kartu náhledu, kterou další kliknutí nahradí. Úprava, dvojklik, Enter nebo přetažení karty z ní udělá trvalou. Výchozí: true",
   "settings.field.file_explorer.respect_gitignore": "Respektovat .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Uplatňovat pravidla `.gitignore`. Je-li vypnuto, ignorované soubory nejsou skryté ani zašedlé. Výchozí: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Uplatňovat pravidla `.gitignore`. Je-li vypnuto, ignorované soubory se vždy zobrazují, ale zůstávají zašedlé. Výchozí: true",
   "settings.field.file_explorer.show_gitignored": "Zobrazit ignorované gitem",
   "settings.field.file_explorer.show_gitignored_desc": "Ve výchozím stavu zobrazovat soubory ignorované gitem.",
   "settings.field.file_explorer.show_hidden": "Zobrazit skryté",

@@ -13,7 +13,7 @@ Language packs add syntax highlighting, language configuration, and LSP support 
 Use the CLI to scaffold a new language pack:
 
 ```bash
-fresh --init language
+fresh --cmd init language
 ```
 
 This creates a directory with the basic structure:
@@ -81,7 +81,7 @@ The manifest configures the language pack:
 | `useTabs` | Use tabs instead of spaces |
 | `autoIndent` | Enable automatic indentation |
 | `formatter.command` | Formatter command (e.g., `prettier`, `rustfmt`) |
-| `formatter.args` | Arguments for the formatter (file path is passed automatically) |
+| `formatter.args` | Arguments for the formatter (`$FILE` is replaced by the file path) |
 
 **Formatter Examples:**
 
@@ -89,13 +89,13 @@ The manifest configures the language pack:
 // Prettier (JavaScript/TypeScript/etc.)
 "formatter": {
   "command": "prettier",
-  "args": ["--write"]
+  "args": ["--stdin-filepath", "$FILE"]
 }
 
 // Prettier with plugin (Svelte, Vue, etc.)
 "formatter": {
   "command": "prettier",
-  "args": ["--write", "--plugin", "prettier-plugin-svelte"]
+  "args": ["--stdin-filepath", "$FILE", "--plugin", "prettier-plugin-svelte"]
 }
 
 // Black (Python)
@@ -113,11 +113,11 @@ The manifest configures the language pack:
 // gofmt (Go)
 "formatter": {
   "command": "gofmt",
-  "args": ["-w"]
+  "args": []
 }
 ```
 
-**Note:** The file path is automatically appended to the args by Fresh. Some formatters expect stdin (use `"-"` as arg), others expect file path.
+**Note:** Fresh sends the buffer to the formatter on stdin and replaces it with the formatter's output, so use the formatter's stdin/stdout mode (for example `"-"` for Black), not an option that rewrites the file in place.
 
 ### LSP Configuration
 
@@ -305,7 +305,7 @@ contexts:
 The fastest way to test your language pack during development:
 
 1. **Open Fresh** with a test file
-2. **Open command palette**: Press `Ctrl+P` then type `>`
+2. **Open command palette**: Press `Ctrl+P`
 3. **Install from local path**:
    - Type `package` and select "Package: Install from URL"
    - Enter the full path to your language pack directory: `/path/to/your-language-pack`
@@ -338,7 +338,7 @@ Always validate your package before publishing:
 
 ```bash
 # Show log locations
-fresh --show-paths
+fresh --cmd config paths
 
 # View Fresh logs (check for grammar parse errors)
 tail -f ~/.local/state/fresh/logs/fresh-*.log
@@ -364,7 +364,7 @@ tail -f ~/.local/state/fresh/logs/lsp/<language>-*.log
 
 **Formatter not working:**
 - Verify formatter is installed: `which <formatter>`
-- Test manually: `<formatter> <args> <file>`
+- Test manually: `<formatter> <args> < <file>` (it should print the formatted text)
 - Check formatter documentation for correct arguments
 
 ## Publishing
@@ -374,9 +374,8 @@ tail -f ~/.local/state/fresh/logs/lsp/<language>-*.log
 3. Add your package to `languages.json`
 
 After approval, users can install via the command palette:
-1. Press `Ctrl+P` then type `>`
-2. Type `package` and select "Package: Install from URL"
-3. Enter your package name or git URL
+1. Press `Ctrl+P`, type `package` and select "Package: Packages"
+2. Find your package and choose **Install**
 
 Users can also install directly from your git repository:
 ```bash

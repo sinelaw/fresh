@@ -7,23 +7,21 @@
 Use overlays to highlight text without modifying content:
 
 ```typescript
-globalThis.highlight_word = function(): void {
+registerHandler("highlight_word", () => {
   const bufferId = editor.getActiveBufferId();
   const cursor = editor.getCursorPosition();
 
-  // Highlight 5 bytes starting at cursor with yellow background
-  editor.addOverlay(
-    bufferId,
-    "my_highlight:1",  // Unique ID (use prefix for batch removal)
-    cursor,
-    cursor + 5,
-    255, 255, 0,       // RGB color
-    false              // underline
-  );
-};
+  // Highlight 5 bytes starting at the cursor with a yellow background
+  editor.addOverlay(bufferId, "my_highlight", cursor, cursor + 5, {
+    bg: [255, 255, 0],  // RGB array, or a theme key such as "editor.selection_bg"
+    underline: false,
+  });
+});
 
-// Later, remove all highlights with the prefix
-editor.removeOverlaysByPrefix(bufferId, "my_highlight:");
+registerHandler("clear_highlights", () => {
+  // Remove every overlay in the namespace at once
+  editor.clearNamespace(editor.getActiveBufferId(), "my_highlight");
+});
 ```
 
 ### Creating Results Panels
@@ -31,9 +29,9 @@ editor.removeOverlaysByPrefix(bufferId, "my_highlight:");
 Display search results, diagnostics, or other structured data in a virtual buffer:
 
 ```typescript
-globalThis.show_results = async function(): Promise<void> {
-  // Define keybindings for the results panel
-  editor.defineMode("my-results", "special", [
+registerHandler("show_results", async () => {
+  // Define keybindings for the results panel (read-only)
+  editor.defineMode("my-results", [
     ["Return", "my_goto_result"],
     ["q", "close_buffer"]
   ], true);
@@ -42,7 +40,7 @@ globalThis.show_results = async function(): Promise<void> {
   await editor.createVirtualBufferInSplit({
     name: "*Results*",
     mode: "my-results",
-    read_only: true,
+    readOnly: true,
     entries: [
       {
         text: "src/main.rs:42: found match\n",
@@ -53,20 +51,20 @@ globalThis.show_results = async function(): Promise<void> {
         properties: { file: "src/lib.rs", line: 100 }
       }
     ],
-    ratio: 0.3,           // Panel takes 30% of height
-    panel_id: "my-results" // Reuse panel if it exists
+    ratio: 0.7,           // Existing content keeps 70%, the panel gets 30%
+    panelId: "my-results" // Reuse panel if it exists
   });
-};
+});
 
 // Handle "go to" when user presses Enter
-globalThis.my_goto_result = function(): void {
+registerHandler("my_goto_result", () => {
   const bufferId = editor.getActiveBufferId();
   const props = editor.getTextPropertiesAtCursor(bufferId);
 
   if (props.length > 0 && props[0].file) {
-    editor.openFile(props[0].file, props[0].line, 0);
+    editor.openFile(props[0].file as string, props[0].line as number, 0);
   }
-};
+});
 
 editor.registerCommand("my_goto_result", "Go to result", "my_goto_result", "my-results");
 ```
@@ -78,7 +76,7 @@ SSH host or in its container when the workspace is remote. No shell is
 involved: pass the program and its arguments already split.
 
 ```typescript
-globalThis.run_tests = async function(): Promise<void> {
+registerHandler("run_tests", async () => {
   editor.setStatus("Running tests...");
 
   const result = await editor.runOnTarget("cargo", ["test"], editor.getCwd());
@@ -88,7 +86,7 @@ globalThis.run_tests = async function(): Promise<void> {
   } else {
     editor.setStatus(`Tests failed: ${result.stderr.split('\n')[0]}`);
   }
-};
+});
 ```
 
 To run a command in another window's workspace, use the machine
@@ -102,7 +100,7 @@ same as `runOnTarget` but resolves with `exit_code` instead of `code`.
 Plugins can call `editor.sendLspRequest(language, method, params)` to run language-server-specific RPCs (clangd extensions, type hierarchy, switch header, etc.). Provide the target language ID (e.g., `"cpp"`) and the full method name, and handle the raw JSON response yourself.
 
 ```typescript
-globalThis.switch_header = async function(): Promise<void> {
+registerHandler("switch_header", async () => {
   const bufferId = editor.getActiveBufferId();
   const path = editor.getBufferPath(bufferId);
   const uri = `file://${path}`;
@@ -112,7 +110,7 @@ globalThis.switch_header = async function(): Promise<void> {
   if (result && typeof result === "string") {
     editor.openFile(result, 0, 0);
   }
-};
+});
 ```
 
 ### File System Operations
@@ -120,15 +118,15 @@ globalThis.switch_header = async function(): Promise<void> {
 Read and write files, check paths:
 
 ```typescript
-globalThis.process_file = async function(): Promise<void> {
+registerHandler("process_file", () => {
   const path = editor.getBufferPath(editor.getActiveBufferId());
 
-  if (editor.fileExists(path)) {
-    const content = await editor.readFile(path);
+  const content = editor.fileExists(path) ? editor.readFile(path) : null;
+  if (content !== null) {
     const modified = content.replace(/TODO/g, "DONE");
     // `replaceFile`, not `writeFile`: running this twice on the same buffer
     // should rewrite the output, and `writeFile` refuses a path that exists.
-    await editor.replaceFile(path + ".processed", modified);
+    editor.replaceFile(path + ".processed", modified);
   }
-};
+});
 ```

@@ -1835,7 +1835,7 @@
   "settings.field.file_explorer.preview_tabs": "Pestañas de vista previa",
   "settings.field.file_explorer.preview_tabs_desc": "Un solo clic abre una pestaña de vista previa temporal que el siguiente clic reemplaza. Editar, hacer doble clic, pulsar Enter o arrastrar la pestaña la vuelve permanente. Predeterminado: true",
   "settings.field.file_explorer.respect_gitignore": "Respetar .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Aplicar las reglas de `.gitignore`. Si está desactivado, los archivos ignorados no se ocultan ni se muestran atenuados. Predeterminado: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Aplicar las reglas de `.gitignore`. Si está desactivado, los archivos ignorados se muestran siempre, aunque atenuados. Predeterminado: true",
   "settings.field.file_explorer.show_gitignored": "Mostrar archivos gitignored",
   "settings.field.file_explorer.show_gitignored_desc": "Mostrar los archivos gitignored de forma predeterminada.",
   "settings.field.file_explorer.show_hidden": "Mostrar ocultos",

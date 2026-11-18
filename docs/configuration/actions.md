@@ -317,7 +317,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `set_compose_width` | Alias of `set_page_width`. Set page width (compose width) |
 | `set_encoding` | Set text encoding (UTF-8, Latin-1, etc.) |
 | `set_language` | Set language/syntax highlighting |
-| `set_line_ending` | Set line ending format (LF/CRLF) |
+| `set_line_ending` | Set line ending format (LF/CRLF/CR) |
 | `set_mark` | Set mark (start selection) |
 | `set_page_width` | Set page width (compose width) |
 | `set_tab_size` | Set tab size for current buffer |

@@ -22,6 +22,8 @@ Closing the comparison closes the files it opened, unless you've changed one wit
 *   Each difference also gets a mark on the scrollbar, so you can see where the changes are in a long file.
 *   The two sides scroll together.
 
+![Two versions of a TOML config compared side by side: changed lines marked ~ with the differing values highlighted, an added line marked + facing a filler row, and a removed line marked -](/images/compare-side-by-side.png)
+
 Lines don't wrap inside a comparison, because a wrapped line would push one side out of step with the other. The two sides scroll in whole lines, so while the top of one pane is inside a run of lines only that side has, the other pane holds at the edge of that run. They line up again as soon as the run scrolls past.
 
 ## Commands

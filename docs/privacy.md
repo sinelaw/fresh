@@ -7,8 +7,9 @@ The data collected includes:
 - Fresh version
 - Operating system and architecture (e.g., `linux-x86_64`, `macos-aarch64`)
 - Terminal type (the `TERM` environment variable)
+- A random installation ID, created on first run and stored in Fresh's data directory
 
-No personal data, file contents, or usage behavior is collected. The check runs once on startup and then once daily.
+No personal data, file contents, or usage behavior is collected. The check runs at most once a day, when Fresh starts.
 
 ## Disabling Upgrade Checks and Telemetry
 

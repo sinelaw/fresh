@@ -2,25 +2,11 @@
 
 > **Palette:** `Workboard: Open`, `Workboard: Next Waiting Agent` · **Menu:** View → Workboard
 >
-> **Needs:** the Orchestrator plugin, which provides the workspaces it shows.
+> **Needs:** the [Orchestrator](./orchestrator.md) plugin, which provides the workspaces it shows.
 
 The Workboard puts every Orchestrator workspace and its coding agent on one full-screen board, together with the agent sessions running outside the editor and the ones found in your agents' history, so you can see at a glance which agents are waiting on you, which have finished, and which are still working. Press `Enter` on a card to open that workspace.
 
-```
-┌ Workboard ─────────────────────────────────────────────────────────────────[×]┐
-│[ 1 Inbox ][ 2 Projects ][ 3 Folders ][ 4 Board ]                ● 2   ✓ 1   * 2  │
-│────────────────────────────────────────────────────────────────────────────────│
-│       Workspace      Status                         Project  Branch        For │
-│▼ NEEDS YOU  2                                                                  │
-│    ●  rate-limit     Should I use Postgres or Redis? api      rate-limit    4m │
-│    ●  login-fix      Allow running cargo test? (y/n) web      login-fix     1m │
-│▼ READY TO REVIEW  1                                                            │
-│    ✓  tab-names      finished, not looked at         web      tab-names · 3 changed │
-│▼ WORKING  2                                                                    │
-│    *  billing-ui                                     api      billing-ui    2m │
-│Enter open  n next waiting  Tab/1-4 lens  Esc close                             │
-└────────────────────────────────────────────────────────────────────────────────┘
-```
+![The Workboard's Inbox lens: a workspace waiting on a question, two ready to review, one working and two parked, each with its project, branch and changes](/images/workboard-inbox.png)
 
 The state symbols are the Orchestrator dock's own: **●** waiting on you, **✓** finished work you haven't looked at, **\*** working, **·** idle. The time on each card is how long it has been in that state, counted from when the Workboard first saw it.
 
@@ -33,9 +19,11 @@ The list lenses are tables: a heading per group (`←` / `→` or a click fold i
 | Lens | What it shows |
 | --- | --- |
 | **Inbox** | Sorted by what needs you: **Needs you** (agent asked a question), **Ready to review** (finished, unseen), **Working**, **Parked**, then **Detected** (sessions found in history, newest first). In the first two, the one that has waited longest is on top. A waiting agent's question is its status; a workspace whose create failed waits here too, with the reason. |
-| **Projects** | One group per project, resolved the way **Import sessions** resolves one: by the repository's git remote (`origin`, else the first remote), so every worktree of a repo and every clone of it, wherever it sits on disk, lands in the same group, and the ssh and https forms of one URL match. A repository with no remote is grouped by its root, anything else by its directory. A cloud session joins the group of the GitHub repository it works on. |
+| **Projects** | One group per project, resolved the way **Import sessions** resolves one: by the repository's git remote (`origin`, else the first remote), so every worktree of a repo and every clone of it, wherever it sits on disk, lands in the same group, and the ssh and https forms of one URL match. A repository with no remote is grouped by its own folder (so each of its worktrees gets its own group), anything else by its directory. A cloud session joins the group of the GitHub repository it works on. |
 | **Folders** | The Orchestrator dock's folders, in the dock's order, so an arrangement you made by hand is one key away. Drag a workspace onto a folder (or onto a workspace in it) to file it there; drop it on **Not in a folder** to unfile it. Sessions outside the editor are listed under **Outside the editor**. |
 | **Board** | A kanban board that fills itself, one column of cards each: **Backlog**, **Needs me**, **Working**, **Review**, **Shipped**. |
+
+![The Workboard's Board lens: cards sorted into Backlog, Needs me, Working, Review and Shipped columns](/images/workboard-board.png)
 
 ### How the Board places cards
 
@@ -111,7 +99,5 @@ const unregister = board?.registerSource({
   open: (id) => attach(id),   // return a string to show why it could not open
 });
 ```
-
-The types (`WorkboardSource`, `WorkboardItem`, `WorkboardApi`) are in `plugins/lib/workboard_model.ts`.
 
 Bind a key to **Workboard: Open** in the [keybinding editor](./keybinding-editor.md) to bring the board up from anywhere, including from inside an agent's terminal.

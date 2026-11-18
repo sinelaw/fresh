@@ -22,7 +22,7 @@ Reach for `init.ts` when the decision depends on *where or how Fresh is starting
 
 If you're building something reusable, prefer a plugin — it's installable, shareable, and gets the plugin lifecycle for free.
 
-Sometimes a plugin is the right unit, but part of its behavior only makes sense at startup or depends on the environment. In that case expose the knobs as a plugin API and *call them from `init.ts`*. Plugin APIs are typed automatically — `editor.getPluginApi("dashboard")` returns the right interface or `null`, no `as`-cast needed:
+Sometimes a plugin is the right unit, but part of its behavior only makes sense at startup or depends on the environment. In that case expose the knobs as a plugin API and *call them from `init.ts`*. A plugin that declares its API gets it typed automatically — `editor.getPluginApi("dashboard")` returns the right interface or `null`, no `as`-cast needed:
 
 ```ts
 // In init.ts — plug the parts together for this machine.
@@ -37,8 +37,8 @@ editor.on("plugins_loaded", () => {
   }
 
   // Configure another plugin for this environment.
-  const todo = editor.getPluginApi("todo-highlighter");
-  if (todo) todo.configure({ tags: ["TODO", "FIXME", "HACK"] });
+  const orch = editor.getPluginApi("orchestrator");
+  if (orch) orch.setDockView("card");
 });
 ```
 
@@ -73,9 +73,9 @@ if (editor.getEnv("FRESH_PROFILE") === "writing") {
 ## Editing and reloading
 
 - **`init: Edit init.ts`** from the command palette opens (or creates) `~/.config/fresh/init.ts` with a starter template. The same command also refreshes `types/fresh.d.ts`, writes `types/plugins.d.ts` (so `editor.getPluginApi("dashboard")` and friends are typed), and creates a `tsconfig.json` on first run.
-- **`init: Reload init.ts`** re-runs the file without restarting Fresh.
+- **`init: Reload init.ts`** re-runs the file without restarting Fresh. From a terminal that a workspace started (see [Scripting the Editor](../features/scripting.md#where-scripts-can-run)), `fresh --cmd init reload` does the same.
 - **`init: Check init.ts`** runs a syntax check (oxc parser) and reports parse errors. It does not run a full TypeScript type-check.
-- **`fresh --no-init`** (alias `--safe`) skips loading for a single launch — useful if the file errors out.
+- **`fresh --no-init`** skips loading for a single launch (`--safe` skips it and all plugins) — useful if the file errors out.
 - **Crash fuse:** if `init.ts` fails to evaluate three times in a row within five minutes, the next launch auto-skips it until you fix or remove the file. A successful evaluation clears the counter.
 
 The full API surface is the same as plugins — see the [Plugin API reference](/plugins/api/).

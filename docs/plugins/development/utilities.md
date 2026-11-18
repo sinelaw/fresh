@@ -1,105 +1,61 @@
 # Plugin Utilities Library
 
-## Example Plugins
-
-The `plugins/` directory contains several example plugins:
-
-- **`welcome.ts`** - Simple command registration and status messages
-- **`todo_highlighter.ts`** - Uses overlays and hooks to highlight keywords efficiently
-- **`git_grep.ts`** - Spawns external process and displays results in a virtual buffer
-
-## Plugin Utilities Library
-
-The `plugins/lib/` directory provides reusable utilities that abstract common plugin patterns. Import them with:
+Fresh's bundled plugins share a small TypeScript library in the `plugins/lib/` folder of the [Fresh repository](https://github.com/sinelaw/fresh/tree/master/crates/fresh-editor/plugins/lib). Bundled plugins import it by relative path:
 
 ```typescript
-import { PanelManager, NavigationController, VirtualBufferFactory } from "@plugins/lib";
+import { Finder } from "./lib/finder.ts";
+import { PanelManager, NavigationController } from "./lib/index.ts";
 ```
 
-### PanelManager
-
-Manages the lifecycle of result panels (open, close, update, toggle):
+The library isn't installed with Fresh, so a plugin of your own can't import it from there. To use a helper, copy its file (and the files it imports, such as `types.ts`) into your plugin's `lib/` folder, delete the `/// <reference path="./fresh.d.ts" />` line at the top of each copy, and import it the same way:
 
 ```typescript
-import { PanelManager } from "@plugins/lib";
+import { PanelManager } from "./lib/panel-manager.ts";
+```
 
-const panel = new PanelManager({
-  name: "*Search Results*",
-  mode: "search-results",
-  panelId: "search",
-  ratio: 0.3,
-  keybindings: [
-    ["Return", "search_goto"],
-    ["q", "close_buffer"]
-  ]
+## What's in it
+
+| Export | File | Use it for |
+|--------|------|------------|
+| `Finder` | `finder.ts` | "Find something and go to it": a search prompt or results panel with fuzzy filtering and preview |
+| `PanelManager` | `panel-manager.ts` | Opening, updating and closing a results panel in a split |
+| `NavigationController` | `navigation-controller.ts` | Tracking the selected item in a list |
+| `createVirtualBufferFactory` | `virtual-buffer-factory.ts` | Creating virtual buffers with sensible defaults |
+| Widgets (`row`, `col`, `button`, `textInput`, `WidgetPanel`, …) | `widgets.ts` | Declarative panel and dialog UI |
+| Types (`RGB`, `Location`, `PanelOptions`, `NavigationOptions`, …) | `types.ts` | Shared types |
+
+## Example
+
+A results panel with a selectable list:
+
+```typescript
+import { PanelManager } from "./lib/panel-manager.ts";
+import { NavigationController } from "./lib/navigation-controller.ts";
+const editor = getEditor();
+
+type Hit = { file: string; line: number; text: string };
+const panel = new PanelManager(editor, "*Results*", "my-results");
+const nav = new NavigationController<Hit>(editor, { itemLabel: "Result" });
+
+registerHandler("my_show_results", async () => {
+  const hits: Hit[] = [{ file: "src/main.rs", line: 42, text: "found match" }];
+  nav.setItems(hits);
+  await panel.open({
+    entries: hits.map((h) => ({
+      text: `${h.file}:${h.line}: ${h.text}\n`,
+      properties: { file: h.file, line: h.line },
+    })),
+    ratio: 0.7, // the panel gets the bottom 30%
+  });
 });
+registerHandler("my_next_result", () => nav.next());
+registerHandler("my_close_results", () => panel.close());
 
-// Show results
-await panel.open(entries);
-
-// Update with new results
-await panel.update(newEntries);
-
-// Toggle visibility
-await panel.toggle(entries);
-
-// Check state
-if (panel.isOpen()) { ... }
+editor.defineMode("my-results", [["n", "my_next_result"], ["q", "my_close_results"]], true);
+editor.registerCommand("My Plugin: Show Results", "Show results", "my_show_results");
 ```
 
-### NavigationController
+- `PanelManager`: `open({ entries, ratio })` opens the panel (or updates it if it's open), `updateContent(entries)` replaces its text, `close()` closes it, and `isOpen` tells you whether it's showing.
+- `NavigationController`: `setItems(items)`, then `next()`, `prev()`, `first()`, `last()`; read the choice with `selected` and `selectedIndex`.
 
-Handles list navigation with selection tracking and visual highlighting:
-
-```typescript
-import { NavigationController } from "@plugins/lib";
-
-const nav = new NavigationController({
-  bufferId: myBufferId,
-  highlightPrefix: "mylist",
-  color: { r: 100, g: 100, b: 255 }
-});
-
-// Move selection
-nav.moveUp();
-nav.moveDown();
-nav.moveToTop();
-nav.moveToBottom();
-
-// Get current selection
-const index = nav.getSelectedIndex();
-const location = nav.getSelectedLocation();
-
-// Cleanup
-nav.clearHighlights();
-```
-
-### VirtualBufferFactory
-
-Simplified creation of virtual buffers with less boilerplate:
-
-```typescript
-import { VirtualBufferFactory } from "@plugins/lib";
-
-const bufferId = await VirtualBufferFactory.create({
-  name: "*Output*",
-  mode: "output-mode",
-  entries: [
-    { text: "Line 1\n", properties: { id: 1 } },
-    { text: "Line 2\n", properties: { id: 2 } }
-  ],
-  readOnly: true,
-  ratio: 0.25,
-  panelId: "output"
-});
-```
-
-### Types
-
-The library also exports common types:
-
-```typescript
-import type { RGB, Location, PanelOptions, NavigationOptions } from "@plugins/lib";
-```
-
-See the source files in `plugins/lib/` for full API details.
+Each file documents its API at the top. See [Common Patterns](./patterns.md) for doing the same with the plain `editor` API.

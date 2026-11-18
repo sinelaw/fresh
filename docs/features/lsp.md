@@ -4,24 +4,32 @@ Fresh has native support for the Language Server Protocol (LSP), providing featu
 
 *   **Real-time diagnostics:** See errors and warnings in your code as you type.
 *   **Code completion:** Auto-imports are applied when you accept a completion. Fresh also provides [basic buffer-word completions](./editing.md#basic-completions) without an LSP.
-*   **Code actions:** Quick fixes, refactorings, and server-initiated file create/rename/delete, all through a single popup that merges actions from every configured server.
+*   **Code actions:** Quick fixes and refactorings, including ones that create or rename files, all through a single popup that merges actions from every configured server. A server is never allowed to delete a file or overwrite an existing one; such a request is refused and reported in the status bar.
 *   **Navigation:** Go to Definition (`F12`), Find References (`Shift+F12`), and Go to Implementation (`Ctrl+F12`).
 *   **Hover, rename, and signature help.**
 *   **Formatting:** "Format Buffer" from the command palette formats the whole file with the configured external formatter, falling back to LSP formatting when none is set. With an active selection it formats only that range via the language server's range formatting (`textDocument/rangeFormatting`) when the server supports it, matching VS Code's "Format Selection".
 
-All LSP operations are available as palette commands (search for "LSP"). Use the [Keybinding Editor](./keybinding-editor.md) to see or change the keys bound to each one.
+Every LSP operation is a palette command under its own name (**Go to Definition**, **Find References**, **Rename Symbol**, **Code Actions**, **Show Hover Info**, …); the server-management commands (**Show LSP Status**, **Start/Restart LSP Server**, **Stop LSP Server**) come up when you search for "LSP". Use the [Keybinding Editor](./keybinding-editor.md) to see or change the keys bound to each one.
 
 ## Status Bar
 
-The status bar shows a single `LSP` indicator — colour-coded, with a spinner during startup and indexing. Activate it (click, or run **LSP: Server Status** from the command palette) to open a popup with per-server status, live progress, and per-server actions (restart, stop, view log). Servers that are configured but whose binary isn't on `PATH` are flagged so Fresh doesn't quietly spawn failing processes. The popup also shows buffer-skip state when a file is too large for LSP, and the "not installed" copy is container-aware when you're attached to a devcontainer (it points at the container's PATH, not the host's). You can also mute a language from the popup.
+The status bar shows a single `LSP` indicator — colour-coded, with a spinner during startup and indexing. Activate it (click, or run **Show LSP Status** from the command palette) to open a popup with per-server status, live progress, per-server actions (start, restart, stop), and a **View Log** entry. Servers that are configured but whose binary isn't on `PATH` are flagged so Fresh doesn't quietly spawn failing processes, and the "not installed" copy is container-aware when you're attached to a devcontainer (it points at the container's PATH, not the host's). You can also turn a language off from the popup (for example **Disable LSP for python**), which is saved to your config.
+
+The indicator reads `LSP (off)` when a server is configured for the file but not running, and `LSP (n/a)` when servers are running but the current file is skipped (for example, it is over the large-file threshold).
+
+![The LSP status popup for Python: pyright-langserver is ready, with Restart, Stop, Disable LSP for python and View Log actions](/images/lsp-status-popup.png)
+
+Requests to a server give up after 30 seconds and say they timed out rather than showing an empty result. If a running server keeps timing out, the indicator reads `LSP (stuck)` in a warning colour; restart the server from the popup.
 
 ## Remote-Aware LSP
 
-Language servers spawn through the editor's current [Authority](../plugins/api/), so attaching to an SSH remote or a devcontainer runs the servers over there. `command_exists` probes and `ProcessLimits` (`max_memory_mb`, `max_cpu_percent`) are threaded through the same authority, so quotas apply whether the server is local or in a container.
+Language servers spawn through the editor's current [Authority](../plugins/api/), so attaching to an SSH remote or a devcontainer runs the servers over there. The "is it installed" check and the memory and CPU limits (`process_limits`: `max_memory_percent`, `max_cpu_percent`) go through the same authority, so quotas apply whether the server is local or in a container.
 
 ## Hover and Diagnostics
 
 Hover popups fuse any overlapping diagnostic with the hover body — severity-coloured and source-tagged (`rustc`, `clippy`, `clangd`, etc.), so you see the error message and the type information together.
+
+![A hover popup showing a Pyright type error above the hovered variable's type](/images/lsp-hover-diagnostic.png)
 
 ## Diagnostics Panel
 
@@ -39,15 +47,15 @@ When the LSP server provides `foldingRange`, fold indicators appear in the gutte
 
 ## Multi-Server Support
 
-You can configure multiple LSP servers for the same language (e.g., pylsp + pyright for Python). Configure this in the Settings UI (run **Open Settings** from the palette) under the **LSP** section.
+You can configure multiple LSP servers for the same language (e.g., pylsp + pyright for Python). Configure this in the Settings UI (run **Open Settings** from the palette) under **Syntax & Languages → Language Servers**.
 
-Each server can opt into or out of specific features using `only_features` / `except_features` — for example, route completions to one server and diagnostics to another. Fresh merges completions from every eligible server and tracks diagnostics per-server. Servers configured for all languages are spawned once per project rather than once per language.
+Each server can opt into or out of specific features using `only_features` / `except_features` — for example, route completions to one server and diagnostics to another. Fresh merges completions and hover results from every eligible server and tracks diagnostics per-server. Servers configured for all languages are spawned once per project rather than once per language.
 
 ## Disabling LSP
 
-To disable a single server, set `"enabled": false` on its entry in the `lsp` map (Settings UI: **LSP** section), or mute the language from the status-bar popup.
+To disable a single server, set `"enabled": false` on its entry in the `lsp` map (Settings UI: **Syntax & Languages → Language Servers**), or pick **Disable LSP for …** in the status-bar popup.
 
-To disable LSP for **all** languages at once, set the top-level `lsp_enabled` master switch to `false` (Settings UI: **General** section):
+To disable LSP for **all** languages at once, set the top-level `lsp_enabled` master switch to `false` (same Settings UI page):
 
 ```json
 {
@@ -63,11 +71,11 @@ When you open a `.h` file, Fresh routes to the C++ LSP if there's a clear signal
 
 ## Workspace Root Detection
 
-By default, Fresh uses the working directory as the LSP workspace root. You can configure `root_markers` on an LSP server entry (e.g., `Cargo.toml`, `package.json`) so the editor walks upward from the file's directory to find the project root. Configure this in the Settings UI (run **Open Settings** from the palette) under the **LSP** section.
+Fresh walks upward from the file's directory to the nearest folder containing one of the server's `root_markers` (e.g., `Cargo.toml`, `package.json`, `.git`) and uses it as the workspace root. Built-in servers come with suitable markers; with no markers, or no match, the file's own folder is used. Configure this in the Settings UI (run **Open Settings** from the palette) under **Syntax & Languages → Language Servers**.
 
 ## Built-in LSP Support
 
-Fresh includes built-in LSP configurations for many languages. Install the server and Fresh will use it automatically:
+Fresh includes built-in LSP configurations for many languages. Install the server, then start it from the LSP status popup: **Start … (always)** (for example **Start rust-analyzer (always)**) starts it now and whenever you open a file of that language; **Start … once** starts it for this session only.
 
 | Language | LSP Server | Install Command |
 |----------|-----------|-----------------|
@@ -82,17 +90,15 @@ Fresh includes built-in LSP configurations for many languages. Install the serve
 | C/C++ | clangd | `brew install llvm` |
 | Kotlin | kotlin-lsp | `brew install JetBrains/utils/kotlin-lsp`, AUR `kotlin-lsp-bin`, or the [standalone archive](https://github.com/Kotlin/kotlin-lsp/releases) |
 | Odin | ols | build from source: <https://github.com/DanielGavin/ols> |
-
-`ols` ships no binaries for most platforms, so Fresh does not start it on
-its own — otherwise every Odin file would report a server that isn't there.
-Once you have built it, set `lsp.odin.auto_start` to `true` (or start it
-from the palette) and it behaves like any other server.
+| Slang | slangd | ships with the [Slang compiler](https://github.com/shader-slang/slang) |
 
 `kotlin-lsp` is JetBrains' official Kotlin server (Alpha). It imports the
 Gradle or Maven project on first start, which can take a while on large
 builds, and it does not analyse `.kts` files yet. To keep using fwcd's
 `kotlin-language-server`, set `lsp.kotlin.command` to `kotlin-language-server`
 and `args` to `[]`.
+
+In a JavaScript/TypeScript project with a `deno.json` or `deno.jsonc` at its root, Fresh uses `deno lsp` instead of `typescript-language-server`, as long as `deno` is on your `PATH`.
 
 ## Python LSP Configuration
 
@@ -168,7 +174,7 @@ For example, to add C# support:
   "languages": {
     "csharp": {
       "extensions": ["cs"],
-      "grammar": "c_sharp",
+      "grammar": "csharp",
       "comment_prefix": "//",
       "auto_indent": true
     }
@@ -183,7 +189,7 @@ For example, to add C# support:
 }
 ```
 
-The language name (e.g., `"csharp"`) must match in both sections. The `grammar` field must be a valid grammar name — run `fresh --cmd grammar list` to see all available grammars. Fresh includes built-in language definitions for many languages, visible in the Settings UI (run **Open Settings** from the palette) under the **Languages** section.
+The language name (e.g., `"csharp"`) must match in both sections. The `grammar` field must be a valid grammar name — run `fresh --cmd grammar list` to see all available grammars. Fresh includes built-in language definitions for many languages, visible in the Settings UI (run **Open Settings** from the palette) under **Syntax & Languages → Languages**.
 
 ### Environment Variables
 
@@ -203,7 +209,7 @@ Pass environment variables to LSP server binaries:
 
 ### Language ID Overrides
 
-Some LSP servers expect a different `languageId` than Fresh's internal language name. Use `language_id_overrides` to map them:
+Some LSP servers expect a different `languageId` than Fresh's internal language name for certain files. Use `language_id_overrides` to map a **file extension** (without the dot) to the `languageId` to send:
 
 ```json
 {
@@ -212,8 +218,7 @@ Some LSP servers expect a different `languageId` than Fresh's internal language 
       "command": "typescript-language-server",
       "args": ["--stdio"],
       "language_id_overrides": {
-        "typescriptreact": "typescriptreact",
-        "javascriptreact": "javascriptreact"
+        "tsx": "typescriptreact"
       }
     }
   }
@@ -229,7 +234,7 @@ Use "Rust LSP: Configure Mode" from the command palette to toggle between Full a
 You can also configure language detection using the Settings UI instead of editing `config.json` directly:
 
 1. **Open Settings**: Run **Open Settings** from the palette (or **Edit → Settings...** from the menu bar).
-2. **Navigate to Languages**: Go to the **Languages** section
+2. **Navigate to Languages**: Go to **Syntax & Languages → Languages**
 3. **Add or Edit a Language**: Click on an existing language to edit it, or add a new one
 4. **Configure Detection**: Set the following fields:
    - **Extensions**: File extensions that should use this language (e.g., `cs` for C#, `rs` for Rust)

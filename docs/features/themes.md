@@ -7,6 +7,14 @@ Fresh supports customizable color themes.
 
 Use the command palette (`Ctrl+P`) and search for "Select Theme" to choose from available themes. Built-in themes and user themes are both shown.
 
+![The Select Theme prompt listing the built-in themes, with quiet marked as current](/images/themes-select-theme.png)
+
+Fresh ships these built-in themes: `dark`, `light`, `high-contrast`, `nostalgia`, `dracula`, `nord`, `solarized-dark`, `tokyo-night`, `gruvbox`, `flat`, `quiet`, and `terminal`.
+
+![The same Python file in six built-in themes](/images/themes-builtin-gallery.png)
+
+*Left to right, top to bottom: `light`, `dracula`, `nord`, `gruvbox`, `solarized-dark`, `nostalgia`.*
+
 ## Setting a Theme in `config.json`
 
 The `theme` field in `config.json` accepts several forms, so you can point at a built-in, a local file, or a theme hosted somewhere else (Fresh's config parser accepts JSONC, so `//` comments are fine):
@@ -18,8 +26,10 @@ The `theme` field in `config.json` accepts several forms, so you can point at a 
 { "theme": "my-theme.json" }                     // relative to ~/.config/fresh/themes
 { "theme": "subdir/dark.json" }                  // nested is fine
 
-{ "theme": "file://${HOME}/themes/x.json" }      // absolute path; ${HOME} and
-                                                  // ${XDG_CONFIG_HOME} are expanded
+{ "theme": "file://${HOME}/.config/fresh/themes/x.json" }
+                                                 // absolute path to a theme in the
+                                                 // themes directory; ${HOME} and
+                                                 // ${XDG_CONFIG_HOME} are expanded
 
 { "theme": "https://github.com/foo/themes#dark" } // URL-packaged theme; fragment
                                                    // picks one theme from the repo
@@ -31,12 +41,14 @@ The relative form is convenient for sharing a Fresh `config.json` in a dotfiles 
 
 Fresh includes a visual Theme Editor for creating and customizing themes:
 
+![The Theme Editor open below a Python file: the Syntax Highlighting section with a swatch per color, and the keyword color's details and palette on the right](/images/themes-editor.png)
+
 1. **Open the Theme Editor**: Press `Ctrl+P` and search for "Edit Theme"
 
 2. **The Theme Editor Interface**:
    - Color fields show a preview swatch next to each value
    - Sections can be collapsed/expanded with `Enter`
-   - Navigate with `Up/Down` arrows, `Tab/Shift+Tab`, or mouse scroll
+   - Navigate with `Up/Down` arrows or mouse scroll; `Tab`/`Shift+Tab` switches between the tree and the color picker panel
    - Click color swatches to edit them directly
 
 3. **Editing Colors**:
@@ -69,7 +81,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    | Save As | `Ctrl+Shift+S` |
    | Delete theme | `Ctrl+D` |
    | Reset value / remove icon entry | `Delete` |
-   | Close | `Ctrl+Q` or `Escape` |
+   | Close | `Escape` |
    | Help | `F1` |
 
 5. **Working with Built-in Themes**:
@@ -107,6 +119,11 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 
 Colors are specified as `[R, G, B]` arrays with values from 0-255, or by
 name (`"Red"`, `"LightBlue"`, …; `"Default"` is the terminal's own color).
+
+The main text cursor is drawn by your terminal, so its color comes from your
+terminal's settings. `editor.cursor` colors the accents Fresh draws itself,
+such as the cursor-jump animation and a focused panel's border, and
+`editor.inactive_cursor` colors the cursor in an unfocused split.
 
 ### File explorer colors
 
@@ -316,19 +333,21 @@ A theme can build on top of another theme instead of restating every color.
 Any field you don't set is taken from the base; the fields you do set
 override the base.
 
-```jsonc
+```json
 {
   "name": "my-light-tweak",
-  "extends": "builtin://light",        // pick the base
-  "editor": { "cursor": [255, 105, 180] }  // change one thing
+  "extends": "builtin://light",
+  "editor": { "selection_bg": [255, 214, 240] }
 }
 ```
 
+This picks `light` as the base and changes only the selection colour. Theme
+files are plain JSON, so leave out `//` comments — a theme file with comments
+is not loaded.
+
 `extends` accepts a built-in name in either form: `"builtin://light"` or
-just `"light"`. The available built-ins are `dark`, `light`, and
-`high-contrast` (plus any others shipped in your install — see the
-**Select Theme** menu for the full list). Inheriting from another *user*
-theme is not supported in this version.
+just `"light"` — any of the [built-in themes](#selecting-a-theme) works.
+Inheriting from another *user* theme is not supported in this version.
 
 If `extends` is omitted and the theme leaves out any of the
 [required colors](#fallbacks), Fresh picks a base for you:

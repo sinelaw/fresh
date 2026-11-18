@@ -142,7 +142,7 @@ Fresh copies the folder into its packages and loads it. The status bar shows
 
 - To update the installed copy after more changes, run the same command
   again.
-- To uninstall, run **Package: Remove**.
+- To uninstall, select it in **Package: Packages** and choose **Uninstall**.
 - **Load Plugin from Buffer** still works while the plugin is installed. It
   replaces the installed copy until Fresh restarts.
 
@@ -157,7 +157,7 @@ Fresh copies the folder into its packages and loads it. The status bar shows
   ```
 
 - **You can't find your log output.** `editor.setStatus` messages go to
-  `status-<pid>.log`, and `editor.debug` output goes to `fresh-<pid>.log`.
+  `status-<pid>.log`, and `editor.debug` output goes to the main `fresh-*.log`.
   Both are in the Logs folder that `fresh --cmd config paths` prints.
 
 ## More help

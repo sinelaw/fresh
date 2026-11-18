@@ -2,7 +2,7 @@
 
 *   **Search:** Press `Ctrl+F` to open the search prompt.
 *   **Replace:** Press `Ctrl+R` to open the search and replace prompt.
-*   **Query Replace:** Press `Ctrl+Alt+R`, or use "Query Replace" from the command palette, for interactive replacement (y/n/!/q prompts for each match). The match being asked about is shown in the current-match color, so you can check exactly what a regex matched before answering. Leave the replacement empty to delete matches one by one.
+*   **Query Replace:** Press `Ctrl+Alt+R`, or use "Query Replace" from the command palette, for interactive replacement: for each match, answer `y` (replace), `n` (skip), `a` or `!` (replace all the rest), or `c` or `q` (stop). The match being asked about is shown in the current-match color, so you can check exactly what a regex matched before answering. Leave the replacement empty to delete matches one by one.
 
 The search toolbar shows toggle buttons for:
 - **Case Sensitive** (`Alt+C`) — match exact case
@@ -19,7 +19,7 @@ say otherwise, and each remembers what you told it:
 | Find / Replace prompt (`Ctrl+F`, `Ctrl+R`) | **Case Sensitive** on the options row, `Alt+C` | Saved with the workspace |
 | Universal Search (Live Grep) | **Case** on the toolbar, `Alt+C` | The rest of the session |
 | Search & Replace panel | **Case** checkbox on the panel, `Alt+C` | The rest of the session, panel reopens included |
-| Git Grep | **Case** checkbox on the prompt toolbar (unbound; `git_grep_toggle_case`) | The rest of the session |
+| Git Grep | Click **Case** on the prompt toolbar, or bind a key to `git_grep_toggle_case` | The rest of the session |
 
 To start somewhere else, set the default in your config:
 
@@ -54,7 +54,8 @@ where.
 
 With the search bar open, `F3` jumps to the next match and `Shift+F3` to the
 previous one **without closing the bar**, so the query stays editable and the
-toggles stay reachable. The status bar reports `Match N of M` as you go. The
+toggles stay reachable. The status bar reports `Match N of M` as you go, with
+clickable arrows beside it for the next and previous match. The
 same keys work after the bar is closed, continuing from the last search.
 
 `Enter` jumps to the current match and closes the bar; `Esc` cancels.
@@ -100,10 +101,21 @@ underlined letter):
 | **Diagnostics** | `Alt+D` | language-server diagnostic messages | off |
 | **All workspaces** | `Alt+A` | every workspace, not just this one | off |
 
+When a file scope is on, a **Provider** dropdown picks the search tool that
+does the work (`rg`, `git grep`, `grep`, …). It lists only the tools
+installed on your system, and `Alt+P` cycles through them.
+
+The preview shows the real file at the match, with full syntax colours, not
+a snippet. **Find References** results work the same way: moving through the
+list opens each location in a
+[preview tab](./file-explorer.md#opening-files) you can scroll and read.
+
+![Universal Search for open_only: the scope and match toggles at the top, the matching lines on the left, and the selected match shown in its file on the right](/images/search-live-grep.png)
+
 With **All workspaces** on, the results of every workspace come in one list,
 grouped under a header row per workspace (`api · 3 matches`): the workspace
 you are in first, then the others in the order the
-[Orchestrator dock](./session-persistence.md) lists them. The rows under a
+[Orchestrator dock](./orchestrator.md) lists them. The rows under a
 header read as they do in their own workspace — `src/x.rs:4`,
 `[buf] src/x.rs:4`, `[term] claude:12`. Files, unsaved buffers and terminal
 output are searched in each workspace. A workspace the dock lists that you
@@ -127,7 +139,7 @@ of the session.
 
 ## Project-Wide Search and Replace
 
-Use "Search and Replace in Project" from the command palette to search across the project's files: in a git repository, tracked and untracked files that `.gitignore` does not exclude, and the files of its submodules; elsewhere, every file outside hidden directories and `node_modules`, `target` and the like. Hidden and gitignored files stay out even when the file explorer shows them, and `file_explorer.custom_ignore_patterns` leave files out too. Press `Alt+Enter` to replace all matches across the project. Works with unsaved buffers and large files, up to 10,000 results.
+Use "Search and Replace in Project" from the command palette to search across the project's files: in a git repository, tracked and untracked files that `.gitignore` does not exclude, and the files of its submodules; elsewhere, every file outside hidden directories and `node_modules`, `target` and the like. Gitignored files stay out even when the file explorer shows them, and `file_explorer.custom_ignore_patterns` leave files out too. Press `Alt+Enter` to replace all matches across the project; Fresh asks you to confirm before it changes any files. Works with unsaved buffers and large files, up to 10,000 results.
 
 Use the **Files** field to limit project search to comma-separated globs. A
 pattern without a directory separator matches file names at any depth (for

@@ -1835,7 +1835,7 @@
   "settings.field.file_explorer.preview_tabs": "Schede di anteprima",
   "settings.field.file_explorer.preview_tabs_desc": "Un clic singolo apre una scheda di anteprima temporanea che viene sostituita al clic successivo. Modificarla, fare doppio clic, premere Invio o trascinare la scheda la rende permanente. Predefinito: true",
   "settings.field.file_explorer.respect_gitignore": "Rispetta .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Applica le regole di `.gitignore`. Se disattivato, i file ignorati non vengono né nascosti né mostrati in grigio. Predefinito: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Applica le regole di `.gitignore`. Se disattivato, i file ignorati vengono sempre mostrati, ma restano in grigio. Predefinito: true",
   "settings.field.file_explorer.show_gitignored": "Mostra file gitignored",
   "settings.field.file_explorer.show_gitignored_desc": "Mostra i file ignorati da git per impostazione predefinita.",
   "settings.field.file_explorer.show_hidden": "Mostra nascosti",

@@ -1278,7 +1278,7 @@
       "type": "object",
       "properties": {
         "respect_gitignore": {
-          "description": "Apply `.gitignore` rules. When off, ignored files are neither hidden nor\ngrayed out. Default: true",
+          "description": "Apply `.gitignore` rules. When off, ignored files are always shown,\nstill grayed out, without turning on Show Gitignored. Default: true",
           "type": "boolean",
           "default": true
         },

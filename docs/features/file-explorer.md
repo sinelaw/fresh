@@ -2,6 +2,10 @@
 
 Fresh includes a built-in file explorer.
 
+![The file explorer beside an open file: modified files are marked M, an untracked file U, folders with changes carry a dot, and the gitignored build and target folders are dimmed](/images/explorer-git-status.png)
+
+*Git status at a glance: M for modified, U for untracked, a dot on folders with changes, and gitignored folders dimmed.*
+
 *   **Toggle Sidebar:** Use `Ctrl+B` to show/hide the file explorer sidebar. When a nested file is active, toggling on expands the tree and reveals the file.
 *   **Focus:** Use `Ctrl+E` to switch focus between the file explorer and editor.
 *   **Sidebar sections:** Plugins can add sections under the file tree — the Markdown **Contents** outline, for example. `Alt+Shift+N` cycles the keyboard through the sidebar (file explorer, then each section, then back to the editor) and `Alt+Shift+P` runs the cycle the other way; both work from inside the tree, a section, the dock or a terminal (in a terminal these two chords go to the editor, not to the program running in it). A hidden sidebar is shown first. A section belongs to the window — or the file — it was made for, so another workspace's outline never appears in yours.
@@ -17,6 +21,20 @@ Fresh includes a built-in file explorer.
 - **Double-click** opens the file in a permanent tab and focuses the editor.
 
 Preview tabs are enabled by default. Turn them off in the Settings UI if you prefer every click to open a permanent tab.
+
+## Managing Files
+
+**Right-click** an entry for a context menu with New File, New Directory, Rename, Cut, Copy, Paste, Duplicate, Delete and Copy Full/Relative Path. It acts on the entry under the pointer; right-clicking empty space offers New File, New Directory and Paste in the project root. While the explorer has focus, an **Explorer** menu in the menu bar offers the main file actions plus Refresh and the hidden/gitignored toggles.
+
+![The file explorer's right-click menu: New File, New Directory, Rename, Cut, Copy, Paste, Delete, Duplicate, Copy Full Path and Copy Relative Path](/images/explorer-context-menu.png)
+
+- **New File / New Directory** (`Ctrl+N` / `Ctrl+Shift+N`) — prompts for a name; nothing is created until you confirm it.
+- **Rename** (`F2`) — type a new name, or a relative path such as `../lib/util.rs` to move the entry elsewhere in the project. Rename never overwrites an existing file.
+- **Drag and drop** — drag files or folders onto a folder to move them there. Fresh asks you to confirm the move first.
+- **Delete** (`Delete`) — asks for confirmation, then moves the entry to the trash.
+- **Refresh** (`Ctrl+R`, or the ⟳ button at the top of the explorer) — re-reads the tree from disk, keeping expanded folders open.
+
+The same actions are in the command palette as **File Explorer: New File**, **File Explorer: Rename**, and so on.
 
 ## Cut / Copy / Paste and Multi-Selection
 
@@ -51,9 +69,13 @@ Dragging the divider preserves whichever form you configured — a sidebar set u
 
 ## Visibility and .gitignore
 
-- The file explorer respects your `.gitignore` by default, and auto-reloads when `.gitignore` changes on disk.
+- The file explorer respects your `.gitignore` by default, and auto-reloads when `.gitignore` changes on disk. Turn off **Respect Gitignore** (Settings → File Explorer) to always show ignored files, without toggling them on.
 - A file is shown only if it isn't hidden by **any** active filter — so if a file is both a dotfile and gitignored, it takes enabling both toggles to see it.
 - Use **Toggle Hidden Files** and **Toggle Gitignored Files** from the command palette to flip either filter. Both persist across restarts.
+- When gitignored entries are shown, they are drawn dimmed so they stand out from tracked files.
+- **Custom Ignore Patterns** (Settings → File Explorer) hides more on top of `.gitignore`. Write them the way you would write `.gitignore` lines, relative to the project root — `build/`, `/dist`, `*.log`, `!keep.log`.
+
+The same ignore rules apply beyond the explorer: Quick Open, project search and Live Grep leave out gitignored files and your custom ignore patterns, and Quick Open follows the explorer's hidden and gitignored toggles (dotfiles that git tracks are always listed).
 
 ## Sorting
 

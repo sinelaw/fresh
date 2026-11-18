@@ -1,24 +1,26 @@
 # Dashboard
 
-> **Activation:** `plugins.dashboard.enabled` in `config.json`, or in the Settings UI under **Plugins → dashboard**.
+> **Palette:** `Show Dashboard`.
 >
-> **Palette:** `Show Dashboard` (available once the plugin is enabled).
+> **Settings:** **Plugins → dashboard** in the Settings UI.
 
-Fresh includes a built-in TUI dashboard plugin that replaces the default `[No Name]` buffer you see after `fresh` with no arguments. By default it shows git status and repo URL, a "vs master" row (commits ahead/behind), and disk usage for common mounts. Weather and recent GitHub PRs are bundled but opt-in — see [Built-in opt-in widgets](#built-in-opt-in-widgets) below.
+Fresh includes a built-in TUI dashboard plugin that can take the place of the empty `[No Name]` buffer when nothing else is open. By default it shows git status and repo URL, a "vs master" row (commits ahead/behind, shown on branches other than master or main), and disk usage for common mounts. Weather and recent GitHub PRs are bundled but opt-in — see [Built-in opt-in widgets](#built-in-opt-in-widgets) below.
 
-## Enabling
+## Opening the Dashboard
 
-The dashboard is off by default. Turn it on from the Settings UI (**Open Settings** → **Plugins** → **dashboard** → **enabled**), or directly in `config.json`:
+The dashboard plugin is loaded by default, but the dashboard doesn't open by itself: run `Show Dashboard` from the command palette whenever you want it.
+
+To have it open by itself when Fresh starts with no files open and after the last buffer is closed, turn on **Auto Open** in the Settings UI (**Open Settings** → **Plugins** → **dashboard**), or set it in `config.json`:
 
 ```json
 {
   "plugins": {
-    "dashboard": { "enabled": true }
+    "dashboard": { "settings": { "auto_open": true } }
   }
 }
 ```
 
-Once enabled, the dashboard auto-opens at startup and after the last buffer is closed. To keep the plugin loaded but skip those ambient open paths — leaving `Show Dashboard` as the only entry point — set `plugins.dashboard.auto-open` to `false`. The default is `true`.
+To unload the plugin entirely, turn it off in the **Plugins** list of the Settings UI (`plugins.dashboard.enabled`).
 
 ## Tips
 
@@ -39,7 +41,9 @@ editor.on("plugins_loaded", () => {
 });
 ```
 
-The GitHub section shows open PRs for the *current repo* (detected from the `origin` remote). Outside a GitHub clone, it renders a short explanatory message instead. If either widget can't reach its endpoint, the section surfaces a one-line error rather than blocking the rest of the dashboard.
+The weather section uses your IP-based location in metric units by default; set **Weather Location** and **Weather Units** (Metric or Imperial) on the dashboard's Settings page to change either.
+
+The GitHub section shows open PRs for the *current repo* (detected from the `origin` remote). It uses the GitHub CLI, so `gh` must be installed and signed in. Outside a GitHub clone, it renders a short explanatory message instead. If either widget can't reach its endpoint, the section surfaces a one-line error rather than blocking the rest of the dashboard.
 
 ## Adding Your Own Sections
 

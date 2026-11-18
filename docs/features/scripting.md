@@ -1,6 +1,6 @@
 # Scripting the Editor
 
-> **CLI:** `fresh --cmd script`, and `fresh --cmd help script` for the built-in guide
+> **CLI:** `fresh --cmd script`, and `fresh --skill` (or `fresh --cmd help script`) for the built-in guide
 
 A running Fresh can be driven from the outside. Hand it a short TypeScript program and it will do anything the editor's plugin API can do — open files, arrange panes, resize them, show output, create a workspace, start a coding agent, open a [guided tour](./code-tours.md). The program runs, does its work, and is forgotten. Whatever it created stays.
 
@@ -145,7 +145,7 @@ echo '
 ' | fresh --cmd script run
 ```
 
-`unarchiveWorkspace(name)` puts one back where it came from. It returns as an unopened worktree on the dock rather than a running session — the inverse of Archive, not "restore and launch" — so follow it with `focusWorkspace` when you want it open. It refuses rather than overwrites if something has since taken the path it wants back.
+`unarchiveWorkspace(name)` puts one back where it came from. It returns as an unopened worktree on the dock (listed when **Menu ▾ → Show → All worktrees** is on) rather than a running session — the inverse of Archive, not "restore and launch" — so follow it with `focusWorkspace` when you want it open. It refuses rather than overwrites if something has since taken the path it wants back.
 
 ### Start a workspace on another machine
 
@@ -168,7 +168,23 @@ Every field mirrors the dialog's SSH form. Kubernetes is the one backend still d
 
 ## Finding your way around
 
-You do not have to memorise any of this. The CLI searches the editor's API by name or description, checks a program for unknown calls before it touches a workspace someone is looking at, and prints where the full TypeScript declarations live. `fresh --cmd help script` is the guide, and it reports the API surface of the build you are actually running.
+You do not have to memorise any of this. The CLI searches the editor's API by name or description, checks a program for unknown calls before it touches a workspace someone is looking at, and prints where the full TypeScript declarations live. `fresh --skill` prints the guide — the same text as `fresh --cmd help script` — and it reports the API surface of the build you are actually running. It is the one command to point an agent at; `fresh --cmd help` lists the other guides.
+
+## Commands, workspaces and agents from the shell
+
+Some things do not need a script at all:
+
+- `fresh --cmd command list` lists every palette command, and `fresh --cmd command run "<name>"` runs one by the name the palette shows.
+- `fresh --cmd init reload` re-runs your [`init.ts`](../configuration/init.md).
+- `fresh --cmd workspace list` lists the workspaces on the Orchestrator dock.
+- `fresh --cmd agent …` lists the agents in your workspaces and what each is doing, starts one, or waits for one to finish.
+
+```sh
+fresh --cmd agent list               # every workspace and its agent's state
+fresh --cmd agent wait fresh-2       # block until that agent has gone quiet
+```
+
+That makes it easy to chain work behind an agent from a script or another agent. The verbs take a workspace's name or ID, as `agent list` shows them. Run `fresh --cmd agent` on its own for every verb and option.
 
 ## Where scripts can run
 
@@ -186,7 +202,7 @@ An agent launched into a Fresh workspace is a process in a terminal. It can read
 
 ![The New Workspace dialog with an agent selected and the advanced options expanded](/images/scripting-run-agent-dialog.png)
 
-Teaching is on by default and is a single toggle. It gives the agent a short briefing on what it can ask the editor for, with worked examples; without it the agent runs as it normally would and never uses the capability. `claude`, `codex` and `opencode` can all be briefed. `aider` cannot drive the editor at all — it has no autonomous shell, it only proposes commands for you to confirm — so the option is not offered for it.
+Teaching is on by default and is a single toggle, **Teach Fresh CLI**. It tells the agent that it can drive the editor and to run `fresh --skill` to learn how; without it the agent runs as it normally would and never uses the capability. Nothing is written into your repository — the briefing rides along with the agent's launch, so an `AGENTS.md` of your own is left alone. `claude`, `codex` and `opencode` can all be briefed. `aider` cannot drive the editor at all — it has no autonomous shell, it only proposes commands for you to confirm — so the option is not offered for it.
 
 Things worth asking for:
 
@@ -206,6 +222,7 @@ You are letting something change a workspace you are looking at. Agents are told
 
 - A program that never finishes will hang the editor's plugin work, the same way a broken plugin would.
 - Agents in remote panes — a container, an SSH host, a Kubernetes pod — have no route back to the editor that started them.
+- An agent running in its own sandbox may be unable to reach the editor; the CLI says so and suggests re-running the command outside the sandbox.
 - This is a different question from [Workspace Trust](./workspace-trust.md). Trust asks whether this repository is safe to load; this asks whether something may drive the editor.
 
 ## See also

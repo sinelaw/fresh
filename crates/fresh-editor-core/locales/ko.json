@@ -1828,7 +1828,7 @@
   "settings.field.file_explorer.preview_tabs": "미리 보기 탭",
   "settings.field.file_explorer.preview_tabs_desc": "한 번 클릭하면 다음 클릭 시 대체되는 임시 미리 보기 탭이 열립니다. 편집하거나, 더블 클릭하거나, Enter를 누르거나, 탭을 끌면 일반 탭으로 바뀝니다. 기본값: true",
   "settings.field.file_explorer.respect_gitignore": ".gitignore 적용",
-  "settings.field.file_explorer.respect_gitignore_desc": "`.gitignore` 규칙을 적용합니다. 끄면 무시된 파일을 숨기거나 회색으로 표시하지 않습니다. 기본값: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "`.gitignore` 규칙을 적용합니다. 끄면 무시된 파일이 항상 표시되지만 회색으로 표시됩니다. 기본값: true",
   "settings.field.file_explorer.show_gitignored": "gitignore 파일 표시",
   "settings.field.file_explorer.show_gitignored_desc": "기본적으로 .gitignore로 무시된 파일을 표시합니다.",
   "settings.field.file_explorer.show_hidden": "숨김 파일 표시",

@@ -1828,7 +1828,7 @@
   "settings.field.file_explorer.preview_tabs": "预览标签页",
   "settings.field.file_explorer.preview_tabs_desc": "单击会打开一个临时预览标签页，下次单击时会被替换。编辑、双击、按 Enter 或拖动该标签页会使其固定。默认：true",
   "settings.field.file_explorer.respect_gitignore": "遵循 .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "应用 `.gitignore` 规则。关闭时，被忽略的文件既不隐藏也不灰显。默认：true",
+  "settings.field.file_explorer.respect_gitignore_desc": "应用 `.gitignore` 规则。关闭时，被忽略的文件始终显示，但仍为灰色。默认：true",
   "settings.field.file_explorer.show_gitignored": "显示 Git 忽略的文件",
   "settings.field.file_explorer.show_gitignored_desc": "默认显示被 gitignore 忽略的文件。",
   "settings.field.file_explorer.show_hidden": "显示隐藏文件",

@@ -45,11 +45,11 @@ Follow these steps to clear the **Ctrl + Alt + Up** and **Ctrl + Alt + Down** sh
 
 ### Using the macOS Keymap
 
-Fresh includes a dedicated macOS keymap that addresses terminal-specific challenges. To use it, add to your `~/.config/fresh/config.json`:
+Fresh includes a dedicated macOS keymap that addresses terminal-specific challenges. To use it, run **Select Keybinding Map** from the command palette and pick `macos`, choose it under **Active Keybinding Map** in the Settings UI (Keybindings), or add to your `~/.config/fresh/config.json`:
 
 ```json
 {
-  "keymap": "macos"
+  "active_keybinding_map": "macos"
 }
 ```
 
@@ -61,7 +61,9 @@ The macOS keymap is designed around these constraints:
 
 **International keyboards use Alt for essential characters.** On German, French, and other ISO layouts, Alt (Option) combined with letters produces characters like @, [, ], {, and }. The macOS keymap avoids Alt+letter combinations that would block character input.
 
-**Unix readline conventions are preserved.** Terminal users expect Ctrl+Y to "yank" (paste from the kill ring), Ctrl+K to kill to end of line, and Ctrl+U to kill to start of line. The macOS keymap respects these conventions rather than overriding them with GUI editor shortcuts.
+**Unix readline conventions are preserved.** Terminal users expect Ctrl+A and Ctrl+E to move to the start and end of the line, Ctrl+K to delete to the end of the line, and Ctrl+U to delete to its start. The macOS keymap keeps these rather than overriding them with GUI editor shortcuts.
+
+**Option deletes by word, as in other Mac apps.** Option+Backspace (the key Mac keyboards label *delete*) deletes the previous word, and Option+forward-Delete (Option+Fn+Delete) deletes the next one, in the editor and in prompts. Your terminal must send Option as Alt for this (see the terminal setup below).
 
 Use the **Command Palette** (Ctrl+P) or run **Show Keyboard Shortcuts** from it to discover the actual key bindings, or view the keymap file directly at `keymaps/macos.json`.
 
@@ -220,7 +222,7 @@ If you find that certain Alt combinations insert characters instead of triggerin
 
 ## Key Names
 
-The `key` field of a binding takes one of the names below. For the `action` field, see the [Actions reference](./actions.md).
+The `key` field of a binding takes one of the names below. For the `action` field, see the [Actions reference](./actions.md). A binding whose key Fresh doesn't recognize is skipped, and a warning naming it is written to the log, so a typo won't stop the rest of your bindings from loading.
 
 <!-- BEGIN GENERATED KEY NAMES -->
 

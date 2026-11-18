@@ -1791,7 +1791,7 @@
   "settings.field.file_explorer.preview_tabs": "Раздели за преглед",
   "settings.field.file_explorer.preview_tabs_desc": "Единично щракване отваря временен раздел за преглед, който се заменя при следващото щракване. Редактирането, двойното щракване, Enter или плъзгането на раздела го прави постоянен. По подразбиране: true",
   "settings.field.file_explorer.respect_gitignore": "Спазване на .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Прилагане на правилата от `.gitignore`. Когато е изключено, игнорираните файлове нито се скриват, нито се показват в сиво. По подразбиране: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Прилагане на правилата от `.gitignore`. Когато е изключено, игнорираните файлове винаги се показват, но остават в сиво. По подразбиране: true",
   "settings.field.file_explorer.show_gitignored": "Показване на игнорираните",
   "settings.field.file_explorer.show_gitignored_desc": "Показване на игнорираните от git файлове по подразбиране.",
   "settings.field.file_explorer.show_hidden": "Показване на скритите",

@@ -1828,7 +1828,7 @@
   "settings.field.file_explorer.preview_tabs": "Thẻ xem trước",
   "settings.field.file_explorer.preview_tabs_desc": "Nhấp một lần sẽ mở một thẻ xem trước tạm thời, thẻ này bị thay thế ở lần nhấp tiếp theo. Chỉnh sửa, nhấp đúp, nhấn Enter hoặc kéo thẻ sẽ biến nó thành thẻ cố định. Mặc định: true",
   "settings.field.file_explorer.respect_gitignore": "Tuân theo .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "Áp dụng quy tắc `.gitignore`. Khi tắt, tệp bị bỏ qua sẽ không bị ẩn cũng không bị làm xám. Mặc định: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "Áp dụng quy tắc `.gitignore`. Khi tắt, tệp bị bỏ qua luôn được hiển thị nhưng vẫn bị làm xám. Mặc định: true",
   "settings.field.file_explorer.show_gitignored": "Hiển thị tệp gitignore",
   "settings.field.file_explorer.show_gitignored_desc": "Hiển thị các tệp bị gitignore theo mặc định.",
   "settings.field.file_explorer.show_hidden": "Hiển thị tệp ẩn",

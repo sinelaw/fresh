@@ -1,6 +1,7 @@
 # Features
 
 - [Editing](./editing.md) - Multiple cursors, advanced selection, unlimited undo/redo
+- [Markdown](./markdown.md) - Compose and dual source/rendered views, Mermaid and math previews, a Contents outline
 - [Command Palette](./command-palette.md) - Quick access to commands, files, and navigation
 - [Navigation](./navigation.md) - Go to definition, position history
 - [File Explorer](./file-explorer.md) - Browse and manage project files
@@ -16,7 +17,9 @@
 - [Remote Editing (SSH)](./ssh.md) - Edit files on remote machines via SSH
 - [Devcontainers](./devcontainer.md) - Attach to a project's devcontainer
 - [Daemon Mode](./session-persistence.md) - Detach and reattach to a background daemon (formerly "Session Persistence")
+- [Orchestrator](./orchestrator.md) - One workspace per task or git worktree, each with its own terminals and coding agent, switched from the dock
 - [Keybinding Editor](./keybinding-editor.md) - Visual keybinding browser and editor
 - [Emacs Keymap](./emacs-keymap.md) - The Emacs keybinding style, key by key
-- [Dashboard](./dashboard.md) - Startup dashboard with weather, git, PRs, disk
+- [Vi Mode](./vi-mode.md) - Modal vi-style editing: motions, operators, text objects and ex commands
+- [Dashboard](./dashboard.md) - A dashboard of git, disk and optional weather and PR widgets
 - [Workboard](./workboard.md) - Every Orchestrator workspace and agent on one board: an attention inbox, project and folder views, a self-sorting kanban

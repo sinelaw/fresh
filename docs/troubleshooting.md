@@ -58,11 +58,21 @@ echo $COLORTERM
 
 If something outside Fresh scribbles over the TUI — a stray shell message, an external program's output, a paste with unbalanced escape sequences, or a terminal that got wedged during a resize — the screen can end up with ghost text or misaligned cells. Run **Redraw Screen** from the command palette (`Ctrl+P`) to clear the terminal and repaint the UI from scratch.
 
-## Advanced Topics
+## Windows: Fresh Won't Start in Git Bash (mintty)
 
-### Visual Regression Testing
+Fresh needs a Windows console, and the mintty terminal used by Git Bash, MSYS2 and Cygwin doesn't provide one, so Fresh exits with an error explaining this. Run it in Windows Terminal, PowerShell or cmd instead (Git Bash itself works fine inside Windows Terminal), or start it with `winpty fresh`, which gives you the keyboard but no mouse.
 
-Fresh uses visual regression testing to catch unintentional UI changes. See `docs/VISUAL_REGRESSION_TESTING.md`.
+## Language Servers
+
+### The status bar shows `LSP (stuck)`
+
+The language server is running but has stopped answering. Requests to it time out after 30 seconds, and Fresh reports the timeout instead of showing empty results. This usually happens while a server is still indexing a large project, or when it has hung.
+
+- Give it a moment if it is indexing; the indicator returns to normal once the server answers again.
+- Click the `LSP` indicator (or run **Show LSP Status**) to see each server's state and open its log.
+- Run **Start/Restart LSP Server** from the command palette (or **LSP → Restart Server**) to restart it.
+
+See [LSP](./features/lsp.md) for configuring servers.
 
 ## Keybindings
 
