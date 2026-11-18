@@ -1241,24 +1241,20 @@ impl crate::app::window::Window {
             state.editing_disabled = true;
         }
 
-        // Apply the global + per-language buffer settings (whitespace
-        // visibility, tabs, auto-close/surround, guides, …).
-        state.apply_buffer_config(&self.resources.config);
-
-        // Apply `.editorconfig` overrides. Project-level indentation settings
-        // take precedence over the language/global defaults resolved above.
-        // Resolved through the FileSystem abstraction so it also works on
-        // remote hosts; matched against the canonical on-disk path.
-        let editorconfig = crate::services::editorconfig::resolve_for_file(
+        // Resolve `.editorconfig`. Project-level indentation settings take
+        // precedence over the language/global defaults; they are kept on the
+        // buffer so every later `apply_buffer_config` (e.g. re-detecting the
+        // language once the grammars load) honours them too. Resolved through
+        // the FileSystem abstraction so it also works on remote hosts;
+        // matched against the canonical on-disk path.
+        state.buffer_settings.editorconfig = crate::services::editorconfig::resolve_for_file(
             self.authority().filesystem.as_ref(),
             canonical_path,
         );
-        if let Some(use_tabs) = editorconfig.use_tabs {
-            state.buffer_settings.use_tabs = use_tabs;
-        }
-        if let Some(tab_size) = editorconfig.tab_size {
-            state.buffer_settings.tab_size = tab_size;
-        }
+
+        // Apply the global + per-language buffer settings (whitespace
+        // visibility, tabs, auto-close/surround, guides, …).
+        state.apply_buffer_config(&self.resources.config);
 
         // Apply line_numbers default from config
         state
