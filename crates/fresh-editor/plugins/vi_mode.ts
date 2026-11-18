@@ -194,7 +194,7 @@ function resetModalState(): void {
   state.pendingInsertCommand = null;
 }
 
-const autoStart = editor.defineConfigBoolean("autoStart", {
+const autoStart = editor.defineConfigBoolean("auto_start", {
   default: false,
   description:
     "Automatically enable vi mode when the editor starts. Default off — users opt in.",
@@ -204,13 +204,13 @@ const autoStart = editor.defineConfigBoolean("autoStart", {
 // `defineViModes()`, and the `config_changed` subscription at the bottom
 // of this file re-reads them and re-emits the modes so a Settings change
 // takes effect without an editor restart.
-let arrowKeys = editor.defineConfigBoolean("arrowKeys", {
+let arrowKeys = editor.defineConfigBoolean("arrow_keys", {
   default: true,
   description:
     "Enable arrow key navigation in vi mode.",
 });
 
-let searchWordUnderCursor = editor.defineConfigBoolean("searchWordUnderCursor", {
+let searchWordUnderCursor = editor.defineConfigBoolean("search_word_under_cursor", {
   default: true,
   description:
     "Enable * and # to search for the word under the cursor.",
@@ -5993,23 +5993,23 @@ if (autoStart) {
   enableVi();
 }
 
-// Adopt Settings changes without an editor restart. `arrowKeys` and
-// `searchWordUnderCursor` are baked into the mode binding tables at
+// Adopt Settings changes without an editor restart. `arrow_keys` and
+// `search_word_under_cursor` are baked into the mode binding tables at
 // `defineMode` time, so re-reading them isn't enough — the modes have to
 // be re-emitted. Guarded on an actual change: `config_changed` fires for
 // every config save, and re-registering the tables on an unrelated one
 // would be pure churn.
 //
-// `autoStart` is deliberately not applied live. It means "enable vi when
+// `auto_start` is deliberately not applied live. It means "enable vi when
 // the editor starts"; flipping vi on mid-session because a startup
 // preference changed is a different behaviour than the setting promises.
 editor.on("config_changed", () => {
   const cfg = (editor.getPluginConfig() ?? {}) as {
-    arrowKeys?: boolean;
-    searchWordUnderCursor?: boolean;
+    arrow_keys?: boolean;
+    search_word_under_cursor?: boolean;
   };
-  const nextArrowKeys = cfg.arrowKeys !== false;
-  const nextSearchWord = cfg.searchWordUnderCursor !== false;
+  const nextArrowKeys = cfg.arrow_keys !== false;
+  const nextSearchWord = cfg.search_word_under_cursor !== false;
   if (nextArrowKeys === arrowKeys && nextSearchWord === searchWordUnderCursor) return;
   arrowKeys = nextArrowKeys;
   searchWordUnderCursor = nextSearchWord;
@@ -6060,7 +6060,7 @@ editor.on("buffer_closed", (args) => {
 editor.on("buffer_activated", (args) => {
   // Outside the `viModeEnabled` guard below: the buffer vi is later asked to
   // leave is usually opened before vi is turned on, and this is the only
-  // place its id can be learned. `enableVi` cannot ask for it — `autoStart`
+  // place its id can be learned. `enableVi` cannot ask for it — `auto_start`
   // calls that from the top-level body, before any buffer exists.
   const bufferId = args.buffer_id;
   const previous = lastActiveBuffer;

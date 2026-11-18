@@ -278,8 +278,8 @@ fn test_vi_vim_compat_optional_features_can_be_disabled() {
         100,
         30,
         serde_json::json!({
-            "arrowKeys": false,
-            "searchWordUnderCursor": false,
+            "arrow_keys": false,
+            "search_word_under_cursor": false,
         }),
     );
 

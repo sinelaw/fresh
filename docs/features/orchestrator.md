@@ -82,7 +82,7 @@ Claude Code and Codex sessions you started elsewhere (in another terminal, in Cl
 
 ## The dock at start-up
 
-The dock is closed the first time you run Fresh. After that, it remembers whether you last opened or closed it, and starts the same way. To change this, open Settings and find **AutoOpenDock** on the **Plugins → orchestrator** page. The same page sets the dock's starting view (**DefaultView**), whether empty workspaces and all worktrees are shown by default, and how background workspaces notify you.
+The dock is closed the first time you run Fresh. After that, it remembers whether you last opened or closed it, and starts the same way. To change this, open Settings and find **Auto Open Dock** on the **Plugins → orchestrator** page. The same page sets the dock's starting view (**Default View**), whether empty workspaces and all worktrees are shown by default, and how background workspaces notify you.
 
 `fresh FILE` and `fresh --simple` never open the dock; it stays available from the View menu.
 

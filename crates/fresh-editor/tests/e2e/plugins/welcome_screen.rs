@@ -181,7 +181,7 @@ fn the_empty_buffer_setting_changes_nothing_about_startup() {
     );
 }
 
-/// **`showOnStartup` is the one switch, and off means off.** Nothing
+/// **`show_on_startup` is the one switch, and off means off.** Nothing
 /// opens at launch; `Welcome` in the palette still works.
 #[test]
 fn show_on_startup_off_opens_nothing_until_asked() {
@@ -191,7 +191,7 @@ fn show_on_startup_off_opens_nothing_until_asked() {
         PluginConfig {
             enabled: true,
             path: None,
-            settings: serde_json::json!({ "showOnStartup": false }),
+            settings: serde_json::json!({ "show_on_startup": false }),
         },
     );
     let (mut harness, _tmp) = harness_with_welcome_config(config);
@@ -202,7 +202,7 @@ fn show_on_startup_off_opens_nothing_until_asked() {
     assert_eq!(
         harness.editor().all_buffer_ids_for_tests(),
         before,
-        "the page opened at startup with showOnStartup off"
+        "the page opened at startup with show_on_startup off"
     );
 
     harness.run_palette_command("Welcome").unwrap();

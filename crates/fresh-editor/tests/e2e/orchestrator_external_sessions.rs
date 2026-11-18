@@ -3,7 +3,7 @@
 //! group per product ("Claude", "Codex").
 //!
 //! The sources are real CLIs, so the tests point the plugin at fake ones
-//! (its `claudeCommand` / `codexCommand` settings): a `claude` whose
+//! (its `claude_command` / `codex_command` settings): a `claude` whose
 //! `agents --json` reports one background job and whose `attach` prints a
 //! marker, and a `codex` whose `cloud list --json` reports one task and whose
 //! `cloud status` prints a marker. Process scanning and the Claude cloud
@@ -94,12 +94,12 @@ esac
             enabled: true,
             path: None,
             settings: serde_json::json!({
-                "claudeCommand": claude.display().to_string(),
-                "codexCommand": codex.display().to_string(),
-                "claudeCloud": false,
-                "codexLocal": false,
+                "claude_command": claude.display().to_string(),
+                "codex_command": codex.display().to_string(),
+                "claude_cloud": false,
+                "codex_local": false,
                 // The fake task's date is fixed; keep it however old it gets.
-                "cloudMaxAgeDays": 0,
+                "cloud_max_age_days": 0,
             }),
         },
     );

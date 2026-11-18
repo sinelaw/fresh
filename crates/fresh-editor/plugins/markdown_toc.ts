@@ -32,8 +32,8 @@
 // the mapping is:
 //
 //   toc.follow      → follow      "cursor" | "scroll"   (default "cursor")
-//   toc.fold_buffer → foldBuffer  boolean               (default false)
-//   toc.auto_open   → autoOpen    boolean               (default true)
+//   toc.fold_buffer → fold_buffer  boolean               (default false)
+//   toc.auto_open   → auto_open    boolean               (default true)
 //   toc.rows        → rows        integer               (default 10)
 //
 // Host API this plugin depends on:
@@ -87,12 +87,12 @@ editor.defineConfigEnum("follow", {
   description:
     "Which heading the Contents panel highlights: the one containing the cursor ('cursor'), or the one at the top of the viewport ('scroll'). The 'Markdown: Contents — Follow Cursor/Scroll' command flips it for the session.",
 });
-editor.defineConfigBoolean("foldBuffer", {
+editor.defineConfigBoolean("fold_buffer", {
   default: false,
   description:
     "Collapsing a heading in the Contents panel also folds its section in the buffer (and expanding unfolds it).",
 });
-editor.defineConfigBoolean("autoOpen", {
+editor.defineConfigBoolean("auto_open", {
   default: true,
   description:
     "Open the Contents panel when a Markdown buffer becomes active and close it when the active buffer is not Markdown. 'Markdown: Toggle Table of Contents' opens it regardless.",
@@ -106,8 +106,8 @@ editor.defineConfigInteger("rows", {
 
 interface TocSettings {
   follow?: FollowMode;
-  foldBuffer?: boolean;
-  autoOpen?: boolean;
+  fold_buffer?: boolean;
+  auto_open?: boolean;
   rows?: number;
 }
 
@@ -127,11 +127,11 @@ function followMode(): FollowMode {
 }
 
 function foldBufferEnabled(): boolean {
-  return settings().foldBuffer === true;
+  return settings().fold_buffer === true;
 }
 
 function autoOpenEnabled(): boolean {
-  return settings().autoOpen !== false;
+  return settings().auto_open !== false;
 }
 
 const DEFAULT_ROWS = 10;
@@ -332,7 +332,7 @@ interface TocState {
   headings: Heading[];
   /** Expansion is plugin-owned (`Tree.expandedKeys` is initial-only). */
   expanded: Set<string>;
-  /** Keys whose section is currently folded in the buffer (foldBuffer). */
+  /** Keys whose section is currently folded in the buffer (fold_buffer). */
   folded: Set<string>;
   /** Row currently selected — mirrored so a rescan can re-select. */
   selected: number;
@@ -473,7 +473,7 @@ function unmountSection(): void {
   }
 }
 
-/** Whether the mounted section is the active buffer's. With `autoOpen`
+/** Whether the mounted section is the active buffer's. With `auto_open`
  *  off the section stays mounted for the last Markdown buffer while the
  *  host parks it behind whatever the user switched to, so "mounted" alone
  *  does not mean "on screen for this buffer". */
@@ -482,7 +482,7 @@ function mountedForActiveBuffer(): boolean {
 }
 
 /** Show the section — column and all — and give it the keyboard. For a
- *  Markdown buffer that has no outline yet (`autoOpen` off, or the outline
+ *  Markdown buffer that has no outline yet (`auto_open` off, or the outline
  *  is another buffer's) this mounts one first. */
 function markdownTocFocus(): void {
   if (mountedForActiveBuffer()) {
@@ -875,9 +875,9 @@ editor.on("config_changed", () => {
 // =============================================================================
 
 /** Toggle the section for the active Markdown buffer, regardless of
- *  `autoOpen`. */
+ *  `auto_open`. */
 function markdownTocToggle(): void {
-  // Off only for the outline the user is looking at: with `autoOpen` off
+  // Off only for the outline the user is looking at: with `auto_open` off
   // the mounted one may be another buffer's, parked out of sight, and
   // "off" for something with no pixels on screen would need a second
   // toggle to get the outline for this buffer.

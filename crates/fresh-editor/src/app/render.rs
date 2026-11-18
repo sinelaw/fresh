@@ -6541,7 +6541,7 @@ mod dock_reservation_tests {
 
     const COLS: u16 = 120;
     const ROWS: u16 = 40;
-    const DECLARES_DOCK: &str = r#"{"chrome":{"dock":{"open_setting":"autoOpenDock"}}}"#;
+    const DECLARES_DOCK: &str = r#"{"chrome":{"dock":{"open_setting":"auto_open_dock"}}}"#;
 
     /// A home with `plugins/orchestrator.manifest.json` planted, so discovery
     /// finds a declaration with no plugin code to run. Leaked for the
@@ -6641,12 +6641,12 @@ mod dock_reservation_tests {
     #[test]
     fn what_the_first_frame_carves() {
         let rule = DockWidthRule::default().width(COLS);
-        let mode = |m: &str| orchestrator_config(true, serde_json::json!({ "autoOpenDock": m }));
+        let mode = |m: &str| orchestrator_config(true, serde_json::json!({ "auto_open_dock": m }));
         let legacy =
-            |on: bool| orchestrator_config(true, serde_json::json!({ "autoOpenDock": on }));
+            |on: bool| orchestrator_config(true, serde_json::json!({ "auto_open_dock": on }));
         let disabled = orchestrator_config(false, serde_json::Value::Null);
         const DECLARES_CLOSED_DOCK: &str =
-            r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
+            r#"{"chrome":{"dock":{"open":false,"open_setting":"auto_open_dock"}}}"#;
         // The case, the plugin's manifest, the config, whether the editor
         // runs in orchestrator mode (a bare `fresh`), and the width expected.
         type Case<'a> = (&'a str, Option<&'a str>, Config, bool, Option<u16>);
@@ -6691,7 +6691,7 @@ mod dock_reservation_tests {
     #[test]
     fn auto_does_not_reopen_a_dock_remembered_open() {
         const DECLARES_CLOSED_DOCK: &str =
-            r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
+            r#"{"chrome":{"dock":{"open":false,"open_setting":"auto_open_dock"}}}"#;
         for orchestrator_mode in [true, false] {
             let dir_context = home(Some(DECLARES_CLOSED_DOCK));
             std::fs::create_dir_all(&dir_context.data_dir).unwrap();
@@ -6723,10 +6723,13 @@ mod dock_reservation_tests {
             serde_json::from_str(DECLARES_DOCK).unwrap(),
         )]);
         for (case, setting) in [
-            ("`always`", serde_json::json!({ "autoOpenDock": "always" })),
+            (
+                "`always`",
+                serde_json::json!({ "auto_open_dock": "always" }),
+            ),
             (
                 "`auto`, left open at quit",
-                serde_json::json!({ "autoOpenDock": "auto" }),
+                serde_json::json!({ "auto_open_dock": "auto" }),
             ),
         ] {
             let dir_context = home(Some(DECLARES_DOCK));
@@ -6760,10 +6763,10 @@ mod dock_reservation_tests {
     /// `Editor::rewrite_legacy_dock_open_setting` for why that matters.
     #[test]
     fn a_legacy_boolean_open_setting_is_rewritten_as_its_mode() {
-        let pointer = "/plugins/orchestrator/settings/autoOpenDock";
+        let pointer = "/plugins/orchestrator/settings/auto_open_dock";
         for (legacy, want_mode, want_open) in [(false, "never", false), (true, "auto", true)] {
             let dir_context = home(Some(DECLARES_DOCK));
-            let config = orchestrator_config(true, serde_json::json!({ "autoOpenDock": legacy }));
+            let config = orchestrator_config(true, serde_json::json!({ "auto_open_dock": legacy }));
             let e = editor(dir_context.clone(), config, false);
 
             assert_eq!(
@@ -6774,7 +6777,7 @@ mod dock_reservation_tests {
                 e.config
                     .plugins
                     .get("orchestrator")
-                    .and_then(|c| c.settings.get("autoOpenDock")),
+                    .and_then(|c| c.settings.get("auto_open_dock")),
                 Some(&serde_json::Value::String(want_mode.into())),
                 "legacy {legacy} must be rewritten in memory as {want_mode}"
             );
@@ -6795,7 +6798,7 @@ mod dock_reservation_tests {
     #[test]
     fn a_mode_open_setting_is_left_alone() {
         let dir_context = home(Some(DECLARES_DOCK));
-        let config = orchestrator_config(true, serde_json::json!({ "autoOpenDock": "never" }));
+        let config = orchestrator_config(true, serde_json::json!({ "auto_open_dock": "never" }));
         let e = editor(dir_context.clone(), config, true);
 
         assert!(!e.dock_reserved, "`never` holds for a bare `fresh`");
@@ -6803,7 +6806,7 @@ mod dock_reservation_tests {
             e.config
                 .plugins
                 .get("orchestrator")
-                .and_then(|c| c.settings.get("autoOpenDock")),
+                .and_then(|c| c.settings.get("auto_open_dock")),
             Some(&serde_json::Value::String("never".into()))
         );
         assert!(

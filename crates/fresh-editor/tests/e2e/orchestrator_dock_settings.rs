@@ -2,10 +2,10 @@
 //! (`plugins.orchestrator.settings.*`, rendered by the Settings UI under
 //! "orchestrator" under "Plugins"):
 //!
-//! * `autoOpenDock` — whether the dock opens on the `ready` hook,
+//! * `auto_open_dock` — whether the dock opens on the `ready` hook,
 //!   unfocused: `auto`, `always` or `never`, plus the booleans it replaced;
-//! * `defaultView` — the density (`card` / `compact`) the dock opens at;
-//! * `showAllWorktrees` / `showEmptyWorkspaces` — the initial state of the
+//! * `default_view` — the density (`card` / `compact`) the dock opens at;
+//! * `show_all_worktrees` / `show_empty_workspaces` — the initial state of the
 //!   two Filters checkboxes.
 //!
 //! Each is only a *default*: the dock's own controls still win once the
@@ -108,12 +108,12 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// `defaultView: "compact"` opens the dock in list density — without it
+/// `default_view: "compact"` opens the dock in list density — without it
 /// the dock always started at "card" and the user had to click "view"
 /// on every launch.
 #[test]
 fn default_view_setting_opens_dock_compact() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "defaultView": "compact" }));
+    let (_tmp, root, config) = setup(serde_json::json!({ "default_view": "compact" }));
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
@@ -126,7 +126,7 @@ fn default_view_setting_opens_dock_compact() {
 /// No setting ⇒ compact density. The dock is a switcher first, and one line
 /// per workspace fits several times as many rows in the same column; the
 /// card's extra lines are detail you go looking for. An explicit
-/// `defaultView: "card"` still gets cards.
+/// `default_view: "card"` still gets cards.
 #[test]
 fn default_view_setting_absent_opens_dock_compact() {
     let (_tmp, root, config) = setup(serde_json::json!({}));
@@ -141,7 +141,7 @@ fn default_view_setting_absent_opens_dock_compact() {
 
 #[test]
 fn default_view_setting_card_opens_dock_card() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "defaultView": "card" }));
+    let (_tmp, root, config) = setup(serde_json::json!({ "default_view": "card" }));
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
@@ -156,8 +156,8 @@ fn default_view_setting_card_opens_dock_card() {
 #[test]
 fn filter_checkbox_settings_seed_the_dock() {
     let (_tmp, root, config) = setup(serde_json::json!({
-        "showAllWorktrees": true,
-        "showEmptyWorkspaces": false,
+        "show_all_worktrees": true,
+        "show_empty_workspaces": false,
     }));
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
@@ -170,12 +170,12 @@ fn filter_checkbox_settings_seed_the_dock() {
     .unwrap();
 }
 
-/// `autoOpenDock: "always"` brings the dock up on the `ready` hook, and
+/// `auto_open_dock: "always"` brings the dock up on the `ready` hook, and
 /// leaves the keyboard with the editor — it's a switcher, not something
 /// to type into.
 #[test]
 fn auto_open_setting_shows_dock_unfocused_at_startup() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": "always" }));
+    let (_tmp, root, config) = setup(serde_json::json!({ "auto_open_dock": "always" }));
     let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
@@ -187,7 +187,7 @@ fn auto_open_setting_shows_dock_unfocused_at_startup() {
     );
 }
 
-/// A new user — no `autoOpenDock`, nothing remembered — starts without the
+/// A new user — no `auto_open_dock`, nothing remembered — starts without the
 /// dock, in an ordinary launch and a bare `fresh` alike.
 #[test]
 fn auto_open_defaults_off() {
@@ -199,10 +199,10 @@ fn auto_open_defaults_off_in_orchestrator_mode() {
     dock_stays_closed(serde_json::json!({}), true);
 }
 
-/// `autoOpenDock: false` keeps the dock closed until it is toggled.
+/// `auto_open_dock: false` keeps the dock closed until it is toggled.
 #[test]
 fn auto_open_can_be_switched_off() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": false }));
+    let (_tmp, root, config) = setup(serde_json::json!({ "auto_open_dock": false }));
     let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
@@ -245,7 +245,7 @@ fn auto_open_can_be_switched_off() {
 /// Driven with both spellings — the `never` mode, and the legacy `false` an
 /// upgrading user still has on disk.
 fn dock_stays_closed_in_orchestrator_mode(setting: serde_json::Value) {
-    dock_stays_closed(serde_json::json!({ "autoOpenDock": setting }), true);
+    dock_stays_closed(serde_json::json!({ "auto_open_dock": setting }), true);
 }
 
 /// Launch with `settings`, fire `ready`, and check no dock mounted.
@@ -341,7 +341,7 @@ fn move_auto_open_dock_in_settings(h: &mut EditorTestHarness, steps: i32) {
 /// so it closes or opens the dock now, not only at the next start.
 #[test]
 fn a_settings_edit_opens_and_closes_the_dock() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": "always" }));
+    let (_tmp, root, config) = setup(serde_json::json!({ "auto_open_dock": "always" }));
     let mut h = launch_orchestrator_mode(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();

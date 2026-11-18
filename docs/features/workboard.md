@@ -67,7 +67,7 @@ The cards are ordinary lists and trees, so they answer the keys and the mouse th
 
 While any agent is waiting on you or has finished unseen work, the status bar shows a count such as `● 2 waiting  ✓ 1 done`. When nothing needs you it is empty and takes no room. Click it, or run **Workboard: Next Waiting Agent**, to jump to the agent that has waited longest (or, if none is waiting, the oldest finished work). The jump never picks the workspace you are already in.
 
-The beacon adds itself to the right of the status bar for the current run, without editing `config.json`. To place it yourself, put `{workboard:attention}` in `editor.status_bar.left` or `editor.status_bar.right`. To turn it off, set **Plugins → workboard → statusBarBeacon** to off in the Settings UI.
+The beacon adds itself to the right of the status bar for the current run, without editing `config.json`. To place it yourself, put `{workboard:attention}` in `editor.status_bar.left` or `editor.status_bar.right`. To turn it off, set **Plugins → workboard → Status Bar Beacon** (`status_bar_beacon`) to off in the Settings UI.
 
 ## From a script
 

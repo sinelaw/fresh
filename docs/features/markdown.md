@@ -127,7 +127,7 @@ The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the 
 
 - The highlighted row is the heading whose section contains the cursor. When the pane showing the file does not have the keyboard (you are in the file explorer or a sidebar section, or reading the file in another split), the row follows the top of the viewport instead. "Markdown: Contents — Follow Cursor/Scroll" pins one or the other for the session.
 - Click a row to put the cursor on that heading and centre it in the pane; focus stays in the sidebar. Press Enter on a row to jump and move focus to the pane. Up/Down browse the rows, Left/Right fold and unfold them.
-- The disclosure glyphs collapse and expand the outline. With `foldBuffer` on, collapsing a heading also folds its section in the buffer.
+- The disclosure glyphs collapse and expand the outline. With `fold_buffer` on, collapsing a heading also folds its section in the buffer.
 
 The panel works the same way in source and compose mode: compose conceals the markers and re-flows the text but does not move it, so the rows, the highlight and the jump target are identical in both.
 
@@ -136,8 +136,8 @@ Settings live under *Plugins → markdown_toc* (`plugins.markdown_toc.settings` 
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `follow` | `"cursor"` | `"cursor"` highlights the heading containing the cursor; `"scroll"` the one at the top of the viewport |
-| `foldBuffer` | `false` | Collapsing a heading in the panel also folds its section in the buffer |
-| `autoOpen` | `true` | Open the panel for Markdown files and close it for other files automatically (it appears while the sidebar is shown) |
+| `fold_buffer` | `false` | Collapsing a heading in the panel also folds its section in the buffer |
+| `auto_open` | `true` | Open the panel for Markdown files and close it for other files automatically (it appears while the sidebar is shown) |
 | `rows` | `10` | Rows the section asks for; dragging the section divider overrides it |
 
 Files above the `editor.large_file_threshold_bytes` limit keep the headings last scanned and the section title reads "Contents (stale)".

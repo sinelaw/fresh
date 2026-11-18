@@ -7,9 +7,9 @@ shows the current mode.
 
 Its settings are in the Settings UI under **Plugins → vi_mode**:
 
-- **AutoStart** — turn vi mode on whenever Fresh starts (off by default).
-- **ArrowKeys** — let the arrow keys move the cursor in vi's modes (on by default).
-- **SearchWordUnderCursor** — `*` and `#` search for the word under the cursor (on by default).
+- **Auto Start** (`auto_start`) — turn vi mode on whenever Fresh starts (off by default).
+- **Arrow Keys** (`arrow_keys`) — let the arrow keys move the cursor in vi's modes (on by default).
+- **Search Word Under Cursor** (`search_word_under_cursor`) — `*` and `#` search for the word under the cursor (on by default).
 
 `Ctrl+P` (command palette) and `Ctrl+Q` (quit) keep working in Normal, Insert
 and Visual modes, so the rest of Fresh is always one key away.

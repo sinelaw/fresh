@@ -16,7 +16,7 @@ const editor = getEditor();
 //   it is never loaded, so no buffers are created, no timers run,
 //   and no network fetches fire.
 //
-//   A second flag `plugins.dashboard.auto-open` (default false) gates
+//   A second flag `plugins.dashboard.settings.auto_open` (default false) gates
 //   only the ambient open paths (startup + last-buffer-closed). When
 //   false the plugin still loads and the "Show Dashboard" command is
 //   still available — it just won't appear on its own.
@@ -213,7 +213,7 @@ export type DashboardApi = {
      *  built-ins (git, disk). */
     clearAllSections(): void;
     /** Toggle the ambient auto-open behaviour for this session.
-     *  Equivalent to setting `plugins.dashboard.auto-open` in the
+     *  Equivalent to setting `plugins.dashboard.settings.auto_open` in the
      *  user config, but scoped to the current process. */
     setAutoOpen(enabled: boolean): void;
     /** Refresh handlers for the built-in widgets that aren't
@@ -1276,17 +1276,17 @@ function formatDaySummary(day: WttrDay | undefined): string | null {
     return s ? truncate(s, valueMax()) : null;
 }
 
-editor.defineConfigString("weatherLocation", {
+editor.defineConfigString("weather_location", {
     default: "",
     description: "Location wttr.in should use for the weather section, instead of its IP-based geolocation. Leave blank to auto-detect.",
 });
 
 function weatherLocation(): string {
-    const cfg = (editor.getPluginConfig() ?? {}) as { weatherLocation?: string };
-    return (cfg.weatherLocation ?? "").trim();
+    const cfg = (editor.getPluginConfig() ?? {}) as { weather_location?: string };
+    return (cfg.weather_location ?? "").trim();
 }
 
-editor.defineConfigEnum("weatherUnits", {
+editor.defineConfigEnum("weather_units", {
     values: ["Metric", "Imperial"] as const,
     default: "Metric",
     description: "Units for the weather section: Metric (°C, km/h) or Imperial (°F, mph).",
@@ -1295,8 +1295,8 @@ editor.defineConfigEnum("weatherUnits", {
 // Anything other than an explicit "Imperial" (including an unset config)
 // is Metric, matching the declared default.
 function weatherUnits(): "Metric" | "Imperial" {
-    const cfg = (editor.getPluginConfig() ?? {}) as { weatherUnits?: string };
-    return cfg.weatherUnits === "Imperial" ? "Imperial" : "Metric";
+    const cfg = (editor.getPluginConfig() ?? {}) as { weather_units?: string };
+    return cfg.weather_units === "Imperial" ? "Imperial" : "Metric";
 }
 
 const weatherRefresh: SectionRefresh = async (ctx) => {
@@ -1971,7 +1971,7 @@ registerHandler("dashboardShowOrFocus", dashboardShowOrFocus);
 // plugin API from init.ts) wins over the user-configured value, which
 // comes from the typed plugin-config field declared below. The field
 // shows up in the Settings UI under "Plugin Settings → dashboard".
-editor.defineConfigBoolean("autoOpen", {
+editor.defineConfigBoolean("auto_open", {
     default: false,
     description: "Show the dashboard automatically when Fresh starts with no real files open.",
 });
@@ -1980,8 +1980,8 @@ let autoOpenOverride: boolean | null = null;
 
 function autoOpenEnabled(): boolean {
     if (autoOpenOverride !== null) return autoOpenOverride;
-    const cfg = (editor.getPluginConfig() ?? {}) as { autoOpen?: boolean };
-    return cfg.autoOpen === true;
+    const cfg = (editor.getPluginConfig() ?? {}) as { auto_open?: boolean };
+    return cfg.auto_open === true;
 }
 
 function shouldShowDashboard(): boolean {

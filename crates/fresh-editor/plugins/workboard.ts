@@ -350,7 +350,7 @@ registerSource({
 
 // ── Beacon ─────────────────────────────────────────────────────────────────
 
-editor.defineConfigBoolean("statusBarBeacon", {
+editor.defineConfigBoolean("status_bar_beacon", {
   default: true,
   description:
     "Show how many agents are waiting on you, and how many finished, in the status bar. Empty when nothing needs you; click it to jump there.",
@@ -360,8 +360,8 @@ editor.registerStatusBarElement(BEACON, "Agents needing you");
 const beaconToken = `{${editor.pluginName()}:${BEACON}}`;
 
 function beaconEnabled(): boolean {
-  const cfg = (editor.getPluginConfig() ?? {}) as { statusBarBeacon?: boolean };
-  return cfg.statusBarBeacon !== false;
+  const cfg = (editor.getPluginConfig() ?? {}) as { status_bar_beacon?: boolean };
+  return cfg.status_bar_beacon !== false;
 }
 
 /** Put the beacon on the status bar's right for this run, unless the user
