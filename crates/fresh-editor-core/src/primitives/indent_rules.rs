@@ -789,10 +789,8 @@ pub fn unclosed_bracket(code: &str) -> Option<char> {
     for c in code.chars() {
         match c {
             '(' | '[' | '{' => open.push(c),
-            ')' | ']' | '}' => {
-                if open.last().map(|&o| closing_bracket(o)) == Some(c) {
-                    open.pop();
-                }
+            ')' | ']' | '}' if open.last().map(|&o| closing_bracket(o)) == Some(c) => {
+                open.pop();
             }
             _ => {}
         }
