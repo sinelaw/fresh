@@ -45,7 +45,14 @@ fn setup_project() -> (tempfile::TempDir, PathBuf) {
 fn add_worktree(root: &Path, name: &str) {
     git(
         root,
-        &["worktree", "add", "-q", &format!("../wt-{name}"), "-b", &format!("{name}-wt")],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            &format!("../wt-{name}"),
+            "-b",
+            &format!("{name}-wt"),
+        ],
     );
 }
 
@@ -102,8 +109,8 @@ fn open_dock_rescans_worktrees_periodically() {
     let (_tmp, root) = setup_project();
     add_worktree(&root, "alpha");
     add_worktree(&root, "beta");
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config(1), root.clone())
-        .unwrap();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config(1), root.clone()).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
     h.wait_until(|h| shows(h, "alpha-wt") && shows(h, "beta-wt"))
@@ -127,8 +134,8 @@ fn context_menu_refresh_rescans_worktrees_and_drops_prunable() {
     add_worktree(&root, "alpha");
     add_worktree(&root, "delta");
     // Periodic re-scan off: only the menu can bring the list up to date.
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config(0), root.clone())
-        .unwrap();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config(0), root.clone()).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
     h.wait_until(|h| shows(h, "alpha-wt") && shows(h, "delta-wt"))
