@@ -4180,9 +4180,13 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
         Some(s) if !s.trim().is_empty() => s.to_string(),
         _ => match std::env::var("FRESH_SESSION") {
             Ok(s) if !s.trim().is_empty() => s,
+            // `--session` is one of the `--cmd` tokens, not a flag of its own
+            // (`fresh --session <id> --cmd …` is rejected), so show where it
+            // goes (#3804).
             _ => anyhow::bail!(
-                "not inside a Fresh session; set --session <id> (or run inside a \
-                 Fresh workspace so $FRESH_SESSION is set)"
+                "not inside a Fresh session; name one after the command, as in \
+                 `fresh --cmd agent list --session <id>` (or run inside a Fresh \
+                 workspace so $FRESH_SESSION is set)"
             ),
         },
     };
@@ -5383,15 +5387,28 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
             if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
                 doc.push(rest.trim().to_string());
                 in_doc = false;
+            } else if let Some(rest) = t.strip_prefix("/**").map(str::trim) {
+                // `/** First words` — the block's text starts on its opening line.
+                if !rest.is_empty() {
+                    doc.push(rest.to_string());
+                }
             }
             continue;
         }
         if in_doc {
-            if t.starts_with("*/") {
-                in_doc = false;
-            } else {
-                doc.push(t.trim_start_matches('*').trim().to_string());
+            // A block may close on its last line of text (`*  last words. */`,
+            // the shape the plugin declarations are emitted in) as well as on
+            // a line of its own; missing that swallowed every declaration
+            // after it (#3804).
+            let (text, closes) = match t.strip_suffix("*/") {
+                Some(text) => (text, true),
+                None => (t, false),
+            };
+            let text = text.trim_start_matches('*').trim();
+            if !text.is_empty() || !closes {
+                doc.push(text.to_string());
             }
+            in_doc = !closes;
             continue;
         }
         if t.is_empty() || t.starts_with("//") || t == "}" || t == "};" {
@@ -6478,6 +6495,14 @@ fn build_localized_after_help() -> String {
     out.push_str(&format!(
         "  script <verb>             {}\n",
         t("cli.cmd.script")
+    ));
+    out.push_str(&format!(
+        "  workspace list            {}\n",
+        t("cli.cmd.workspace")
+    ));
+    out.push_str(&format!(
+        "  agent <verb>              {}\n",
+        t("cli.cmd.agent")
     ));
     out.push_str(&format!(
         "  help [TOPIC]              {}\n",
@@ -7878,6 +7903,38 @@ mod tests {
         let schema: serde_json::Value = serde_json::from_str(TOUR_SCHEMA_JSON).unwrap();
         assert_eq!(schema["title"], "Fresh Code Tour Manifest");
         assert!(schema["definitions"]["TourStep"].is_object());
+    }
+
+    /// #3804: `fresh --help` lists every `--cmd` verb family the dispatcher
+    /// accepts, `workspace` and `agent` included.
+    #[test]
+    fn test_help_lists_workspace_and_agent_verbs() {
+        let help = build_localized_after_help();
+        for verb in ["  workspace list ", "  agent <verb> ", "  script <verb> "] {
+            assert!(help.contains(verb), "{verb:?} missing from --help:\n{help}");
+        }
+    }
+
+    /// #3804: plugin declarations close a doc block on its last line of text
+    /// (`*  … */`); the scanner must not stay inside the comment and swallow
+    /// the members that follow, which hid `newWorkspace` from `script api`.
+    #[test]
+    fn test_parse_dts_entries_doc_closed_on_text_line() {
+        let dts = "export type OrchestratorApi = {
+                   	/** Launch an agent.
+                   	*  More words. */
+                   	runAgent(options?: RunAgentOptions): Promise<void>;
+                   	/** Create a workspace
+                   	*
+                   	*  and launch. */
+                   	newWorkspace(options?: NewWorkspaceOptions): Promise<WorkspaceIds>;
+                   };
+";
+        let entries = parse_dts_entries(dts, "plugins.d.ts");
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["runAgent", "newWorkspace"]);
+        assert_eq!(entries[0].doc, ["Launch an agent.", "More words."]);
+        assert_eq!(entries[1].doc, ["Create a workspace", "", "and launch."]);
     }
 
     /// `help script`'s API-surface section is counted from the embedded
