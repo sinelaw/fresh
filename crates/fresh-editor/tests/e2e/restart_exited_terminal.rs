@@ -693,5 +693,20 @@ fn test_blocked_workspace_restores_terminals_without_running_them() {
         harness.render().unwrap();
         harness.assert_screen_contains("Workspace trust is Blocked");
         assert_eq!(launch_count(), 1);
+        harness.shutdown(true).unwrap();
+    }
+
+    // ---- Session 3: trusted again. The Blocked session's save kept the
+    // terminal live, so it runs again rather than coming back exited. ----
+    {
+        let mut harness = session(&dir_context);
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "the workspace should have been restored");
+        harness.render().unwrap();
+        harness
+            .wait_until(|_| launch_count() == 2)
+            .expect("a terminal held back by a Blocked folder runs once trusted");
+        harness.render().unwrap();
+        harness.assert_screen_not_contains("⟳ Restart claude");
     }
 }
