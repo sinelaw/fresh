@@ -12,7 +12,4 @@ git add -A
 git commit -q -m "inventory-api 1.4.0"
 mv /tmp/.docshot-items.$$ src/routes/items.js
 # init.ts registers "Docs: Build Workspaces" (see shots/orchestrator.py).
-# shoot.py has made the config dir already; find it beside or above us.
-for d in ../home/.config/fresh ../../.config/fresh; do
-  if [ -d "$d" ]; then cp "$(dirname "$0")/../../shots/orchestrator-init.ts" "$d/init.ts"; break; fi
-done
+cp "$DOCSHOT_SHOTS/orchestrator-init.ts" "$DOCSHOT_CONFIG_DIR/init.ts"

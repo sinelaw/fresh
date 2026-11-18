@@ -65,7 +65,7 @@ a `SHOTS` list, and `shots/_common.py` holds step helpers such as
 |---|---|
 | `id` | name used on the command line |
 | `cols`, `rows` | terminal size in cells (default 120 × 34) |
-| `project` | directory under `projects/` copied in as the working directory (default `default`); its `setup.sh`, if any, runs inside the copy |
+| `project` | directory under `projects/` copied in as the working directory (default `default`); its `setup.sh`, if any, runs inside the copy, with `DOCSHOT_HOME`, `DOCSHOT_CONFIG_DIR` and `DOCSHOT_SHOTS` set |
 | `config` | merged into the base user `config.json` |
 | `config_files` | extra files to write into the project, e.g. `.fresh/config.json` |
 | `args` | arguments to `fresh` |

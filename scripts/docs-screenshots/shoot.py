@@ -84,12 +84,12 @@ class Kitty:
         self.rows = shot.get("rows", 34)
         self.scratch = scratch
         self.sock = f"unix:{scratch}/kitty.sock"
-        home = scratch / "home"
+        home = scratch  # so paths under it read as ~/<dir>
         self.project = scratch / shot.get("dir", "invoicing")
         self.config_dir = home / ".config" / "fresh"
         self.config_dir.mkdir(parents=True)
 
-        make_project(shot.get("project", "default"), self.project)
+        make_project(shot.get("project", "default"), self.project, home, self.config_dir)
         config = {"version": 1, **BASE_CONFIG}
         deep_merge(config, shot.get("config", {}))
         (self.config_dir / "config.json").write_text(json.dumps(config, indent=2))
@@ -241,13 +241,21 @@ def deep_merge(dst: dict, src: dict):
             dst[k] = v
 
 
-def make_project(name: str, dest: Path):
+def make_project(name: str, dest: Path, home: Path, config_dir: Path):
+    """Copy projects/<name> to dest and run its setup.sh there.
+
+    setup.sh gets DOCSHOT_HOME (the shot's throwaway home), DOCSHOT_CONFIG_DIR
+    (Fresh's user config dir inside it) and DOCSHOT_SHOTS (the shots/ dir, for
+    init scripts and other assets).
+    """
     src = HERE / "projects" / name
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns("setup.sh"))
     setup = src / "setup.sh"
     if setup.exists():
-        subprocess.run(["bash", str(setup)], cwd=dest, check=True, capture_output=True)
+        env = dict(os.environ, DOCSHOT_HOME=str(home), DOCSHOT_CONFIG_DIR=str(config_dir),
+                   DOCSHOT_SHOTS=str(HERE / "shots"))
+        subprocess.run(["bash", str(setup)], cwd=dest, check=True, capture_output=True, env=env)
 
 
 def find_frame(screen: str, title: str):
