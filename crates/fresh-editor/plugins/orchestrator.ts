@@ -1041,6 +1041,13 @@ editor.defineConfigBoolean("showAllWorktrees", {
   description:
     "Start the dock (and the Open picker) with 'all worktrees' checked, listing on-disk worktrees that have no open workspace.",
 });
+editor.defineConfigInteger("worktreeRefreshSeconds", {
+  default: 30,
+  minimum: 0,
+  maximum: 3600,
+  description:
+    "How often, in seconds, an open dock (or Open picker) showing 'all worktrees' re-scans git for worktrees added or removed outside Fresh. 0 turns the periodic scan off; Refresh in a row's right-click menu still re-scans on demand.",
+});
 editor.defineConfigBoolean("showEmptyWorkspaces", {
   default: true,
   description:
@@ -1070,6 +1077,7 @@ interface DockSettings {
   detectionRulesUrl?: string;
   defaultView?: "card" | "compact";
   showAllWorktrees?: boolean;
+  worktreeRefreshSeconds?: number;
   showEmptyWorkspaces?: boolean;
 }
 
@@ -1098,6 +1106,13 @@ function configuredShowWorktrees(): boolean {
 function configuredHideTrivial(): boolean {
   if (lastHideTrivial !== null) return lastHideTrivial;
   return dockSettings().showEmptyWorkspaces === false;
+}
+
+// Period of the background worktree re-scan, in ms; 0 = off.
+function configuredWorktreeRefreshMs(): number {
+  const v = dockSettings().worktreeRefreshSeconds;
+  const secs = typeof v === "number" && Number.isFinite(v) ? v : 30;
+  return secs > 0 ? Math.round(secs * 1000) : 0;
 }
 
 // =============================================================================
@@ -1842,6 +1857,14 @@ function refreshExternal(): void {
   if (!feed) return;
   setExternalSessions(feed.snapshot());
   void feed.refresh();
+}
+
+// Re-read everything the dock lists from outside the editor: the git
+// worktrees on disk and the external sessions. What the right-click menu's
+// Refresh runs, on any row.
+function refreshDockSources(): void {
+  void refreshDiscoveredWorktrees();
+  refreshExternal();
 }
 
 // Sessions open outside this editor that no workspace here stands for, in
@@ -2964,6 +2987,33 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
   }
   if (openPanel) refreshOpenDialog();
 }
+
+// Periodic re-scan. Discovery otherwise runs only when the dock or picker
+// opens, so a dock left open kept listing worktrees that had been removed
+// and never showed new ones until it was toggled. One host timer at the
+// configured period (`worktreeRefreshSeconds`, 0 = off); each tick is a
+// no-op unless a panel is up with its discovered rows shown, so a closed
+// dock spawns no git.
+let worktreeRefreshTimer: number | null = null;
+let worktreeRefreshPeriodMs = 0;
+
+function syncWorktreeRefreshTimer(): void {
+  const want = configuredWorktreeRefreshMs();
+  if (want === worktreeRefreshPeriodMs) return;
+  if (worktreeRefreshTimer !== null) {
+    editor.clearInterval(worktreeRefreshTimer);
+    worktreeRefreshTimer = null;
+  }
+  worktreeRefreshPeriodMs = want;
+  if (want > 0) {
+    worktreeRefreshTimer = editor.setInterval(want, "orchestrator_worktree_refresh_tick");
+  }
+}
+
+registerHandler("orchestrator_worktree_refresh_tick", () => {
+  if (!openPanel || !openDialog?.showWorktrees) return;
+  void refreshDiscoveredWorktrees();
+});
 
 // =============================================================================
 // Session display helpers
@@ -5795,6 +5845,9 @@ function openControlRoom(
   // project); the dialog renders immediately with live sessions and
   // gains the discovered rows when the scan lands.
   void refreshDiscoveredWorktrees();
+  // And keeps re-scanning while it stays up (also catches a plugin reload,
+  // which gets no `ready`).
+  syncWorktreeRefreshTimer();
   // The external sessions group, the same way: what the feed already has now, a
   // fresh listing when it lands.
   if (asDock) refreshExternal();
@@ -6941,6 +6994,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     return contextMenuSpec(label, [
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename", intent: "primary" },
       { label: editor.t("dock.ctx_new_subfolder"), key: "ctx-new-subfolder" },
+      { label: editor.t("dock.ctx_refresh"), key: "ctx-refresh" },
       { label: editor.t("dock.ctx_delete_folder"), key: "ctx-delete-folder", intent: "danger" },
     ]);
   }
@@ -6973,6 +7027,10 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       { label: editor.t("dock.ctx_visit"), key: "ctx-visit", intent: "primary" },
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename-session" },
       { label: editor.t("dock.ctx_move"), key: "ctx-move" },
+      // Re-scans the whole list, not just this row: a worktree added or
+      // removed outside the editor shows up (or goes) without reopening the
+      // dock.
+      { label: editor.t("dock.ctx_refresh"), key: "ctx-refresh" },
     ];
   if (pending && pendingActionable(pending)) {
     items.push({ label: editor.t("dock.ctx_retry"), key: "ctx-retry" });
@@ -9094,12 +9152,18 @@ interface ParsedWorktree {
   path: string;
   branch: string;
   detached: boolean;
+  // git still has metadata for the worktree (`.git/worktrees/<id>`) but its
+  // directory is gone — deleted with `rm -rf` rather than
+  // `git worktree remove`. git keeps listing it, with a `prunable` line,
+  // until someone runs `git worktree prune`.
+  prunable: boolean;
 }
 
 /// Parse `git worktree list --porcelain` output. Blocks are
 /// separated by blank lines; the first block is the main worktree,
 /// the rest are linked. Each block has a `worktree <path>` line
-/// plus `branch refs/heads/<name>` or `detached`.
+/// plus `branch refs/heads/<name>` or `detached`, and a `prunable
+/// <reason>` line when the worktree's directory no longer exists.
 function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
   const out: ParsedWorktree[] = [];
   let cur: ParsedWorktree | null = null;
@@ -9107,12 +9171,14 @@ function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
     const line = raw.trimEnd();
     if (line.startsWith("worktree ")) {
       if (cur) out.push(cur);
-      cur = { path: line.slice("worktree ".length), branch: "", detached: false };
+      cur = { path: line.slice("worktree ".length), branch: "", detached: false, prunable: false };
     } else if (cur && line.startsWith("branch ")) {
       const ref = line.slice("branch ".length);
       cur.branch = ref.replace(/^refs\/heads\//, "");
     } else if (cur && line === "detached") {
       cur.detached = true;
+    } else if (cur && (line === "prunable" || line.startsWith("prunable "))) {
+      cur.prunable = true;
     } else if (line === "" && cur) {
       out.push(cur);
       cur = null;
@@ -9123,7 +9189,8 @@ function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
 }
 
 /// Enumerate the *linked* worktrees of `repoRoot` (excludes the
-/// main worktree, which is the repo's own checkout). Returns the
+/// main worktree, which is the repo's own checkout, and prunable
+/// entries, whose directory is already gone). Returns the
 /// parsed entries with the main-repo root resolved so callers can
 /// tag discovered sessions with the right `projectPath`.
 async function listLinkedWorktrees(
@@ -9139,7 +9206,10 @@ async function listLinkedWorktrees(
   if (all.length === 0) return null;
   // The first entry is always the main worktree.
   const mainRoot = all[0].path;
-  const worktrees = all.slice(1);
+  // A prunable entry is a worktree whose directory was deleted without
+  // `git worktree remove`. There is nothing on disk to open, so listing it
+  // would leave a row that lingers until the user runs `git worktree prune`.
+  const worktrees = all.slice(1).filter((wt) => !wt.prunable);
   return { mainRoot, worktrees };
 }
 
@@ -18005,7 +18075,7 @@ editor.on("widget_event", (e) => {
       if (target.kind === "folder" && isExternalFolder(target.id)) {
         if (e.widget_key === "ctx-external-refresh") {
           closeDockContextMenu();
-          refreshExternal();
+          refreshDockSources();
         }
         return;
       }
@@ -18063,9 +18133,19 @@ editor.on("widget_event", (e) => {
           closeDockContextMenu();
           return;
         }
+        if (e.widget_key === "ctx-refresh") {
+          closeDockContextMenu();
+          refreshDockSources();
+          return;
+        }
         return;
       }
       const id = target.id;
+      if (e.widget_key === "ctx-refresh") {
+        closeDockContextMenu();
+        refreshDockSources();
+        return;
+      }
       if (e.widget_key === "ctx-retry") {
         closeDockContextMenu();
         retryPending(id);
@@ -18989,6 +19069,7 @@ editor.on("window_closed", (args) => {
 // editor last quit. They come back as paused placeholder rows the user
 // resumes (Enter) or dismisses — nothing auto-runs (§ recoverPendingWorkspaces).
 editor.on("ready", () => {
+  syncWorktreeRefreshTimer();
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
@@ -19015,6 +19096,8 @@ editor.on("ready", () => {
 // Settings save or config reload. That is still the user's latest
 // instruction, so acting on it then is the rule, not a leak.
 editor.on("config_changed", () => {
+  // A Settings edit to the re-scan period takes effect now.
+  syncWorktreeRefreshTimer();
   const mode = configuredDockMode();
   if (mode === lastDockMode) return;
   lastDockMode = mode;

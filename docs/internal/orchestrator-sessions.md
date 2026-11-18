@@ -468,6 +468,7 @@ the generated settings widgets.
 | `autoOpenDock`        | `"auto"` | Whether the dock opens (unfocused) on the `ready` event: `never`, `always`, or `auto` — as the user left it, else closed. Opening or closing the dock yourself writes `always` / `never`, so a start follows your last instruction; editing it to `always` / `never` opens or closes the dock now. The pre-#3442 booleans are read as `never` / `auto` and rewritten. |
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
+| `worktreeRefreshSeconds` | `30`  | How often an open dock / Open picker with "all worktrees" on re-scans `git worktree list`, so worktrees added or removed outside Fresh show up without reopening it. `0` turns the periodic scan off; **Refresh** in any row's right-click menu still re-scans on demand. Worktrees git reports as `prunable` (directory deleted without `git worktree remove`) are never listed. |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
 | `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
 | `notifySound`         | `false`  | Ring the terminal bell with each notice.             |

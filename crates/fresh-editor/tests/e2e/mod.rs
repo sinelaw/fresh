@@ -304,6 +304,7 @@ pub mod orchestrator_dock_width;
 pub mod orchestrator_external_sessions;
 pub mod orchestrator_new_workspace_open_file;
 pub mod orchestrator_window_lsp;
+pub mod orchestrator_worktree_refresh;
 pub mod overlay_extend_to_line_end;
 pub mod pane_navigation;
 #[cfg(feature = "plugins")]
