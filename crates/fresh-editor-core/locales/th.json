@@ -2416,5 +2416,7 @@
   "dialog.title.permission_denied": "การเข้าถึงถูกปฏิเสธ",
   "dialog.title.name_conflict": "ชื่อซ้ำ",
   "dialog.title.large_file": "ไฟล์ขนาดใหญ่",
-  "dialog.title.go_to_line": "ไปที่บรรทัด"
+  "dialog.title.go_to_line": "ไปที่บรรทัด",
+  "prompt.cancelled": "ยกเลิกแล้ว",
+  "explorer.title": "โปรแกรมสำรวจไฟล์"
 }

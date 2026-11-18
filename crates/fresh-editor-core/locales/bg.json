@@ -1321,7 +1321,7 @@
   "menu.explorer.cut": "Отрязване",
   "menu.explorer.delete": "Изтриване",
   "menu.explorer.new_file": "Нов файл",
-  "menu.explorer.new_folder": "Нова папка",
+  "menu.explorer.new_folder": "Нова директория",
   "menu.explorer.open": "Отваряне",
   "menu.explorer.paste": "Поставяне",
   "menu.explorer.refresh": "Опресняване",
@@ -2425,5 +2425,7 @@
   "dialog.title.permission_denied": "Отказан достъп",
   "dialog.title.name_conflict": "Конфликт на имена",
   "dialog.title.large_file": "Голям файл",
-  "dialog.title.go_to_line": "Отиди на ред"
+  "dialog.title.go_to_line": "Отиди на ред",
+  "prompt.cancelled": "Отменено.",
+  "explorer.title": "Файлов браузър"
 }

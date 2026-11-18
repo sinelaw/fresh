@@ -1062,3 +1062,56 @@ fn test_untitled_floating_prompt_has_no_live_grep_hints() {
         "An untitled non-Live-Grep prompt must not show Live Grep's hints. Screen:\n{screen}"
     );
 }
+
+/// Escaping a prompt that is not a search does not say "Search cancelled."
+/// (#3805): a plugin's `editor.prompt()` (an async prompt), a plugin's own
+/// prompt type and Save As each used to fall through to that message.
+#[test]
+fn test_cancelling_a_non_search_prompt_does_not_say_search_cancelled() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::view::prompt::PromptType;
+    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+
+    let cancel_and_read_status = |harness: &mut EditorTestHarness| {
+        harness.wait_for_prompt().unwrap();
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        harness.wait_for_prompt_closed().unwrap();
+        harness.render().unwrap();
+        harness.get_status_bar()
+    };
+
+    for prompt_type in [
+        PromptType::AsyncPrompt,
+        PromptType::Plugin {
+            custom_type: "some-plugin-prompt".to_string(),
+        },
+    ] {
+        harness
+            .editor_mut()
+            .start_prompt("Name: ".to_string(), prompt_type.clone());
+        let status = cancel_and_read_status(&mut harness);
+        assert!(
+            status.contains("Cancelled.") && !status.contains("Search"),
+            "cancelling {prompt_type:?} should say a neutral \"Cancelled.\": {status:?}"
+        );
+    }
+
+    harness
+        .editor_mut()
+        .start_prompt("Save as: ".to_string(), PromptType::SaveFileAs);
+    let status = cancel_and_read_status(&mut harness);
+    assert!(
+        status.contains("Save cancelled"),
+        "cancelling Save As should say the save was cancelled: {status:?}"
+    );
+
+    // A search prompt still says it was the search that was cancelled.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    let status = cancel_and_read_status(&mut harness);
+    assert!(
+        status.contains("Search cancelled."),
+        "cancelling a search should still say so: {status:?}"
+    );
+}

@@ -1301,7 +1301,7 @@
   "menu.explorer.delete": "Delete",
   "menu.explorer.new_file": "New File",
   "menu.explorer.paste": "Paste",
-  "menu.explorer.new_folder": "New Folder",
+  "menu.explorer.new_folder": "New Directory",
   "menu.explorer.open": "Open",
   "menu.explorer.refresh": "Refresh",
   "menu.explorer.rename": "Rename",
@@ -1906,5 +1906,7 @@
   "dialog.title.permission_denied": "Permission Denied",
   "dialog.title.name_conflict": "Name Conflict",
   "dialog.title.large_file": "Large File",
-  "dialog.title.go_to_line": "Go to Line"
+  "dialog.title.go_to_line": "Go to Line",
+  "prompt.cancelled": "Cancelled.",
+  "explorer.title": "File Explorer"
 }

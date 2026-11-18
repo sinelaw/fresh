@@ -2416,5 +2416,7 @@
   "dialog.title.permission_denied": "权限不足",
   "dialog.title.name_conflict": "名称冲突",
   "dialog.title.large_file": "大文件",
-  "dialog.title.go_to_line": "跳转到行"
+  "dialog.title.go_to_line": "跳转到行",
+  "prompt.cancelled": "已取消。",
+  "explorer.title": "文件资源管理器"
 }

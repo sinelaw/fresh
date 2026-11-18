@@ -882,8 +882,10 @@ impl Editor {
         // conflict with the borrow on self.active_window().prompt.
         let prompt_clone = self.active_window().prompt.clone();
         // What the status line says once the prompt is gone; a prompt whose
-        // cancellation means something more specific replaces it below.
-        let mut cancelled_message = t!("search.cancelled").to_string();
+        // cancellation means something more specific replaces it below. Only
+        // the search prompts say "Search cancelled." — a plugin's `prompt()`,
+        // `pickFile()` or Save As is not a search.
+        let mut cancelled_message = t!("prompt.cancelled").to_string();
         if let Some(prompt) = prompt_clone {
             let prompt = &prompt;
             // Reset history navigation for this prompt type
@@ -895,6 +897,10 @@ impl Editor {
             match &prompt.prompt_type {
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                     self.active_window_mut().clear_search_highlights();
+                    cancelled_message = t!("search.cancelled").to_string();
+                }
+                PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                    cancelled_message = t!("search.cancelled").to_string();
                 }
                 PromptType::Plugin { custom_type } => {
                     // Fire plugin hook for prompt cancellation
@@ -934,11 +940,19 @@ impl Editor {
                     // "save and quit" chain aborts the quit — the user
                     // explicitly chose not to name this buffer, so we'd
                     // rather keep the editor open than drop their content.
-                    if matches!(prompt.prompt_type, PromptType::SaveFileAs)
-                        && self.has_pending_quit_unnamed_save()
-                    {
-                        self.clear_pending_quit_unnamed_save();
-                        cancelled_message = t!("buffer.quit_cancelled").to_string();
+                    match prompt.prompt_type {
+                        PromptType::SaveFileAs => {
+                            cancelled_message = if self.has_pending_quit_unnamed_save() {
+                                self.clear_pending_quit_unnamed_save();
+                                t!("buffer.quit_cancelled").to_string()
+                            } else {
+                                t!("buffer.save_cancelled").to_string()
+                            };
+                        }
+                        PromptType::OpenFile => {
+                            cancelled_message = t!("file.open_cancelled").to_string();
+                        }
+                        _ => {}
                     }
                 }
                 PromptType::AsyncPrompt => {
