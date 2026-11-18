@@ -4,7 +4,7 @@
 >
 > **Settings:** **Plugins → dashboard** in the Settings UI.
 
-Fresh includes a built-in TUI dashboard plugin that can take the place of the empty `[No Name]` buffer when nothing else is open. By default it shows git status and repo URL, a "vs master" row (commits ahead/behind), and disk usage for common mounts. Weather and recent GitHub PRs are bundled but opt-in — see [Built-in opt-in widgets](#built-in-opt-in-widgets) below.
+Fresh includes a built-in TUI dashboard plugin that can take the place of the empty `[No Name]` buffer when nothing else is open. By default it shows git status and repo URL, a "vs master" row (commits ahead/behind, shown on branches other than master or main), and disk usage for common mounts. Weather and recent GitHub PRs are bundled but opt-in — see [Built-in opt-in widgets](#built-in-opt-in-widgets) below.
 
 ## Opening the Dashboard
 
@@ -43,7 +43,7 @@ editor.on("plugins_loaded", () => {
 
 The weather section uses your IP-based location in metric units by default; set **WeatherLocation** and **WeatherUnits** (Metric or Imperial) on the dashboard's Settings page to change either.
 
-The GitHub section shows open PRs for the *current repo* (detected from the `origin` remote). Outside a GitHub clone, it renders a short explanatory message instead. If either widget can't reach its endpoint, the section surfaces a one-line error rather than blocking the rest of the dashboard.
+The GitHub section shows open PRs for the *current repo* (detected from the `origin` remote). It uses the GitHub CLI, so `gh` must be installed and signed in. Outside a GitHub clone, it renders a short explanatory message instead. If either widget can't reach its endpoint, the section surfaces a one-line error rather than blocking the rest of the dashboard.
 
 ## Adding Your Own Sections
 

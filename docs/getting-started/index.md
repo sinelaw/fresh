@@ -84,4 +84,4 @@ Close it with `Esc` or the tab's ×, and run **Welcome** from the command palett
 *   **The Command Palette:** The command palette provides quick access to commands and features. Press `Ctrl+P` to open it, and then start typing to search for commands.
 *   **Buffers:** Each open file is represented as a buffer. You can have multiple buffers open at once and switch between them.
 *   **Splits:** You can split your editor view horizontally or vertically to view multiple buffers at once.
-*   **The Status Bar:** The status bar at the bottom of the screen displays information about the current buffer, including the file name, cursor position, and Git branch.
+*   **The Status Bar:** The status bar at the bottom of the screen displays information about the current buffer, such as the cursor position, language, encoding and LSP status, along with the workspace trust level. You can choose which elements it shows (see [Status Bar](../configuration/index.md#status-bar)).
