@@ -287,6 +287,7 @@ impl Editor {
         // action key in `data`, and the `LspStatus` resolver tells confirm how
         // to interpret it, so no separate action-key table is needed.
         let mut items: Vec<crate::view::popup::PopupListItem> = Vec::new();
+        self.push_lsp_file_skipped_row(language, &servers, &mut items);
         self.push_lsp_server_rows(language, &servers, &mut items);
         self.push_lsp_footer_rows(language, &servers, &mut items);
         self.present_lsp_status_popup(language, items, focused);
@@ -384,6 +385,39 @@ impl Editor {
             auto_start,
             user_dismissed,
             any_enabled,
+        }
+    }
+
+    /// When the active file is skipped by LSP (large file, binary, per-buffer
+    /// toggle) while a server for its language runs — the status bar's
+    /// `LSP (n/a)` — say so above the server rows, so the popup doesn't read
+    /// as "ready" with no hint why this file gets nothing.
+    fn push_lsp_file_skipped_row(
+        &self,
+        language: &str,
+        servers: &LspStatusServers,
+        items: &mut Vec<crate::view::popup::PopupListItem>,
+    ) {
+        use crate::services::async_bridge::LspServerStatus;
+
+        let any_running = servers
+            .running
+            .values()
+            .any(|s| !matches!(s, LspServerStatus::Shutdown));
+        let reason = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .filter(|meta| !meta.lsp_enabled)
+            .and_then(|meta| meta.lsp_disabled_reason.clone());
+        if let (true, Some(reason)) = (any_running, reason) {
+            items.push(
+                crate::view::popup::PopupListItem::new(
+                    format!("note:{language}"),
+                    t!("lsp.popup_file_skipped", reason = reason).to_string(),
+                )
+                .disabled(),
+            );
         }
     }
 
@@ -517,18 +551,18 @@ impl Editor {
                 } else {
                     format!("    Start {name}")
                 };
-                // All dormant servers for a language share the same `start:`
-                // key; only emit the row once.
-                let start_key = format!("start:{language}");
-                if !items
-                    .iter()
-                    .any(|i| i.data.as_deref() == Some(start_key.as_str()))
-                {
-                    items.push(crate::view::popup::PopupListItem::action(
-                        start_key,
-                        start_label,
-                    ));
-                }
+                // With several servers, each dormant one gets its own Start
+                // row that starts just that server; a lone server starts the
+                // language as a whole.
+                let start_key = if servers.names.len() > 1 {
+                    format!("start:{language}/{name}")
+                } else {
+                    format!("start:{language}")
+                };
+                items.push(crate::view::popup::PopupListItem::action(
+                    start_key,
+                    start_label,
+                ));
             }
         }
     }

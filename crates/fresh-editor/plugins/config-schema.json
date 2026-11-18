@@ -1956,7 +1956,7 @@
           "x-order": 5
         },
         "root_markers": {
-          "description": "Files or folders that mark the project root: the nearest folder above the\nfile that contains one is used. Empty means `[\".git\"]`. With no match, the\nfile's own folder is used.",
+          "description": "Files or folders that mark the project root: the nearest folder above the\nfile that contains one is used. With no match, or no markers, the file's\nown folder is used. Left empty, a built-in server keeps its own markers.",
           "type": "array",
           "items": {
             "type": "string"

@@ -10,11 +10,20 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// `Ctrl+F12` on a symbol issues `textDocument/implementation` and the editor
-/// processes the response (jumping/listing) without hanging.
-#[test]
-#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
-fn test_goto_implementation_request() -> anyhow::Result<()> {
+/// A Python project with a fake LSP server (bash script) that answers
+/// `initialize` with `capabilities` and logs what it receives.
+///
+/// Returns the temp dir (keep it alive), the project root, `main.py`, the
+/// server's log file, and a config using the server for Python.
+fn fake_python_server(
+    capabilities: &str,
+) -> anyhow::Result<(
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    fresh::config::Config,
+)> {
     let temp_dir = tempfile::TempDir::new()?;
     // On macOS, temp paths are symlinks; the editor canonicalizes paths, so
     // URIs must use the canonical path to match.
@@ -81,7 +90,7 @@ while true; do
 
     case "$method" in
         "initialize")
-            send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{{"implementationProvider":true,"textDocumentSync":1}}}}}}'
+            send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{capabilities}}}}}'
             echo "SENT: initialize response" >> "$LOG_FILE"
             ;;
         "initialized")
@@ -148,6 +157,17 @@ done
         }]),
     );
 
+    Ok((temp_dir, project_root, main_file, log_file, config))
+}
+
+/// `Ctrl+F12` on a symbol issues `textDocument/implementation` and the editor
+/// processes the response (jumping/listing) without hanging.
+#[test]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
+fn test_goto_implementation_request() -> anyhow::Result<()> {
+    let (_temp_dir, project_root, main_file, log_file, config) =
+        fake_python_server(r#"{"implementationProvider":true,"textDocumentSync":1}"#)?;
+
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(100, 30, config, project_root)?;
 
@@ -185,5 +205,43 @@ done
     // Drain the async response so the editor processes it without panicking.
     harness.process_async_and_render()?;
 
+    Ok(())
+}
+
+/// With a server that doesn't offer implementations (e.g. pyright), Go to
+/// Implementation says so instead of doing nothing (#3801).
+#[test]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
+fn test_goto_implementation_unsupported_shows_message() -> anyhow::Result<()> {
+    let (_temp_dir, project_root, main_file, log_file, config) =
+        fake_python_server(r#"{"textDocumentSync":1}"#)?;
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, config, project_root)?;
+
+    harness.open_file(&main_file)?;
+    harness.wait_until(|_| {
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log.contains("ACTION: initialized")
+    })?;
+
+    // Once the editor has handled the initialize answer, Ctrl+F12 reports
+    // that the server can't do it.
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (on)"))?;
+    harness.send_key(KeyCode::F(12), KeyModifiers::CONTROL)?;
+    harness.process_async_and_render()?;
+    let message = harness.editor().get_status_message().cloned();
+    assert!(
+        message
+            .as_deref()
+            .is_some_and(|m| m.contains("not supported")),
+        "expected a 'not supported' status message, got {:?}",
+        message
+    );
+
+    let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+    assert!(
+        !log.contains("RECV: implementation request"),
+        "no request is sent to a server without implementationProvider"
+    );
     Ok(())
 }

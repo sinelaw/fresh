@@ -3996,8 +3996,8 @@ impl Config {
         // used as given.
         let mut value = parse_config_jsonc(&contents)?;
         crate::config_io::rename_legacy_keys(&mut value);
-        let partial: crate::partial_config::PartialConfig =
-            serde_json::from_value(value).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        let partial = crate::partial_config::PartialConfig::from_layer_value(value)
+            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
         Ok(partial.resolve())
     }
