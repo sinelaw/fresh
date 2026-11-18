@@ -134,4 +134,10 @@ SHOTS = [
             ("click_text", "fresh-1", 1), ("key", "End", *["BackSpace"] * 8), ("text", "fix/flaky-drain"),
             ("settle",), ("dump",), ("shot", "scripting-run-agent-dialog")],
     },
+    {
+        "id": "scripting-orchestrator-dock", **FRESH, **WIDE, "args": ["crates/fresh-editor/src/server/command_access.rs"],
+        "steps": [("wait", "Capability"), ("key", "ctrl+p"), ("text", "Docs: Agent Workspaces"),
+                  ("wait", "Stage the Scripting"), ("settle",), ("key", "Return"),
+                  ("wait", "flaky-repro"), ("sleep", 8), ("settle",), ("dump",), ("shot", "scripting-orchestrator-dock")],
+    },
 ]
