@@ -4988,7 +4988,7 @@ function defineViModes(): void {
     ["C-c", "vi_copy"],
     ["C-p", "command_palette"],
     ["C-q", "quit"],
-  ], true); // read_only = true to prevent character insertion
+  ], true, false, false, true); // read_only = true to prevent character insertion; hold keys (#3796)
 
   // Define vi-insert mode - only Escape is special, other keys insert text
   editor.defineMode("vi-insert", [
@@ -5002,7 +5002,7 @@ function defineViModes(): void {
     // Pass through to standard editor shortcuts
     ["C-p", "command_palette"],
     ["C-q", "quit"],
-  ], false); // read_only = false to allow normal typing
+  ], false, false, false, true); // read_only = false to allow normal typing
 
   // vi-find-char and vi-replace-char modes do not need bindings:
   // their entry-point handlers (vi_find_char_f/t/F/T, vi_replace_char) call
@@ -5072,12 +5072,12 @@ function defineViModes(): void {
 
     // Cancel
     ["Escape", "vi_cancel"],
-  ], true);
+  ], true, false, false, true);
 
   // vi-text-object mode needs no bindings either: `enterOperatorTextObject`
   // reads the object key with getNextKey. The mode is defined so the buffer
   // is read-only while it waits.
-  editor.defineMode("vi-text-object", [], true);
+  editor.defineMode("vi-text-object", [], true, false, false, true);
 
   // Define vi-visual mode (character-wise)
   editor.defineMode("vi-visual", [
@@ -5142,7 +5142,7 @@ function defineViModes(): void {
     // Pass through to standard editor shortcuts
     ["C-p", "command_palette"],
     ["C-q", "quit"],
-  ], true);
+  ], true, false, false, true);
 
   // Define vi-visual-line mode (line-wise)
   editor.defineMode("vi-visual-line", [
@@ -5188,7 +5188,7 @@ function defineViModes(): void {
     // Pass through to standard editor shortcuts
     ["C-p", "command_palette"],
     ["C-q", "quit"],
-  ], true);
+  ], true, false, false, true);
 
   // Define vi-visual-block mode (column/block selection)
   editor.defineMode("vi-visual-block", [
@@ -5238,7 +5238,7 @@ function defineViModes(): void {
     // Pass through to standard editor shortcuts
     ["C-p", "command_palette"],
     ["C-q", "quit"],
-  ], true);
+  ], true, false, false, true);
 }
 
 defineViModes();

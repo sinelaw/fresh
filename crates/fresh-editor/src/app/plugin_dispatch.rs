@@ -1457,6 +1457,7 @@ impl Editor {
                 plugin_name,
                 shortcuts,
                 scoped,
+                hold_keys,
             } => {
                 self.handle_define_mode(
                     name,
@@ -1467,6 +1468,7 @@ impl Editor {
                     allow_text_input,
                     inherit_normal_bindings,
                     plugin_name,
+                    hold_keys,
                 );
             }
 
@@ -4679,6 +4681,9 @@ impl Editor {
             actions.len(),
             buffer_id,
         );
+        // The keys typed after the key whose handler opened this are the
+        // popup's (#3796).
+        self.release_plugin_key_hold_for_popup();
 
         // Build popup list items from actions
         let items: Vec<crate::model::event::PopupListItemData> = actions

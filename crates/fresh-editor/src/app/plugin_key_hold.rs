@@ -1,6 +1,6 @@
 //! Keys held back while a plugin's modal input handler is still running.
 //!
-//! A plugin that owns an input mode (vi, flash, …) changes how the *next*
+//! A plugin that owns a modal input mode (vi) changes how the *next*
 //! key is read from inside the handler of *this* one: `d` switches vi to
 //! operator-pending, `f` starts capturing the target character. The handler
 //! runs on the plugin thread, so those changes reach the editor a round trip
@@ -15,8 +15,11 @@
 //! own (`getNextKey`, as `f` and `r` do) gets the queued keys one at a time,
 //! as it asks for them, and the rest wait on until it settles: without that,
 //! the key after `f`'s target landed in the capture `f` was about to close
-//! and was dropped. A handler that opens a prompt releases the queue, since
-//! the keys are the prompt's now. A handler that never settles releases it
+//! and was dropped. A handler that opens a prompt or an action popup
+//! releases the queue, since the keys are meant for it now.
+//!
+//! Only modes defined with `holdKeys` hold keys: anywhere else a slow
+//! handler (a markdown Enter, say) would stall typing for nothing. A handler that never settles releases it
 //! after [`KEY_HOLD_TIMEOUT`] without a key asked for, so a stuck plugin
 //! delays typing but cannot swallow it.
 
@@ -34,6 +37,9 @@ pub(crate) struct PluginKeyHold {
     /// Whether a prompt was open when the handler started, so that only one
     /// the handler opened counts as it handing the keyboard to the user.
     prompt_open_at_start: bool,
+    /// Set when an action popup opened while the hold was on: the handler
+    /// handed the keyboard to the user, as with a prompt.
+    popup_opened: bool,
     /// When the hold started, or last handed the handler a key it asked for.
     /// Wall-clock, not the editor's time source: the bound is on how long a
     /// real keystroke may be held, which a paused test clock must not stretch
@@ -60,14 +66,26 @@ impl Editor {
 
     /// Answerable-call id for a plugin action a key is dispatching, if that
     /// key's successors must wait for it: the key came from the keyboard and
-    /// a plugin's input mode is active (the handler may change how the next
-    /// key reads). `None` for everything else, which dispatches as before.
+    /// the active plugin input mode was defined with `holdKeys` (its handler
+    /// may change how the next key reads). `None` for everything else, which
+    /// dispatches as before.
     pub(super) fn plugin_key_hold_request(&self) -> Option<u64> {
         (self.dispatching_key
             && self.plugin_key_hold.is_none()
             && self.macro_replay.is_none()
-            && self.window_or_input_mode().is_some())
+            && self
+                .window_or_input_mode()
+                .and_then(|mode| self.mode_registry.get(mode))
+                .is_some_and(|mode| mode.hold_keys))
         .then(crate::server::command_access::next_request_id)
+    }
+
+    /// An action popup opened: if keys are held for a handler, release them,
+    /// since they are the popup's now.
+    pub(super) fn release_plugin_key_hold_for_popup(&mut self) {
+        if let Some(hold) = self.plugin_key_hold.as_mut() {
+            hold.popup_opened = true;
+        }
     }
 
     /// Start holding keys behind the handler dispatched under `request_id`.
@@ -76,6 +94,7 @@ impl Editor {
         self.plugin_key_hold = Some(PluginKeyHold {
             request_id,
             prompt_open_at_start: window.prompt.is_some(),
+            popup_opened: false,
             since: std::time::Instant::now(),
         });
     }
@@ -95,7 +114,8 @@ impl Editor {
         let request_id = hold.request_id;
         let settled =
             !crate::server::command_access::take_completed_where(|id| id == request_id).is_empty();
-        let prompted = self.active_window().prompt.is_some() && !hold.prompt_open_at_start;
+        let prompted = (self.active_window().prompt.is_some() && !hold.prompt_open_at_start)
+            || hold.popup_opened;
         let timed_out = hold.since.elapsed() >= KEY_HOLD_TIMEOUT;
         if timed_out && !settled && !prompted {
             tracing::warn!(

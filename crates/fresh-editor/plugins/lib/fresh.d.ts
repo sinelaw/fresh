@@ -7295,11 +7295,21 @@ interface EditorAPI {
 	* ], true);
 	* ```
 	* 
+	* `holdKeys` makes keystrokes in this mode wait for one another: a key
+	* that arrives while the handler of the previous one is still running
+	* is held until it settles (at most 2 s), so it is read in whatever
+	* mode that handler switched to. Set it for modal editing (vi's `d`
+	* then `w`), where a key changes how the next one reads; leave it off
+	* otherwise, since a slow handler then delays typing.
+	* 
 	* @param name - Mode name (e.g., "diagnostics-list")
 	* @param bindingsArr - Array of [key_string, command_name] pairs
 	* @param readOnly - Whether buffers in this mode are read-only
+	* @param allowTextInput - Whether unbound characters reach the plugin as `mode_text_input`
+	* @param inheritNormalBindings - Whether unbound keys fall through to the Normal bindings
+	* @param holdKeys - Whether a key waits for the previous key's handler to settle
 	*/
-	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
+	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean, holdKeys?: boolean): boolean;
 	/**
 	* Set the active window's editor mode — a plugin mode scoped to that
 	* window, such as `markdown-source`. It outranks the editor-wide input

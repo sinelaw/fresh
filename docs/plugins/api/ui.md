@@ -192,8 +192,15 @@ editor.defineMode("diagnostics-list", [
 ], true);
 ```
 
+`holdKeys` makes keystrokes in this mode wait for one another: a key
+that arrives while the handler of the previous one is still running
+is held until it settles (at most 2 s), so it is read in whatever
+mode that handler switched to. Set it for modal editing (vi's `d`
+then `w`), where a key changes how the next one reads; leave it off
+otherwise, since a slow handler then delays typing.
+
 ```typescript
-defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
+defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean, holdKeys?: boolean): boolean;
 ```
 
 | Parameter | Description |
@@ -201,6 +208,9 @@ defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextI
 | `name` | Mode name (e.g., "diagnostics-list") |
 | `bindingsArr` | Array of [key_string, command_name] pairs |
 | `readOnly` | Whether buffers in this mode are read-only |
+| `allowTextInput` | Whether unbound characters reach the plugin as `mode_text_input` |
+| `inheritNormalBindings` | Whether unbound keys fall through to the Normal bindings |
+| `holdKeys` | Whether a key waits for the previous key's handler to settle |
 
 ### `setEditorMode`
 
