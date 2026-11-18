@@ -45,13 +45,18 @@ Follow these steps to clear the **Ctrl + Alt + Up** and **Ctrl + Alt + Down** sh
 
 ### Using the macOS Keymap
 
-Fresh includes a dedicated macOS keymap that addresses terminal-specific challenges. To use it, run **Select Keybinding Map** from the command palette and pick `macos`, choose it under **Active Keybinding Map** in the Settings UI (Keybindings), or add to your `~/.config/fresh/config.json`:
+Fresh includes a dedicated macOS keymap that addresses terminal-specific challenges. To use it, run **Select Keybinding Map** from the command palette and pick `macos`, or choose it under **Settings → Keybindings → Active Keybinding Map**:
 
+![Settings at Keybindings, with the Active Keybinding Map dropdown open: default, emacs, vscode, macos, macos-gui](/images/settings-keybinding-map.png)
+
+::: details Show JSON
+In `~/.config/fresh/config.json`:
 ```json
 {
   "active_keybinding_map": "macos"
 }
 ```
+:::
 
 The macOS keymap is designed around these constraints:
 
@@ -153,8 +158,11 @@ The full list of keys:
 
 ### Keyboard Enhancement Flags
 
-Fresh can use the Kitty Keyboard Protocol to get more accurate key reporting from supported terminals. You can configure which features to enable in your config file:
+Fresh can use the Kitty Keyboard Protocol to get more accurate key reporting from supported terminals. Choose which features to enable under **Settings → Editor → Keyboard**:
 
+![Settings at Editor › Keyboard, with Keyboard Disambiguate Escape Codes turned on](/images/settings-keyboard-flags.png)
+
+::: details Show JSON
 ```json
 {
   "editor": {
@@ -165,6 +173,7 @@ Fresh can use the Kitty Keyboard Protocol to get more accurate key reporting fro
   }
 }
 ```
+:::
 
 | Option | Default | Description |
 | :--- | :--- | :--- |

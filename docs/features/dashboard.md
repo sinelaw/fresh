@@ -10,8 +10,11 @@ Fresh includes a built-in TUI dashboard plugin that can take the place of the em
 
 The dashboard plugin is loaded by default, but the dashboard doesn't open by itself: run `Show Dashboard` from the command palette whenever you want it.
 
-To have it open by itself when Fresh starts with no files open and after the last buffer is closed, turn on **Auto Open** in the Settings UI (**Open Settings** → **Plugins** → **dashboard**), or set it in `config.json`:
+To have it open by itself when Fresh starts with no files open and after the last buffer is closed, turn on **Auto Open** in the Settings UI (**Open Settings** → **Plugins** → **dashboard**):
 
+![Settings at Plugins › dashboard: Auto Open, then the weather location and units](/images/settings-dashboard-auto-open.png)
+
+::: details Show JSON
 ```json
 {
   "plugins": {
@@ -19,6 +22,7 @@ To have it open by itself when Fresh starts with no files open and after the las
   }
 }
 ```
+:::
 
 To unload the plugin entirely, turn it off in the **Plugins** list of the Settings UI (`plugins.dashboard.enabled`).
 

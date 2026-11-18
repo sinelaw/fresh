@@ -21,8 +21,11 @@ say otherwise, and each remembers what you told it:
 | Search & Replace panel | **Case** checkbox on the panel, `Alt+C` | The rest of the session, panel reopens included |
 | Git Grep | Click **Case** on the prompt toolbar, or bind a key to `git_grep_toggle_case` | The rest of the session |
 
-To start somewhere else, set the default in your config:
+To start somewhere else, open **Settings** (**Open Settings** from the palette, or **Edit → Settings...**), go to **Editor → Search** and turn on **Case Sensitive**. Typing `/case sensitive` in Settings jumps straight to it.
 
+![Settings at Editor › Search, with Case Sensitive selected and its description below](/images/settings-search-case-sensitive.png)
+
+::: details Show JSON
 ```json
 {
   "editor": {
@@ -32,6 +35,7 @@ To start somewhere else, set the default in your config:
   }
 }
 ```
+:::
 
 `case_sensitive` seeds all four surfaces; flipping a toggle still wins from
 there, and the Find prompt saves a choice that differs from it with the

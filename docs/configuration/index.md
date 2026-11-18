@@ -187,8 +187,8 @@ You cannot remove or unset a value from a lower layer — only override it. For 
 To configure Fresh through the Settings UI:
 
 1. **Open Settings**: Use **Edit → Settings...** or Command Palette (`Ctrl+P`) → "Open Settings"
-2. **Browse Categories**: Use arrow keys or click to navigate
-3. **Change Values**: Toggle booleans, adjust numbers, select from dropdowns
+2. **Find a setting**: Press `/` and type part of its name — `/tab size`, `/locale` — then `Enter` to jump to it. Or browse the categories with the arrow keys or the mouse
+3. **Change Values**: Toggle booleans, adjust numbers, select from dropdowns; lists and maps (languages, language servers, renderers) open a dialog per entry
 4. **Choose Target Layer**: Click the layer button (e.g., `[ User ]`) to switch between User/Project/Session
 5. **Save**: Press Enter on the Save button or use `Ctrl+S`
 
@@ -198,8 +198,13 @@ To configure Fresh through the Settings UI:
 
 For complex configurations (like LSP args or custom keybindings), click the `[ Edit ]` button in the Settings footer to open the raw JSON config file for the selected layer.
 
-## Example Configurations
+## Settings for One Project
 
+Everything you change in the Settings UI is saved to the layer shown on the layer button — `[ User ]` by default, which is your own `config.json`. To make a change for the current project only, click the button until it reads `[ Project ]` before you change anything: the title switches to **Settings [Project]** and **Save** writes `.fresh/config.json` in the project root, which you can commit for everyone working on it.
+
+![The Settings UI with the layer button switched to Project: the title reads Settings [Project]](/images/settings-layer-project.png)
+
+::: details Show JSON
 **User config** (`~/.config/fresh/config.json`) - your personal defaults:
 ```json
 {
@@ -226,13 +231,20 @@ For complex configurations (like LSP args or custom keybindings), click the `[ E
   }
 }
 ```
+:::
 
 ## Common Configuration Tasks
 
 ### Add a Custom Language
 
-To add syntax highlighting and LSP support for a new language:
+To add syntax highlighting and LSP support for a new language, open **Settings → Syntax & Languages**:
 
+1. Under **Languages**, choose **[+] Add new**, give it a key (say `mylang`), and fill in its **Extensions**, **Grammar** and **Comment Prefix**.
+2. Under **Language Servers**, choose **[+] Add new** with the same key and set the server's **Command** and **Args**.
+
+![The python entry under Languages in Settings: Auto Close, Auto Indent, Auto Surround, Comment Prefix, Extensions, Filenames, Format On Save and Formatter](/images/settings-language-entry.png)
+
+::: details Show JSON
 ```json
 {
   "languages": {
@@ -252,6 +264,7 @@ To add syntax highlighting and LSP support for a new language:
   }
 }
 ```
+:::
 
 The `grammar` field accepts a short name like `"bash"` or `"rust"` as well as the full display name. To see every grammar available in your environment — including built-in grammars, user-installed grammars, language packs, bundles, and plugin-registered grammars — run:
 
@@ -261,8 +274,9 @@ fresh --cmd grammar list
 
 ### Use Your Own Grammar File
 
-You can give a language its own syntax highlighting by pointing `textmate_grammar` at a grammar file:
+You can give a language its own syntax highlighting by pointing its **Textmate Grammar** setting (in the language's entry under **Settings → Syntax & Languages → Languages**) at a grammar file:
 
+::: details Show JSON
 ```json
 {
   "languages": {
@@ -273,6 +287,7 @@ You can give a language its own syntax highlighting by pointing `textmate_gramma
   }
 }
 ```
+:::
 
 The file must be a `.sublime-syntax` file; `.tmLanguage` is not supported. It
 highlights files with the language's `extensions`. Use `grammar` instead when
@@ -282,9 +297,11 @@ you just want to reuse a grammar Fresh already knows (see `fresh --cmd grammar l
 
 Fresh auto-indents new lines when you press Enter. Most languages work out of
 the box, but you can tune the rules — or add them for a language Fresh doesn't
-recognize — with an `indent` block on a language entry. No tree-sitter grammar
-is required.
+recognize — with the **Indent** setting on a language's entry under **Settings →
+Syntax & Languages → Languages**, which holds the patterns below. No tree-sitter
+grammar is required.
 
+::: details Show JSON
 ```json
 {
   "languages": {
@@ -298,6 +315,7 @@ is required.
   }
 }
 ```
+:::
 
 #### How it works
 
@@ -390,11 +408,15 @@ Fresh's source tree — or to understand which family yours resembles — see
 
 ### Set a Default Language for Unrecognized Files
 
-When Fresh opens a file whose type it cannot detect (no matching extension, filename, or glob pattern), it shows it as "Plain Text" with no syntax highlighting. Set `default_language` to the name of any entry in the `languages` map and unrecognized files will use that language's full configuration — useful for `.conf`, `.rc`, `.rules`, and other config files that Fresh doesn't recognize.
+When Fresh opens a file whose type it cannot detect (no matching extension, filename, or glob pattern), it shows it as "Plain Text" with no syntax highlighting. Set **Default Language** (under **Settings → Syntax & Languages**) to any entry in the Languages list and unrecognized files will use that language's full configuration — useful for `.conf`, `.rc`, `.rules`, and other config files that Fresh doesn't recognize.
 
+![Settings at Syntax & Languages, with the Default Language dropdown selected and set to none](/images/settings-default-language.png)
+
+::: details Show JSON
 ```json
 { "default_language": "bash" }
 ```
+:::
 
 This tells Fresh: "When you don't know what language a file is, treat it as bash." The file picks up bash syntax highlighting, `#` comments, indent rules, and anything else defined for bash in `languages`.
 
@@ -402,8 +424,11 @@ Any language name works — try `yaml`, `json`, `toml`, or a custom entry of you
 
 ### Customize LSP Settings
 
-Configure initialization options for a language server:
+Configure initialization options for a language server in its entry under **Settings → Syntax & Languages → Language Servers** (**Initialization Options**, under **Advanced**). See [LSP Integration](../features/lsp.md) for the rest of a server's settings.
 
+![The Language Servers entry for python opened in Settings: the server's Command, Enabled, Name, Args, Auto Start and Root Markers, with Env and Language Id Overrides under Advanced](/images/settings-lsp-entry.png)
+
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -417,17 +442,32 @@ Configure initialization options for a language server:
   }
 }
 ```
+:::
 
 ### Tabs vs Spaces
 
-Two settings decide how Fresh indents:
+Two settings, both under **Settings → Editor → Editing**, decide how Fresh indents:
 
-- `editor.use_tabs` — when `true`, the Tab key and auto-indent insert tab
-  characters; when `false` (the default), they insert spaces.
-- `editor.tab_size` — the width of one indent level (default `4`). With spaces
+- **Use Tabs** — when on, the Tab key and auto-indent insert tab
+  characters; when off (the default), they insert spaces.
+- **Tab Size** — the width of one indent level (default `4`). With spaces
   it is how many spaces one level inserts; with tabs it is how wide a tab
   character is displayed.
 
+![Settings at Editor › Editing, with Tab Size selected and set to 4](/images/settings-tab-size.png)
+
+Each language can override both: open its entry under **Settings → Syntax &
+Languages → Languages** and set **Tab Size** and **Use Tabs** there. A value left
+unset (shown as *Inherited*) falls back to the editor-wide one. Go and Makefile
+ship with tabs on already.
+
+![The python entry under Languages, scrolled to its Tab Size, which is inherited from the editor-wide setting](/images/settings-language-tab-size.png)
+
+To change only one project, switch the Settings layer button to `[ Project ]`
+first (see [Settings for One Project](#settings-for-one-project)).
+
+::: details Show JSON
+Editor-wide:
 ```json
 {
   "editor": {
@@ -437,10 +477,7 @@ Two settings decide how Fresh indents:
 }
 ```
 
-Each language can override both under `languages.<id>`; a value left unset
-falls back to the `editor` one. Go and Makefile ship with `use_tabs: true`
-already.
-
+Per language:
 ```json
 {
   "languages": {
@@ -450,9 +487,7 @@ already.
 }
 ```
 
-To change only one project, put the same keys in `.fresh/config.json` at the
-project root (see [Configuration Layers](#configuration-layers)):
-
+One project only, in `.fresh/config.json` at the project root:
 ```json
 {
   "version": 1,
@@ -461,6 +496,7 @@ project root (see [Configuration Layers](#configuration-layers)):
   }
 }
 ```
+:::
 
 A `.editorconfig` file next to (or above) the file you open takes precedence
 over these: `indent_style` sets tabs or spaces and `indent_size` / `tab_width`
@@ -596,6 +632,7 @@ Universal Search keeps its own Word and Regex defaults (regex **on**, matching
 what `rg` and `git grep` do); Git Grep has no word or regex toggle. Case
 sensitivity is the one option all four surfaces take from here.
 
+::: details Show JSON
 ```json
 {
   "editor": {
@@ -605,6 +642,7 @@ sensitivity is the one option all four surfaces take from here.
   }
 }
 ```
+:::
 
 `Alt+C` toggles case sensitivity in the Find/Replace prompt, in Universal
 Search and in the Search & Replace panel. Git Grep shows a **Case** checkbox on
@@ -630,8 +668,9 @@ If copy/paste hangs (common with PuTTY), try disabling one or both of these.
 
 ## Process Resource Limits
 
-To prevent LSP servers from consuming too many resources, Fresh can limit their memory and CPU usage.
+To prevent LSP servers from consuming too many resources, Fresh can limit their memory and CPU usage: set **Process Limits** (under **Advanced**) in the server's entry under **Settings → Syntax & Languages → Language Servers**.
 
+::: details Show JSON
 ```json
 {
   "lsp": {
@@ -646,5 +685,6 @@ To prevent LSP servers from consuming too many resources, Fresh can limit their 
   }
 }
 ```
+:::
 
 `max_memory_percent` is a share of total system memory. `max_cpu_percent` is relative to one core (e.g. 200 = two full cores).

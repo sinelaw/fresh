@@ -77,6 +77,9 @@ A row opens to edit the command and its arguments. The help under the fields lis
 | `{width}` | the number of columns available inside the frame |
 | `{lang}` | the block's language, as written after the fence |
 
+To add a language, use **[+] Add new** under Renderers and give it the language name as written after the fence (for example `dot`); to stop drawing one, delete its row or clear its command.
+
+::: details Show JSON
 In `config.json` the setting is `plugins.markdown_compose.settings.renderers`, a map from language to `command` and `args`. These are the defaults:
 
 ```json
@@ -116,6 +119,7 @@ Use [`mmaid`](https://github.com/aaronsb/mmaid-go) for Mermaid instead, and stop
   "math":    { "command": "", "args": [] }
 }
 ```
+:::
 
 A command not on your `PATH` can be given by its full path, e.g. `"command": "/opt/tools/bin/utftex"`. Put `--` before `{source}` when the tool takes options, as the defaults do, so a formula starting with `-` is not read as one.
 

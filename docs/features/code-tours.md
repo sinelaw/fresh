@@ -8,7 +8,7 @@ A tour is a walkthrough of a codebase, played inside the editor. It opens as a p
 
 ![A tour open in the dock with the step's lines highlighted in the source above](/images/code-tour-panel.png)
 
-*Step 3 of 5 of a tour of Fresh's own source. The step's lines are highlighted above; the rail on the left ticks off the steps already visited.*
+*Step 3 of 5 of a tour of a small invoicing service. The step's lines are highlighted above; the rail on the left ticks off the steps already visited.*
 
 ## Where tours come from
 

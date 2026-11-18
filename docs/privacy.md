@@ -20,9 +20,15 @@ You can disable both upgrade checking and telemetry with the same flag:
 fresh --no-upgrade-check
 ```
 
-**Configuration file** (`~/.config/fresh/config.json`):
+**Settings UI:** open **Settings** (**Edit → Settings...**), go to **General** and turn off **Check For Updates**, then **Save**.
+
+![Settings at General, with Check For Updates selected](/images/settings-check-for-updates.png)
+
+::: details Show JSON
+In `~/.config/fresh/config.json`:
 ```json
 {
   "check_for_updates": false
 }
 ```
+:::

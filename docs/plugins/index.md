@@ -74,8 +74,11 @@ Installed packages are stored in:
 
 ### Registry Sources
 
-By default, Fresh uses the official package registry. You can add additional registries in your config:
+By default, Fresh uses the official package registry. Add more under **Settings → Packages → Sources** (**[+] Add new**, then the registry's repository URL):
 
+![Settings at Packages, with the Sources list holding the official registry and an Add new row](/images/settings-packages-sources.png)
+
+::: details Show JSON
 ```json
 {
   "packages": {
@@ -86,6 +89,7 @@ By default, Fresh uses the official package registry. You can add additional reg
   }
 }
 ```
+:::
 
 Use the **Sync** button in **Package: Packages** to fetch the latest package lists.
 

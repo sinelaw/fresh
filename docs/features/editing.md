@@ -18,7 +18,7 @@ Some keybindings may not work or may differ on your system due to differences in
 
 ## Vertical Rulers
 
-Add column rulers at any position via "Add Ruler" from the command palette. Useful for enforcing line length limits. Remove with "Remove Ruler". Both change the current buffer and also save the result as your `rulers` setting, so files you open later (and later sessions) get the same rulers. You can also set `rulers` in config directly (e.g. `[80, 120]`).
+Add column rulers at any position via "Add Ruler" from the command palette. Useful for enforcing line length limits. Remove with "Remove Ruler". Both change the current buffer and also save the result as your `rulers` setting, so files you open later (and later sessions) get the same rulers. You can also edit the list directly under **Settings → Editor → Display → Rulers** (`rulers`, e.g. `[80, 120]`).
 
 Ruler columns are 1-based *display* columns — screen cells, not characters: a ruler at 80 highlights the 80th display column, the last one the text may occupy. A tab advances to the next tab stop and a full-width character (CJK, most emoji) takes two cells, so on lines containing either, the ruler column is not the character count the status bar reports; for plain ASCII text the two numbers agree. Values below 1 are not valid columns and are ignored.
 
@@ -26,16 +26,21 @@ When a ruler column falls inside a full-width character — for example a ruler 
 
 ## Indentation Guides
 
-Enable vertical indentation guides in the Settings UI. The default is off; choose to draw every indentation level, or only the innermost guide for the cursor's current block. The glyph (default `▏`) is also configurable there.
+Enable vertical indentation guides with **Indentation Guide** under **Settings → Editor → Display**. The default is `none`; choose `all` to draw every indentation level, or `active` for only the innermost guide of the cursor's current block. The glyph (default `▏`) is also configurable there.
+
+![Settings at Editor › Display, with the Indentation Guide dropdown selected and set to none](/images/settings-indentation-guide.png)
 
 Guides are visual-only: they replace rendered leading whitespace cells without changing buffer text, cursor positions, byte mappings, or mouse behavior. Themes can set the guide color with the `indentation_guide_fg` key; when omitted, it inherits the whitespace-indicator color.
 
-Turn on `editor.rainbow_indentation` to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
+Turn on **Rainbow Indentation** (same page) to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
 
 **Per-buffer override** — **Toggle Indentation Guides (Current Buffer)** in the command palette flips guides for the active buffer only, leaving the global setting and other buffers untouched. Turning them on in a buffer where the global mode is `none` draws every level; where it is `active`, that mode is kept. The choice persists across restarts.
 
-Guides are a source-code aid, so plain-text buffers (language `text` — undetected files, `.txt`, and buffers manually set to Plain Text) never draw them, even when guides are enabled globally. Any language can opt out (or plain text back in) with the per-language `indentation_guide` setting:
+Guides are a source-code aid, so plain-text buffers (language `text` — undetected files, `.txt`, and buffers manually set to Plain Text) never draw them, even when guides are enabled globally. Any language can opt out (or plain text back in) with its own **Indentation Guide** setting: open **Settings → Syntax & Languages → Languages**, open the language, and set **Indentation Guide** (cleared, it follows the editor-wide setting):
 
+![The yaml entry under Languages in Settings, scrolled to its Indentation Guide setting, which is inherited](/images/settings-language-indentation-guide.png)
+
+::: details Show JSON
 ```jsonc
 {
   "languages": {
@@ -44,6 +49,7 @@ Guides are a source-code aid, so plain-text buffers (language `text` — undetec
   }
 }
 ```
+:::
 
 ## Current-Line Highlight
 
@@ -80,11 +86,11 @@ Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the comm
 
 ## Read-Only Mode
 
-Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read-Only Mode (Current Buffer)" from the command palette to override for a single buffer, or set `auto_read_only` to `false` in config to disable automatic read-only entirely (binary files still open read-only).
+Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read-Only Mode (Current Buffer)" from the command palette to override for a single buffer, or turn off **Auto Read Only** under **Settings → Editor → Editing** (`auto_read_only`) to disable automatic read-only entirely (binary files still open read-only).
 
 ## Whitespace Indicators
 
-Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or the `whitespace_*` settings in config, with `whitespace_show` as the master toggle. A language can hide tab arrows with `show_whitespace_tabs`. Theme color: `whitespace_indicator_fg`.
+Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions under **Settings → Editor → Whitespace** (the `whitespace_*` settings), with **Whitespace Show** as the master toggle. A language can hide tab arrows with its **Show Whitespace Tabs** setting under **Syntax & Languages → Languages**. Theme color: `whitespace_indicator_fg`.
 
 **Toggle Whitespace Indicators (Current Buffer)** in the command palette flips the master toggle for the active buffer. Switching it on marks every space, whatever the configured per-position settings say. With the default settings (spaces off, tabs on) the indicators count as on, so the first use hides them and the second shows every space. Tab and line-ending indicators follow the configuration, so a language that hides tab arrows keeps hiding them. "Reset Buffer Settings" drops the per-buffer choice.
 
@@ -94,7 +100,7 @@ Inside a selection the indicators appear regardless of the settings above, so se
 
 ## Inline Diagnostics
 
-Diagnostic messages can be displayed at the end of each line, right-aligned, with version-aware staleness dimming. Disabled by default — enable "diagnostics inline text" in the Settings UI or set `diagnostics_inline_text` in config.
+Diagnostic messages can be displayed at the end of each line, right-aligned, with version-aware staleness dimming. Disabled by default — turn on **Diagnostics Inline Text** under **Settings → Editor → Diagnostics** (`diagnostics_inline_text`).
 
 ## Line Wrap
 
@@ -230,13 +236,10 @@ A recorded macro lives only in its register until you persist it:
 
 Both write one sentinel-delimited block per register and reload `init.ts` immediately, so promoting a saved macro replaces its saved form (the register is then no longer seeded at startup). Each step is `{ action, args?, count? }`; the [Actions reference](../configuration/actions.md) lists every action name and the args it takes.
 
-To bind a custom key to play a macro, follow the example below to add a `keybindings` section to your local `config.json`. 
-
-This example binds `alt+shift+!` to play macro 1 and `alt+shift+@` to play macro 2.
+To bind a key that asks which macro to play, bind **Play macro (prompts for register)** (`prompt_play_macro`) in the [Keybinding Editor](./keybinding-editor.md). A key that plays one particular register needs the register as an argument, which the Keybinding Editor can't set, so add it to the `keybindings` section of your `config.json` — this example binds `alt+shift+!` to play macro 1 and `alt+shift+@` to play macro 2:
 
 ```json
 {
-  "theme": "dracula",
   "keybindings": [
     {
       "key": "!",

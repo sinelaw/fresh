@@ -74,16 +74,18 @@ If you try to close the editor with unsaved changes, a confirmation dialog offer
 
 Fresh uses a layered keybinding system:
 
-1. **Keymap** — A named set of default bindings (`default`, `emacs`, `vscode`, `macos`, `macos-gui`). Set via `"active_keybinding_map"` in your config.
+1. **Keymap** — A named set of default bindings (`default`, `emacs`, `vscode`, `macos`, `macos-gui`). Set with **View → Keybinding Style**, or **Settings → Keybindings → Active Keybinding Map** (`active_keybinding_map`).
 2. **Custom bindings** — User overrides defined in the `"keybindings"` array of your config file. These take precedence over keymap bindings.
 
-Custom bindings added through the editor are appended to the `keybindings` array. To switch the base keymap, use **View → Keybinding Style** or set `"active_keybinding_map"` in your config file:
+Custom bindings added through the editor are appended to the `keybindings` array. To switch the base keymap, use **View → Keybinding Style**, or pick one under **Settings → Keybindings → Active Keybinding Map**.
 
+::: details Show JSON
 ```json
 {
   "active_keybinding_map": "emacs"
 }
 ```
+:::
 
 Every built-in keymap other than `default` inherits from another one and
 overrides only the keys it cares about, so anything a keymap doesn't mention
