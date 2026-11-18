@@ -774,6 +774,38 @@ impl ConfigResolver {
         write_clean_value_to_path(&path, config_value)
     }
 
+    /// Save one setting of `config` (the JSON pointer `pointer`, e.g.
+    /// `/editor/rulers`) to `layer`, leaving the rest of the file untouched.
+    ///
+    /// When the value equals what the layers below would give, the key is
+    /// removed from the file instead, so setting a value back to its
+    /// default really takes effect (an omitted key would otherwise leave the
+    /// file's old value in place).
+    pub fn save_setting_to_layer(
+        &self,
+        config: &Config,
+        pointer: &str,
+        layer: ConfigLayer,
+    ) -> Result<(), ConfigError> {
+        let current =
+            serde_json::to_value(config).map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        let value = current
+            .pointer(pointer)
+            .cloned()
+            .ok_or_else(|| ConfigError::ValidationError(format!("Unknown setting: {}", pointer)))?;
+        let parent = serde_json::to_value(self.resolve_up_to_layer(layer)?.resolve())
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+
+        let mut changes = std::collections::HashMap::new();
+        let mut deletions = std::collections::HashSet::new();
+        if parent.pointer(pointer) == Some(&value) {
+            deletions.insert(pointer.to_string());
+        } else {
+            changes.insert(pointer.to_string(), value);
+        }
+        self.save_changes_to_layer(&changes, &deletions, layer)
+    }
+
     /// Resolve config by merging layers below the target layer.
     /// Used to calculate the "parent" config for delta serialization.
     fn resolve_up_to_layer(&self, layer: ConfigLayer) -> Result<PartialConfig, ConfigError> {
@@ -2185,6 +2217,42 @@ mod tests {
         let config = resolver.resolve().unwrap();
         assert_eq!(&*config.theme, "light");
         assert_eq!(config.editor.tab_size, 2);
+    }
+
+    #[test]
+    fn issue_3800_setting_back_to_default_removes_key() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"theme": "light", "editor": {"rulers": [10]}}"#,
+        )
+        .unwrap();
+
+        let mut config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.rulers, vec![10]);
+        config.editor.rulers.clear();
+        resolver
+            .save_setting_to_layer(&config, "/editor/rulers", ConfigLayer::User)
+            .unwrap();
+
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        assert!(
+            saved.pointer("/editor/rulers").is_none(),
+            "rulers back at the default must leave the file: {}",
+            saved
+        );
+        assert_eq!(saved["theme"], "light", "other settings untouched");
+        assert!(resolver.resolve().unwrap().editor.rulers.is_empty());
+
+        // A non-default value is written.
+        config.editor.rulers = vec![80, 100];
+        resolver
+            .save_setting_to_layer(&config, "/editor/rulers", ConfigLayer::User)
+            .unwrap();
+        assert_eq!(resolver.resolve().unwrap().editor.rulers, vec![80, 100]);
     }
 
     #[test]
