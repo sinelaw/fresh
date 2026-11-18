@@ -13,6 +13,8 @@ All from the command palette (`Ctrl+P`):
 
 You can open multiple terminal tabs and switch between them like regular file buffers. The tab bar's **+** button also offers New Terminal / New File.
 
+![A terminal opened to the right of a source file, showing git status, git diff and a syntax check for the file being edited](/images/terminal-split.png)
+
 ## Send to Terminal
 
 **Send Selection to Terminal** runs the selected text — or the current line if there's no selection — in the most recently used terminal, and switches focus to it.

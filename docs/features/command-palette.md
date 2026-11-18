@@ -9,6 +9,8 @@ Press `Ctrl+P` to open the command palette. Use prefix characters to switch mode
 | `#` | Buffers | Switch between open buffers by name |
 | `:` | Go to line | Jump to a specific line number |
 
+![The command palette in command mode: the query "tog line" lists Toggle Line Numbers, Toggle Line Wrap and other matching commands with their descriptions](/images/palette-commands.png)
+
 **Tips:**
 - A hints line at the bottom shows available prefixes
 - Press `Tab` to accept the top suggestion. In file finder mode, when what you've typed is the start of a path, `Tab` instead completes it as far as all the matches agree, a folder at a time, like shell completion
@@ -16,6 +18,8 @@ Press `Ctrl+P` to open the command palette. Use prefix characters to switch mode
 - Space-separated terms match independently (e.g., "feat group" matches "features/groups/view.tsx") — so `etc hosts` finds `/etc/hosts`, `save file` finds `save_file.rs`
 - In file finder mode, use `path:line[:col]` syntax to jump to a location after opening (e.g. `src/main.rs:42:10`)
 - In go-to-line mode (`:`) and in file-finder mode when you append `:<N>` to a file, the cursor previews the target line live as you type and commits when you press Enter. If you move the mouse or hit Escape, the preview is reverted.
+
+![The file finder with the query "test res": tests/reservations.test.js is the top match, followed by other files whose paths contain both terms](/images/palette-file-finder.png)
 
 ## File Finder on Large and Remote Trees
 

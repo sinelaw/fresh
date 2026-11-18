@@ -23,6 +23,8 @@ The list lenses are tables: a heading per group (`←` / `→` or a click fold i
 | **Folders** | The Orchestrator dock's folders, in the dock's order, so an arrangement you made by hand is one key away. Drag a workspace onto a folder (or onto a workspace in it) to file it there; drop it on **Not in a folder** to unfile it. Sessions outside the editor are listed under **Outside the editor**. |
 | **Board** | A kanban board that fills itself, one column of cards each: **Backlog**, **Needs me**, **Working**, **Review**, **Shipped**. |
 
+![The Workboard's Board lens: cards sorted into Backlog, Needs me, Working, Review and Shipped columns](/images/workboard-board.png)
+
 ### How the Board places cards
 
 Each card goes to a column from its agent's state:
