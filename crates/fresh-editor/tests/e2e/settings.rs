@@ -324,7 +324,6 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
         .unwrap();
     harness.type_text("AutoOpen").unwrap();
     harness.render().unwrap();
-    // The key is camelCase; the label reads as words.
     harness.assert_screen_contains("Auto Open");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)

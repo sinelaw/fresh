@@ -956,13 +956,7 @@ impl Config {
         for path in Self::config_search_paths(working_dir) {
             if let Ok(contents) = std::fs::read_to_string(&path) {
                 match crate::config::parse_config_jsonc(&contents) {
-                    // Under today's key names, like the resolved config, so a
-                    // plugin reading what the user set finds it under the key
-                    // it declares.
-                    Ok(mut value) => {
-                        crate::config_io::rename_legacy_keys(&mut value);
-                        return value;
-                    }
+                    Ok(value) => return value,
                     Err(e) => {
                         tracing::warn!("Failed to parse config from {}: {}", path.display(), e);
                     }

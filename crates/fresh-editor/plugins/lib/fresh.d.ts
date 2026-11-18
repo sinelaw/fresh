@@ -8910,7 +8910,7 @@ interface EditorAPI {
 *
 * Typed overload of `editor.getPluginConfig`. Plugins that declared
 * their fields via `defineConfigX` can pass the shape type explicitly:
-* `editor.getPluginConfig<{ auto_enable: boolean; ... }>()`. Without
+* `editor.getPluginConfig<{ autoEnable: boolean; ... }>()`. Without
 * the generic, falls back to `unknown`.
 */
 interface EditorAPI {
