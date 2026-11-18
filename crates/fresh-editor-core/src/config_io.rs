@@ -532,24 +532,40 @@ impl ConfigResolver {
     /// Session > Project > UserPlatform > User > System
     ///
     /// Each layer fills in values missing from higher precedence layers.
+    ///
+    /// A layer that can't be loaded at all (unreadable, or not valid JSONC) is
+    /// skipped with a warning; it never discards the other layers. A layer
+    /// with a wrongly typed field loses just that field (see
+    /// [`ConfigResolver::load_layer_from_path`]).
     pub fn resolve(&self) -> Result<Config, ConfigError> {
+        // Load one layer, skipping it (with a warning) when it can't be read
+        // or parsed, so one bad file never resets the others to defaults.
+        let lenient = |name: &str, loaded: Result<Option<PartialConfig>, ConfigError>| match loaded
+        {
+            Ok(partial) => partial,
+            Err(e) => {
+                tracing::warn!("Ignoring the {} config layer: {}", name, e);
+                None
+            }
+        };
+
         // Start with highest precedence layer (Session)
-        let mut merged = self.load_session_layer()?.unwrap_or_default();
+        let mut merged = lenient("session", self.load_session_layer()).unwrap_or_default();
 
         // Merge in Project layer (fills missing values)
-        if let Some(project_partial) = self.load_project_layer()? {
+        if let Some(project_partial) = lenient("project", self.load_project_layer()) {
             tracing::debug!("Loaded project config layer");
             merged.merge_from(&project_partial);
         }
 
         // Merge in User Platform layer (e.g., config_linux.json)
-        if let Some(platform_partial) = self.load_user_platform_layer()? {
+        if let Some(platform_partial) = lenient("user platform", self.load_user_platform_layer()) {
             tracing::debug!("Loaded user platform config layer");
             merged.merge_from(&platform_partial);
         }
 
         // Merge in User layer (fills remaining missing values)
-        if let Some(user_partial) = self.load_user_layer()? {
+        if let Some(user_partial) = lenient("user", self.load_user_layer()) {
             tracing::debug!("Loaded user config layer");
             merged.merge_from(&user_partial);
         }
@@ -632,6 +648,11 @@ impl ConfigResolver {
     }
 
     /// Load a layer from a specific path, applying migrations if needed.
+    ///
+    /// A field whose value has the wrong type (e.g. a string where an object
+    /// is expected) is dropped with a warning naming the file and the field,
+    /// and the rest of the layer is kept. Only when the offending part can't
+    /// be isolated does the whole layer fail to load.
     fn load_layer_from_path(&self, path: &Path) -> Result<Option<PartialConfig>, ConfigError> {
         if !path.exists() {
             return Ok(None);
@@ -645,13 +666,34 @@ impl ConfigResolver {
             .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
 
         // Apply migrations
-        let migrated = migrate_config(value)?;
+        let mut migrated = migrate_config(value)?;
 
         // Now deserialize to PartialConfig
-        let partial: PartialConfig = serde_json::from_value(migrated)
-            .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
+        let err = match serde_json::from_value::<PartialConfig>(migrated.clone()) {
+            Ok(partial) => return Ok(Some(partial)),
+            Err(e) => e,
+        };
 
-        Ok(Some(partial))
+        // Drop just the fields that don't deserialize, keeping the rest.
+        let removed = prune_invalid_fields(&mut migrated);
+        match serde_json::from_value::<PartialConfig>(migrated) {
+            Ok(partial) if !removed.is_empty() => {
+                for (pointer, reason) in &removed {
+                    tracing::warn!(
+                        "{}: ignoring invalid setting \"{}\": {}",
+                        path.display(),
+                        pointer,
+                        reason
+                    );
+                }
+                Ok(Some(partial))
+            }
+            _ => Err(ConfigError::ParseError(format!(
+                "{}: {}",
+                path.display(),
+                err
+            ))),
+        }
     }
 
     /// Resolve the writable path for `layer`, returning an error for the read-only
@@ -829,6 +871,83 @@ where
             collector(prefix.to_string());
         }
     }
+}
+
+/// Upper bound on the fields [`prune_invalid_fields`] drops from one layer,
+/// so a file that is wrong throughout stops early and fails as a whole.
+const MAX_PRUNED_FIELDS: usize = 32;
+
+/// Remove the fields that stop `value` from deserializing as a
+/// [`PartialConfig`], returning each removed field's JSON pointer with the
+/// error it caused.
+///
+/// serde reports only the first error, without a path, so the culprit is
+/// found by descent: a key holds the error when removing it changes (or
+/// clears) the error. The deepest such key is removed and the search
+/// repeats until the value deserializes. When no single key can be blamed
+/// (the root itself is wrong, or two siblings fail identically) the search
+/// stops at the nearest blamable ancestor, or gives up at the root.
+fn prune_invalid_fields(value: &mut Value) -> Vec<(String, String)> {
+    let mut removed: Vec<(String, String)> = Vec::new();
+    while removed.len() < MAX_PRUNED_FIELDS {
+        let err = match serde_json::from_value::<PartialConfig>(value.clone()) {
+            Ok(_) => break,
+            Err(e) => e.to_string(),
+        };
+        let path = locate_invalid_field(value, &err);
+        if path.is_empty() {
+            break;
+        }
+        let pointer = json_pointer(&path);
+        remove_path(value, &path);
+        // Removing a field can expose an error on its parent (e.g. a struct
+        // left without a required field); report only the outermost removal.
+        removed.retain(|(p, _)| !p.starts_with(&format!("{}/", pointer)));
+        removed.push((pointer, err));
+    }
+    removed
+}
+
+/// Find the path of the deepest key in `root` whose removal changes the
+/// deserialization error `err` (see [`prune_invalid_fields`]).
+fn locate_invalid_field(root: &Value, err: &str) -> Vec<String> {
+    let mut path: Vec<String> = Vec::new();
+    loop {
+        let Some(Value::Object(map)) = root.pointer(&json_pointer(&path)) else {
+            return path;
+        };
+        let culprit = map.keys().find(|key| {
+            let mut candidate = root.clone();
+            let mut key_path = path.clone();
+            key_path.push((*key).clone());
+            remove_path(&mut candidate, &key_path);
+            match serde_json::from_value::<PartialConfig>(candidate) {
+                Ok(_) => true,
+                Err(e) => e.to_string() != err,
+            }
+        });
+        match culprit {
+            Some(key) => path.push(key.clone()),
+            None => return path,
+        }
+    }
+}
+
+/// Remove the object key at `path` (a list of unescaped segments).
+fn remove_path(root: &mut Value, path: &[String]) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    if let Some(Value::Object(map)) = root.pointer_mut(&json_pointer(parents)) {
+        map.remove(last);
+    }
+}
+
+/// Build a JSON pointer from path segments, escaping `~` and `/`.
+fn json_pointer(path: &[String]) -> String {
+    path.iter()
+        .map(|seg| format!("/{}", seg.replace('~', "~0").replace('/', "~1")))
+        .collect()
 }
 
 /// Calculate the delta between a partial config and its parent.
@@ -1971,6 +2090,101 @@ mod tests {
         let config = resolver.resolve().unwrap();
         assert_eq!(config.editor.tab_size, 16); // Session wins
         drop(temp);
+    }
+
+    /// Write `user` and `project` config files for a resolver test.
+    fn write_user_and_project(resolver: &ConfigResolver, user: &str, project: &str) {
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, user).unwrap();
+        let project_config_path = resolver.project_config_write_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&project_config_path, project).unwrap();
+    }
+
+    #[test]
+    fn issue_3776_wrongly_typed_field_drops_only_that_field() {
+        // `formatter` must be an object; the string is a type error. It must
+        // not reset the user's theme, nor the project's other settings.
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(
+            &resolver,
+            r#"{"theme": "light", "editor": {"line_numbers": false}}"#,
+            r#"{
+                "editor": {"tab_size": 3},
+                "languages": {
+                    "javascript": {"formatter": "prettier --write", "tab_size": 5}
+                }
+            }"#,
+        );
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(&*config.theme, "light", "user layer must survive");
+        assert!(!config.editor.line_numbers, "user layer must survive");
+        assert_eq!(config.editor.tab_size, 3, "rest of project layer kept");
+        let js = &config.languages["javascript"];
+        assert_eq!(js.tab_size, Some(5), "sibling of the bad field kept");
+        assert_eq!(
+            js.formatter.as_ref().map(|f| &f.command),
+            Config::default().languages["javascript"]
+                .formatter
+                .as_ref()
+                .map(|f| &f.command),
+            "the bad field is dropped, leaving the built-in formatter"
+        );
+    }
+
+    #[test]
+    fn issue_3776_struct_missing_required_field_is_dropped() {
+        // A formatter without its required `command` is dropped as a whole.
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(
+            &resolver,
+            r#"{"theme": "light"}"#,
+            r#"{"languages": {"rust": {"formatter": {"args": ["--custom-flag"]}, "tab_size": 6}}}"#,
+        );
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(&*config.theme, "light");
+        let rust = &config.languages["rust"];
+        assert_eq!(rust.tab_size, Some(6));
+        assert_eq!(
+            rust.formatter.as_ref().map(|f| &f.args),
+            Config::default().languages["rust"]
+                .formatter
+                .as_ref()
+                .map(|f| &f.args)
+        );
+    }
+
+    #[test]
+    fn issue_3776_prune_reports_field_paths() {
+        let mut value = serde_json::json!({
+            "editor": {"tab_size": "wide", "line_numbers": false, "rulers": "eighty"},
+            "theme": "light",
+        });
+        let removed = prune_invalid_fields(&mut value);
+        let pointers: Vec<&str> = removed.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(pointers.len(), 2, "{:?}", pointers);
+        assert!(pointers.contains(&"/editor/tab_size"), "{:?}", pointers);
+        assert!(pointers.contains(&"/editor/rulers"), "{:?}", pointers);
+        assert_eq!(value["editor"]["line_numbers"], false);
+        assert_eq!(value["theme"], "light");
+        assert!(serde_json::from_value::<PartialConfig>(value).is_ok());
+    }
+
+    #[test]
+    fn issue_3776_unparseable_layer_is_skipped_not_the_others() {
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(
+            &resolver,
+            r#"{"theme": "light", "editor": {"tab_size": 2}}"#,
+            r#"{"editor": {"tab_size": 3"#,
+        );
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(&*config.theme, "light");
+        assert_eq!(config.editor.tab_size, 2);
     }
 
     #[test]
