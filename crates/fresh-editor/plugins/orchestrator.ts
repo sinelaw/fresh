@@ -2172,8 +2172,8 @@ async function openLiveSession(key: string, opts: { dive: boolean }): Promise<vo
       });
       id = result.windowId;
       // Not a worktree this editor made: nothing to remove on Delete.
-      editor.setWindowState("project_path", plan.root);
-      editor.setWindowState("shared_worktree", true);
+      editor.setWindowState("project_path", plan.root, id);
+      editor.setWindowState("shared_worktree", true, id);
       orchestratorSessions.set(id, {
         id,
         stableId: result.stableId || undefined,
@@ -15955,8 +15955,10 @@ async function runLocalCreate(id: number): Promise<void> {
       settleCreateOutcome(id, { ok: false, error: "workspace creation was dismissed" });
       return;
     }
-    editor.setWindowState("project_path", effectiveProjectPath);
-    editor.setWindowState("shared_worktree", sharedWorktree);
+    // Tag the new window by id: a background or scripted create leaves
+    // another window active, and the tag must not land there (#3786).
+    editor.setWindowState("project_path", effectiveProjectPath, winId);
+    editor.setWindowState("shared_worktree", sharedWorktree, winId);
     const discId = discoveredIdByPath.get(root);
     if (discId !== undefined) {
       orchestratorSessions.delete(discId);
@@ -16385,8 +16387,8 @@ async function attachToWorktree(opts: {
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
     });
     const id = result.windowId;
-    editor.setWindowState("project_path", opts.projectPath);
-    editor.setWindowState("shared_worktree", false);
+    editor.setWindowState("project_path", opts.projectPath, id);
+    editor.setWindowState("shared_worktree", false, id);
     if (opts.discoveredId !== undefined) {
       orchestratorSessions.delete(opts.discoveredId);
       discoveredIdByPath.delete(opts.root);

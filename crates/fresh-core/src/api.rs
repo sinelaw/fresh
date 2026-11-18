@@ -4452,6 +4452,9 @@ pub enum PluginCommand {
         key: String,
         #[ts(type = "any")]
         value: Option<serde_json::Value>,
+        /// The window to write to; `None` is the active window.
+        #[serde(default)]
+        window_id: Option<WindowId>,
     },
 
     /// Remove all overlays from a buffer

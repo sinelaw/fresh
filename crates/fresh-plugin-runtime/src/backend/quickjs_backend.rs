@@ -7682,7 +7682,8 @@ impl JsEditorApi {
 
     // Write-through to snapshot + dispatched to editor; the underlying
     // storage lives on `Session.plugin_state`.
-    /// Set per-session state on the **active** session. Same
+    /// Set per-session state on the **active** session, or on the window
+    /// `windowId` names. Same
     /// shape as `setGlobalState` (`getWindowState` returns the new value
     /// straight away; null/undefined deletes), but the state belongs to
     /// the active session and swaps with the rest of session state on
@@ -7693,39 +7694,49 @@ impl JsEditorApi {
     ///
     /// The state is per plugin. It follows the session across saves and
     /// restores instead of applying globally.
+    ///
+    /// @param windowId - Write to this window (from `listWindows()` or
+    /// `createWindowWithTerminal`) instead of the active one. A window just
+    /// created in the background is not the active one, so tag it by id.
     pub fn set_window_state<'js>(
         &self,
         ctx: fresh_js::Ctx<'js>,
         key: String,
         value: Value<'js>,
+        #[plugin_api(ts_type = "number | null")] window_id: fresh_js::function::Opt<Option<u64>>,
     ) -> bool {
         let json_value = if value.is_undefined() || value.is_null() {
             None
         } else {
             Some(js_to_json(&ctx, value))
         };
+        let window_id = window_id.0.flatten().map(fresh_core::WindowId);
         // Write-through to snapshot's active-session map so the
         // very next getWindowState observes our write without
-        // waiting for a tick.
+        // waiting for a tick. A write to another window does not touch
+        // the active window's state.
         if let Ok(mut snapshot) = self.state_snapshot.write() {
-            match &json_value {
-                Some(v) => {
-                    snapshot
-                        .active_session_plugin_states
-                        .entry(self.plugin_name.clone())
-                        .or_default()
-                        .insert(key.clone(), v.clone());
-                }
-                None => {
-                    if let Some(map) = snapshot
-                        .active_session_plugin_states
-                        .get_mut(&self.plugin_name)
-                    {
-                        map.remove(&key);
-                        if map.is_empty() {
-                            snapshot
-                                .active_session_plugin_states
-                                .remove(&self.plugin_name);
+            // Another window's state has nothing in the snapshot to update.
+            if window_id.is_none_or(|id| id == snapshot.active_window_id) {
+                match &json_value {
+                    Some(v) => {
+                        snapshot
+                            .active_session_plugin_states
+                            .entry(self.plugin_name.clone())
+                            .or_default()
+                            .insert(key.clone(), v.clone());
+                    }
+                    None => {
+                        if let Some(map) = snapshot
+                            .active_session_plugin_states
+                            .get_mut(&self.plugin_name)
+                        {
+                            map.remove(&key);
+                            if map.is_empty() {
+                                snapshot
+                                    .active_session_plugin_states
+                                    .remove(&self.plugin_name);
+                            }
                         }
                     }
                 }
@@ -7736,6 +7747,7 @@ impl JsEditorApi {
                 plugin_name: self.plugin_name.clone(),
                 key,
                 value: json_value,
+                window_id,
             })
             .is_ok()
     }

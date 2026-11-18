@@ -321,6 +321,7 @@ fn tagging_a_new_session_persists_it_without_a_quit() {
         value: Some(serde_json::Value::String(
             proj_b.to_string_lossy().into_owned(),
         )),
+        window_id: None,
     })
     .unwrap();
 
@@ -337,6 +338,56 @@ fn tagging_a_new_session_persists_it_without_a_quit() {
     // written it already), the tagging call must leave a complete, identity-
     // carrying record behind.
     let _ = before;
+}
+
+/// A workspace created in the background (or by a script) is not the active
+/// window, so the Orchestrator tags it by id. The tag must land on that window
+/// and persist it, leaving the active window's state alone (#3786).
+#[cfg(feature = "plugins")]
+#[test]
+fn tagging_a_background_session_by_id_leaves_the_active_one_alone() {
+    use fresh_core::api::PluginCommand;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let proj_a = sandbox.path().join("a");
+    let proj_b = sandbox.path().join("b");
+    let data_home = sandbox.path().join("data-home");
+    std::fs::create_dir_all(&proj_a).unwrap();
+    std::fs::create_dir_all(&proj_b).unwrap();
+    std::fs::create_dir_all(&data_home).unwrap();
+    let proj_a = proj_a.canonicalize().unwrap();
+    let proj_b = proj_b.canonicalize().unwrap();
+
+    let dir_context = DirectoryContext::for_testing(&data_home);
+    let mut e = editor_in(&proj_a, &dir_context);
+    let win_a = e.active_window_id();
+
+    // B is created but A stays active, as a background create leaves it.
+    let win_b = e.create_window_at(proj_b.clone(), "b".into());
+    assert_eq!(e.active_window_id(), win_a);
+
+    let project = sandbox.path().join("project");
+    e.handle_plugin_command(PluginCommand::SetWindowState {
+        plugin_name: "orchestrator".into(),
+        key: "project_path".into(),
+        value: Some(serde_json::Value::String(
+            project.to_string_lossy().into_owned(),
+        )),
+        window_id: Some(win_b),
+    })
+    .unwrap();
+
+    assert!(
+        e.active_window().plugin_state.get("orchestrator").is_none(),
+        "the active window was tagged with the background window's project"
+    );
+    let saved = Workspace::load(&proj_b)
+        .unwrap()
+        .expect("tagging the background window persists it");
+    assert_eq!(
+        saved.session_plugin_state["orchestrator"]["project_path"],
+        serde_json::Value::String(project.to_string_lossy().into_owned()),
+    );
 }
 
 /// Deleting an in-place session must forget its persisted workspace, or
