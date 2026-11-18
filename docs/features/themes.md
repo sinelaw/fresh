@@ -323,13 +323,17 @@ A theme can build on top of another theme instead of restating every color.
 Any field you don't set is taken from the base; the fields you do set
 override the base.
 
-```jsonc
+```json
 {
   "name": "my-light-tweak",
-  "extends": "builtin://light",        // pick the base
-  "editor": { "selection_bg": [255, 214, 240] }  // change one thing
+  "extends": "builtin://light",
+  "editor": { "selection_bg": [255, 214, 240] }
 }
 ```
+
+This picks `light` as the base and changes only the selection colour. Theme
+files are plain JSON, so leave out `//` comments — a theme file with comments
+is not loaded.
 
 `extends` accepts a built-in name in either form: `"builtin://light"` or
 just `"light"` — any of the [built-in themes](#selecting-a-theme) works.

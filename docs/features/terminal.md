@@ -66,7 +66,7 @@ The terminal has two modes, indicated in the status bar:
 
 ## Keyboard Capture
 
-While a terminal has focus, only the editor's top-level keys reach the editor: the command palette and Quick Open (`Ctrl+P`), the menus, moving between splits and tabs, quitting, and the terminal's own keys listed on this page. Every other key goes to the program. That includes `Ctrl+B` and `Ctrl+E`, which the shell uses for line editing, so they don't toggle or focus the file explorer from a terminal.
+While a terminal has focus, only the editor's top-level keys reach the editor, such as the command palette and Quick Open (`Ctrl+P`), the menus, moving between splits and tabs, quitting, and the terminal's own keys listed on this page. Every other key goes to the program. That includes `Ctrl+B` and `Ctrl+E`, which the shell uses for line editing, so they don't toggle or focus the file explorer from a terminal.
 
 To send the remaining editor keys to the terminal too:
 
