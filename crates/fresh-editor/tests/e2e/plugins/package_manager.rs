@@ -1668,6 +1668,40 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         harness.screen_to_string()
     );
 
+    // Uninstall asks first (#3805), and its default answer keeps the
+    // package: a second, stray Enter cancels.
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Uninstall uninstall-test-plugin?")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Uninstall cancelled"))
+        .unwrap();
+    assert!(
+        test_plugin_dir.exists(),
+        "cancelling the confirmation must leave the package installed"
+    );
+
+    // Ask again, and this time choose Uninstall.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Uninstall uninstall-test-plugin?")
+        })
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
     // Step 9: Wait for uninstall to complete
     eprintln!("[TEST] Step 9: Waiting for uninstall to complete (Removed or plugin gone)");
     harness

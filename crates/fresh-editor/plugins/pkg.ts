@@ -3229,11 +3229,9 @@ async function pkg_activate() : Promise<void> {
       await runPackageAction(() => updatePackage(installedPackage));
       updatePkgManagerView();
     } else if (actionName === "Uninstall" && installedPackage) {
-      await runPackageAction(() => removePackage(installedPackage));
-      const newItems = getFilteredItems();
-      pkgState.selectedIndex = Math.min(pkgState.selectedIndex, Math.max(0, newItems.length - 1));
-      pkgState.focus = { type: "list" };
-      updatePkgManagerView();
+      // Reached by Tab from the list and run by Enter, so ask first; the
+      // answer arrives as an `action_popup_result`.
+      confirmUninstall(installedPackage);
     } else if (actionName === "Install") {
       const installUrl = item.registryEntry?.repository ?? item.repository;
       if (installUrl) {
@@ -3248,6 +3246,47 @@ async function pkg_activate() : Promise<void> {
   }
 }
 registerHandler("pkg_activate", pkg_activate);
+
+const UNINSTALL_POPUP_ID = "pkg-uninstall-confirm";
+/** The package the open uninstall confirmation is about. */
+let pendingUninstall: InstalledPackage | null = null;
+
+/** Ask before uninstalling. "Cancel" is the first action, so the popup's
+ *  default answer — what a stray Enter picks — keeps the package. */
+function confirmUninstall(pkg: InstalledPackage): void {
+  pendingUninstall = pkg;
+  editor.showActionPopup({
+    id: UNINSTALL_POPUP_ID,
+    title: `Uninstall ${pkg.name}?`,
+    message: `${pkg.name} will be removed (moved to the system trash).`,
+    actions: [
+      { id: "cancel", label: "Cancel (ESC)" },
+      { id: "uninstall", label: `Uninstall ${pkg.name}` },
+    ],
+  });
+}
+
+editor.on("action_popup_result", async (data) => {
+  if (data.popup_id !== UNINSTALL_POPUP_ID) return;
+  const pkg = pendingUninstall;
+  pendingUninstall = null;
+  if (data.action_id !== "uninstall" || !pkg) {
+    editor.setStatus("Uninstall cancelled");
+    return;
+  }
+  // The handler's promise is detached, so it carries its own catch: an
+  // unhandled rejection is fatal to the plugin runtime.
+  try {
+    await runPackageAction(() => removePackage(pkg));
+  } catch (e) {
+    packageFailure(`Failed to remove ${pkg.name}: ${e}`);
+  }
+  if (!pkgState.isOpen) return;
+  const newItems = getFilteredItems();
+  pkgState.selectedIndex = Math.min(pkgState.selectedIndex, Math.max(0, newItems.length - 1));
+  pkgState.focus = { type: "list" };
+  updatePkgManagerView();
+});
 
 function pkg_back_or_close() : void {
   if (!pkgState.isOpen) return;
