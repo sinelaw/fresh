@@ -10,7 +10,7 @@ use crate::config::{
 };
 use crate::types::LspLanguageConfig;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Trait for merging configuration layers.
 /// Higher precedence values (self) override lower precedence (other).
@@ -100,6 +100,15 @@ pub struct PartialConfig {
     /// Environment detectors — overridden wholesale (the whole detector list
     /// is replaced if provided), not merged per-detector.
     pub env: Option<crate::config::EnvConfig>,
+    /// `lsp` keys whose lone server entry leaves out `auto_start` (filled by
+    /// [`PartialConfig::from_layer_value`]; not part of the file format).
+    /// Such an entry inherits `auto_start` from a lower layer's entry when
+    /// layers merge, else from the built-in server on resolve.
+    #[serde(skip)]
+    pub lsp_auto_start_unset: HashSet<String>,
+    /// Same as `lsp_auto_start_unset`, for `universal_lsp`.
+    #[serde(skip)]
+    pub universal_lsp_auto_start_unset: HashSet<String>,
 }
 
 impl Merge for PartialConfig {
@@ -133,12 +142,73 @@ impl Merge for PartialConfig {
         merge_hashmap_recursive(&mut self.languages, &other.languages);
         self.default_language.merge_from(&other.default_language);
         self.lsp_enabled.merge_from(&other.lsp_enabled);
-        merge_hashmap(&mut self.lsp, &other.lsp);
-        merge_hashmap(&mut self.universal_lsp, &other.universal_lsp);
+        merge_lsp_map(
+            &mut self.lsp,
+            &mut self.lsp_auto_start_unset,
+            &other.lsp,
+            &other.lsp_auto_start_unset,
+        );
+        merge_lsp_map(
+            &mut self.universal_lsp,
+            &mut self.universal_lsp_auto_start_unset,
+            &other.universal_lsp,
+            &other.universal_lsp_auto_start_unset,
+        );
         merge_hashmap_recursive(&mut self.plugins, &other.plugins);
 
         self.active_keybinding_map
             .merge_from(&other.active_keybinding_map);
+    }
+}
+
+/// Merge an `lsp` / `universal_lsp` map from a lower layer. Entries merge
+/// whole (the higher layer's entry wins), except that a lone server whose
+/// entry leaves out `auto_start` (listed in `target_unset`) takes it from the
+/// lower layer's lone server for the same key, when that one sets it.
+fn merge_lsp_map(
+    target: &mut Option<HashMap<String, LspLanguageConfig>>,
+    target_unset: &mut HashSet<String>,
+    other: &Option<HashMap<String, LspLanguageConfig>>,
+    other_unset: &HashSet<String>,
+) {
+    let Some(other_map) = other else {
+        return;
+    };
+    if let Some(target_map) = target.as_mut() {
+        target_unset.retain(|key| {
+            let (Some(higher), Some(lower)) = (target_map.get_mut(key), other_map.get(key)) else {
+                return true;
+            };
+            if other_unset.contains(key) {
+                return true;
+            }
+            match (higher.as_mut_slice(), lower.as_slice()) {
+                ([higher], [lower]) => {
+                    higher.auto_start = lower.auto_start;
+                    false
+                }
+                _ => true,
+            }
+        });
+    }
+    for key in other_unset {
+        if !target.as_ref().is_some_and(|t| t.contains_key(key)) {
+            target_unset.insert(key.clone());
+        }
+    }
+    merge_hashmap(target, other);
+}
+
+/// A user server entry that leaves out `auto_start` (`unset`) and only
+/// tweaks the built-in server (no `command`, or the same one) takes the
+/// built-in's `auto_start`; a server the user defines keeps the default.
+fn inherit_builtin_auto_start(
+    user: &mut crate::types::LspServerConfig,
+    builtin: &crate::types::LspServerConfig,
+    unset: bool,
+) {
+    if unset && (user.command.is_empty() || user.command == builtin.command) {
+        user.auto_start = builtin.auto_start;
     }
 }
 
@@ -1355,6 +1425,8 @@ impl From<&crate::config::Config> for PartialConfig {
             },
             packages: Some(PartialPackagesConfig::from(&cfg.packages)),
             env: Some(cfg.env.clone()),
+            lsp_auto_start_unset: HashSet::new(),
+            universal_lsp_auto_start_unset: HashSet::new(),
         }
     }
 }
@@ -1362,46 +1434,39 @@ impl From<&crate::config::Config> for PartialConfig {
 impl PartialConfig {
     /// Deserialize one config layer from its JSON.
     ///
-    /// Same as `serde_json::from_value`, except that an `lsp` /
-    /// `universal_lsp` entry that leaves out `auto_start` inherits it from
-    /// the built-in server it is merged with (see
-    /// [`LspServerConfig::merge_with_defaults`](crate::types::LspServerConfig::merge_with_defaults)),
-    /// instead of taking serde's default of `true`. Without this, adding just
-    /// `initialization_options` to a built-in server would start it
-    /// automatically.
+    /// Same as `serde_json::from_value`, except that it notes which `lsp` /
+    /// `universal_lsp` entries (a lone server) leave out `auto_start`, so
+    /// they don't take serde's default of `true` blindly. Such an entry
+    /// inherits `auto_start` from the next lower layer's entry for the same
+    /// key (see [`Merge::merge_from`]); failing that, from the built-in
+    /// server when the entry just tweaks it (no `command`, or the built-in's
+    /// command); otherwise (a server the user defines) it defaults to
+    /// `true`. Without this, adding just `initialization_options` to a
+    /// built-in server would start it automatically.
     pub fn from_layer_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         let mut partial: PartialConfig = serde_json::from_value(value.clone())?;
-        let mut defaults: Option<crate::config::Config> = None;
-        for (field, servers_by_key) in [
-            ("lsp", &mut partial.lsp),
-            ("universal_lsp", &mut partial.universal_lsp),
+        for (field, servers_by_key, unset) in [
+            ("lsp", &partial.lsp, &mut partial.lsp_auto_start_unset),
+            (
+                "universal_lsp",
+                &partial.universal_lsp,
+                &mut partial.universal_lsp_auto_start_unset,
+            ),
         ] {
             let (Some(servers_by_key), Some(serde_json::Value::Object(raw_by_key))) =
-                (servers_by_key.as_mut(), value.get(field))
+                (servers_by_key.as_ref(), value.get(field))
             else {
                 continue;
             };
-            for (key, servers) in servers_by_key.iter_mut() {
-                // Only a lone server is merged with the built-in one.
+            for (key, servers) in servers_by_key {
+                // Only a lone server inherits; a list is the full server set.
                 let raw = match raw_by_key.get(key) {
                     Some(serde_json::Value::Array(items)) if items.len() == 1 => &items[0],
                     Some(item @ serde_json::Value::Object(_)) => item,
                     _ => continue,
                 };
-                let [server] = servers.as_mut_slice() else {
-                    continue;
-                };
-                if raw.get("auto_start").is_some() {
-                    continue;
-                }
-                let defaults = defaults.get_or_insert_with(crate::config::Config::default);
-                let builtin = if field == "lsp" {
-                    &defaults.lsp
-                } else {
-                    &defaults.universal_lsp
-                };
-                if let Some([builtin]) = builtin.get(key).map(LspLanguageConfig::as_slice) {
-                    server.auto_start = builtin.auto_start;
+                if servers.as_slice().len() == 1 && raw.get("auto_start").is_none() {
+                    unset.insert(key.clone());
                 }
             }
         }
@@ -1442,11 +1507,13 @@ impl PartialConfig {
                         // For multi-server user config, replace entirely (user is
                         // explicitly configuring the full server list).
                         if user_configs.len() == 1 && default_slice.len() == 1 {
-                            let merged = user_configs
-                                .into_iter()
-                                .next()
-                                .unwrap()
-                                .merge_with_defaults(&default_slice[0]);
+                            let mut user = user_configs.into_iter().next().unwrap();
+                            inherit_builtin_auto_start(
+                                &mut user,
+                                &default_slice[0],
+                                self.lsp_auto_start_unset.contains(&key),
+                            );
+                            let merged = user.merge_with_defaults(&default_slice[0]);
                             result.insert(key, LspLanguageConfig::Multi(vec![merged]));
                         } else {
                             result.insert(key, LspLanguageConfig::Multi(user_configs));
@@ -1469,11 +1536,13 @@ impl PartialConfig {
                     if let Some(default_configs) = result.get(&key) {
                         let default_slice = default_configs.as_slice();
                         if user_configs.len() == 1 && default_slice.len() == 1 {
-                            let merged = user_configs
-                                .into_iter()
-                                .next()
-                                .unwrap()
-                                .merge_with_defaults(&default_slice[0]);
+                            let mut user = user_configs.into_iter().next().unwrap();
+                            inherit_builtin_auto_start(
+                                &mut user,
+                                &default_slice[0],
+                                self.universal_lsp_auto_start_unset.contains(&key),
+                            );
+                            let merged = user.merge_with_defaults(&default_slice[0]);
                             result.insert(key, LspLanguageConfig::Multi(vec![merged]));
                         } else {
                             result.insert(key, LspLanguageConfig::Multi(user_configs));

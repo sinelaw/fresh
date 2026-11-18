@@ -2287,6 +2287,67 @@ mod tests {
     }
 
     #[test]
+    fn issue_3801_own_server_without_auto_start_still_auto_starts() {
+        let (_temp, resolver) = create_test_resolver();
+        let defaults = Config::default();
+        let builtin = &defaults.lsp["python"].as_slice()[0];
+        assert!(!builtin.auto_start);
+        assert_ne!(builtin.command, "pyright-langserver");
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"lsp": {
+                "python": {"command": "pyright-langserver", "args": ["--stdio"]},
+                "rust": {"command": "rust-analyzer", "env": {"A": "1"}}
+            }}"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        let python = &config.lsp["python"].as_slice()[0];
+        assert_eq!(python.command, "pyright-langserver");
+        assert!(python.auto_start, "a user-defined server defaults to true");
+        assert!(
+            !config.lsp["rust"].as_slice()[0].auto_start,
+            "the built-in's own command is still a tweak of the built-in"
+        );
+    }
+
+    #[test]
+    fn issue_3801_auto_start_inherited_from_lower_layer() {
+        let (_temp, resolver) = create_test_resolver();
+        assert!(!Config::default().lsp["rust"].as_slice()[0].auto_start);
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"lsp": {"rust": {"auto_start": true}, "go": {"auto_start": false}}}"#,
+        )
+        .unwrap();
+        let project_config_path = resolver.project_config_write_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &project_config_path,
+            r#"{"lsp": {
+                "rust": {"initialization_options": {"checkOnSave": false}},
+                "go": {"command": "my-gopls"}
+            }}"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        let rust = &config.lsp["rust"].as_slice()[0];
+        assert!(rust.auto_start, "the user layer's auto_start is kept");
+        assert!(rust.initialization_options.is_some());
+        let go = &config.lsp["go"].as_slice()[0];
+        assert_eq!(go.command, "my-gopls");
+        assert!(!go.auto_start, "a lower layer's explicit false is kept too");
+    }
+
+    #[test]
     fn layer_precedence_ordering() {
         assert!(ConfigLayer::Session.precedence() > ConfigLayer::Project.precedence());
         assert!(ConfigLayer::Project.precedence() > ConfigLayer::User.precedence());
