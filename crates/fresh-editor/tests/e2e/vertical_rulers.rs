@@ -452,6 +452,46 @@ fn test_remove_ruler_selects_specific() {
     );
 }
 
+/// Removing the last ruler must remove `rulers` from the user's config.json,
+/// not leave the old value there to come back in other buffers (#3800).
+#[test]
+fn test_remove_last_ruler_removes_it_from_config_file() {
+    let temp = TempDir::new().unwrap();
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(temp.path());
+    let working_dir = temp.path().join("project");
+    std::fs::create_dir_all(&working_dir).unwrap();
+    std::fs::create_dir_all(&dir_context.config_dir).unwrap();
+    let config_path = dir_context.config_path();
+    std::fs::write(&config_path, r#"{"editor": {"rulers": [10]}}"#).unwrap();
+
+    let mut config = Config::default();
+    config.editor.rulers = vec![10];
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        80,
+        24,
+        config,
+        working_dir,
+        dir_context.clone(),
+    )
+    .unwrap();
+    let _fixture = harness.load_buffer_from_text(&"X".repeat(60)).unwrap();
+    harness.render().unwrap();
+
+    run_command(&mut harness, "Remove Ruler");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(
+        saved.pointer("/editor/rulers").is_none(),
+        "rulers should be gone from config.json, got: {}",
+        saved
+    );
+}
+
 /// Test that "Remove Ruler" with no rulers shows no prompt (nothing to remove).
 #[test]
 fn test_remove_ruler_none_configured() {
