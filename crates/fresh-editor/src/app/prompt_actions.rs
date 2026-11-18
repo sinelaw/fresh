@@ -1691,8 +1691,7 @@ impl Editor {
         false
     }
 
-    /// Quit, throwing away every unsaved change: the quit prompt's Discard,
-    /// and `force_quit` (vi's `:q!`).
+    /// Quit, throwing away every unsaved change: the quit prompt's Discard.
     ///
     /// Clearing modified is what stops `end_recovery_session` preserving
     /// these under hot_exit — the user asked to throw them away. Every
@@ -1700,11 +1699,17 @@ impl Editor {
     /// others' recovery data silently resurrects the changes (issue #3189).
     pub(crate) fn discard_unsaved_changes_and_quit(&mut self) {
         for window in self.windows.values_mut() {
-            for (_, state) in &mut window.buffers {
-                state.buffer.clear_modified();
-                state.buffer.set_recovery_pending(false);
-            }
+            discard_unsaved_changes(window);
         }
+        self.should_quit = true;
+    }
+
+    /// `force_quit` (vi's `:q!` and `ZQ`): quit, throwing away the unsaved
+    /// changes in the workspace the user is looking at. Nothing asked about
+    /// the other workspaces, so their unsaved work is left to hot exit, as
+    /// a plain quit leaves it.
+    pub(crate) fn force_quit(&mut self) {
+        discard_unsaved_changes(self.active_window_mut());
         self.should_quit = true;
     }
 
@@ -2105,6 +2110,15 @@ impl Editor {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// Mark every buffer of `window` unmodified and drop its pending recovery
+/// write, so hot exit does not preserve changes the user threw away.
+fn discard_unsaved_changes(window: &mut crate::app::window::Window) {
+    for (_, state) in &mut window.buffers {
+        state.buffer.clear_modified();
+        state.buffer.set_recovery_pending(false);
+    }
+}
 
 #[cfg(test)]
 mod tests {
