@@ -1046,8 +1046,9 @@ impl Editor {
                 plugin_name,
                 key,
                 value,
+                window_id,
             } => {
-                self.handle_set_session_state(plugin_name, key, value);
+                self.handle_set_session_state(plugin_name, key, value, window_id);
             }
             PluginCommand::RefreshLines { buffer_id } => {
                 self.handle_refresh_lines(buffer_id);

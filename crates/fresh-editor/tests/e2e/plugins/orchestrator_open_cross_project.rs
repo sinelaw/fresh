@@ -39,6 +39,7 @@ fn set_orch_project_path(harness: &mut EditorTestHarness, project_path: &Path) {
             plugin_name: "orchestrator".into(),
             key: "project_path".into(),
             value: Some(Value::String(project_path.to_string_lossy().into_owned())),
+            window_id: None,
         })
         .unwrap();
 }
