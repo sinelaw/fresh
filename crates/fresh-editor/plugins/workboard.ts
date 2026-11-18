@@ -75,7 +75,7 @@ interface OrchestratorLike {
   listWorkspaces(): WorkspaceLike[];
   listFolders(): FolderLike[];
   getWorkspace(target: string | number): { explain?: { question?: string | null } } | null;
-  focusWorkspace(target: string | number): Promise<boolean>;
+  focusWorkspace(target: string | number, options?: { asJump?: boolean }): Promise<boolean>;
   moveWorkspace(target: string | number, folderId: string | null): boolean;
   /** Agents running outside the editor that no workspace stands for. */
   listExternalSessions?(): LiveSession[];
@@ -218,7 +218,10 @@ function withProject(ws: WorkspaceLike): WorkspaceLike {
   const machine = machineOf(ws);
   if (machine === null) return ws;
   const project = projects.get(`${machine}\n${ws.root}`);
-  if (!project) queueResolve(machine, ws.root);
+  // Asked again even when an answer is cached: `queueResolve` waits out
+  // `RESOLVE_AGAIN_MS`, and a repository that has since gained a remote
+  // moves under it.
+  queueResolve(machine, ws.root);
   return project ? { ...ws, project } : ws;
 }
 
@@ -389,7 +392,8 @@ async function jumpNext(): Promise<void> {
     editor.setStatus("Workboard: nothing needs you right now");
     return;
   }
-  await orchestrator()?.focusWorkspace(card.ws.workspaceId || card.ws.windowId);
+  // As a jump, so Orchestrator: Jump Back returns to where this came from.
+  await orchestrator()?.focusWorkspace(card.ws.workspaceId || card.ws.windowId, { asJump: true });
 }
 
 // ── The board panel ───────────────────────────────────────────────────────
