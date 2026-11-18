@@ -8,8 +8,8 @@ import { gitCwdCandidate } from "./lib/git_repo.ts";
  * (issue #1796). Search results stream in as the user types; arrow
  * keys navigate; Enter opens at the match location.
  *
- * Search backend is pluggable. The plugin ships three built-in
- * providers (ripgrep → git grep → grep) selected by priority on
+ * Search backend is pluggable. The plugin ships five built-in
+ * providers (git grep → ripgrep → ag → ack → grep) selected by priority on
  * each invocation; users and other plugins can register additional
  * providers via the exported plugin API:
  *
@@ -137,7 +137,7 @@ export interface LiveGrepProvider {
    *  same name are both kept; only the higher-priority one is ever
    *  selected unless it becomes unavailable. */
   name: string;
-  /** Higher priority wins. Built-ins use 0/-1/-2; user-registered
+  /** Higher priority wins. Built-ins use 0 to -4; user-registered
    *  providers default to 0 if omitted. */
   priority?: number;
   /** Cheap probe — typically `ctx.machine.run("foo", ["--version"],

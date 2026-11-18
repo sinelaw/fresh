@@ -29,37 +29,37 @@ Plugins should use `registerHandler()` to register command handlers instead of t
 
 ## Package Manager
 
-Fresh includes a built-in package manager.
-
-### Installing Packages
-
-Use the command palette (`Ctrl+P >`) and search for:
+Fresh includes a built-in package manager for plugins, themes, language packs and bundles. Two commands in the command palette (`Ctrl+P`) cover everything:
 
 | Command | Description |
 |---------|-------------|
-| `pkg: Install Plugin` | Browse and install plugins from the registry |
-| `pkg: Install Theme` | Browse and install themes from the registry |
-| `pkg: Install from URL` | Install directly from any git repository URL |
-| `pkg: List Installed` | Show all installed packages |
-| `pkg: Update All` | Update all installed packages |
-| `pkg: Remove Package` | Remove an installed package |
+| `Package: Packages` | Browse, install, update and remove packages |
+| `Package: Install from URL` | Install from a git URL, a theme file URL or a local directory |
 
-### Installing from Git URL
+Installed and updated packages load immediately, without restarting Fresh.
 
-Any git repository can be installed directly:
+### Browsing and Installing
 
-1. Open command palette (`Ctrl+P`)
-2. Search for `pkg: Install from URL`
-3. Enter the git repository URL (e.g., `https://github.com/user/fresh-plugin`)
-4. Restart Fresh to activate the plugin
+**Package: Packages** opens the package browser. It lists your installed packages first, then what the registry offers. Packages with a newer version in the registry are marked `↑`.
 
-**Monorepo support:** For repositories containing multiple plugins, use a URL fragment to specify the subdirectory:
+- Press `/` to search, or use `Tab` to reach the filter buttons (**All**, **Installed**, **Plugins**, **Themes**, **Languages**, **Bundles**).
+- Press `Enter` on a package to see its details and actions: **Install**, **Update** or **Uninstall**.
+- The registry syncs in the background when the browser opens. The **Sync** button fetches the latest package lists on demand.
 
-```
-https://github.com/user/fresh-plugins#packages/rainbow-brackets
-```
+### Installing from a URL or Local Directory
 
-This installs only the `packages/rainbow-brackets` directory from the repository.
+**Package: Install from URL** installs a package that isn't in the registry. It accepts:
+
+- **A git repository URL**, e.g. `https://github.com/user/fresh-plugin`.
+- **A subdirectory of a repository** (for repositories that hold several packages), using a URL fragment: `https://github.com/user/fresh-plugins#packages/rainbow-brackets`.
+- **A single theme file**: a URL ending in `.json`, which is downloaded and installed as a theme.
+- **A local directory** containing a `package.json`, e.g. `~/src/my-plugin` (a `#subdir` fragment works here too). Fresh installs a copy, so run the command again after you change the source.
+
+Running it again for a package that is already installed upgrades it in place.
+
+### Updating and Removing
+
+Select an installed package in **Package: Packages** and choose **Update** to re-install it from the source it came from (a registry, git URL or local directory), or **Uninstall** to remove it. Uninstalling unloads a plugin right away and moves the package to the system trash.
 
 ### Package Locations
 
@@ -68,8 +68,6 @@ Installed packages are stored in:
 - **Themes:** `~/.config/fresh/themes/packages/`
 - **Language Packs:** `~/.config/fresh/languages/packages/`
 - **Bundles:** `~/.config/fresh/bundles/packages/`
-
-Each package is a git repository, so you can update manually with `git pull` if needed.
 
 ### Registry Sources
 
@@ -86,7 +84,7 @@ By default, Fresh uses the official package registry. You can add additional reg
 }
 ```
 
-Run `pkg: Sync Registry` to fetch the latest package lists.
+Use the **Sync** button in **Package: Packages** to fetch the latest package lists.
 
 ## Creating Packages
 
@@ -145,7 +143,7 @@ Bundles combine multiple languages and plugins into a single installable package
 }
 ```
 
-Bundles are shown with a "B" tag in the package manager. Create one with `fresh --init bundle`.
+Bundles are shown with a "B" tag in the package manager. `fresh --cmd init` doesn't scaffold bundles; write the `package.json` by hand.
 
 ## Clangd helper plugin
 

@@ -479,7 +479,7 @@ In the Settings UI, each setting shows where its current value comes from:
 
 ## Status Bar
 
-The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, palette hint, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, a `{search_nav}` pair of `↓` / `↑` arrows, shown while a search is active, that you can click to go to the next or previous match (like F3 / Shift+F3), a clickable `{terminal_restart}` indicator that appears when the active terminal buffer's process has quit (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)), and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
+The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder, or use the keyboard: ←→ switches column, Shift+←→ moves an item across, Shift+↑↓ reorders, and Esc finishes. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, a clickable palette hint that opens the command palette, a clickable `{update}` indicator that appears when a new Fresh version is available and starts the update, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, a `{search_nav}` pair of `↓` / `↑` arrows, shown while a search is active, that you can click to go to the next or previous match (like F3 / Shift+F3), a clickable `{terminal_restart}` indicator that appears when the active terminal buffer's process has quit (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)), and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
 
 The `{remote}` indicator is clickable — activate it to open a context-aware menu for the current authority (detach, show container logs, retry attach, etc.). It also reflects connection state: `Connecting`, `Connected`, or `FailedAttach`.
 
@@ -506,10 +506,14 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Rainbow indentation | Color indentation-guide levels using theme `indent_rainbow_*` colors | off |
 | Vertical scrollbar | Show vertical scrollbar | on |
 | Horizontal scrollbar | Show horizontal scrollbar | off |
+| Viewport edge fade | Fade the top and bottom rows of a pane when there is more text beyond that edge | on |
 | Terminal background | Let terminal background show through | off |
 | Bracket matching | Highlight matching bracket pairs | on |
 | Status bar | Show/hide the status bar | on |
-| Whitespace indicators | Show space/tab characters (leading, inner, trailing) | off |
+| Auto-hide tab bar | Hide the tab bar while the window shows a single file in a single pane | off |
+| Nerd Font icons | Use Nerd Font icons in the UI. Turn on only if your terminal uses a Nerd Font | off |
+| Whitespace indicators | Show markers for tabs, spaces and line endings (leading, inner, trailing) | tabs on; spaces and line endings off |
+| Whitespace in selection | Show whitespace markers inside a selection, even where they are hidden elsewhere | on |
 | Diagnostics inline text | Show diagnostics at end of line | off |
 | Show tilde | Show `~` markers after end of file | on |
 | Menu bar mnemonics | Enable Alt+key shortcuts for menu bar | on |
@@ -522,6 +526,18 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Auto-surround | Wrap selection when typing a delimiter | on |
 | Trim trailing whitespace on save | Remove trailing whitespace when saving | off |
 | Ensure final newline on save | Add trailing newline when saving | off |
+| Virtual space | Let the cursor go past the end of a line: never, only in block selections, or always | off |
+| Large file threshold | Files over this size load lazily and skip language servers | 10 MB |
+
+### Mouse
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Smooth scroll | Scroll a wheel notch one line at a time instead of jumping (needs animations on) | on |
+| Mouse wheel scroll lines | Lines scrolled per wheel notch | 3 |
+| Mouse hover | Show documentation when hovering the mouse over code | on (off on Windows) |
+
+Shift+wheel scrolls sideways.
 
 ### Auto-Save
 
@@ -578,7 +594,9 @@ its prompt toolbar (click it, or Tab to it and press Space); bind
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Show prompt line | Show the prompt line at the bottom | on |
+| Show prompt line | Always show the prompt line at the bottom; otherwise it appears only while a prompt is open | off |
+| Empty tab on last close | Open an empty `[No Name]` tab when the last tab is closed | on |
+| Explorer on last close | Focus the file explorer when the last tab is closed | on |
 
 ### Clipboard
 
