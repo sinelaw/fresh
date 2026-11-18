@@ -3632,3 +3632,87 @@ fn test_staged_file_side_by_side_shows_and_labels_the_index() {
         "the unstaged edit is not part of the staged entry's right side:\n{screen}"
     );
 }
+
+/// A repo whose `src/main.rs` is unmerged after a conflicting merge: the
+/// index has no stage-0 copy of it.
+fn repo_with_merge_conflict() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    let main_rs = repo.path.join("src/main.rs");
+    fs::write(&main_rs, "fn main() {\n    println!(\"BASE_LINE\");\n}\n").unwrap();
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    let git = |args: &[&str]| {
+        let out = crate::common::git_test_helper::git_command(&repo.path)
+            .args(args)
+            .output()
+            .unwrap();
+        out.status.success()
+    };
+    assert!(git(&["checkout", "-q", "-b", "other"]));
+    fs::write(&main_rs, "fn main() {\n    println!(\"THEIR_LINE\");\n}\n").unwrap();
+    repo.git_add(&["src/main.rs"]);
+    repo.git_commit("theirs");
+    assert!(git(&["checkout", "-q", "-"]));
+    fs::write(&main_rs, "fn main() {\n    println!(\"HEAD_LINE\");\n}\n").unwrap();
+    repo.git_add(&["src/main.rs"]);
+    repo.git_commit("ours");
+    assert!(!git(&["merge", "-q", "other"]), "the merge must conflict");
+    repo
+}
+
+/// The newest of the review's hidden side buffers named `name`
+/// (`*OLD:…*`): its id and text.
+fn side_buffer(harness: &EditorTestHarness, name: &str) -> Option<(usize, String)> {
+    let editor = harness.editor();
+    editor
+        .all_buffer_ids_for_tests()
+        .into_iter()
+        .filter(|id| editor.get_buffer_display_name(*id) == name)
+        .max_by_key(|id| id.0)
+        .and_then(|id| Some((id.0, editor.get_buffer_content(id)?)))
+}
+
+/// An unmerged path has no index copy (`git show :path` fails): the
+/// unstaged side-by-side's left side falls back to HEAD instead of showing
+/// it empty, and the staged entry's right side to the working file.
+#[test]
+fn test_conflicted_file_side_by_side_falls_back_to_head() {
+    init_tracing_from_env();
+    let repo = repo_with_merge_conflict();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        44,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    open_review_diff(&mut harness);
+
+    // The staged entry comes first; its right side is the working file.
+    harness
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            side_buffer(h, "*NEW:src/main.rs*").is_some_and(|(_, t)| t.contains("<<<<<<<"))
+        })
+        .unwrap();
+    let (staged_old_id, _) = side_buffer(&harness, "*OLD:src/main.rs*").unwrap();
+
+    // `.` moves to the unstaged entry, whose left side is HEAD.
+    harness
+        .send_key(KeyCode::Char('.'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            side_buffer(h, "*OLD:src/main.rs*").is_some_and(|(id, _)| id > staged_old_id)
+        })
+        .unwrap();
+    let (_, old_text) = side_buffer(&harness, "*OLD:src/main.rs*").unwrap();
+    assert!(
+        old_text.contains("HEAD_LINE") && !old_text.contains("<<<<<<<"),
+        "the unstaged left side of an unmerged path is HEAD: {old_text:?}"
+    );
+}

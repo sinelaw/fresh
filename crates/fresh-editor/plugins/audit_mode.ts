@@ -5227,9 +5227,17 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
     const root = state.repo ? state.repo.root : (editor.getCwd() || "");
     const absPath = root ? editor.pathJoin(root, file.path) : file.path;
     const cwd = root || editor.getCwd();
-    const gitShow = async (rev: string): Promise<string> => {
+    const tryGitShow = async (rev: string): Promise<string | null> => {
         const shown = await editor.runOnTarget("git", ["show", `${rev}:${file.path}`], cwd);
-        return shown.code === 0 ? shown.stdout : "";
+        return shown.code === 0 ? shown.stdout : null;
+    };
+    const gitShow = async (rev: string): Promise<string> => (await tryGitShow(rev)) ?? "";
+    const readWorking = (): string => editor.readFile(editor.authorityPath(absPath)) ?? "";
+    // The index copy (`git show :path`). An unmerged (conflicted) path has
+    // no stage-0 entry there, so `fallback` stands in for it.
+    const indexOr = async (fallback: () => Promise<string> | string): Promise<string> => {
+        const staged = await tryGitShow("");
+        return staged ?? (await fallback());
     };
     if (state.mode === 'range' && state.range) {
         const [oldContent, newContent] = await Promise.all([
@@ -5244,7 +5252,7 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
         // may carry further, unstaged edits the hunks know nothing about).
         const [oldContent, newContent] = await Promise.all([
             file.status !== 'A' ? gitShow("HEAD") : Promise.resolve(""),
-            file.status !== 'D' ? gitShow("") : Promise.resolve(""),
+            file.status !== 'D' ? indexOr(readWorking) : Promise.resolve(""),
         ]);
         return { oldContent, newContent, absPath };
     }
@@ -5253,11 +5261,9 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
     // index lines up with the hunks. Reading the working file is a
     // synchronous host call, so there is nothing to overlap it with.
     const oldContent = file.category !== 'untracked' && file.status !== 'A'
-        ? await gitShow("")
+        ? await indexOr(() => gitShow("HEAD"))
         : "";
-    const newContent = file.status !== 'D'
-        ? (editor.readFile(editor.authorityPath(absPath)) ?? "")
-        : "";
+    const newContent = file.status !== 'D' ? readWorking() : "";
     return { oldContent, newContent, absPath };
 }
 
