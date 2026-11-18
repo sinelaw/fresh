@@ -1949,6 +1949,15 @@ impl Editor {
         outcome
     }
 
+    /// Re-run init.ts because the user asked to (`init: Reload init.ts`,
+    /// `editor.reloadInit()`, saving a macro into it). An explicit request
+    /// clears the crash fuse first: the fuse only guards launches, and kept
+    /// the reload of a fixed file skipped too (#3788).
+    pub fn reload_init_script(&mut self) -> crate::init_script::InitOutcome {
+        crate::init_script::reset_fuse(&self.dir_context.config_dir);
+        self.load_init_script(true)
+    }
+
     /// Non-blocking variant of [`Self::load_init_script`] for the TUI
     /// startup path. Does the synchronous pre-work (types scaffolding
     /// refresh, syntax check, fuse check), then either submits the
@@ -2075,6 +2084,15 @@ impl Editor {
                 // copy of the config of their own (terminal shell, LSP, …),
                 // and only `set_config` hands them the new one (#3712).
                 self.set_config(new_config);
+                // Buffers already open — files from the command line, a
+                // restored session — resolved their wrap, gutter and tab
+                // settings when they opened; re-resolve them as a Settings
+                // save does, keeping per-buffer pins (#3788).
+                self.refresh_open_buffer_settings_from_config();
+                for window in self.windows.values_mut() {
+                    window.resync_global_display_defaults();
+                }
+                self.invalidate_live_editor_layout_after_settings_save();
                 if old_theme != self.config.theme {
                     if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
                         *self.theme.write().unwrap() = theme;

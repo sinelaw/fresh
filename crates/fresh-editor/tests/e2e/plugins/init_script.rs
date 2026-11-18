@@ -515,3 +515,101 @@ fn set_setting_terminal_shell_applies_to_new_terminals() {
         .wait_until(|h| h.screen_to_string().contains("SHELL_FROM_SETTING"))
         .unwrap();
 }
+
+/// #3788: a buffer already open when init.ts runs (a file from the command
+/// line, a restored session) follows its `setSetting`, not just files opened
+/// afterwards — the `FRESH_PROFILE=writing fresh long.txt` example.
+#[test]
+fn set_setting_applies_to_buffers_already_open() {
+    let (mut harness, tmp, config_dir) = harness_with_scratch_config_dir();
+    let file = tmp.path().join("work").join("long.txt");
+    fs::write(&file, format!("{}END\nsecond\n", "word ".repeat(30))).unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    // Wrapped (the default), the whole line is on screen, and the gutter
+    // shows line numbers.
+    harness.assert_screen_contains("END");
+    assert!(
+        harness.screen_row_text(2).trim_start().starts_with('1'),
+        "line numbers start out shown:\n{}",
+        harness.screen_to_string()
+    );
+
+    write_init_ts(
+        &config_dir,
+        r#"
+        const editor = getEditor();
+        editor.setSetting("editor.line_wrap", false);
+        editor.setSetting("editor.line_numbers", false);
+        "#,
+    );
+    harness.editor_mut().load_init_script(true);
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Unwrapped, the line now runs off the 80-column screen.
+    harness.assert_screen_not_contains("END");
+    assert!(
+        harness.screen_row_text(2).trim_start().starts_with("word"),
+        "the open buffer must drop its line numbers:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// #3788: with the crash fuse tripped, fixing init.ts and running
+/// `init: Reload` runs it — the reload used to be skipped too.
+#[test]
+fn init_reload_runs_a_fixed_file_after_the_fuse_tripped() {
+    use fresh::input::keybindings::Action;
+
+    let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
+    write_init_ts(&config_dir, "throw new Error('broken');");
+    for _ in 0..4 {
+        harness.editor_mut().load_init_script(true);
+        harness.editor_mut().process_async_messages();
+    }
+    let status = harness
+        .editor()
+        .get_status_message()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        status.contains("skipped"),
+        "fuse should have tripped: {status:?}"
+    );
+
+    // An explicit reload of the still-broken file runs it (and fails again)
+    // rather than being skipped.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::InitReload);
+    harness.editor_mut().process_async_messages();
+    let status = harness
+        .editor()
+        .get_status_message()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !status.contains("skipped"),
+        "reload must not be skipped: {status:?}"
+    );
+    assert!(!status.contains("init.ts.ts"), "{status:?}");
+
+    write_init_ts(
+        &config_dir,
+        r#"
+        const editor = getEditor();
+        editor.setStatus("fixed and loaded");
+        "#,
+    );
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::InitReload);
+    harness.editor_mut().process_async_messages();
+    let status = harness
+        .editor()
+        .get_status_message()
+        .cloned()
+        .unwrap_or_default();
+    assert!(status.contains("fixed and loaded"), "status = {status:?}");
+}

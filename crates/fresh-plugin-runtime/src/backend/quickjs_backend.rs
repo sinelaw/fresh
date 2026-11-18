@@ -11147,7 +11147,13 @@ impl QuickJsBackend {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
+        self.execute_js_as(code, source_name, plugin_name)
+    }
 
+    /// [`Self::execute_js`] with the plugin name given rather than derived
+    /// from `source_name`, for a plugin whose name is itself a file name
+    /// (`init.ts`).
+    fn execute_js_as(&mut self, code: &str, source_name: &str, plugin_name: &str) -> Result<()> {
         tracing::debug!(
             "execute_js: starting for plugin '{}' from '{}'",
             plugin_name,
@@ -11222,26 +11228,36 @@ impl QuickJsBackend {
             );
         }
 
+        // The name errors and stack traces show. A plugin already named like a
+        // file (`init.ts`) keeps its name rather than becoming `init.ts.ts`.
+        let ext = if is_typescript { ".ts" } else { ".js" };
+        let source_name = if plugin_name.ends_with(ext) {
+            plugin_name.to_string()
+        } else {
+            format!("{plugin_name}{ext}")
+        };
+
         let js_code = if has_es_module_syntax(source) {
             let stripped = strip_imports_and_exports(source);
             if is_typescript {
-                transpile_typescript(&stripped, &format!("{}.ts", plugin_name))?
+                transpile_typescript(&stripped, &source_name)?
             } else {
                 stripped
             }
         } else if is_typescript {
-            transpile_typescript(source, &format!("{}.ts", plugin_name))?
+            transpile_typescript(source, &source_name)?
         } else {
             source.to_string()
         };
 
-        // Use plugin_name as the source_name so execute_js extracts the right name
-        let source_name = format!(
-            "{}.{}",
-            plugin_name,
-            if is_typescript { "ts" } else { "js" }
-        );
-        self.execute_js(&js_code, &source_name)
+        // The context key is unchanged: what `execute_js` derived from the
+        // `<plugin_name><ext>` name it used to be handed.
+        let with_ext = format!("{plugin_name}{ext}");
+        let context_name = Path::new(&with_ext)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+        self.execute_js_as(&js_code, &source_name, context_name)
     }
 
     /// Clean up all runtime state owned by a plugin.
@@ -12253,6 +12269,20 @@ mod tests {
         let mut backend = QuickJsBackend::new().unwrap();
         let result = backend.execute_js("const x = 1 + 2;", "test.js");
         assert!(result.is_ok());
+    }
+
+    /// A plugin named like a file (`init.ts`) is reported under that name,
+    /// not `init.ts.ts` (#3788).
+    #[test]
+    fn test_execute_source_error_names_init_ts_once() {
+        let mut backend = QuickJsBackend::new().unwrap();
+        let err = backend
+            .execute_source("throw new Error('boom');", "init.ts", true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("init.ts"), "{err}");
+        assert!(!err.contains("init.ts.ts"), "{err}");
+        assert!(backend.plugin_contexts.borrow().contains_key("init.ts"));
     }
 
     #[test]

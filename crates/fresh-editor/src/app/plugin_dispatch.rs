@@ -3200,7 +3200,7 @@ impl Editor {
     fn handle_reload_init(&mut self, callback_id: JsCallbackId) {
         use crate::init_script::InitOutcome;
 
-        let outcome = self.load_init_script(true);
+        let outcome = self.reload_init_script();
         self.fire_plugins_loaded_hook();
 
         let manager = self.plugin_manager.read().unwrap();
