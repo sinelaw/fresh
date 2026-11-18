@@ -3534,3 +3534,101 @@ fn test_sidebar_shows_one_marker_while_the_keyboard_drives() {
         harness.screen_to_string()
     );
 }
+
+// ---------------------------------------------------------------------------
+// #3805: staging an already-staged hunk; what a staged file's right side shows
+// ---------------------------------------------------------------------------
+
+/// A repo whose `src/main.rs` has a staged change and, on top of it, a
+/// further working-tree edit that is not staged.
+fn repo_with_staged_and_further_unstaged_change() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    let main_rs = repo.path.join("src/main.rs");
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"STAGED_CHANGE\");\n}\n",
+    )
+    .unwrap();
+    repo.git_add(&["src/main.rs"]);
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"STAGED_CHANGE\");\n    // WORKING_ONLY\n}\n",
+    )
+    .unwrap();
+    repo
+}
+
+/// `s` on a hunk in the Staged section has nothing to do; it used to run
+/// `git apply --cached` on the patch again and report "Patch failed".
+#[test]
+fn test_stage_on_already_staged_hunk_is_a_no_op() {
+    init_tracing_from_env();
+    let repo = repo_with_staged_and_further_unstaged_change();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    open_review_diff(&mut harness);
+
+    // Staged hunks sort first: `n` lands on the staged one.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            assert!(
+                !s.contains("Patch failed"),
+                "staging a staged hunk failed:\n{s}"
+            );
+            s.contains("Hunk already staged")
+        })
+        .unwrap();
+}
+
+/// A staged entry's side-by-side shows the index (what its hunks were diffed
+/// against) and says so, rather than the working file labelled "Working".
+#[test]
+fn test_staged_file_side_by_side_shows_and_labels_the_index() {
+    init_tracing_from_env();
+    let repo = repo_with_staged_and_further_unstaged_change();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        44,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    open_review_diff(&mut harness);
+
+    // The staged entry is the first file, so `2` splits it.
+    harness
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("NEW (Staged)") && s.contains("STAGED_CHANGE")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("NEW (Working)"),
+        "the staged entry's right side is the index, not the working file:\n{screen}"
+    );
+    assert!(
+        !screen.contains("WORKING_ONLY"),
+        "the unstaged edit is not part of the staged entry's right side:\n{screen}"
+    );
+}

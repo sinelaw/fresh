@@ -3865,6 +3865,10 @@ async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
         return;
     }
     const { hunk, range } = sel;
+    if (action === 'stage' && hunk.gitStatus === 'staged') {
+        editor.setStatus(editor.t("status.lines_already_staged") || "Lines already staged");
+        return;
+    }
     const patch = buildHunkPatch(hunk.file, hunk, range);
     let flags: string[];
     if (action === 'stage') flags = ["--cached", "--unidiff-zero"];
@@ -4241,6 +4245,11 @@ async function unstageFileEntry(f: FileEntry) {
 
 async function stageHunk(hunk: Hunk | null) {
     if (!hunk || !hunk.file) return;
+    if (hunk.gitStatus === 'staged') {
+        // Its patch is already in the index; applying it again can only fail.
+        editor.setStatus(editor.t("status.hunk_already_staged") || "Hunk already staged");
+        return;
+    }
     rememberPendingHunkAnchor(hunk.id);
     if (hunk.gitStatus === 'untracked') {
         const cwd = gitCwd();
@@ -5229,15 +5238,40 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
         ]);
         return { oldContent, newContent, absPath };
     }
-    // Only the `git show` is a round trip; reading the working file is a
+    if (file.category === 'staged') {
+        // A staged entry's hunks are `git diff --cached`: HEAD against the
+        // index, so the right side is the index, not the working file (which
+        // may carry further, unstaged edits the hunks know nothing about).
+        const [oldContent, newContent] = await Promise.all([
+            file.status !== 'A' ? gitShow("HEAD") : Promise.resolve(""),
+            file.status !== 'D' ? gitShow("") : Promise.resolve(""),
+        ]);
+        return { oldContent, newContent, absPath };
+    }
+    // Unstaged hunks are `git diff`: the index against the working file. The
+    // index equals HEAD unless part of the file is staged, and then only the
+    // index lines up with the hunks. Reading the working file is a
     // synchronous host call, so there is nothing to overlap it with.
     const oldContent = file.category !== 'untracked' && file.status !== 'A'
-        ? await gitShow("HEAD")
+        ? await gitShow("")
         : "";
     const newContent = file.status !== 'D'
         ? (editor.readFile(editor.authorityPath(absPath)) ?? "")
         : "";
     return { oldContent, newContent, absPath };
+}
+
+/** The OLD / NEW pane labels for `file`'s side-by-side: what each side
+ *  actually shows, which depends on the section the entry is in. */
+function paneLabelsFor(file: FileEntry): { old: string; new: string } {
+    if (state.mode === 'range' && state.range) {
+        return { old: `OLD (${state.range.from})`, new: `NEW (${state.range.to})` };
+    }
+    if (file.category === 'staged') return { old: "OLD (HEAD)", new: "NEW (Staged)" };
+    // An unstaged entry's left side is the index; call it that when it
+    // differs from HEAD, i.e. when the same path also has staged changes.
+    const partlyStaged = state.files.some(f => f.path === file.path && f.category === 'staged');
+    return { old: partlyStaged ? "OLD (Staged)" : "OLD (HEAD)", new: "NEW (Working)" };
 }
 
 /** How many review comments are anchored in `file`. Shown in the
@@ -5327,15 +5361,16 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
         ? { type: "side-by-side", ratios: [0.5, 0.5], showSeparator: true }
         : { type: "unified", showSeparator: false };
 
+    const paneLabels = paneLabelsFor(file);
     const compositeBufId = await editor.createCompositeBuffer({
         name: `*Review: ${file.path}*`,
         mode: REVIEW_DIFF_MODE,
         layout: layoutCfg as never,
         sources: [
-            { bufferId: oldRes.bufferId, label: "OLD (HEAD)", editable: false, style: { gutterStyle: "diff-markers" } },
+            { bufferId: oldRes.bufferId, label: paneLabels.old, editable: false, style: { gutterStyle: "diff-markers" } },
             {
                 bufferId: newRes.bufferId,
-                label: paneLabelWithComments("NEW (Working)", commentCountForFile(file)),
+                label: paneLabelWithComments(paneLabels.new, commentCountForFile(file)),
                 editable: false,
                 style: { gutterStyle: "diff-markers" },
             },
@@ -5530,8 +5565,9 @@ async function review_drill_down() {
 
     editor.setStatus(editor.t("status.loading_diff"));
 
-    // Get all hunks for this file
-    const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
+    // Get this entry's hunks — only its own section's: a path that is both
+    // staged and unstaged has two sets, diffed against different bases.
+    const fileHunks = hunksForFile(selectedFile);
     if (fileHunks.length === 0) return;
 
     // Get git root to construct absolute path
@@ -5544,28 +5580,10 @@ async function review_drill_down() {
     const gitRoot = gitRootResult.stdout.trim();
     const absoluteFilePath = editor.pathJoin(gitRoot, h.file);
 
-    // Get old (HEAD) and new (working) file content
-    let oldContent: string;
-    const gitShow = await editor.runOnTarget("git", ["show", `HEAD:${h.file}`], cwd);
-    if (gitShow.code !== 0) {
-        oldContent = "";
-    } else {
-        oldContent = gitShow.stdout;
-    }
-
-    // Read new file content (use absolute path for readFile)
-    // For deleted files the path no longer exists — use empty content
-    let newContent: string;
-    if (selectedFile.status === 'D') {
-        newContent = "";
-    } else {
-        const readResult = await editor.readFile(editor.authorityPath(absoluteFilePath));
-        if (readResult === null) {
-            editor.setStatus(editor.t("status.failed_new_version"));
-            return;
-        }
-        newContent = readResult;
-    }
+    // The two sides this entry's hunks were diffed between: HEAD and the
+    // index for a staged entry, the index and the working file otherwise.
+    const { oldContent, newContent } = await fetchFileVersions(selectedFile);
+    const paneLabels = paneLabelsFor(selectedFile);
 
     // Close any existing side-by-side views (old split-based approach)
     if (activeSideBySideState) {
@@ -5645,7 +5663,7 @@ async function review_drill_down() {
         sources: [
             {
                 bufferId: oldBufferId,
-                label: "OLD (HEAD)  [Enter] open this version  [n/p] hunks  [q] close",
+                label: `${paneLabels.old}  [Enter] open this version  [n/p] hunks  [q] close`,
                 editable: false,
                 style: {
                     gutterStyle: "diff-markers"
@@ -5653,7 +5671,7 @@ async function review_drill_down() {
             },
             {
                 bufferId: newBufferId,
-                label: "NEW (Working)  [Enter/Alt+o] open file",
+                label: `${paneLabels.new}  [Enter/Alt+o] open file`,
                 editable: false,
                 style: {
                     gutterStyle: "diff-markers"
@@ -7299,9 +7317,25 @@ registerHandler("review_edit_note", review_edit_note);
 
 
 
+/**
+ * The `.review/` directory exports go to, set up to ignore itself: it holds a
+ * `.gitignore` of `*`, so an export never turns up as untracked in
+ * `git status` — or in the review that produced it — without touching the
+ * repository's own ignore rules.
+ */
+function reviewExportDir(): string {
+    const reviewDir = editor.pathJoin(editor.getCwd(), ".review");
+    // `writeFile` refuses an existing file, so a `.gitignore` already there
+    // (ours from an earlier export, or the user's own) is left alone.
+    editor.writeFile(
+        editor.authorityPath(editor.pathJoin(reviewDir, ".gitignore")),
+        "# Fresh Review Diff exports; not part of the project.\n*\n",
+    );
+    return reviewDir;
+}
+
 async function review_export_session() {
-    const cwd = editor.getCwd();
-    const reviewDir = editor.pathJoin(cwd, ".review");
+    const reviewDir = reviewExportDir();
 
     let md = `# Code Review Session\n`;
     md += `Date: ${new Date().toISOString()}\n\n`;
@@ -7360,8 +7394,7 @@ async function review_export_session() {
 registerHandler("review_export_session", review_export_session);
 
 async function review_export_json() {
-    const cwd = editor.getCwd();
-    const reviewDir = editor.pathJoin(cwd, ".review");
+    const reviewDir = reviewExportDir();
 
     const session = {
         version: "2.0",

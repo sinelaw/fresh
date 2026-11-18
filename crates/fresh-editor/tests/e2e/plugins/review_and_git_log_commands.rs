@@ -242,6 +242,18 @@ fn review_diff_export_to_markdown_command_writes_the_session_file() {
         exported.contains("MARKDOWN_EXPORT_COMMENT"),
         "the export should carry the comment. Exported:\n{exported}"
     );
+
+    // The export is not project content: it must not show up as untracked —
+    // in `git status`, and so in the very review that wrote it (#3805).
+    let status = git_command(&repo.path)
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .expect("git status should run");
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        !status.contains(".review"),
+        "the exported session should not be untracked. git status:\n{status}"
+    );
 }
 
 /// `Review Diff: Export to JSON` writes the same session as machine-readable
