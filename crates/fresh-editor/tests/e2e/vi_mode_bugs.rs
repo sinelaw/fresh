@@ -3958,6 +3958,60 @@ fn test_vi_visual_block_deletes_column() {
     harness.wait_until(|h| h.cursor_position() == 0).unwrap();
 }
 
+/// One `u` undoes a visual block delete.
+#[test]
+fn test_vi_visual_block_delete_is_one_undo() {
+    let (mut harness, _td, _fixture) = open_vi("abcd\nefgh\nijkl\n");
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'd');
+    harness.wait_for_buffer_content("cd\ngh\nijkl\n").unwrap();
+    wait_normal(&mut harness);
+
+    send_key(&mut harness, 'u');
+    harness
+        .wait_for_buffer_content("abcd\nefgh\nijkl\n")
+        .unwrap();
+}
+
+/// Undoing a visual block change takes no invisible step: the first `u`
+/// takes back the typing, the next the column.
+#[test]
+fn test_vi_visual_block_change_undoes_visibly() {
+    let (mut harness, _td, _fixture) = open_vi("abcd\nefgh\nijkl\n");
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'c');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text("X").unwrap();
+    harness.wait_for_buffer_content("Xcd\nXgh\nijkl\n").unwrap();
+    escape(&mut harness);
+    wait_normal(&mut harness);
+
+    send_key(&mut harness, 'u');
+    harness.wait_for_buffer_content("cd\ngh\nijkl\n").unwrap();
+    send_key(&mut harness, 'u');
+    harness
+        .wait_for_buffer_content("abcd\nefgh\nijkl\n")
+        .unwrap();
+}
+
 /// A block whose head moves left of where it started still holds the
 /// starting column.
 #[test]
