@@ -144,6 +144,7 @@ impl Editor {
                 }
             }
             PromptType::GotoLine => {
+                let origin = self.take_goto_line_origin();
                 let buffer_id = self.active_buffer();
                 let current_line_1based = self
                     .active_window()
@@ -162,6 +163,7 @@ impl Editor {
                             let line =
                                 resolve_goto_line_target(target, current_line_1based, max_line);
                             self.goto_line_col(line, None);
+                            self.record_goto_line_jump(buffer_id, origin);
                             self.set_status_message(t!("goto.jumped", line = line).to_string());
                         }
                         None => {
@@ -1885,16 +1887,18 @@ impl Editor {
         // Any live goto-line preview must be resolved before executing the
         // result: a GotoLine confirm accepts the preview as-is, everything
         // else (file/buffer/action/etc.) should see the pre-preview state.
-        match &result {
+        let goto_origin = match &result {
             QuickOpenResult::GotoLine(_) => {
                 // Commit the preview: discard the saved snapshot without
-                // restoring, since the cursor is already at the target.
-                self.active_window_mut().goto_line_preview = None;
+                // restoring, since the cursor is already at the target —
+                // keeping where it started, for the position history.
+                Some(self.take_goto_line_origin())
             }
             _ => {
                 self.restore_goto_line_preview_snapshot();
+                None
             }
-        }
+        };
 
         match result {
             QuickOpenResult::ExecuteAction(action) => PromptResult::ExecuteAction(action),
@@ -1972,6 +1976,9 @@ impl Editor {
                     let max_line = state.buffer.line_count().unwrap_or(1);
                     let line = resolve_goto_line_target(target, current_line_1based, max_line);
                     self.goto_line_col(line, None);
+                    if let Some(origin) = goto_origin {
+                        self.record_goto_line_jump(buffer_id, origin);
+                    }
                     self.set_status_message(t!("goto.jumped", line = line).to_string());
                 } else {
                     self.set_status_message(t!("status.no_selection").to_string());
@@ -1987,6 +1994,35 @@ impl Editor {
                 PromptResult::Done
             }
         }
+    }
+
+    /// Where a goto-line jump starts from, as `(position, anchor)`: the
+    /// cursor from before a live preview moved it, when one did, otherwise
+    /// the cursor now. Ends the preview without restoring it.
+    fn take_goto_line_origin(&mut self) -> (usize, Option<usize>) {
+        let buffer_id = self.active_buffer();
+        match self.active_window_mut().goto_line_preview.take() {
+            Some(snap) if snap.buffer_id == buffer_id => (snap.position, snap.anchor),
+            _ => {
+                let primary = *self.active_cursors().primary();
+                (primary.position, primary.anchor)
+            }
+        }
+    }
+
+    /// Record a confirmed goto-line jump in the position history, as a
+    /// jump to another buffer is: the place it left, then where it landed,
+    /// so Go Back returns to the line the jump started from.
+    fn record_goto_line_jump(&mut self, buffer_id: BufferId, origin: (usize, Option<usize>)) {
+        let primary = *self.active_cursors().primary();
+        if primary.position == origin.0 {
+            return;
+        }
+        let ph = &mut self.active_window_mut().position_history;
+        ph.commit_pending_movement();
+        ph.record_movement(buffer_id, origin.0, origin.1);
+        ph.commit_pending_movement();
+        ph.record_movement(buffer_id, primary.position, primary.anchor);
     }
 
     fn open_file_with_jump(

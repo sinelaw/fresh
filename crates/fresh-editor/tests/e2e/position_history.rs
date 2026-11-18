@@ -250,3 +250,51 @@ fn test_position_history_with_next_prev_buffer() {
     harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
     harness.assert_buffer_content("Third");
 }
+
+/// A Go to Line jump (Ctrl+G) is recorded in the position history (#3805):
+/// Go Back returns to the line the jump started from, and Go Forward to the
+/// line it landed on. Both the typed-number preview path (absolute) and the
+/// relative path go through the same confirm.
+#[test]
+fn test_goto_line_jump_is_recorded_in_position_history() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let path = harness.project_dir().unwrap().join("lines.txt");
+    let content: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&path, &content).unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    let line_start = |n: usize| content.match_indices('\n').nth(n - 2).unwrap().0 + 1;
+    assert_eq!(harness.cursor_position(), 0, "starts at the top");
+
+    for (input, landed) in [("80", 80), ("-30", 50)] {
+        harness
+            .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.wait_for_prompt().unwrap();
+        harness.type_text(input).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_prompt_closed().unwrap();
+        assert_eq!(
+            harness.cursor_position(),
+            line_start(landed),
+            "Go to Line {input} lands on line {landed}"
+        );
+    }
+
+    // Back: 50 → 80 → 1.
+    harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
+    assert_eq!(harness.cursor_position(), line_start(80));
+    harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Go Back returns to where the first jump started"
+    );
+
+    // And forward again.
+    harness.send_key(KeyCode::Right, KeyModifiers::ALT).unwrap();
+    assert_eq!(harness.cursor_position(), line_start(80));
+}
