@@ -5670,8 +5670,9 @@ async function executeCommand(
       // :q - quit editor (like vim)
       // :q! - force quit (discard unsaved changes)
       //
-      // `force_quit` throws unsaved changes away (hot exit does not bring
-      // them back), so the plain form only reaches it with nothing unsaved.
+      // `force_quit` throws the unsaved changes in this workspace away (hot
+      // exit does not bring them back; other workspaces keep theirs for
+      // it), so the plain form only reaches it with nothing unsaved.
       if (force) {
         editor.executeAction("force_quit");
         return {};
@@ -6188,8 +6189,9 @@ async function gotoLine(lineNum: number): Promise<CommandResult> {
 }
 
 // Whether any buffer of any window has unsaved changes. `force_quit`
-// discards them all, so a quit that must not lose work checks every window,
-// not just the active one.
+// discards the active window's and leaves the others' to hot exit (which may
+// be off), so a quit that must not lose work checks every window, not just
+// the active one.
 function anyBufferModified(): boolean {
   return editor.listWindows().some((w) => editor.listBuffers(w.id).some((b) => b.modified));
 }

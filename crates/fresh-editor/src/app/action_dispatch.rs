@@ -135,8 +135,9 @@ impl Editor {
         match action {
             Action::Quit => self.quit(),
             // "Quit editor (discard unsaved changes)": hot exit must not
-            // bring back what the user chose to throw away (#3797).
-            Action::ForceQuit => self.discard_unsaved_changes_and_quit(),
+            // bring back what the user chose to throw away (#3797) in the
+            // workspace in view; other workspaces keep theirs for hot exit.
+            Action::ForceQuit => self.force_quit(),
             Action::Detach => {
                 self.should_detach = true;
             }

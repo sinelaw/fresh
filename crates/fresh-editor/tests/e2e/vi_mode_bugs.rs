@@ -4150,6 +4150,63 @@ fn test_vi_force_quit_discards_changes() {
     );
 }
 
+/// `:q!` throws away the changes in the workspace in view only: another
+/// workspace's unsaved edit, which the user can't see from here, is left to
+/// hot exit like a plain quit leaves it.
+#[test]
+fn test_vi_force_quit_keeps_other_workspace_changes() {
+    let (mut harness, td) = vi_mode_harness(100, 24);
+    let recovery_dir = harness.recovery_dir().unwrap();
+    let first = harness.editor().active_window_id();
+
+    // An unsaved edit in a second workspace, typed before vi mode is on.
+    let other_root = td.path().join("workspace_b");
+    fs::create_dir_all(&other_root).unwrap();
+    let other = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "workspace_b".to_string());
+    harness.editor_mut().set_active_window(other);
+    let background = other_root.join("b.txt");
+    fs::write(&background, "beta\n").unwrap();
+    harness.open_file(&background).unwrap();
+    harness.type_text("BG-EDIT").unwrap();
+    harness.render().unwrap();
+
+    // Back in the first workspace: an edit, then `:q!`.
+    harness.editor_mut().set_active_window(first);
+    let fixture = TestFixture::new("a.txt", "abc\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("bc\n").unwrap();
+    run_ex(&mut harness, "q!");
+    harness.wait_until(|h| h.should_quit()).unwrap();
+    harness.shutdown(true).unwrap();
+
+    let saved: Vec<String> = fresh::services::recovery::all_entries(&recovery_dir)
+        .into_iter()
+        .map(|e| {
+            let chunk = e
+                .metadata_path
+                .parent()
+                .unwrap()
+                .join(format!("{}.chunk.0", e.id));
+            fs::read_to_string(chunk).unwrap_or_default()
+        })
+        .collect();
+    assert!(
+        saved.iter().any(|c| c.contains("BG-EDIT")),
+        "the other workspace's unsaved edit is kept for hot exit: {saved:?}"
+    );
+    assert!(
+        !saved.iter().any(|c| c == "bc\n"),
+        "the edit `:q!` threw away is not: {saved:?}"
+    );
+    assert_eq!(fs::read_to_string(&fixture.path).unwrap(), "abc\n");
+    assert_eq!(fs::read_to_string(&background).unwrap(), "beta\n");
+}
+
 /// `:q` with unsaved changes refuses and keeps them.
 #[test]
 fn test_vi_quit_refuses_with_changes() {
