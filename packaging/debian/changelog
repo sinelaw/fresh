@@ -1,7 +1,0 @@
-fresh-editor (0.5.8-1) unstable; urgency=medium
-
-  * Initial release. (Closes: #1124035)
-    Built from Debian's packaged crates, with Debian's QuickJS running
-    plugins and esbuild compiling the bundled ones.
-
- -- Noam Lewis <jones.noamle@gmail.com>  Mon, 09 Nov 2026 20:04:52 +0000

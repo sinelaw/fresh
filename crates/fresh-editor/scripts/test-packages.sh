@@ -17,8 +17,12 @@ echo "=== Stripping binary ==="
 strip target/x86_64-unknown-linux-gnu/release/fresh
 ls -la target/x86_64-unknown-linux-gnu/release/fresh
 
-echo "=== Syncing debian/changelog with Cargo.toml ==="
+echo "=== Using packaging/release-deb as debian/ ==="
 "$PROJECT_ROOT/scripts/update-debian-changelog.sh"
+# debian/ is the Debian-archive packaging; put it back afterwards.
+git diff --quiet -- debian || { echo "debian/ has local changes; commit or stash them first" >&2; exit 1; }
+trap 'rm -rf debian && git checkout -q -- debian' EXIT
+rm -rf debian && cp -r packaging/release-deb debian
 
 echo "=== Building .deb package via dpkg-buildpackage ==="
 # dpkg-buildpackage drops the .deb in the parent of the source tree.

@@ -323,10 +323,9 @@ the manifests need the kind of patch a Debian source package carries.
   packaged and which only the optional `gui` feature uses. A required
   dependency the registry lacks is an error.
 
-**`packaging/debian/`** is a Debian source package built this way (its
-`README.source` has the details). It is separate from the repository's own
-`debian/`, which builds the release `.deb` from crates.io with the default
-features:
+**`debian/`** is a Debian source package built this way, the same as the
+Salsa repository's (its `README.source` has the details). The release `.deb`,
+built from crates.io with the default features, is `packaging/release-deb/`:
 
 - `debian/control` lists the `librust-*-dev` Build-Depends that
   `scripts/debian.py packages --control` generates (debcargo-style:
@@ -352,7 +351,6 @@ packaged esbuild); the packages are kept as build artifacts. By hand, in a
 ```sh
 apt-get update && apt-get install -y git dpkg-dev
 git clone https://github.com/sinelaw/fresh && cd fresh
-rm -rf debian && cp -r packaging/debian debian
 apt-get build-dep -y ./
 dpkg-buildpackage -us -uc -b
 apt-get install -y ../fresh-editor_*.deb
@@ -408,8 +406,7 @@ cache: 73 ms preparing).
   team's agreement on the source package (above), the packaging on salsa, a
   sponsor, and an upload to unstable, from where it migrates to testing.
 
-A sketch of the packaging (not in the upstream `debian/` directory, which
-builds the upstream `.deb` with the default features):
+A sketch of the packaging (since grown into `debian/`):
 
 ```
 Build-Depends: debhelper-compat (= 13), dh-cargo, cargo, rustc,

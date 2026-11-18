@@ -51,26 +51,22 @@ and install.sh never pick: fresh-editor_<ver>-1_<arch>.debian-testing.deb
 .dsc with its orig and debian tarballs). The package version follows the
 workspace version in Cargo.toml.
 
-To build from a checkout:
+To build from a checkout of upstream (https://github.com/sinelaw/fresh):
 
-    VERSION=$(dpkg-parsechangelog -l packaging/debian/changelog -S Version | sed 's/-[^-]*$//')
+    VERSION=$(dpkg-parsechangelog -S Version | sed 's/-[^-]*$//')
     git archive --prefix=fresh-editor-$VERSION/ HEAD | xz > ../fresh-editor_$VERSION.orig.tar.xz
-    rm -rf debian && cp -r packaging/debian debian
     sudo apt-get build-dep ./
     dpkg-buildpackage -us -uc
 
-To upload the source package to mentors.debian.net (orig tarball from the
-release tag, debian/ from HEAD), signed with the maintainer's key:
+This debian/ is kept the same in upstream's repository and in the Salsa
+repository (https://salsa.debian.org/sinelaw/fresh-editor, git-buildpackage
+layout), which the Debian archive gets the package from; upstream's
+packaging/release-deb is the unrelated crates.io .deb attached to releases.
+To move Salsa to a new release and upload it to mentors.debian.net, from
+upstream's checkout:
 
-    scripts/debian-mentors-upload.sh
-
-The Debian archive gets the package from the Salsa repository
-(https://salsa.debian.org/sinelaw/fresh-editor, git-buildpackage layout:
-debian/latest, upstream/latest, pristine-tar). To move it to a new release
-(import with uscan and pristine-tar, sync debian/ with this packaging/debian,
-push, wait for Salsa CI, then upload to mentors):
-
-    scripts/debian-salsa-update.sh --repo ../fresh-editor-salsa all <version>
+    scripts/debian-salsa-update.py --repo ../fresh-editor-salsa prepare <version>
+    scripts/debian-salsa-update.py --repo ../fresh-editor-salsa release
 
 Copyright
 ---------

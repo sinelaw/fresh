@@ -262,7 +262,7 @@ jobs:
   # The editor is built with the Debian package's features (runtime, plugins,
   # embed-plugins, precompiled-plugins: no tree-sitter, http, self-update or
   # oxc). The job also checks that Debian testing's archive can supply every
-  # Rust dependency of that build. The Debian package itself (packaging/debian) is built by
+  # Rust dependency of that build. The Debian package itself (debian/) is built by
   # debian-package.yml.
   # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:
@@ -308,18 +308,18 @@ jobs:
         run: |
           curl -fsSL -o /tmp/Packages.xz https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
           python3 scripts/debian.py check /tmp/Packages.xz --features runtime,plugins,embed-plugins,precompiled-plugins
-      # The librust-*-dev Build-Depends are generated (packaging/debian/README.source).
+      # The librust-*-dev Build-Depends are generated (debian/README.source).
       # Without this, a new dependency reaches a Debian upload missing from them.
-      - name: packaging/debian/control lists what the generator does
+      - name: debian/control lists what the generator does
         run: |
           for suite in oldstable stable; do
             curl -fsSL -o "/tmp/$suite.Packages.xz" "https://deb.debian.org/debian/dists/$suite/main/binary-amd64/Packages.xz"
           done
           python3 scripts/debian.py packages --control /tmp/Packages.xz \
             --baseline /tmp/oldstable.Packages.xz --baseline /tmp/stable.Packages.xz > /tmp/generated
-          grep '^ librust-' packaging/debian/control > /tmp/committed
+          grep '^ librust-' debian/control > /tmp/committed
           diff -u /tmp/committed /tmp/generated || {
-            echo "::error::packaging/debian/control's librust-*-dev entries are out of date; replace them with the + lines above (scripts/debian.py packages --control, see packaging/debian/README.source)"
+            echo "::error::debian/control's librust-*-dev entries are out of date; replace them with the + lines above (scripts/debian.py packages --control, see debian/README.source)"
             exit 1
           }
 

@@ -1,10 +1,10 @@
-# The Debian-archive build of Fresh (packaging/debian): source and binary
+# The Debian-archive build of Fresh (debian/, the same as Salsa's): source and binary
 # packages built the way Debian's buildds would, offline from the librust-*-dev
 # packages, with Debian's cargo and rustc, Debian's QuickJS and esbuild, and no
-# crates.io. See packaging/debian/README.source and
+# crates.io. See debian/README.source and
 # docs/internal/debian-quickjs-spike.md.
 #
-# The release's main .deb is a different thing: debian/ (linux-packages.yml)
+# The release's main .deb is a different thing: packaging/release-deb (linux-packages.yml)
 # builds it from crates.io with the default features, for any Debian or Ubuntu.
 # Releases also attach this build (release.yml calls this with `release: true`),
 # named so that neither the updater nor install.sh mistakes it for that one:
@@ -80,24 +80,20 @@ jobs:
           persist-credentials: false
 
       # A `3.0 (quilt)` source package: the orig tarball is the tree as
-      # committed, and packaging/debian becomes its debian/ (replacing the
-      # release one, which the orig tarball also carries).
-      # The package version follows the workspace's, as debian/changelog does
-      # for the main .deb (scripts/update-debian-changelog.sh).
+      # committed. The package version follows the workspace's.
       - name: Make the orig tarball and the source tree
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo_version=$(awk -F'"' '/^\[workspace\.package\]/ { p = 1; next } /^\[/ { p = 0 }
             p && /^version[[:space:]]*=/ { print $2; exit }' Cargo.toml)
-          sed -i "1s/([^)]*)/(${cargo_version}-1)/" packaging/debian/changelog
-          version=$(dpkg-parsechangelog -l packaging/debian/changelog -S Version)
+          sed -i "1s/([^)]*)/(${cargo_version}-1)/" debian/changelog
+          version=$(dpkg-parsechangelog -l debian/changelog -S Version)
           test "$version" = "${cargo_version}-1"
           upstream=${version%-*}
           mkdir -p /build
           git archive --prefix="fresh-editor-$upstream/" HEAD | xz -T0 > "/build/fresh-editor_$upstream.orig.tar.xz"
           tar -xf "/build/fresh-editor_$upstream.orig.tar.xz" -C /build
-          rm -rf "/build/fresh-editor-$upstream/debian"
-          cp -r packaging/debian "/build/fresh-editor-$upstream/debian"
+          cp debian/changelog "/build/fresh-editor-$upstream/debian/changelog"
           echo "SRC=/build/fresh-editor-$upstream" >> "$GITHUB_ENV"
 
       - name: Install build dependencies

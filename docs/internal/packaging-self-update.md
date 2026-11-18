@@ -216,7 +216,7 @@ Search order for the receipt (first hit wins):
 Candidates 2 and 3 differ only in directory name, and both are required
 because the binary and the package are not named the same thing. The binary is
 `fresh`; the package is `fresh-editor`. OS packages put their data under
-`/usr/share/<package>`, so `.deb` (`debian/rules`) and `.rpm`
+`/usr/share/<package>`, so `.deb` (`packaging/release-deb/rules`) and `.rpm`
 (`[package.metadata.generate-rpm]`) ship `/usr/share/fresh-editor/`, while the
 wrapper channels that install under a prefix they control — the Homebrew
 formula, the Flatpak manifest, the Nix derivation — use `share/fresh/`.
@@ -452,7 +452,7 @@ println!("cargo::rerun-if-env-changed=FRESH_BUILD_CHANNEL");
   a packaged receipt in `$out/share/fresh/`.
 - **AUR source PKGBUILD**: export `FRESH_BUILD_CHANNEL=aur` in `build()`, and
   `install -Dm644` a receipt with `channel=aur`.
-- **`.deb` (`debian/rules`)** and **`.rpm` (`generate-rpm` assets)**: build with
+- **`.deb` (`packaging/release-deb/rules`)** and **`.rpm` (`generate-rpm` assets)**: build with
   the env var and ship `/usr/share/fresh-editor/install-receipt.toml`
   (`channel=apt`/`dnf`, `managed=true`, `self_update=false`). Added to
   `fresh-editor.install` and the rpm asset list.
@@ -491,7 +491,7 @@ Its AppImage branch writes `channel=appimage`, `self_update=true`,
 
 #### Desktop integration (tarball branch only)
 The musl archive carries `fresh.desktop` and a `hicolor` icon tree — the same
-files `debian/fresh-editor.install` puts in `/usr/share`. Unpacked under
+files `packaging/release-deb/fresh-editor.install` puts in `/usr/share`. Unpacked under
 `INSTALL_DIR` they are inert, because no XDG lookup consults that path, so the
 tarball branch copies them into `$XDG_DATA_HOME/{applications,icons/hicolor}`
 after the move. Three details are load-bearing:
