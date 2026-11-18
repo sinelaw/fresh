@@ -38,7 +38,7 @@ SHOTS = [
         ("wait", "#"), ("text", "PS1='\\[\\e[32m\\]dev\\[\\e[0m\\]:\\[\\e[34m\\]\\W\\[\\e[0m\\]$ '; clear\r"), ("settle",),
         ("text", "git status -s\r"), ("settle",),
         ("text", "git --no-pager diff -U1 invoicing/models.py\r"), ("settle",),
-        ("text", "python3 -m py_compile invoicing/models.py && echo compiles\r"), ("sleep", 1),
+        ("text", "python3 -m py_compile invoicing/models.py && echo ok\r"), ("sleep", 1),
         ("shot", "terminal-split")], "cols": 140},
     {"id": "search-live-grep", "args": ["invoicing/cli.py"], "steps": [("wait", "argparse")] + palette("live grep")
         + [("text", "open_only"), ("wait", "test_report.py:28"), ("key", "Down"), ("sleep", 2), ("settle",), ("shot", "search-live-grep")], "cols": 150, "rows": 36},
@@ -60,7 +60,7 @@ SHOTS = [
     # picker's key hints and the Cursor Style dropdown are not clipped.
     {"id": "settings-status-bar", "args": ["invoicing/models.py"], "cols": 132, "rows": 34,
      "steps": [("wait", "class Client")] + settings_jump("left") + [("crop_frame", "Settings ["), ("key", "Return"), ("wait", "Git: branch"), ("settle",),
-        ("key", "Down", "Down", "Down", "Down"), ("settle",), ("key", "shift+Right"), ("settle",), ("shot", "settings-status-bar")]},
+        ("click_text", "Git: branch"), ("settle",), ("key", "shift+Right"), ("settle",), ("shot", "settings-status-bar")]},
     {"id": "settings-editor", "args": ["invoicing/models.py"], "cols": 132, "rows": 34,
      "steps": [("wait", "class Client")] + settings_jump("cursor style") + [("crop_frame", "Settings ["), ("shot", "settings-editor")]},
 ]

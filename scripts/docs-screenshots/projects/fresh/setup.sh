@@ -14,6 +14,7 @@ cp "$(dirname "$0")/../../shots/review.ts" review.ts
 cp "$(dirname "$0")/../../shots/fresh-tour.json" .fresh-tour.json
 git init -q -b main
 git config user.name "Docs"; git config user.email "docs@example.invalid"
+git remote add origin https://github.com/sinelaw/fresh.git
 git add -A; git commit -q -m "Fresh source excerpt"
 # A prompt that reads as "a shell inside the editor", and the init script.
 for d in ../home ../..; do

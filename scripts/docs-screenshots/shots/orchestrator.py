@@ -31,10 +31,13 @@ sleep 100000
     "bench": """
 sleep 2; while true; do echo "GET /items  p95 $((40 + RANDOM % 20))ms"; sleep 0.5; done
 """,
-    # Only so the New Workspace dialog offers Claude, as it would where it is
-    # installed. No shot launches it.
+    # Stand-ins for Claude Code and Codex: they keep printing, so they read as
+    # working. Also what makes the New Workspace dialog offer them.
     "claude": """
-echo "claude stand-in for docs screenshots"; sleep 100000
+sleep 2; while true; do echo "Reading src/queue.rs ($RANDOM)"; sleep 0.6; done
+""",
+    "codex": """
+sleep 2; while true; do echo "running cargo test drain ... attempt $RANDOM"; sleep 0.7; done
 """,
     # Works, changes a file, says it is done and goes quiet: "Ready to review".
     "run-tests": """
@@ -111,13 +114,24 @@ SHOTS = [
             ("shot", "workboard-inbox"), ("key", "4"), ("settle",), ("shot", "workboard-board")],
     },
     {
-        "id": "scripting", **FRESH, **WIDE, "args": ["crates/fresh-editor/src/server/command_access.rs"],
+        "id": "scripting", **FRESH, "cols": 150, "rows": 40, "args": ["crates/fresh-editor/src/server/command_access.rs"],
         "steps": [("wait", "Capability")] + script_shell
         + sh("fresh --cmd script run review.ts") + [("wait", '["command_access.rs"'), ("settle",),
                                                      ("shot", "scripting-layout-after")]
         + sh("clear") + sh(DESCRIBE) + [("wait", '"terminal"]'), ("settle",)]
         + sh(JUMP) + [("wait", "\ntrue"), ("settle",), ("dump",), ("shot", "scripting-cmd-run")]
-        + sh("clear") + sh(TOUR) + [("wait", "Step 1 of 3"), ("settle",), ("key", "n"), ("settle",), ("dump",),
+        # openFileInSplit moved focus to the editor pane: click back into the terminal.
+        + [("click", 30, 33), ("settle",)] + sh("clear") + sh(TOUR) + [("wait", "Step 1 of 3"), ("settle",), ("key", "n"), ("settle",), ("dump",),
                                     ("shot", "scripting-tour-handoff")],
+    },
+    {
+        "id": "scripting-run-agent-dialog", **FRESH, "cols": 140, "rows": 46, "args": ["crates/fresh-editor/src/main.rs"],
+        "steps": [("wait", "use "), ("settle",)] + palette("Orchestrator: New Workspace") + [
+            ("sleep", 3), ("settle",), ("click_text", "Save as project"), ("settle",),
+            ("click_text", "[   Add   ]"), ("settle",), ("click_text", "Choose an agent"), ("settle",),
+            ("click_text", "claude   "), ("settle",), ("click_text", "Describe the task"), ("settle",),
+            ("text", "Fix the flaky drain() test"), ("settle",), ("click_text", "Details"), ("settle",),
+            ("click_text", "fresh-1", 1), ("key", "End", *["BackSpace"] * 8), ("text", "fix/flaky-drain"),
+            ("settle",), ("dump",), ("shot", "scripting-run-agent-dialog")],
     },
 ]

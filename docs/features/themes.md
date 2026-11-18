@@ -54,7 +54,7 @@ Fresh ships twelve built-in color themes — the same project in each, below (cl
 
 Use the command palette (`Ctrl+P`) and search for "Select Theme" to choose from available themes. Built-in themes and user themes are both shown.
 
-![The Select Theme prompt listing the built-in themes, with quiet marked as current](/images/themes-select-theme.png)
+![The Select Theme prompt listing the built-in themes, with dark marked as current](/images/themes-select-theme.png)
 
 The theme is also a setting: **Settings → General → Theme**, a dropdown of every installed theme.
 
