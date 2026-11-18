@@ -119,6 +119,8 @@ Edit multiple locations simultaneously:
 | `Ctrl+Alt+↓` | Add cursor below |
 | `Esc` | Remove secondary cursors |
 
+![Four cursors, one on each client.currency, added with Ctrl+D; the status bar shows the cursor count](/images/editing-multiple-cursors.png)
+
 ## Selection
 
 | Shortcut | Action |

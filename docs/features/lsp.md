@@ -15,6 +15,8 @@ All LSP operations are available as palette commands (search for "LSP"). Use the
 
 The status bar shows a single `LSP` indicator — colour-coded, with a spinner during startup and indexing. Activate it (click, or run **Show LSP Status** from the command palette) to open a popup with per-server status, live progress, and per-server actions (restart, stop, view log). Servers that are configured but whose binary isn't on `PATH` are flagged so Fresh doesn't quietly spawn failing processes. The popup also shows buffer-skip state when a file is too large for LSP, and the "not installed" copy is container-aware when you're attached to a devcontainer (it points at the container's PATH, not the host's). You can also mute a language from the popup.
 
+![The LSP status popup for Python: pyright-langserver is ready, with Restart, Stop, Disable LSP for python and View Log actions](/images/lsp-status-popup.png)
+
 If a server is running but stops answering, the indicator reads `LSP (stuck)` in a warning colour. Requests to it give up after 30 seconds and say they timed out rather than showing an empty result; restart the server from the popup.
 
 ## Remote-Aware LSP
@@ -24,6 +26,8 @@ Language servers spawn through the editor's current [Authority](../plugins/api/)
 ## Hover and Diagnostics
 
 Hover popups fuse any overlapping diagnostic with the hover body — severity-coloured and source-tagged (`rustc`, `clippy`, `clangd`, etc.), so you see the error message and the type information together.
+
+![A hover popup showing a Pyright type error above the hovered variable's type](/images/lsp-hover-diagnostic.png)
 
 ## Diagnostics Panel
 

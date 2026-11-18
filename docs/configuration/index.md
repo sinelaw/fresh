@@ -192,6 +192,8 @@ To configure Fresh through the Settings UI:
 4. **Choose Target Layer**: Click the layer button (e.g., `[ User ]`) to switch between User/Project/Session
 5. **Save**: Press Enter on the Save button or use `Ctrl+S`
 
+![The Settings UI open on Editor › Display: categories on the left, each setting with its description and current value on the right](/images/settings-editor.png)
+
 **Advanced: Edit Config File Directly**
 
 For complex configurations (like LSP args or custom keybindings), click the `[ Edit ]` button in the Settings footer to open the raw JSON config file for the selected layer.
@@ -480,6 +482,8 @@ In the Settings UI, each setting shows where its current value comes from:
 ## Status Bar
 
 The left and right sides of the status bar are configurable in the Settings UI. Each side is a picker with an **Available** column and an **Included** column: move elements across to show or hide them, and reorder the Included list with its arrow buttons or the keyboard (the picker shows the keys). A separator drawn between elements can also be set there.
+
+![The status bar picker for the left side: Git: branch has just been moved from Available into Included, with the picker's keys shown below](/images/settings-status-bar.png)
 
 Elements you can place:
 

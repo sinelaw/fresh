@@ -42,6 +42,8 @@ Installed and updated packages load immediately, without restarting Fresh.
 
 **Package: Packages** opens the package browser. It lists your installed packages first, then what the registry offers. Packages with a newer version in the registry are marked `↑`.
 
+![The package browser: filter buttons across the top, the registry's packages on the left, and the selected theme's details with an Install action on the right](/images/packages-browser.png)
+
 - Press `/` to search, or use `Tab` to reach the filter buttons (**All**, **Installed**, **Plugins**, **Themes**, **Languages**, **Bundles**).
 - Press `Enter` on a package to see its details and actions: **Install**, **Update** or **Uninstall**.
 - The registry syncs in the background when the browser opens. The **Sync** button fetches the latest package lists on demand.

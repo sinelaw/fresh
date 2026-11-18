@@ -7,7 +7,13 @@ Fresh supports customizable color themes.
 
 Use the command palette (`Ctrl+P`) and search for "Select Theme" to choose from available themes. Built-in themes and user themes are both shown.
 
+![The Select Theme prompt listing the built-in themes, with quiet marked as current](/images/themes-select-theme.png)
+
 Fresh ships these built-in themes: `dark`, `light`, `high-contrast`, `nostalgia`, `dracula`, `nord`, `solarized-dark`, `tokyo-night`, `gruvbox`, `flat`, `quiet`, and `terminal`.
+
+![The same Python file in six built-in themes](/images/themes-builtin-gallery.png)
+
+*Left to right, top to bottom: `light`, `dracula`, `nord`, `gruvbox`, `solarized-dark`, `nostalgia`.*
 
 ## Setting a Theme in `config.json`
 
@@ -32,6 +38,8 @@ The relative form is convenient for sharing a Fresh `config.json` in a dotfiles 
 ## Creating and Editing Themes
 
 Fresh includes a visual Theme Editor for creating and customizing themes:
+
+![The Theme Editor open below a Python file: the Syntax Highlighting section with a swatch per color, and the keyword color's details and palette on the right](/images/themes-editor.png)
 
 1. **Open the Theme Editor**: Press `Ctrl+P` and search for "Edit Theme"
 
