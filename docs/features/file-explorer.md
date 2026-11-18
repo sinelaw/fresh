@@ -18,6 +18,18 @@ Fresh includes a built-in file explorer.
 
 Preview tabs are enabled by default. Turn them off in the Settings UI if you prefer every click to open a permanent tab.
 
+## Managing Files
+
+**Right-click** an entry for a context menu with New File, New Directory, Rename, Cut, Copy, Paste, Duplicate, Delete and Copy Full/Relative Path. It acts on the entry under the pointer; right-clicking empty space offers New File, New Directory and Paste in the project root. While the explorer has focus, an **Explorer** menu in the menu bar offers the main file actions plus Refresh and the hidden/gitignored toggles.
+
+- **New File / New Directory** (`Ctrl+N` / `Ctrl+Shift+N`) — prompts for a name; nothing is created until you confirm it.
+- **Rename** (`F2`) — type a new name, or a relative path such as `../lib/util.rs` to move the entry elsewhere in the project. Rename never overwrites an existing file.
+- **Drag and drop** — drag files or folders onto a folder to move them there. Fresh asks you to confirm the move first.
+- **Delete** (`Delete`) — asks for confirmation, then moves the entry to the trash.
+- **Refresh** (`Ctrl+R`, or the ⟳ button at the top of the explorer) — re-reads the tree from disk, keeping expanded folders open.
+
+The same actions are in the command palette as **File Explorer: New File**, **File Explorer: Rename**, and so on.
+
 ## Cut / Copy / Paste and Multi-Selection
 
 - **`Ctrl+C` / `Ctrl+X` / `Ctrl+V`** — copy, cut, or paste the selection. Same-directory copy auto-appends ` copy` / ` copy 2` etc. Same-directory cut is a no-op. Paste into a different directory with a name conflict asks per file, in a confirmation dialog offering Overwrite, Overwrite All, Skip, Skip All and Cancel (each button's own underlined letter works as an accelerator).
@@ -51,9 +63,13 @@ Dragging the divider preserves whichever form you configured — a sidebar set u
 
 ## Visibility and .gitignore
 
-- The file explorer respects your `.gitignore` by default, and auto-reloads when `.gitignore` changes on disk.
+- The file explorer respects your `.gitignore` by default, and auto-reloads when `.gitignore` changes on disk. Turn off **Respect Gitignore** (Settings → File Explorer) to treat ignored files like any other.
 - A file is shown only if it isn't hidden by **any** active filter — so if a file is both a dotfile and gitignored, it takes enabling both toggles to see it.
 - Use **Toggle Hidden Files** and **Toggle Gitignored Files** from the command palette to flip either filter. Both persist across restarts.
+- When gitignored entries are shown, they are drawn dimmed so they stand out from tracked files.
+- **Custom Ignore Patterns** (Settings → File Explorer) hides more on top of `.gitignore`. Write them the way you would write `.gitignore` lines, relative to the project root — `build/`, `/dist`, `*.log`, `!keep.log`.
+
+The same hidden and ignored rules apply beyond the explorer: Quick Open, project search and Live Grep leave out the same files, and Quick Open follows the hidden-files toggle.
 
 ## Sorting
 

@@ -88,7 +88,7 @@ Entries use the same dialect as `languages.*.filenames`: a literal entry matches
 # (with Auto Attach on, this is the shared one, the same as a bare `fresh`)
 fresh -a
 
-# Detach: press Ctrl+Shift+D (or use Command Palette > "Detach")
+# Detach: File > Detach (or Command Palette > "Detach")
 # Terminal closes, but the Fresh daemon keeps running in the background
 
 # Reattach later
@@ -253,7 +253,7 @@ done
 
 ### Detaching
 
-- `Ctrl+Shift+D` or Command Palette → "Detach" or File → Detach: the client exits and the daemon keeps running.
+- **Detach** (File → Detach, or "Detach" in the command palette): the client exits and the daemon keeps running.
 - `Ctrl+Q` asks first: **Detach** (the default) leaves Fresh running in the background, and **Quit and Stop All** stops the daemon along with its terminals and agents.
 
 ## Limitations and Pitfalls

@@ -50,7 +50,7 @@ The current filter state is shown in the header bar.
 | `Enter` | Edit the selected binding |
 | `a` | Add a new binding |
 | `d` or `Delete` | Delete the selected binding. A custom binding is dropped from `config.json`; a keymap or plugin binding is removed for good with an `unbind` entry, and the key falls through to whatever else binds it |
-| `x` | Disable the selected binding: a `noop` override, so the key does nothing in that context |
+| `x` | Disable the selected binding: a `noop` override, so the key does nothing in that context (in the `terminal` context, the key goes to the program instead) |
 
 ### The Edit Dialog
 
@@ -58,7 +58,7 @@ When adding or editing a binding, a dialog appears with three fields:
 
 1. **Key** — Press the desired key combination. The dialog starts in key recording mode. To bind a special key like **Esc**, **Tab**, or **Enter**, press **Enter** on the key field first to enter recording, then press the key you want to bind; press **Escape** to cancel recording.
 2. **Action** — Type an action name. An autocomplete popup shows matching actions as you type. Use `↑`/`↓` to navigate suggestions and `Tab` or `Enter` to accept. Only valid action names are accepted.
-3. **Context** — Use `←`/`→` to cycle through available contexts (global, normal, prompt, searchPrompt, popup, completion, file\_explorer, dock, menu, terminal, settings, compositeBuffer).
+3. **Context** — Use `←`/`→` to cycle through available contexts (global, normal, prompt, searchPrompt, popup, completion, fileExplorer, dock, menu, terminal, settings, compositeBuffer).
 
 Use `Tab` to move between fields. The dialog shows a read-only description of the selected action and warns about conflicting bindings.
 
@@ -124,7 +124,7 @@ Each binding in `config.json` has this structure:
 | `searchPrompt` | When the find/replace prompt is active — a narrowing of `prompt`, adding the match-mode toggles |
 | `popup` | When a popup (completion, hover) is open |
 | `completion` | When the completion popup is open — takes precedence over `popup` |
-| `file_explorer` | When the file explorer has focus |
+| `fileExplorer` | When the file explorer has focus (`file_explorer` is accepted too) |
 | `dock` | When the utility dock has focus |
 | `menu` | When a menu is open |
 | `terminal` | When the integrated terminal has focus |
@@ -158,6 +158,10 @@ things behind:
   when you want a key dead rather than free — `Ctrl+Q → quit`, everywhere,
   say. It shows in the editor as a custom `noop` row, and `d` on that row
   removes the override again.
+
+  The `terminal` context is the exception: there, a `noop` binding hands the
+  key to the program running in the terminal instead of to the editor. Use it
+  to give a shell or TUI a key the editor would otherwise take.
 
 ### Chord (multi-key) bindings
 

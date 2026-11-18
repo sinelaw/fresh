@@ -54,7 +54,8 @@ where.
 
 With the search bar open, `F3` jumps to the next match and `Shift+F3` to the
 previous one **without closing the bar**, so the query stays editable and the
-toggles stay reachable. The status bar reports `Match N of M` as you go. The
+toggles stay reachable. The status bar reports `Match N of M` as you go, with
+clickable arrows beside it for the next and previous match. The
 same keys work after the bar is closed, continuing from the last search.
 
 `Enter` jumps to the current match and closes the bar; `Esc` cancels.
@@ -100,6 +101,15 @@ underlined letter):
 | **Diagnostics** | `Alt+D` | language-server diagnostic messages | off |
 | **All workspaces** | `Alt+A` | every workspace, not just this one | off |
 
+When a file scope is on, a **Provider** dropdown picks the search tool that
+does the work (`rg`, `git grep`, `grep`, …). It lists only the tools
+installed on your system, and `Alt+P` cycles through them.
+
+The preview shows the real file at the match, with full syntax colours, not
+a snippet. **Find References** results work the same way: moving through the
+list opens each location in a
+[preview tab](./file-explorer.md#opening-files) you can scroll and read.
+
 With **All workspaces** on, the results of every workspace come in one list,
 grouped under a header row per workspace (`api · 3 matches`): the workspace
 you are in first, then the others in the order the
@@ -127,7 +137,7 @@ of the session.
 
 ## Project-Wide Search and Replace
 
-Use "Search and Replace in Project" from the command palette to search across the project's files: in a git repository, tracked and untracked files that `.gitignore` does not exclude, and the files of its submodules; elsewhere, every file outside hidden directories and `node_modules`, `target` and the like. Hidden and gitignored files stay out even when the file explorer shows them, and `file_explorer.custom_ignore_patterns` leave files out too. Press `Alt+Enter` to replace all matches across the project. Works with unsaved buffers and large files, up to 10,000 results.
+Use "Search and Replace in Project" from the command palette to search across the project's files: in a git repository, tracked and untracked files that `.gitignore` does not exclude, and the files of its submodules; elsewhere, every file outside hidden directories and `node_modules`, `target` and the like. Hidden and gitignored files stay out even when the file explorer shows them, and `file_explorer.custom_ignore_patterns` leave files out too. Press `Alt+Enter` to replace all matches across the project; Fresh asks you to confirm before it changes any files. Works with unsaved buffers and large files, up to 10,000 results.
 
 Use the **Files** field to limit project search to comma-separated globs. A
 pattern without a directory separator matches file names at any depth (for
