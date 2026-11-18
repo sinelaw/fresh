@@ -126,7 +126,29 @@ impl Editor {
     ///
     /// If no selection exists, copies the entire current line (like VSCode/Rider/Zed).
     /// For block selections, copies only the rectangular region.
+    ///
+    /// Ends mark mode: once the region set with `set_mark` has been copied
+    /// the mark is deactivated, as Emacs' `M-w` does, so the next move does
+    /// not go on extending it and the next edit does not replace it (#3799).
+    /// A selection made any other way is left as it was.
     pub fn copy_selection(&mut self) {
+        self.copy_selection_keeping_mark();
+        let marked: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .filter(|(_, cursor)| !cursor.deselect_on_move)
+            .map(|(cursor_id, _)| cursor_id)
+            .collect();
+        for cursor_id in marked {
+            let event = Event::ClearAnchor { cursor_id };
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+        }
+    }
+
+    /// [`Self::copy_selection`] without ending mark mode, for a caller that
+    /// still needs the selection (cut deletes it next).
+    fn copy_selection_keeping_mark(&mut self) {
         // Check if any cursor has a block selection (takes priority)
         let has_block_selection = self
             .active_cursors()
@@ -537,7 +559,7 @@ impl Editor {
             .any(|(_, cursor)| cursor.selection_range().is_some());
 
         // Copy first (this handles both selection and whole-line cases)
-        self.copy_selection();
+        self.copy_selection_keeping_mark();
 
         if has_selection {
             // Delete selected text from all cursors
