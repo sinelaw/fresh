@@ -300,3 +300,81 @@ fn a_confirmation_dialog_takes_the_keyboard() {
     assert!(!harness.should_quit());
     assert!(!harness.screen_to_string().contains("Unsaved Changes"));
 }
+
+// ---- #3799 ------------------------------------------------------------------
+
+fn open_find_file(harness: &mut EditorTestHarness) {
+    ctrl(harness, 'x');
+    ctrl(harness, 'f');
+    harness.wait_for_prompt().unwrap();
+}
+
+/// `C-g` cancels Find File (`C-x C-f`): the file browser used to take every
+/// Ctrl key itself, before the minibuffer bindings.
+#[test]
+fn find_file_ctrl_g_cancels() {
+    let mut harness = emacs_harness();
+    open_find_file(&mut harness);
+
+    ctrl(&mut harness, 'g');
+    harness.wait_for_prompt_closed().unwrap();
+}
+
+/// `C-a` in Find File moves to the start of the input instead of selecting
+/// it: what is typed next goes in front.
+#[test]
+fn find_file_ctrl_a_moves_to_start() {
+    let mut harness = emacs_harness();
+    open_find_file(&mut harness);
+    // Whatever the prompt starts with, `C-k` after `C-a` leaves it empty.
+    ctrl(&mut harness, 'a');
+    ctrl(&mut harness, 'k');
+    harness.type_text("zz").unwrap();
+    harness.render().unwrap();
+
+    ctrl(&mut harness, 'a');
+    harness.type_text("Q").unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness
+            .editor()
+            .active_window()
+            .prompt
+            .as_ref()
+            .unwrap()
+            .input_str(),
+        "Qzz"
+    );
+}
+
+/// `M-w` copies the region and deactivates the mark, so moving afterwards
+/// does not go on extending the selection.
+#[test]
+fn meta_w_deactivates_the_mark() {
+    let mut harness = emacs_harness();
+    harness.type_text("alpha\nbeta").unwrap();
+    harness.render().unwrap();
+    ctrl(&mut harness, 'a');
+    key(&mut harness, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    ctrl(&mut harness, 'e');
+    assert!(harness.editor().active_cursors().primary().anchor.is_some());
+
+    alt(&mut harness, 'w');
+    assert!(
+        harness.editor().active_cursors().primary().anchor.is_none(),
+        "the region stays active after M-w"
+    );
+    ctrl(&mut harness, 'p');
+    assert!(harness.editor().active_cursors().primary().anchor.is_none());
+}
+
+/// The "no active search" hint names this keymap's search key, not Ctrl+F
+/// (which is forward-char here).
+#[test]
+fn no_active_search_hint_names_the_search_key() {
+    let mut harness = emacs_harness();
+    harness.type_text("alpha").unwrap();
+    ctrl(&mut harness, 'r');
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Press Ctrl+F");
+}

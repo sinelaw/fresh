@@ -607,7 +607,7 @@ impl Editor {
             }
         } else {
             let find_key = self
-                .get_keybinding_for_action("find")
+                .get_keybinding_for_action("search")
                 .unwrap_or_else(|| "Ctrl+F".to_string());
             self.set_status_message(t!("search.no_active", find_key = find_key).to_string());
         }
