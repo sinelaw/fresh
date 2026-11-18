@@ -87,6 +87,20 @@ impl InputHandler for TerminalModeInputHandler<'_> {
     }
 }
 
+/// The chords that resume terminal mode from scrollback: Ctrl+Space, Ctrl+]
+/// or Ctrl+`. Without the kitty keyboard protocol Ctrl+Space (and Ctrl+`)
+/// arrive as NUL, which reads as Ctrl+@, so that counts too (#3785).
+///
+/// Unlike a typed character, a resume key is a command to the editor: it is
+/// consumed, never forwarded to the program in the terminal.
+pub fn is_terminal_resume_key(event: &KeyEvent) -> bool {
+    event.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(
+            event.code,
+            KeyCode::Char(' ') | KeyCode::Char('@') | KeyCode::Char(']') | KeyCode::Char('`')
+        )
+}
+
 /// Check if a key combination should re-enter terminal mode from read-only view.
 /// Returns true if the key should trigger terminal mode entry.
 ///
@@ -97,12 +111,8 @@ pub fn should_enter_terminal_mode(event: &KeyEvent) -> bool {
     let code = event.code;
     let modifiers = event.modifiers;
 
-    // Ctrl+Space, Ctrl+], or Ctrl+` to enter terminal mode
     if modifiers.contains(KeyModifiers::CONTROL) {
-        return matches!(
-            code,
-            KeyCode::Char(' ') | KeyCode::Char(']') | KeyCode::Char('`')
-        );
+        return is_terminal_resume_key(event);
     }
 
     // Any plain character key (no Ctrl/Alt) exits scrollback mode
@@ -269,6 +279,16 @@ mod tests {
             KeyModifiers::CONTROL
         )));
         // 'q' alone
+        // Legacy Ctrl+Space (NUL) reads as Ctrl+@ (#3785).
+        assert!(should_enter_terminal_mode(&key_with_mods(
+            KeyCode::Char('@'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(is_terminal_resume_key(&key_with_mods(
+            KeyCode::Char('@'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_terminal_resume_key(&key(KeyCode::Char('a'))));
         assert!(should_enter_terminal_mode(&key(KeyCode::Char('q'))));
         // Any plain character key should exit scrollback (issue #863)
         assert!(should_enter_terminal_mode(&key(KeyCode::Char('a'))));
