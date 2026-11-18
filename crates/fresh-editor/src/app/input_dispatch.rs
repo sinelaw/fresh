@@ -589,6 +589,10 @@ impl Editor {
     pub(crate) fn set_prompt(&mut self, prompt: crate::view::prompt::Prompt) {
         self.drop_prompt();
         self.active_window_mut().prompt = Some(prompt);
+        // The prompt takes the keyboard: a key routed before the next frame
+        // (one held behind the plugin handler that opened it, #3796) must
+        // see it, not the tree laid out before it opened.
+        self.shell_description_stale = true;
     }
 
     /// Take the active window's prompt down, and its toolbar panel with it.
@@ -599,8 +603,8 @@ impl Editor {
         let prompt = self.active_window_mut().prompt.take()?;
         if let Some(key) = &prompt.toolbar {
             let _ = self.widget_registry.unmount(key);
-            self.shell_description_stale = true;
         }
+        self.shell_description_stale = true;
         Some(prompt)
     }
 
