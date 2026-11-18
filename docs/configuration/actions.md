@@ -184,6 +184,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `move_page_up` | Move page up |
 | `move_right` | Move cursor right |
 | `move_right_in_line` | Move cursor right |
+| `move_to_indentation` | Move to indentation (first non-whitespace character of the line) |
 | `move_to_paragraph_down` | Move to next empty line |
 | `move_to_paragraph_up` | Move to previous empty line |
 | `move_up` | Move cursor up |

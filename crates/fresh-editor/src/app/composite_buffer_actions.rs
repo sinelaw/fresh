@@ -918,12 +918,13 @@ impl Editor {
                 CursorMovement::Right,
                 false,
             ),
-            Action::MoveLineStart | Action::SmartHome => self.handle_cursor_movement_action(
-                split_id,
-                buffer_id,
-                CursorMovement::LineStart,
-                false,
-            ),
+            Action::MoveLineStart | Action::SmartHome | Action::MoveToIndentation => self
+                .handle_cursor_movement_action(
+                    split_id,
+                    buffer_id,
+                    CursorMovement::LineStart,
+                    false,
+                ),
             Action::MoveLineEnd => self.handle_cursor_movement_action(
                 split_id,
                 buffer_id,

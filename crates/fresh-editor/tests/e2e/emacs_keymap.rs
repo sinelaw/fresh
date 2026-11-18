@@ -378,3 +378,39 @@ fn no_active_search_hint_names_the_search_key() {
     harness.render().unwrap();
     harness.assert_screen_not_contains("Press Ctrl+F");
 }
+
+/// `M-m` is `back-to-indentation`: it goes to the first non-blank character
+/// and stays there when pressed again, rather than toggling to column 0 the
+/// way smart Home does.
+#[test]
+fn meta_m_is_back_to_indentation() {
+    let mut harness = emacs_harness();
+    harness.type_text("    indented").unwrap();
+    harness.render().unwrap();
+
+    alt(&mut harness, 'm');
+    assert_eq!(harness.cursor_position(), 4);
+    alt(&mut harness, 'm');
+    assert_eq!(harness.cursor_position(), 4, "M-m toggled away");
+
+    // From column 0 it also lands on the indentation.
+    ctrl(&mut harness, 'a');
+    assert_eq!(harness.cursor_position(), 0);
+    alt(&mut harness, 'm');
+    assert_eq!(harness.cursor_position(), 4);
+}
+
+/// `M-f` is `forward-word`: it stops at the end of the word, not at the start
+/// of the next one.
+#[test]
+fn meta_f_stops_at_word_end() {
+    let mut harness = emacs_harness();
+    harness.type_text("alpha beta gamma").unwrap();
+    harness.render().unwrap();
+    ctrl(&mut harness, 'a');
+
+    alt(&mut harness, 'f');
+    assert_eq!(harness.cursor_position(), 5);
+    alt(&mut harness, 'f');
+    assert_eq!(harness.cursor_position(), 10);
+}

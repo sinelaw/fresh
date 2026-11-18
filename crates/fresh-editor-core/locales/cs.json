@@ -349,6 +349,7 @@
   "action.show_warnings": "Zobrazit varování",
   "action.smart_home": "Chytrý začátek (přepínat začátek řádku / první neprázdný znak)",
   "action.select_smart_home": "Chytře vybrat k začátku (první neprázdný znak / začátek řádku)",
+  "action.move_to_indentation": "Přejít na odsazení (první neprázdný znak řádku)",
   "action.sort_lines": "Seřadit řádky",
   "action.split_horizontal": "Rozdělit vodorovně",
   "action.split_vertical": "Rozdělit svisle",
