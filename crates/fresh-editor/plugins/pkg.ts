@@ -1637,6 +1637,29 @@ async function installFromMonorepo(
 }
 
 /**
+ * A manifest's `language` object as the `LanguagePackConfig` that
+ * `registerLanguageConfig` takes, for a language pack and a bundle's
+ * languages alike. The registered config replaces the language's whole
+ * entry, so a field left out here is lost until the next start.
+ */
+function languagePackConfig(lang: NonNullable<BundleLanguage["language"]>): LanguagePackConfig {
+  return {
+    commentPrefix: lang.commentPrefix ?? null,
+    blockCommentStart: lang.blockCommentStart ?? null,
+    blockCommentEnd: lang.blockCommentEnd ?? null,
+    useTabs: lang.useTabs ?? null,
+    tabSize: lang.tabSize ?? null,
+    autoIndent: lang.autoIndent ?? null,
+    showWhitespaceTabs: lang.showWhitespaceTabs ?? null,
+    formatter: lang.formatter ? {
+      command: lang.formatter.command,
+      args: lang.formatter.args ?? [],
+    } : null,
+    editRules: lang.editRules,
+  };
+}
+
+/**
  * Load a language pack (register grammar, language config, and LSP server)
  */
 async function loadLanguagePack(packageDir: string, manifest: PackageManifest): Promise<void> {
@@ -1651,23 +1674,7 @@ async function loadLanguagePack(packageDir: string, manifest: PackageManifest): 
 
   // Register language config if present
   if (manifest.fresh?.language) {
-    const lang = manifest.fresh.language;
-    editor.registerLanguageConfig(langId, {
-      commentPrefix: lang.commentPrefix ?? null,
-      blockCommentStart: lang.blockCommentStart ?? null,
-      blockCommentEnd: lang.blockCommentEnd ?? null,
-      useTabs: lang.useTabs ?? null,
-      tabSize: lang.tabSize ?? null,
-      autoIndent: lang.autoIndent ?? null,
-      showWhitespaceTabs: lang.showWhitespaceTabs ?? null,
-      formatter: lang.formatter ? {
-        command: lang.formatter.command,
-        args: lang.formatter.args ?? [],
-      } : null,
-      // The registered config replaces the language's whole entry, so a
-      // field left out here is lost until the next start.
-      editRules: lang.editRules,
-    });
+    editor.registerLanguageConfig(langId, languagePackConfig(manifest.fresh.language));
   }
 
   // Register LSP server if present
@@ -1708,21 +1715,7 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
 
       // Register language config if present
       if (lang.language) {
-        const langConfig = lang.language;
-        editor.registerLanguageConfig(langId, {
-          commentPrefix: langConfig.commentPrefix ?? null,
-          blockCommentStart: langConfig.blockCommentStart ?? null,
-          blockCommentEnd: langConfig.blockCommentEnd ?? null,
-          useTabs: langConfig.useTabs ?? null,
-          tabSize: langConfig.tabSize ?? null,
-          autoIndent: langConfig.autoIndent ?? null,
-          showWhitespaceTabs: langConfig.showWhitespaceTabs ?? null,
-          formatter: langConfig.formatter ? {
-            command: langConfig.formatter.command,
-            args: langConfig.formatter.args ?? [],
-          } : null,
-          editRules: langConfig.editRules,
-        });
+        editor.registerLanguageConfig(langId, languagePackConfig(lang.language));
       }
 
       // Register LSP server if present
