@@ -51,6 +51,17 @@ body.native-panels .tree-item.k-scrim[data-surface-kind="floating"]{visibility:h
 .native-confirm .nc-btn.destructive.selected{background:var(--danger,#f47067);border-color:var(--danger,#f47067);color:#fff}
 .native-confirm .accel{text-decoration:none}
 body.alt-held .native-confirm .accel{text-decoration:underline;text-underline-offset:.15em}
+/* The settings' dialogs (73-native.js `settingsDialogEls`): the pending
+   changes as a list, the shortcuts help as a two-column table. */
+.native-confirm .nc-changes{margin:0;padding:.4em .6em .4em 1.6em;font-family:var(--mono-family);font-size:.88em;
+  line-height:1.4;max-height:12em;overflow:auto;background:var(--surface,rgba(0,0,0,.15));border-radius:var(--r-md,6px)}
+.native-confirm .nc-help{display:grid;grid-template-columns:max-content 1fr;gap:.15em 1.2em;
+  max-height:min(28em,calc(100vh - 12em));overflow:auto;font-size:.92em}
+.native-confirm .nc-help-head{grid-column:1/-1;font-weight:600;margin-top:.5em}
+.native-confirm .nc-help-head:first-child{margin-top:0}
+.native-confirm .nc-help-key{font-family:var(--mono-family);color:var(--ui-accent,var(--accent));white-space:nowrap}
+.native-confirm .nc-hint{color:var(--muted);font-size:.85em;text-align:right}
+.settings-dialog.sd-help{width:min(40em,calc(100% - 4em))}
 
 /* ---- plugin panels ----------------------------------------------------------
    The interior of a dock, floating panel or sidebar section, laid out from its

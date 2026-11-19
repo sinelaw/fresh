@@ -395,6 +395,10 @@
       linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%);color:#f7f8e6;
     box-shadow:var(--wa-ring),var(--wa-vbevel),inset 0 1px 0 rgba(255,255,255,.32),0 2px 4px rgba(0,0,0,.45)}
   body.theme-winamp .native-confirm .nc-btn.destructive{color:#ff8a7a}
+  body.theme-winamp .native-confirm .nc-changes{color:var(--wa-green);background:var(--wa-sunken);border-radius:0;box-shadow:var(--wa-in)}
+  body.theme-winamp .native-confirm .nc-help-key{color:var(--wa-green)}
+  body.theme-winamp .native-confirm .nc-help-head{color:var(--wa-amber);letter-spacing:.08em}
+  body.theme-winamp .native-confirm .nc-hint{color:#b49c7e}
   body.theme-winamp .native-confirm .nc-btn.destructive.selected{color:#fff3ee;
     background:radial-gradient(90% 130% at 50% -22%,rgba(255,220,200,.35),transparent 62%),
       linear-gradient(180deg,#b0503e 0%,#93392b 46%,#62231a 100%)}

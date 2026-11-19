@@ -526,6 +526,17 @@
     key: TreeKey
 } */
 
+// view/scene.rs `SettingsDialogView`: a dialog over the settings.
+/** type SettingsDialog = {
+    kind: "confirm" | "reset" | "entryDelete" | "entryDiscard" | "help",
+    title: String,
+    body: String,
+    changes: String[],
+    lines: { key: String, desc: String, heading: Boolean }[],
+    buttons: ConfirmButton[],
+    help: String
+} */
+
 // view/native.rs `ConfirmButtonView`. `label` is [before, accelerator, after].
 /** type ConfirmButton = {
     label: [String, String, String],
@@ -859,5 +870,6 @@
     entryDialog: EntryDialog | Null,
     showingHelp: Boolean,
     showingConfirm: Boolean,
-    showingReset: Boolean
+    showingReset: Boolean,
+    dialog: SettingsDialog | Null
 } */

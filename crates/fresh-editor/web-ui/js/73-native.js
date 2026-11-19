@@ -84,8 +84,17 @@ function confirmCardEls(c){
   const title=div("nc-title"); title.textContent=c.title; card.appendChild(title);
   if(c.body){ const p=div("nc-body"); p.id="nc-body"; p.textContent=c.body; card.appendChild(p); }
   if(c.detail){ const d=div("nc-detail"); d.textContent=c.detail; card.appendChild(d); }
+  dialogButtons(card, c.buttons);
+  scrim.appendChild(card);
+  return [scrim];
+}
+
+// The answers of a dialog card, in a row at its foot.
+/** function dialogButtons(El, ConfirmButton[]) => Undefined */
+function dialogButtons(card, buttons){
+  if(buttons.length===0) return;
   const row=div("nc-buttons");
-  for(const b of c.buttons){
+  for(const b of buttons){
     const el=nativeButton("nc-btn"+(b.selected?" selected":"")+(b.destructive?" destructive":"")
       +(b.escape?" escape":""), b.key);
     const [pre, acc, post]=b.label;
@@ -96,6 +105,39 @@ function confirmCardEls(c){
     row.appendChild(el);
   }
   card.appendChild(row);
+}
+
+// ---- the settings' dialogs --------------------------------------------------
+// The prompts over the settings (unsaved changes, reset, delete or discard an
+// entry) and the shortcuts help, drawn as the same card as a confirmation, so
+// every skin's dialog styling is theirs too. `kind` is a class for a skin that
+// wants to tell them apart. Answered like the confirmation: each button presses
+// the tree node it mirrors.
+/** function settingsDialogEls(SettingsDialog) => El[] */
+function settingsDialogEls(d){
+  const scrim=div("native-scrim");
+  scrim.addEventListener("mousedown", e=>{ e.preventDefault(); e.stopPropagation(); });
+  const card=div("native-card native-confirm settings-dialog sd-"+d.kind);
+  aria(card, "alertdialog", {modal:true, label:d.title, description:null});
+  card.addEventListener("mousedown", e=>{ e.stopPropagation(); });
+  const title=div("nc-title"); title.textContent=d.title; card.appendChild(title);
+  if(d.body){ const p=div("nc-body"); p.textContent=d.body; card.appendChild(p); }
+  if(d.changes.length>0){
+    const ul=document.createElement("ul"); ul.className="nc-changes";
+    for(const c of d.changes){ const li=document.createElement("li"); li.textContent=c; ul.appendChild(li); }
+    card.appendChild(ul);
+  }
+  if(d.lines.length>0){
+    const t=div("nc-help");
+    for(const l of d.lines){
+      if(l.heading){ const h=div("nc-help-head"); h.textContent=l.key; t.appendChild(h); continue; }
+      const k=div("nc-help-key"); k.textContent=l.key; t.appendChild(k);
+      const v=div("nc-help-desc"); v.textContent=l.desc; t.appendChild(v);
+    }
+    card.appendChild(t);
+  }
+  dialogButtons(card, d.buttons);
+  if(d.help){ const h=div("nc-hint"); h.textContent=d.help; card.appendChild(h); }
   scrim.appendChild(card);
   return [scrim];
 }

@@ -1792,6 +1792,10 @@ pub struct Choice {
     pub selected: usize,
     pub hovered: Option<usize>,
     pub help: String,
+    /// The button that throws something away (Discard, Reset), if any.
+    pub destructive: Option<usize>,
+    /// The button Esc answers with (Cancel).
+    pub cancel: usize,
 }
 
 /// A two-button prompt where one of them destroys something.
@@ -2534,6 +2538,8 @@ mod tests {
             selected,
             hovered,
             help: "←/→/Tab: Select".into(),
+            destructive: Some(1),
+            cancel: 2,
         }
     }
 

@@ -968,6 +968,13 @@ function settingItemRows(items, container, live, entry){
 }
 /** function settingsEls(Settings) => El[] */
 function settingsEls(s){
+  const out=settingsWindowEls(s);
+  const d=s.dialog;
+  if(d) out.push(...settingsDialogEls(d));
+  return out;
+}
+/** function settingsWindowEls(Settings) => El[] */
+function settingsWindowEls(s){
   const out=[]; const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
   const el=aria(div("region settings-modal"), "dialog", {modal:true, label:s.title});
   const title=div("set-title"); title.textContent=s.title+"  —  layer: "+s.targetLayer; el.appendChild(title);

@@ -2518,7 +2518,9 @@ impl Editor {
     /// Not the entry-dialog stack, which is its own surface and its own
     /// migration; when one of those is up this answers `None` and the painter
     /// draws it as before.
-    fn settings_dialog_description(&self) -> Option<crate::view::shell::settings::Dialog> {
+    pub(crate) fn settings_dialog_description(
+        &self,
+    ) -> Option<crate::view::shell::settings::Dialog> {
         use crate::view::shell::settings as st;
         use fresh_i18n::t;
 
@@ -2625,6 +2627,8 @@ impl Editor {
                 selected: s.reset_dialog_selection,
                 hovered: s.reset_dialog_hover,
                 help,
+                destructive: Some(0),
+                cancel: 1,
             }));
         }
         if s.showing_confirm_dialog {
@@ -2640,6 +2644,8 @@ impl Editor {
                 selected: s.confirm_dialog_selection,
                 hovered: s.confirm_dialog_hover,
                 help,
+                destructive: Some(1),
+                cancel: 2,
             }));
         }
         None

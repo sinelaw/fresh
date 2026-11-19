@@ -2396,6 +2396,113 @@ pub struct SettingsView {
     pub showing_help: bool,
     pub showing_confirm: bool,
     pub showing_reset: bool,
+    /// The dialog over the settings, as content: the unsaved-changes and
+    /// reset prompts, the entry delete/discard confirmations and the
+    /// shortcuts help. The terminal draws it from the same description
+    /// (`settings_dialog_description`); the web draws it as the skin's
+    /// dialog card. `None` while none is open.
+    pub dialog: Option<SettingsDialogView>,
+}
+
+/// A settings dialog (`shell::settings::Dialog`) as the web draws it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDialogView {
+    /// "confirm" | "reset" | "entryDelete" | "entryDiscard" | "help".
+    pub kind: &'static str,
+    pub title: String,
+    pub body: String,
+    /// The pending changes the prompt is about, one per line.
+    pub changes: Vec<String>,
+    /// The shortcuts help's lines (empty for the other kinds).
+    pub lines: Vec<SettingsHelpLineView>,
+    pub buttons: Vec<crate::view::native::ConfirmButtonView>,
+    /// The keyboard hint the terminal shows under the buttons.
+    pub help: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsHelpLineView {
+    pub key: String,
+    pub desc: String,
+    pub heading: bool,
+}
+
+impl SettingsDialogView {
+    fn of(d: crate::view::shell::settings::Dialog) -> Self {
+        use crate::view::shell::settings::{self as st, Dialog};
+        let button = |i: usize,
+                      label: &str,
+                      selected: usize,
+                      hovered: Option<usize>,
+                      destructive: Option<usize>,
+                      cancel: usize| {
+            crate::view::native::ConfirmButtonView {
+                label: [label.to_string(), String::new(), String::new()],
+                destructive: destructive == Some(i),
+                selected: i == selected,
+                hovered: hovered == Some(i),
+                escape: i == cancel,
+                key: crate::view::native::key_json(&st::button_key(i)),
+            }
+        };
+        let choice = |kind: &'static str, c: st::Choice| SettingsDialogView {
+            kind,
+            title: c.title,
+            body: c.prompt,
+            changes: c.changes,
+            lines: Vec::new(),
+            buttons: c
+                .buttons
+                .iter()
+                .enumerate()
+                .map(|(i, b)| button(i, b, c.selected, c.hovered, c.destructive, c.cancel))
+                .collect(),
+            help: c.help,
+        };
+        // The keep/cancel answer of a two-button destructive prompt is the
+        // one that is not destructive.
+        let destructive = |kind: &'static str, k: st::Destructive| SettingsDialogView {
+            kind,
+            title: k.title,
+            body: k.message,
+            changes: Vec::new(),
+            lines: Vec::new(),
+            buttons: k
+                .buttons
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let cancel = usize::from(k.destructive == 0);
+                    button(i, b, k.selected, None, Some(k.destructive), cancel)
+                })
+                .collect(),
+            help: k.help,
+        };
+        match d {
+            Dialog::Confirm(c) => choice("confirm", c),
+            Dialog::Reset(c) => choice("reset", c),
+            Dialog::EntryDelete(k) => destructive("entryDelete", k),
+            Dialog::EntryDiscard(k) => destructive("entryDiscard", k),
+            Dialog::Help { title, lines } => SettingsDialogView {
+                kind: "help",
+                title,
+                body: String::new(),
+                changes: Vec::new(),
+                lines: lines
+                    .into_iter()
+                    .map(|l| SettingsHelpLineView {
+                        key: l.key,
+                        desc: l.desc,
+                        heading: l.heading,
+                    })
+                    .collect(),
+                buttons: Vec::new(),
+                help: String::new(),
+            },
+        }
+    }
 }
 
 /// `store` is the surface's — the page's or the dialog's — and says which
@@ -2695,6 +2802,9 @@ impl Editor {
             showing_help: st.showing_help,
             showing_confirm: st.showing_confirm_dialog,
             showing_reset: st.showing_reset_dialog,
+            dialog: self
+                .settings_dialog_description()
+                .map(SettingsDialogView::of),
         })
     }
 }
