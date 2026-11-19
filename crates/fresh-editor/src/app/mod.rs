@@ -1077,10 +1077,8 @@ pub struct Editor {
     /// save would silently undo them (#3791).
     pub(crate) runtime_settings: editor_init::RuntimeSettings,
 
-    /// Installed language packs' languages, which live in no config file,
-    /// so a config re-resolved from disk (a Settings save,
-    /// `reloadConfig()`) gets them laid back under the files' own, the way
-    /// startup put them there: see [`SessionLanguages`].
+    /// Installed language packs' languages, laid back under the files' own
+    /// on a config re-resolved from disk: see [`SessionLanguages`].
     pub(crate) session_languages: SessionLanguages,
 
     // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`

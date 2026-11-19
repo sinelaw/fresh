@@ -281,10 +281,8 @@ impl Editor {
     }
 
     /// `Action::InsertLineBelow` (vi's `o`): each cursor to its line's end,
-    /// then Enter there, taking only the edit-rule rewrites that add text at
-    /// the cursor ([`RuleReach::InsertOnly`]). On an empty list item it
-    /// continues the list, where the user's Enter clears the item: the
-    /// command opens a line, it doesn't answer the item.
+    /// then Enter there with [`RuleReach::InsertOnly`], so an empty list item
+    /// is continued rather than cleared.
     ///
     /// [`RuleReach::InsertOnly`]: fresh_core::edit_rules::RuleReach::InsertOnly
     pub(super) fn insert_line_below(&mut self) -> AnyhowResult<()> {

@@ -73,13 +73,10 @@ fn strip_empty_defaults(value: Value, existing: Option<&Value>) -> Option<Value>
                         return Some((k, v));
                     }
                     // A language's `edit_rules` are kept exactly: `[]` turns
-                    // its rules off (Markdown has some by default), and an
-                    // empty template (`"replace_before": ""`) replaces text
-                    // with nothing, where leaving it out keeps the text — a
-                    // rule left with no template at all doesn't load. The
-                    // Settings UI writes a whole language entry when one of
-                    // its fields changes, so stripping here broke the
-                    // built-in rules on any unrelated language save.
+                    // its rules off, and an empty template (`"replace_before":
+                    // ""`) means something other than a missing one. The
+                    // Settings UI writes a whole language entry on any change,
+                    // so stripping would break the rules on an unrelated save.
                     if k == "edit_rules" {
                         return Some((k, v));
                     }
@@ -424,13 +421,11 @@ fn migrate_v2_to_v3(mut value: Value) -> Result<Value, ConfigError> {
 
 /// Migration from v3 to v4: `languages.<id>.auto_indent` now takes effect.
 ///
-/// Before v4 a language's `auto_indent` was a plain bool defaulting to
-/// `true` that nothing read on Enter, and the Settings language dialog wrote
-/// every field of an entry when any one changed — so many files hold
-/// `"auto_indent": true` for languages the user never meant to set it for.
-/// Read as written, it would now override `editor.auto_indent: false`. Those
-/// values had no effect, so dropping them keeps the behaviour unchanged: the
-/// language follows `editor.auto_indent`. A `false` is left alone.
+/// Before v4 it was a bool defaulting to `true` that nothing read, and the
+/// Settings dialog wrote it into every language entry it saved. Read as
+/// written it would now override `editor.auto_indent: false`, so a `true` is
+/// dropped (the language follows `editor.auto_indent`, as before); a `false`
+/// is left alone.
 fn migrate_v3_to_v4(mut value: Value) -> Result<Value, ConfigError> {
     if let Value::Object(ref mut map) = value {
         map.insert("version".to_string(), Value::Number(4.into()));
@@ -453,12 +448,9 @@ fn migrate_v3_to_v4(mut value: Value) -> Result<Value, ConfigError> {
 /// the new one the first time any setting is saved — rather than holding the
 /// two side by side.
 ///
-/// Also retires the `markdown_source` plugin's entry: its list editing is
-/// now Markdown's built-in `edit_rules`, so a file that disabled the plugin
-/// (`"plugins": {"markdown_source": {"enabled": false}}`) turned list editing
-/// off and gets `"languages": {"markdown": {"edit_rules": []}}` instead —
-/// unless it sets Markdown's `edit_rules` itself, which then stand. The
-/// plugin entry goes either way.
+/// Also retires the `markdown_source` plugin's entry, whose list editing is
+/// now Markdown's built-in `edit_rules`: a file that disabled the plugin gets
+/// `languages.markdown.edit_rules: []` instead, unless it sets those itself.
 pub fn rename_legacy_keys(value: &mut Value) {
     const RENAMED: [(&str, &str); 1] = [("orchestrator_mode", "auto_attach")];
     if let Value::Object(map) = value {

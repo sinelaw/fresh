@@ -112,7 +112,6 @@ impl RuntimeSettings {
         self.0.push((pointer, value));
     }
 
-    /// Forget the value at `pointer`.
     pub(crate) fn forget(&mut self, pointer: &str) {
         self.0.retain(|(p, _)| p != pointer);
     }
@@ -2281,8 +2280,8 @@ impl Editor {
         config: &mut crate::config::Config,
         changed_pointers: &[String],
     ) {
-        // Language packs' languages first: a `setSetting` or a registered
-        // language applies on top, as it did before.
+        // Packs' languages first, so `setSetting` writes and registered
+        // languages apply on top.
         self.session_languages.reapply(config);
         self.runtime_settings.reapply(config, changed_pointers);
         if let Ok(schemas) = self.plugin_schemas.read() {

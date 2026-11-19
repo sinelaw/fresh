@@ -314,10 +314,8 @@ impl LanguageManifestConfig {
         }
     }
 
-    /// Convert to the internal `LanguageConfig` used by the editor, for the
-    /// language `language` (named in warnings about its edit rules): the
-    /// conversion a plugin-registered config takes
-    /// ([`LanguageConfig::from_pack`]).
+    /// Convert to the internal `LanguageConfig`, as a plugin-registered
+    /// config is ([`LanguageConfig::from_pack`]).
     pub fn to_language_config(&self, language: &str) -> LanguageConfig {
         LanguageConfig::from_pack(language, self.to_pack_config())
     }

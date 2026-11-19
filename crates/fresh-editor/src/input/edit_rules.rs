@@ -1,18 +1,14 @@
 //! Edit rules, applied inside Enter / Tab / Shift+Tab.
 //!
-//! The rules themselves — patterns, templates, the registry — live in
-//! [`fresh_core::edit_rules`] and know nothing about buffers. This module is
-//! the buffer side: for each cursor it reads the line around the cursor,
-//! asks the rules of the language at the cursor for a rewrite — that
-//! language's `edit_rules` setting first, then the sets plugins registered
-//! for it — and turns the answer into the key's own events, so a rule's edit
-//! is part of the keystroke (one undo step, applied before the next key is
-//! read).
+//! The rules themselves live in [`fresh_core::edit_rules`] and know nothing
+//! about buffers. This module reads the line around each cursor, asks the
+//! rules of the language at the cursor for a rewrite, and turns the answer
+//! into the key's own events, so a rule's edit is part of the keystroke (one
+//! undo step, applied before the next key is read).
 //!
 //! The language at a cursor is the buffer's, except on a content line of an
-//! embedded-language region the buffer's highlighter knows (a fenced code
-//! block in Markdown, a `<script>` in Vue): there it is the region's
-//! language, and that language's rules and `auto_indent` apply instead
+//! embedded-language region (a fenced code block in Markdown, a `<script>`
+//! in Vue), where the region's language's rules and `auto_indent` apply
 //! ([`cursor_languages`]).
 
 use crate::config::{BufferConfig, Config};
@@ -32,9 +28,8 @@ use fresh_core::edit_rules::{
 };
 use std::sync::Arc;
 
-/// What a key needs to resolve the language of an embedded region to its
-/// settings: the config, and the grammar catalog that maps a syntax to a
-/// language id.
+/// What a key needs to resolve an embedded region's language to its
+/// settings.
 #[derive(Clone, Copy)]
 pub struct LanguageLookup<'a> {
     pub config: &'a Config,
@@ -45,10 +40,8 @@ pub struct LanguageLookup<'a> {
 /// content line of an embedded-language region, in place of the buffer's.
 #[derive(Debug, Clone)]
 pub(crate) struct RegionLanguage {
-    /// The region's language id; `None` when the region named no language
-    /// that resolves to one. Such a region is language-less: no edit rules
-    /// (neither configured nor plugin-registered) and the indentation of a
-    /// buffer with no language.
+    /// The region's language id; `None` when it named none that resolves,
+    /// which leaves it no edit rules and a language-less buffer's indentation.
     pub language: Option<String>,
     /// The syntax the highlighter resolved the region's language to, whose
     /// indentation rules Enter uses.
@@ -60,9 +53,7 @@ pub(crate) struct RegionLanguage {
 }
 
 impl RegionLanguage {
-    /// The edit rules that apply in the region: its language's configured
-    /// rules, then the sets plugins registered for it — none at all for a
-    /// language-less region.
+    /// The region's edit rules; none at all for a language-less region.
     fn rules<'a>(&'a self, registry: Option<&'a EditRuleRegistry>) -> BufferEditRules<'a> {
         BufferEditRules {
             language: self.language.as_deref().unwrap_or(""),
@@ -132,14 +123,10 @@ impl CursorLanguages {
 }
 
 /// Resolve the language at each cursor (at the start of its selection, if
-/// any), from the embedded regions the buffer's highlighter recorded while
-/// parsing: a cursor on a content line of a region gets the region's
-/// language's settings ([`RegionLanguage`]); one on a delimiter line,
-/// outside every region, or where the highlighter cannot say (its cache
-/// does not cover the line, or is not anchored) gets the buffer's.
-///
-/// Asks nothing of a buffer whose highlighter hosts no regions, or when
-/// the caller has no `lookup` (a key issued with no config at hand).
+/// any) from the embedded regions the highlighter recorded: a cursor on a
+/// region's content line gets the region's settings; one anywhere else, or
+/// where the highlighter cannot say, gets the buffer's. Asks nothing when
+/// the highlighter hosts no regions or the caller has no `lookup`.
 pub(crate) fn cursor_languages(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -197,7 +184,6 @@ pub(crate) struct RuleEdits {
 /// Where a cursor's line lies in the buffer.
 #[derive(Debug, Clone, Copy)]
 struct LineSpan {
-    /// The line's first byte.
     start: usize,
     /// The end of its text, before the line break; before the cursor when
     /// it sits between the `\r` and `\n` of a CRLF break.
@@ -233,11 +219,9 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
         .map_or(a.len().min(b.len()), |((i, _), _)| i)
 }
 
-/// Apply the edit rules for the buffer and `trigger` at each cursor they can
-/// handle, pushing their events onto `events`: the buffer's configured rules
-/// (`buffer_settings.edit_rules`), then, when the caller passes the
-/// registry, the sets plugins registered for its language. `reach` says
-/// which rewrites the key takes (all of them, for the user's own key).
+/// Apply the edit rules for `trigger` at each cursor they can handle,
+/// pushing their events onto `events`. `reach` says which rewrites the key
+/// takes (all of them, for the user's own key).
 ///
 /// A cursor is handled when it has no selection, is not in virtual space,
 /// shares its line with no other cursor (or another cursor's selection), and
@@ -267,9 +251,6 @@ pub(crate) fn apply_edit_rules(
         configured: &configured,
         registry,
     };
-    // The rules at a cursor: its region language's, when its line is a
-    // region's content (none at all for a language-less region), else the
-    // buffer's.
     let rules_for = |id: CursorId| {
         languages
             .get(id)
@@ -285,7 +266,6 @@ pub(crate) fn apply_edit_rules(
     let vs_mode = state.buffer_settings.virtual_space;
     let line_ending = state.buffer.line_ending().insertion_str();
 
-    // What each cursor touches: its selection, or just its position.
     let mut spans: Vec<(usize, usize, CursorId)> = cursors
         .iter()
         .map(|(id, c)| {

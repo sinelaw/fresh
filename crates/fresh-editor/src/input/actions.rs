@@ -127,9 +127,8 @@ fn logical_line_end(buffer: &mut Buffer, pos: usize) -> usize {
 /// terminator, or the end of the buffer on a line that has none. `None` when
 /// the line runs further than `cap` bytes past `pos`.
 ///
-/// A `pos` between the `\r` and `\n` of a CRLF pair is inside the terminator,
-/// not on the line's text: the line still ends on the `\r`, so `end` is then
-/// `pos - 1`, before `pos`.
+/// A `pos` between the `\r` and `\n` of a CRLF pair is inside the terminator:
+/// the line still ends on the `\r`, so `end` is then before `pos`.
 pub(crate) fn logical_line_end_within(
     buffer: &mut Buffer,
     pos: usize,
@@ -944,12 +943,9 @@ fn buffer_indent_rules(
     indent_rules_for(Some(&state.language), state.highlighter.syntax_name())
 }
 
-/// Indent for a new line split at `position`, by the tiers below
-/// tree-sitter, for text in `language` (`None`: no language) whose syntax is
-/// `syntax`: the language's regex indentation rules, read off the buffer with
-/// the highlighter's scopes masking comments and strings; else the
-/// language-agnostic heuristic; else, for plain text or no language, the
-/// prose one that treats a blank line as a paragraph break (#3165).
+/// Indent for a new line split at `position` by the tiers below tree-sitter:
+/// `language`'s regex rules (scope-masked), else the language-agnostic
+/// heuristic, or for plain text or no language the prose one (#3165).
 fn non_grammar_indent(
     state: &EditorState,
     position: usize,
@@ -980,9 +976,8 @@ fn non_grammar_indent(
     }
 }
 
-/// The regex indentation rules for text at a cursor: its embedded region's
-/// language's ([`indent_rules_for`]) when it is on a region's content line,
-/// else the buffer's ([`buffer_indent_rules`]).
+/// The regex indentation rules at a cursor: its embedded region's language's
+/// when on a region's content line, else the buffer's.
 fn indent_rules_at(
     state: &EditorState,
     region: Option<&RegionLanguage>,
@@ -993,8 +988,7 @@ fn indent_rules_at(
     }
 }
 
-/// The closing-delimiter dedent by the regex indentation rules at the
-/// cursor ([`indent_rules_at`]); `None` when there are none.
+/// Closing-delimiter dedent by the regex rules at the cursor.
 fn rules_dedent(
     state: &EditorState,
     region: Option<&RegionLanguage>,
@@ -1017,9 +1011,8 @@ fn rules_dedent(
 /// scanner for unknown syntaxes.
 ///
 /// On a content line of an embedded region (a fenced code block), the
-/// region's language decides, as it does for Enter: its regex rules, else the
-/// bracket scanner. Tree-sitter parses the buffer's language, which the
-/// region's text is not part of.
+/// region's language decides, as for Enter: tree-sitter parses only the
+/// buffer's language.
 fn calculate_closing_delimiter_indent(
     state: &mut EditorState,
     region: Option<&RegionLanguage>,
@@ -1055,8 +1048,7 @@ fn calculate_closing_delimiter_indent(
     .unwrap_or(0)
 }
 
-/// One level of indentation, as Tab inserts it: a tab character, or
-/// `tab_size` spaces.
+/// One level of indentation, as Tab inserts it.
 pub(crate) fn indent_unit(use_tabs: bool, tab_size: usize) -> String {
     if use_tabs {
         "\t".to_string()
@@ -1164,35 +1156,24 @@ fn handle_skip_over(events: &mut Vec<Event>, cursor_id: CursorId, insert_positio
 /// in the same event list.
 ///
 /// The multi-cursor applier (`apply_events_as_bulk_edit`) applies every
-/// `Insert`/`Delete` against the buffer as it was before the key, then
-/// shifts a cursor's `MoveCursor` target for the other edits below it only
-/// when that cursor also carries an `Insert` at its own position (the
-/// auto-close shape); any other move is taken as already post-edit, because
-/// that is what indent and the other bulk emitters produce. An emitter whose
-/// move accounts for its own edits but not for edits made elsewhere in the
-/// same list brings it into post-edit coordinates here, keeping the
-/// applier's one rule true:
+/// `Insert`/`Delete` against the pre-key buffer, then shifts a cursor's
+/// `MoveCursor` for the other edits below it only when that cursor also
+/// carries an `Insert` at its own position (the auto-close shape); any other
+/// move is taken as already post-edit, as indent and the other bulk emitters
+/// produce. Emitters whose moves ignore edits made elsewhere in the list
+/// bring them into post-edit coordinates here, keeping that rule true:
 ///
-/// * the skip-over `MoveCursor`s of [`insert_char_events`]: a skip-over owns
-///   no edit, so with `xx` above `a()`, both cursors at end of line, typing
-///   `)` inserted one at the first cursor and left the second one byte short
-///   of stepping over its `)` — the `;` typed next went inside the parens
-///   (#3166);
-/// * the moves the normal handler of Enter or Shift+Tab computes for the
-///   cursors no edit rule handled, which know nothing of the rules' edits
-///   on other lines ([`apply_edit_rules`]).
+/// * the skip-over moves of [`insert_char_events`], which own no edit (a
+///   second cursor stopped one byte short of its `)`, #3166);
+/// * the normal Enter / Shift+Tab moves of the cursors no edit rule handled
+///   ([`apply_edit_rules`]).
 ///
-/// The moves are the `MoveCursor`s among `events[moves]`; the edits they are
-/// rebased onto are the `Insert`/`Delete`s among `events[edits]`, both in
-/// the buffer's coordinates before the key. Each move is keyed on
-/// `origin(cursor, old_position)`, where its cursor was before the key, and
-/// shifted (target and anchor) by the net length of the edits of *other*
-/// cursors strictly below that. A cursor's own edits are already folded into
-/// the move it emits: the dedent skip-over deletes and re-inserts its own
-/// line's indent and moves relative to the result, and a selection is
-/// deleted at the position the move starts from, not below it. A move whose
-/// cursor has an `Insert` at its origin is left alone, since the applier
-/// shifts that one itself.
+/// `events[edits]` and `events[moves]` are both in pre-key coordinates. Each
+/// move is keyed on `origin(cursor, old_position)` and shifted (target and
+/// anchor) by the net length of *other* cursors' edits strictly below it. A
+/// cursor's own edits are already folded into its move (the dedent skip-over
+/// re-inserts its own indent; a selection is deleted where the move starts).
+/// A move whose cursor has an `Insert` at its origin is left to the applier.
 fn rebase_moves_onto_edits(
     events: &mut [Event],
     edits: Range<usize>,
@@ -1603,10 +1584,9 @@ fn insert_char_events(
     // they are rebased onto the other cursors' edits after the loop.
     let mut skip_over_moves: Vec<usize> = Vec::new();
 
-    // A cursor in a fenced code block re-indents a closing delimiter or a
-    // keyword by the block's language, as Enter indents by it. Both re-indent
-    // only an indented line, so the cursors' languages are looked up — once,
-    // for all of them — only when some cursor's line starts with whitespace.
+    // A fenced code block re-indents a typed closer or keyword by its own
+    // language. Only indented lines re-indent, so look the languages up
+    // (once, for all cursors) only when some cursor's line is indented.
     let languages = if cursor_data
         .iter()
         .any(|d| starts_indented(state, d.line_start, d.insert_position))
@@ -1617,8 +1597,6 @@ fn insert_char_events(
     };
 
     for data in cursor_data {
-        // On a content line of an embedded region, the region's language
-        // decides whether and how a typed delimiter or keyword re-indents.
         let region = languages.get(data.cursor_id);
         let indent_here = region.map_or(auto_indent, |r| r.auto_indent);
         // Virtual space: materialize the gap between the buffer/line content
@@ -1939,8 +1917,7 @@ fn handle_insert_newline(
         // After bracket expansion, cursor should be at end of cursor line, not at end of closing bracket line
         let mut cursor_line_end_position: Option<usize> = None;
 
-        // On a content line of an embedded region (a fenced code block), the
-        // region's language decides whether and how the new line indents.
+        // In an embedded region (a fenced code block), its language decides.
         let region = languages.get(cursor_id);
         let auto_indent = region.map_or(auto_indent, |r| r.auto_indent);
 
@@ -1954,12 +1931,8 @@ fn handle_insert_newline(
             // falling back to the language-agnostic heuristic for unknown
             // syntaxes (.txt, …). `IndentCalculator` itself also falls back to
             // the rules tier when a language has no grammar. A cursor in an
-            // embedded region indents by the region's language
-            // ([`non_grammar_indent`] with the region's language): the
-            // tree-sitter tier parses the whole buffer as one language, which
-            // a region's text is not part of, so a language with a bundled
-            // grammar indents in a region by its regex rules, the tier that
-            // stands in for the grammar wherever it is missing.
+            // embedded region skips the tree-sitter tier, which parses the
+            // whole buffer as one language, and indents by the region's rules.
             let indent_width_opt = match (region, state.highlighter.language()) {
                 (Some(region), _) => Some(non_grammar_indent(
                     state,
@@ -2961,7 +2934,6 @@ pub(crate) fn line_end_moves(state: &mut EditorState, cursors: &Cursors) -> Vec<
     if !state.show_cursors {
         return Vec::new();
     }
-    // `MoveLineEnd`'s logical-line move, dropping every selection.
     let mut events = Vec::new();
     move_cursors(cursors, &mut events, true, |c| {
         logical_line_end(&mut state.buffer, c.position)
@@ -3415,17 +3387,11 @@ pub fn action_to_events(
     )
 }
 
-/// [`action_to_events`], with the plugin-registered edit rules too: Enter,
-/// Tab and Shift+Tab offer each cursor to the buffer's configured rules,
-/// then to these, before their normal edit (see
-/// [`crate::input::edit_rules`]). `rule_reach` says which of the rules'
-/// rewrites the key takes: all for the user's key, only those adding text at
-/// the cursor for the Enter of `insert_line_below` (vi's `o`).
-///
-/// With a `language_lookup`, a cursor on a content line of an embedded
-/// region the buffer's highlighter knows (a fenced code block) uses that
-/// region's language — its edit rules, `auto_indent` and indentation rules —
-/// rather than the buffer's; see [`crate::input::edit_rules::cursor_languages`].
+/// [`action_to_events`], with the plugin-registered edit rules too (see
+/// [`crate::input::edit_rules`]); `rule_reach` says which of the rules'
+/// rewrites the key takes. With a `language_lookup`, a cursor on a content
+/// line of an embedded region (a fenced code block) uses that region's
+/// language's edit rules, `auto_indent` and indentation rules.
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events_with_edit_rules(
     state: &mut EditorState,
@@ -3513,8 +3479,6 @@ pub fn action_to_events_with_edit_rules(
                     estimated_line_length,
                     &languages,
                 );
-                // Rebase its moves onto the rules' edits (none when no rule
-                // handled a cursor).
                 let to = events.len();
                 rebase_moves_onto_edits(&mut events, rules_from..from, from..to, |id, old| {
                     rest.get(id).map_or(old, |c| c.position)
@@ -3541,8 +3505,6 @@ pub fn action_to_events_with_edit_rules(
             if let Some(rest) = rest {
                 let from = events.len();
                 handle_dedent_selection(state, rest, &mut events, tab_size, estimated_line_length);
-                // Rebase its moves onto the rules' edits (none when no rule
-                // handled a cursor).
                 let to = events.len();
                 rebase_moves_onto_edits(&mut events, rules_from..from, from..to, |id, old| {
                     rest.get(id).map_or(old, |c| c.position)

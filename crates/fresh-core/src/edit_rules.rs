@@ -2,21 +2,11 @@
 //! as data and applied by the editor synchronously, inside the key's own
 //! edit.
 //!
-//! Rules come from two places:
-//!
-//! - a language's `edit_rules` setting (`languages.<id>.edit_rules`: the
-//!   built-in defaults, the user's and project's config.json, a language
-//!   pack), held per buffer as [`ConfiguredEditRule`]s; and
-//! - plugins, which register an [`EditRuleSet`] for some language ids at run
-//!   time (`registerEditRules`), kept in the [`EditRuleRegistry`].
-//!
-//! When one of the keys is pressed, the editor splits the cursor's line at
-//! the cursor and asks [`BufferEditRules::apply`] for a rewrite: the
-//! buffer's configured rules are tried first, in order, then the
-//! plugin-registered sets for its language, in registration order. The
-//! first rule that applies wins, and when none does the key does what it
-//! always does. Nothing here knows about any particular language: the rules
-//! are regular expressions and templates (see [`EditRule`] for the format).
+//! Rules come from a language's `edit_rules` setting ([`ConfiguredEditRule`])
+//! and from plugins (`registerEditRules`, kept in the [`EditRuleRegistry`]);
+//! [`BufferEditRules`] tries them in that order and the first that applies
+//! wins. Nothing here knows about any particular language (see [`EditRule`]
+//! for the format).
 //!
 //! The rules run in the editor rather than in a plugin because a plugin
 //! handler runs asynchronously: keys typed after Enter were inserted before
@@ -34,7 +24,6 @@ enum CaptureRef {
     Name(String),
 }
 
-/// One piece of a parsed template.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Piece {
     Text(String),
@@ -70,10 +59,8 @@ fn parse_capture_ref(s: &str) -> Result<CaptureRef, String> {
 }
 
 fn parse_template(src: &str) -> Result<Template, String> {
-    // `\n`, `\t`, `\r`, `\\`: a line break, a tab, a carriage return, a
-    // backslash, so a template can be written on one line (a Settings field
-    // is one line) — the escapes a search & replace template takes. A
-    // backslash before anything else is itself.
+    // The escapes search & replace takes (`\n`, `\t`, `\r`, `\\`), so a
+    // template fits in a one-line Settings field.
     let src = crate::escapes::interpret_escapes(src);
     let mut pieces = Vec::new();
     let mut text = String::new();
@@ -199,7 +186,6 @@ fn dedent_once(indent: &str, width: usize) -> Option<&str> {
     None
 }
 
-/// The capture groups of one rule's match.
 struct Captures<'t> {
     before: Option<regex::Captures<'t>>,
     after: Option<regex::Captures<'t>>,
@@ -258,11 +244,9 @@ pub enum RuleReach {
     /// Any: the user's own Enter / Tab / Shift+Tab.
     #[default]
     Line,
-    /// Only those that add text at the cursor ([`LineEdit::only_inserts`]);
-    /// a rule that would rewrite the line is passed over for the next one.
-    /// For the Enter of `insert_line_below` (vi's `o`: line end, then
-    /// Enter): the command opens a line, so clearing or rewriting the line
-    /// it opens from is not its to do.
+    /// Only those that add text at the cursor ([`LineEdit::only_inserts`]),
+    /// for the Enter of `insert_line_below` (vi's `o`), which opens a line
+    /// rather than rewriting the one it opens from.
     InsertOnly,
 }
 
@@ -287,7 +271,6 @@ pub struct CompiledEditRule {
 }
 
 impl CompiledEditRule {
-    /// Compile one rule, or say what is wrong with it.
     pub fn compile(rule: &EditRule) -> Result<Self, String> {
         let regex = |field: &str, src: &Option<String>| -> Result<Option<Regex>, String> {
             src.as_deref()
@@ -349,7 +332,6 @@ impl CompiledEditRule {
         Ok(())
     }
 
-    /// The key this rule answers.
     pub fn trigger(&self) -> EditRuleTrigger {
         self.on
     }
@@ -396,8 +378,6 @@ pub struct ConfiguredEditRule {
 }
 
 impl ConfiguredEditRule {
-    /// Compile `rule`, or say what is wrong with it.
-    ///
     /// A line break written as a real one in a template is kept as the
     /// escape `\n` (see [`escape_line_breaks`]): it means the same, and the
     /// rule as written is what the Settings UI shows and writes back, in a
@@ -419,12 +399,10 @@ impl ConfiguredEditRule {
         Ok(Self { rule, compiled })
     }
 
-    /// The rule as written.
     pub fn rule(&self) -> &EditRule {
         &self.rule
     }
 
-    /// The rule, compiled.
     pub fn compiled(&self) -> &CompiledEditRule {
         &self.compiled
     }
@@ -489,7 +467,6 @@ impl schemars::JsonSchema for ConfiguredEditRule {
     }
 }
 
-/// An [`EditRuleSet`], compiled.
 #[derive(Debug, Clone)]
 pub struct CompiledEditRuleSet {
     languages: Vec<String>,
@@ -497,7 +474,6 @@ pub struct CompiledEditRuleSet {
 }
 
 impl CompiledEditRuleSet {
-    /// Compile a set, or say which rule is wrong and why.
     pub fn compile(set: &EditRuleSet) -> Result<Self, String> {
         if set.languages.is_empty() {
             return Err("`languages` must name at least one language id".to_string());
@@ -531,8 +507,7 @@ impl EditRuleRegistry {
         Self::default()
     }
 
-    /// Add `owner`'s set `id`, replacing (in place) one already under that
-    /// name.
+    /// Add `owner`'s set `id`, replacing one of that name in place.
     pub fn register(&mut self, owner: &str, id: &str, set: CompiledEditRuleSet) {
         match self.sets.iter_mut().find(|(o, i, _)| o == owner && i == id) {
             Some(entry) => entry.2 = set,
@@ -554,8 +529,8 @@ impl EditRuleRegistry {
         len - self.sets.len()
     }
 
-    /// Whether any rule answers `trigger` in `language`: when not, the key
-    /// needs no look at the line.
+    /// Whether any rule answers `trigger` in `language`, so a key can skip
+    /// reading the line.
     pub fn has_rules(&self, language: &str, trigger: EditRuleTrigger) -> bool {
         self.sets
             .iter()
@@ -598,17 +573,15 @@ impl EditRuleRegistry {
 /// same line, and `"edit_rules": []` leaves only the plugins' rules.
 #[derive(Clone, Copy)]
 pub struct BufferEditRules<'a> {
-    /// The buffer's language id.
     pub language: &'a str,
-    /// The language's `edit_rules` setting, compiled.
     pub configured: &'a [CompiledEditRule],
     /// The plugin-registered sets, when the caller has them.
     pub registry: Option<&'a EditRuleRegistry>,
 }
 
 impl BufferEditRules<'_> {
-    /// Whether any rule answers `trigger` here: when not, the key needs no
-    /// look at the line.
+    /// Whether any rule answers `trigger` here, so a key can skip reading
+    /// the line.
     pub fn has_rules(&self, trigger: EditRuleTrigger) -> bool {
         self.configured.iter().any(|r| r.on == trigger)
             || self
@@ -621,8 +594,7 @@ impl BufferEditRules<'_> {
         self.apply_within(trigger, ctx, RuleReach::Line)
     }
 
-    /// [`Self::apply`], taking only a rewrite `reach` allows: a rule whose
-    /// rewrite it doesn't is passed over for the next.
+    /// [`Self::apply`], passing over rewrites `reach` doesn't allow.
     pub fn apply_within(
         &self,
         trigger: EditRuleTrigger,
@@ -641,23 +613,12 @@ impl BufferEditRules<'_> {
     }
 }
 
-/// Markdown's built-in `edit_rules`: list editing.
-///
-/// - Enter continues a list item (the same bullet, the next number, an
-///   unchecked checkbox) with its indentation; on an item with nothing but
-///   its marker it removes the marker instead; on any other indented line it
-///   keeps the indentation.
-/// - Tab on a blank bullet or checkbox item indents it one level (the
-///   buffer's `tab_size` / `use_tabs`) and cycles the bullet (`*` → `-` →
-///   `+` → `*`); Shift+Tab takes a level off and cycles back.
-///
-/// Everywhere else the keys do what they always do. Written in the format a
+/// Markdown's built-in `edit_rules`: list editing. Written in the format a
 /// user writes in config.json, as the worked example of it.
 pub fn markdown_list_rules() -> Vec<EditRule> {
     // A blank list item's text before the cursor: indentation (group 1), a
     // bullet (2) and an optional checkbox (3), then only whitespace.
     const BLANK_BULLET_ITEM: &str = r"^([ \t]*)([-*+]) (\[[ xX]\] )?\s*$";
-    // Nothing but whitespace after the cursor.
     const BLANK: &str = r"^\s*$";
     serde_json::from_value(serde_json::json!([
         // Enter on an empty item (marker only): remove the marker.
@@ -668,9 +629,7 @@ pub fn markdown_list_rules() -> Vec<EditRule> {
             "replace_before": "",
             "replace_after": ""
         },
-        // Enter on a checkbox item: a new unchecked one. (`\n` in a
-        // template is a line break; written as the escape, the template
-        // reads on one line in the Settings UI.)
+        // Enter on a checkbox item: a new unchecked one.
         { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": r"\n$1$2 [ ] " },
         // Enter on an ordered item: the next number.
         { "on": "newline", "before": r"^([ \t]*)(\d+)\. ", "insert": r"\n$1${inc:2}. " },

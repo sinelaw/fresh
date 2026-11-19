@@ -6823,8 +6823,6 @@ impl schemars::JsonSchema for EditRuleTrigger {
 /// that would rewrite the line (clear an empty list item, cycle a bullet)
 /// is passed over for the next one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, TS)]
-// Keys are snake_case like the rest of config.json; the camelCase spellings
-// plugins use (`replaceBefore`, `replaceAfter`) are accepted as aliases.
 #[serde(deny_unknown_fields)]
 #[schemars(extend("x-display-field" = "/on,/before"))]
 #[ts(export, rename_all = "camelCase")]

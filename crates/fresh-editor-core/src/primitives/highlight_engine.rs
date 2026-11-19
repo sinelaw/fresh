@@ -434,10 +434,9 @@ struct LineStructure {
     table_after: bool,
 }
 
-/// The embedded-language region open at a line boundary: which of the
-/// host's `EMBEDDING_SPECS` it is, and the syntax its child parser runs
-/// (`None` when the region named no language that resolved, and the spec
-/// has no default).
+/// The embedded-language region open at a line boundary: its index in the
+/// host's `EMBEDDING_SPECS`, and the syntax its child parser runs (`None`
+/// when none resolved).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RegionState {
     spec: u8,
@@ -453,10 +452,8 @@ pub enum LineLanguage {
     /// whose rows are not wholly the embedded language's text (a unified
     /// diff's, whose rows carry a patch marker).
     Host,
-    /// A content line of an embedded region. `Some` names the syntax the
-    /// region's language resolved to (the token the document gave, or the
-    /// spec's default), exactly as the highlighter resolved it for its child
-    /// parser; `None` when the region named no language that resolved.
+    /// A content line of an embedded region, with the syntax the highlighter
+    /// resolved its language to for the child parser (`None`: none resolved).
     Embedded(Option<String>),
 }
 
@@ -2821,14 +2818,11 @@ impl TextMateEngine {
             .unwrap_or_default()
     }
 
-    /// The cache's recorded lines from the one holding `start` through the
-    /// first that reaches `need_end`, as indices into `cache.lines` — or
-    /// `None` when the cache cannot vouch for them: it does not reach
-    /// `need_end`, the parse that built it started from a guessed state in
-    /// the middle of a large file, an edit before `need_end` is still
-    /// unrepaired, or the lines are not recorded contiguously (a missing
-    /// line is unknown, not "no structure"). The one test of whether the
-    /// cache may answer for a span of lines.
+    /// Indices into `cache.lines` from the line holding `start` through the
+    /// first reaching `need_end`, or `None` when the cache cannot vouch for
+    /// them: it falls short, was parsed from a guessed mid-file state, has an
+    /// unrepaired edit before `need_end`, or the lines are not contiguous (a
+    /// missing line is unknown, not "no structure").
     fn vouched_lines(&self, start: usize, need_end: usize) -> Option<Range<usize>> {
         let cache = self.cache.as_ref()?;
         if !cache.anchored || cache.range.end < need_end {
@@ -2945,38 +2939,27 @@ impl TextMateEngine {
     }
 
     /// Whether this syntax hosts embedded-language regions
-    /// (`EMBEDDING_SPECS`) at all. False for every syntax but the few hosts
-    /// (Markdown, Vue, unified diffs), so a caller can skip asking
-    /// [`Self::line_language`] about any other buffer.
+    /// (`EMBEDDING_SPECS`) at all: only Markdown, Vue and unified diffs do,
+    /// so a caller can skip [`Self::line_language`] for any other buffer.
     pub fn hosts_embedded_regions(&self) -> bool {
         !self.embedding.is_empty()
     }
 
     /// The language the line `line_start..line_end` is written in (`line_end`
-    /// past its line break: the next line's start, or the buffer's end on
-    /// the last line — the caller locates the line), as the host grammar's
-    /// embedded regions say: [`LineLanguage::Embedded`] for a
-    /// content line of a region, [`LineLanguage::Host`] otherwise (and for
-    /// every syntax that hosts no regions).
+    /// past its line break; the caller locates the line):
+    /// [`LineLanguage::Embedded`] for a content line of a region,
+    /// [`LineLanguage::Host`] otherwise.
     ///
-    /// A lookup on the highlight cache, like [`Self::structure_lines_in`]:
-    /// it brings the cache up to date through `line_end`, through the same
-    /// dispatcher highlighting uses, and reads the state the parse recorded
-    /// around it. Around the cursor on a key press that is normally a cache
-    /// hit (the frame drawn before the key parsed the viewport), or the
-    /// repair of the edits made since that frame.
+    /// Read off the highlight cache, like [`Self::structure_lines_in`], after
+    /// bringing it up to date through `line_end` with the dispatcher
+    /// highlighting uses: on a key press that is normally a hit, since the
+    /// frame before it parsed the viewport. The cache is only extended or
+    /// repaired here, never rebuilt, so the answer is `None` (unknown)
+    /// whenever the cache cannot vouch for the line ([`Self::vouched_lines`])
+    /// rather than a parse that would throw away the viewport's cache.
     ///
-    /// `None` — unknown — whenever the cache cannot vouch for the line: the
-    /// cache is missing or does not reach `line_start`, the parse that
-    /// built it started from a guessed state mid-file, the line was not
-    /// recorded, or an edit at or before it is still unrepaired. The cache
-    /// is only ever extended or repaired here, never rebuilt from scratch:
-    /// a line it does not cover is answered `None` rather than paid for with
-    /// a parse that would also throw away the viewport's cache.
-    ///
-    /// The empty line after a buffer's final line break holds no text the
-    /// parser ever sees, so its state is the state the parse ended the
-    /// previous line in, which the cache recorded.
+    /// The empty line after a final line break, which the parser never sees,
+    /// is in the state the parse ended the previous line in.
     pub fn line_language(
         &mut self,
         buffer: &Buffer,
@@ -2990,8 +2973,7 @@ impl TextMateEngine {
         if line_start > buffer_len || line_end < line_start || line_end > buffer_len {
             return None;
         }
-        // Only a cache that already reaches the line is brought up to date:
-        // the hit, forward-extension and repair paths, never a cold parse.
+        // Never a cold parse: only a cache that already reaches the line.
         let desired_start = Self::desired_parse_start(buffer_len, line_start, 0);
         if !self.cache_reaches(desired_start, desired_start.max(line_start)) {
             return None;
@@ -3005,14 +2987,12 @@ impl TextMateEngine {
         let (before, after) = if line_start < line_end {
             let vouched = self.vouched_lines(line_start, line_end)?;
             let line = &self.cache.as_ref()?.lines[vouched.start];
-            // The cache's record of the line must be the caller's line.
             if line.start != line_start || line.end != line_end {
                 return None;
             }
             (line.region_before, line.region_after)
         } else if line_start == buffer_len && line_start > 0 {
-            // The empty line after the final line break: the parse ended the
-            // line above it in the state this line is in.
+            // The empty line after the final line break.
             let vouched = self.vouched_lines(line_start - 1, line_start)?;
             let prev = &self.cache.as_ref()?.lines[vouched.end - 1];
             if prev.end != line_start {
@@ -3224,9 +3204,7 @@ impl HighlightEngine {
         }
     }
 
-    /// The language of the line `line_start..line_end` (`line_end` past its
-    /// line break), by the embedded regions the engine knows; see
-    /// `TextMateEngine::line_language`. Engines with no regions answer
+    /// See `TextMateEngine::line_language`. Engines with no regions answer
     /// [`LineLanguage::Host`].
     pub fn line_language(
         &mut self,

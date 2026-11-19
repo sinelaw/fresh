@@ -162,11 +162,10 @@ pub struct BufferSettings {
     pub tab_size_override: Option<usize>,
 
     /// Whether Enter indents the new line (and a typed closer re-indents
-    /// its line). Set based on global + language config: a language's
-    /// `auto_indent` wins, otherwise `editor.auto_indent`. `None` for a
-    /// buffer never given its language's settings (a plugin's virtual
-    /// buffer, a log opened directly): it follows `editor.auto_indent`
-    /// when the key is pressed (see [`Self::auto_indent`]).
+    /// its line), from the resolved language config. `None` for a buffer
+    /// never given its language's settings (a plugin's virtual buffer, a log
+    /// opened directly): it follows `editor.auto_indent` when the key is
+    /// pressed (see [`Self::auto_indent`]).
     pub auto_indent: Option<bool>,
 
     /// Whether to auto-close brackets, parentheses, and quotes.

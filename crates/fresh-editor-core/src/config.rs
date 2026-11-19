@@ -2754,12 +2754,9 @@ pub fn configured_edit_rules(
 }
 
 impl LanguageConfig {
-    /// The settings a language pack gives the language `language` (named in
-    /// warnings about its edit rules): a plugin's `registerLanguageConfig`,
-    /// or a package manifest's `language` section (by way of
-    /// `LanguageManifestConfig::to_pack_config`). Its formatter reads from
-    /// stdin with a 10-second timeout; an edit rule that doesn't compile is
-    /// dropped with a warning ([`configured_edit_rules`]).
+    /// The settings a language pack gives `language`: a plugin's
+    /// `registerLanguageConfig`, or a package manifest's `language` section.
+    /// Its formatter reads from stdin with a 10-second timeout.
     pub fn from_pack(language: &str, pack: fresh_core::api::LanguagePackConfig) -> Self {
         Self {
             comment_prefix: pack.comment_prefix,
@@ -2987,7 +2984,6 @@ impl BufferConfig {
                 config.word_characters = wc.clone();
             }
 
-            // Edit rules: from language config
             config.edit_rules = lang_config
                 .edit_rules
                 .iter()
@@ -4716,15 +4712,11 @@ impl Config {
         // auto-close nor auto-surround is on by default here. Set
         // `languages.markdown.auto_close` / `.auto_surround` to `true` to get
         // the global behaviour back; they are independent of each other.
-        // Its `edit_rules` are the list editing (see
-        // `markdown_list_edit_rules`); `"edit_rules": []` turns them off.
-        //
-        // `auto_indent` is off: the editor's generic indenter (Markdown has
-        // no indent rules of its own) indents a line after one ending in
-        // `:`, `(`, `[` or `{` — "Steps:" + Enter would start an indented
-        // code block — and carries indentation across blank lines. Keeping
-        // an indented line's indentation is one of the edit rules instead,
-        // so `"edit_rules": []` turns that off too.
+        // `auto_indent` is off: the generic indenter (Markdown has no indent
+        // rules) indents after a line ending in `:`, `(`, `[` or `{` ("Steps:"
+        // + Enter would start a code block) and carries indentation across
+        // blank lines. Keeping an indented line's indentation is an edit rule
+        // instead, so `"edit_rules": []` turns that off too.
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
