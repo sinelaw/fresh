@@ -82,6 +82,7 @@ The manifest configures the language pack:
 | `autoIndent` | Enable automatic indentation |
 | `formatter.command` | Formatter command (e.g., `prettier`, `rustfmt`) |
 | `formatter.args` | Arguments for the formatter (`$FILE` is replaced by the file path) |
+| `editRules` | What Enter / Tab / Shift+Tab do on matching lines: the language's [`edit_rules`](../../configuration/index.md#edit-rules), in the same format |
 
 **Formatter Examples:**
 
@@ -115,6 +116,14 @@ The manifest configures the language pack:
   "command": "gofmt",
   "args": []
 }
+```
+
+**Edit rules example** (continue `;` comments on Enter):
+
+```json
+"editRules": [
+  { "on": "newline", "before": "^(\\s*;+ ?)\\S", "insert": "\n$1" }
+]
 ```
 
 **Note:** Fresh sends the buffer to the formatter on stdin and replaces it with the formatter's output, so use the formatter's stdin/stdout mode (for example `"-"` for Black), not an option that rewrites the file in place.

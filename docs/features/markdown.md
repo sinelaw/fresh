@@ -1,6 +1,6 @@
 # Markdown
 
-Fresh edits Markdown as source, and can also show it as a rendered page — with Mermaid diagrams and math drawn in place — or both side by side. All of it comes from built-in plugins that are on by default.
+Fresh edits Markdown as source, and can also show it as a rendered page — with Mermaid diagrams and math drawn in place — or both side by side. Smart editing is built into Markdown's language settings; the views come from built-in plugins that are on by default.
 
 - **[Smart editing](#smart-editing)**: lists continue and indent as you type.
 - **[Compose mode](#compose-mode)**: a distraction-free, rendered view of the file, still editable.
@@ -10,12 +10,26 @@ Fresh edits Markdown as source, and can also show it as a rendered page — with
 
 ## Smart Editing
 
-Smart editing for Markdown files (provided by the built-in `markdown_source` plugin, enabled by default):
+Smart editing for Markdown files, on by default:
 
-- Enter continues list items (bullets, ordered lists, checkboxes)
+- Enter continues list items: the same bullet, the next number (`9.` → `10.`), or a new unchecked checkbox, at the same indentation
 - Enter on an empty list marker removes it
-- Tab on an empty list item indents it and cycles the bullet style (Shift+Tab reverses); elsewhere Tab works as usual
-- Single-quote auto-close is disabled so apostrophes don't interfere
+- Enter on any other indented line keeps its indentation
+- Tab on an empty bullet or checkbox item indents it one level (your `tab_size` / `use_tabs`) and cycles the bullet `*` → `-` → `+`; Shift+Tab takes the level back off and cycles the other way. Elsewhere Tab and Shift+Tab work as usual, and Tab with a selection indents the selected lines
+- Auto-closing of quotes and brackets is off (`auto_close: false`), so apostrophes and prose parentheses don't interfere; turn it back on with `languages.markdown.auto_close`
+- Inside a fenced code block none of this applies: the lines are code in the block's language, so Enter, Tab and Shift+Tab follow that language's settings — its edit rules and auto-indent (in a ` ```python ` block, Enter after `def f():` indents the next line) — and a `}` or a keyword such as `else:` typed on an indented line re-indents by that language's rules too. A block whose language Fresh doesn't recognize, or that names none, gets no list editing, and Enter indents as it does in a plain text file
+
+It applies at every cursor, keeps up with typing however fast (or a paste of keystrokes), and each Enter or Tab is one undo step. It works the same in vi mode's insert mode and in compose mode; vi's `o` continues the list below the current item, and on an empty item opens a new one rather than clearing it. It applies to buffers whose language is Markdown (`.md`, `.markdown`, `README`); an `.mdx` file is plain text unless you add `mdx` to `languages.markdown.extensions` (or define an `mdx` language with these rules).
+
+The list editing is Markdown's built-in `edit_rules` setting (see [Edit rules](../configuration/index.md#edit-rules)). To turn it off, set it to an empty list in your config.json:
+
+```json
+{ "languages": { "markdown": { "edit_rules": [] } } }
+```
+
+That also turns off keeping an indented line's indentation on Enter, which is one of the rules (Markdown's `auto_indent` is off). Setting your own `languages.markdown.edit_rules` replaces the built-in rules as a whole; the Settings UI lists them under **Syntax & Languages → Languages → markdown → Edit Rules**.
+
+If you had turned off the old `markdown_source` plugin (`"plugins": {"markdown_source": {"enabled": false}}`), Fresh reads that as `"edit_rules": []` and writes it that way the next time it saves your config.
 
 ## Compose Mode
 

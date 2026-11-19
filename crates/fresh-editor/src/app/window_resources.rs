@@ -130,6 +130,10 @@ pub struct WindowResources {
     /// `RwLock` for the same reason as `keybindings`.
     pub command_registry: Arc<RwLock<CommandRegistry>>,
 
+    /// Edit rules plugins register for Enter / Tab / Shift+Tab per language
+    /// (`registerEditRules`), read by every window's `action_to_events`.
+    pub edit_rules: Arc<RwLock<fresh_core::edit_rules::EditRuleRegistry>>,
+
     /// Filesystem operation manager (background renames, deletes, etc.)
     pub fs_manager: Arc<FsManager>,
 

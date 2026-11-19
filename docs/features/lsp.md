@@ -188,8 +188,7 @@ For example, to add C# support:
     "csharp": {
       "extensions": ["cs"],
       "grammar": "csharp",
-      "comment_prefix": "//",
-      "auto_indent": true
+      "comment_prefix": "//"
     }
   },
   "lsp": {

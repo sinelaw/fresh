@@ -2688,6 +2688,43 @@ impl Editor {
         );
     }
 
+    /// Handle RegisterEditRules: compile a plugin's edit rule set and add it
+    /// (replacing one under the same plugin and id). The plugin API compiled
+    /// it once already to report mistakes to the plugin, so a failure here
+    /// is only logged.
+    pub(super) fn handle_register_edit_rules(
+        &mut self,
+        plugin_name: String,
+        id: String,
+        rules: fresh_core::api::EditRuleSet,
+    ) {
+        match fresh_core::edit_rules::CompiledEditRuleSet::compile(&rules) {
+            Ok(compiled) => {
+                if let Ok(mut registry) = self.edit_rules.write() {
+                    registry.register(&plugin_name, &id, compiled);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("registerEditRules({plugin_name}/{id}): {e}");
+            }
+        }
+    }
+
+    /// Handle UnregisterEditRules: drop a plugin's edit rule set `id`, or
+    /// every set it registered (`None`, sent when the plugin unloads).
+    pub(super) fn handle_unregister_edit_rules(&mut self, plugin_name: String, id: Option<String>) {
+        if let Ok(mut registry) = self.edit_rules.write() {
+            match id {
+                Some(id) => {
+                    registry.unregister(&plugin_name, &id);
+                }
+                None => {
+                    registry.unregister_owner(&plugin_name);
+                }
+            }
+        }
+    }
+
     /// Handle RegisterLanguageConfig command
     /// Applies language configuration immediately to runtime config
     pub(super) fn handle_register_language_config(
@@ -2695,24 +2732,30 @@ impl Editor {
         language: String,
         config: fresh_core::api::LanguagePackConfig,
     ) {
-        // Convert LanguagePackConfig to the internal LanguageConfig format
-        let lang_config = crate::config::LanguageConfig {
-            comment_prefix: config.comment_prefix,
-            auto_indent: config.auto_indent.unwrap_or(true),
-            use_tabs: config.use_tabs,
-            tab_size: config.tab_size,
-            show_whitespace_tabs: config.show_whitespace_tabs.unwrap_or(true),
-            formatter: config.formatter.map(|f| crate::config::FormatterConfig {
-                command: f.command,
-                args: f.args,
-                stdin: true,       // Default: read from stdin
-                timeout_ms: 10000, // Default: 10 second timeout
-            }),
-            ..Default::default()
-        };
+        // The plugin API refused a rule that doesn't compile already; one
+        // that gets here regardless is dropped with a warning.
+        let lang_config = crate::config::LanguageConfig::from_pack(&language, config);
+        // Kept, as a `setSetting` value is, for a reload or a Settings save,
+        // which re-resolve the config from files that don't hold it: the
+        // whole `languages.<id>` entry, by JSON pointer (an id may hold a
+        // `.`, which a dot path can't name).
+        match serde_json::to_value(&lang_config) {
+            Ok(value) => self.runtime_settings.set(
+                super::editor_init::json_pointer(["languages", language.as_str()]),
+                value,
+            ),
+            Err(e) => {
+                tracing::warn!("language {language:?}: can't keep its registered config: {e}")
+            }
+        }
         self.config_mut()
             .languages
             .insert(language.clone(), lang_config);
+        // Window reads (file open, new buffers) resolve settings from each
+        // window's copy of the config, so propagate the change there, and
+        // re-resolve buffers already open in this language.
+        self.sync_windows_config();
+        self.refresh_open_buffer_settings_for(Some(&language));
         tracing::info!("Language config registered for '{}'", language);
     }
 

@@ -4,6 +4,7 @@
 //! time if need be; a [`BufferSearch`] runs one a time slice at a time on a
 //! buffer that may be edited meanwhile. [`expand_replacement`] turns a
 //! match into its replacement text.
+use fresh_core::escapes::interpret_escapes;
 use regex::bytes::Regex;
 use std::ops::Range;
 use std::time::Instant;
@@ -527,35 +528,6 @@ fn expand_replacement(
         }
         _ => escaped,
     }
-}
-
-/// Interpret the common backslash escapes in a replacement template:
-/// `\n`, `\t`, `\r` become their control-character equivalents and `\\`
-/// becomes a single backslash. Unknown escapes (e.g. `\q`) are preserved
-/// verbatim so users who didn't mean to type an escape sequence don't get
-/// surprising behaviour. A trailing lone backslash is likewise passed
-/// through unchanged.
-fn interpret_escapes(template: &str) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut chars = template.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('\\') => out.push('\\'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
 }
 
 /// Normalize `$N` capture references to `${N}` so the regex crate doesn't

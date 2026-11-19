@@ -505,6 +505,7 @@ impl Editor {
                 }
                 self.paste()
             }
+            Action::InsertLineBelow => self.insert_line_below()?,
             Action::SelectAll => {
                 // Focused widget Text wins over the buffer's
                 // select-all. SelectAll on the buffer is then

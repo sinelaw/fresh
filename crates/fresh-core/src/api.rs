@@ -1876,7 +1876,7 @@ pub struct EditorStateSnapshot {
     #[ts(skip)]
     pub last_grammar_gen: u64,
     /// The active window's editor mode — a window-scoped plugin mode
-    /// (e.g. "markdown-source"). When set, its keybindings take precedence
+    /// (e.g. flash's label mode). When set, its keybindings take precedence
     /// over the input mode and normal key handling in that window.
     pub editor_mode: Option<String>,
     /// The editor-wide input mode — a modal-editing personality such as vi
@@ -5811,8 +5811,26 @@ pub enum PluginCommand {
     /// one window. When set, the mode's keybindings take precedence over the
     /// editor-wide input mode and normal editing, in that window only.
     SetEditorMode {
-        /// Mode name (e.g., "markdown-source") or None to clear
+        /// Mode name (e.g., flash's "flash") or None to clear
         mode: Option<String>,
+    },
+
+    /// Register (or replace) a plugin's edit rules under `id`. See
+    /// [`EditRuleSet`].
+    RegisterEditRules {
+        /// Plugin that owns the rules; its rules go when it unloads.
+        plugin_name: String,
+        /// The plugin's name for this set; registering the same id again
+        /// replaces it in place.
+        id: String,
+        rules: EditRuleSet,
+    },
+
+    /// Drop a plugin's edit rules: the set named `id`, or every set the
+    /// plugin registered when `id` is `None` (sent when it unloads).
+    UnregisterEditRules {
+        plugin_name: String,
+        id: Option<String>,
     },
 
     /// Set the editor-wide input mode: a modal-editing personality such as
@@ -6715,6 +6733,145 @@ pub enum PluginCommand {
 }
 
 // =============================================================================
+// Edit Rules
+// =============================================================================
+
+/// The key an [`EditRule`] answers: `"newline"` (Enter), `"indent"` (Tab) or
+/// `"dedent"` (Shift+Tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, rename_all = "lowercase")]
+pub enum EditRuleTrigger {
+    /// Enter: the editor's `insert_newline`, also in vi insert mode.
+    Newline,
+    /// Tab: the editor's `insert_tab`, when no cursor has a selection.
+    Indent,
+    /// Shift+Tab: the editor's `dedent_selection`.
+    Dedent,
+}
+
+/// A plain string enum, which the Settings UI offers as a choice (a derived
+/// schema describes each variant in a `oneOf`, which it can't).
+impl schemars::JsonSchema for EditRuleTrigger {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("EditRuleTrigger")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "The key a rule answers: Enter (`newline`), Tab (`indent`) or Shift+Tab (`dedent`).",
+            "type": "string",
+            "enum": ["newline", "indent", "dedent"]
+        })
+    }
+}
+
+/// One rule: when its key is pressed and the cursor's line matches, the
+/// line is rewritten from templates instead of the key's normal edit.
+///
+/// The same format serves a language's `edit_rules` setting
+/// (`languages.<id>.edit_rules` in config.json), a language pack's
+/// `editRules`, and `registerEditRules`. In config.json and a pack's
+/// manifest the keys are snake_case (`replace_before`, `replace_after`);
+/// the plugin API spells those two `replaceBefore` / `replaceAfter`.
+///
+/// The line is split at the cursor into the text **before** it (from the
+/// line start) and the text **after** it (to the line end, without the line
+/// break). `before` and `after` are regular expressions searched in those
+/// two parts (Rust `regex` syntax: no look-around or back-references; use
+/// `^` and `$` to anchor). Both must match for the rule to apply; one left
+/// out matches anything. The result is
+///
+/// ```text
+/// (replace_before ?? before) + (insert ?? "") + CURSOR + (replace_after ?? after)
+/// ```
+///
+/// so `insert` adds text at the cursor and the `replace*` templates rewrite
+/// either part. At least one of the three must be given.
+///
+/// Templates are literal text with these substitutions:
+///
+/// - `$1`, `${1}`: a capture group of `before` by number (`$0` is its whole
+///   match); after `$` every digit counts, as in search & replace (`$12` is
+///   group 12; write `${1}2` for group 1 then `2`). `${name}`: a named
+///   group of `before` or else of `after`. A group that did not take part
+///   in the match is empty.
+/// - `${inc:REF}`: the capture (a `REF` as above, e.g. `${inc:2}`) as a
+///   decimal number plus one, keeping zero-padding (`09` → `10`, `007` → `008`).
+/// - `${cycle:REF:a|b|c}`: the value after the capture's value in the
+///   list, wrapping around (`b` → `c`, `c` → `a`). List the values in the
+///   reverse order to step backwards.
+/// - `${indent}`: one indentation level of the buffer — a tab, or
+///   `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
+/// - `${dedent:REF}`: the capture with one indentation level taken off its
+///   start: a leading tab, or `tab_size` leading spaces.
+/// - `$$`: a literal `$`.
+/// - `\n`: a line break (the two characters backslash and `n`; a real line
+///   break works too), `\t`: a tab, `\r`: a carriage return, `\\`: a
+///   backslash — the escapes search & replace takes. A backslash before
+///   anything else is itself. A line break is written as the buffer's line
+///   ending (`\n` or `\r\n`). In config.json the backslash is escaped
+///   (`"insert": "\\n$1"`); the Settings UI shows and takes `\n` as is.
+///
+/// When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
+/// number, a value not in the list, less than a level of indentation), the
+/// rule does not apply and the next one is tried.
+///
+/// Rules answer Enter, Tab and Shift+Tab, also when a plugin runs them
+/// with `executeAction`. The `insert_line_below` action (vi's `o`: line
+/// end, then Enter) takes only a rule that adds text at the cursor; a rule
+/// that would rewrite the line (clear an empty list item, cycle a bullet)
+/// is passed over for the next one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+#[schemars(extend("x-display-field" = "/on,/before"))]
+#[ts(export, rename_all = "camelCase")]
+pub struct EditRule {
+    /// The key this rule answers.
+    pub on: EditRuleTrigger,
+    /// Pattern searched in the line's text before the cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub before: Option<String>,
+    /// Pattern searched in the line's text after the cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after: Option<String>,
+    /// Template inserted at the cursor; the cursor ends up after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub insert: Option<String>,
+    /// Template that replaces the line's text before the cursor.
+    #[serde(
+        default,
+        alias = "replaceBefore",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, rename = "replaceBefore")]
+    pub replace_before: Option<String>,
+    /// Template that replaces the line's text after the cursor.
+    #[serde(
+        default,
+        alias = "replaceAfter",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, rename = "replaceAfter")]
+    pub replace_after: Option<String>,
+}
+
+/// A plugin's edit rules for some languages; see `registerEditRules`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, rename_all = "camelCase")]
+pub struct EditRuleSet {
+    /// Language ids the rules apply to, as `BufferInfo.language` reports
+    /// them (e.g. `"markdown"`).
+    pub languages: Vec<String>,
+    /// The rules, tried in order; the first that applies wins.
+    pub rules: Vec<EditRule>,
+}
+
+// =============================================================================
 // Language Pack Configuration Types
 // =============================================================================
 
@@ -6758,6 +6915,13 @@ pub struct LanguagePackConfig {
     /// Formatter configuration
     #[serde(default)]
     pub formatter: Option<FormatterPackConfig>,
+
+    /// Edit rules for Enter / Tab / Shift+Tab in this language: the
+    /// language's `edit_rules` setting (see [`EditRule`]). A rule that does
+    /// not compile is refused with an error naming it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub edit_rules: Option<Vec<EditRule>>,
 }
 
 /// Formatter configuration for language packs
@@ -7863,6 +8027,7 @@ mod fromjs_impls {
         LanguagePackConfig,
         LspServerPackConfig,
         ProcessLimitsPackConfig,
+        EditRuleSet,
         CreateTerminalOptions,
         CreateWindowWithTerminalOptions,
         CreatePreparingWindowOptions,
@@ -8095,6 +8260,17 @@ mod fromjs_impls {
             assert_eq!(got.comment_prefix.as_deref(), Some("//"));
             assert_eq!(got.tab_size, Some(7));
             assert_eq!(got.use_tabs, Some(true));
+            assert_eq!(got.edit_rules, None);
+        }
+
+        #[test]
+        fn language_pack_config_decodes_edit_rules() {
+            let got: LanguagePackConfig =
+                eval_as("({editRules: [{on: 'newline', before: '^;', insert: '\\n; '}]})");
+            let rules = got.edit_rules.expect("editRules");
+            assert_eq!(rules[0].on, EditRuleTrigger::Newline);
+            assert_eq!(rules[0].before.as_deref(), Some("^;"));
+            assert_eq!(rules[0].insert.as_deref(), Some("\n; "));
         }
 
         #[test]

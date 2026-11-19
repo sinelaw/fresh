@@ -890,7 +890,7 @@ mod tests {
                 filenames: vec!["CUSTOMBUILD".to_string()],
                 grammar: "Bourne Again Shell (bash)".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -907,6 +907,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         registry.apply_language_config(&languages);

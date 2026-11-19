@@ -236,7 +236,7 @@ impl Editor {
     ///
     /// The first of, in order: the buffer's own mode (virtual buffers), the
     /// active window's editor mode, and the editor-wide input mode. So a
-    /// search-replace panel isn't hijacked by markdown-source or vi, a
+    /// search-replace panel isn't hijacked by a window mode or vi, a
     /// window-scoped mode (flash's labels) outranks vi in its own window
     /// only, and vi holds wherever nothing more specific does.
     ///

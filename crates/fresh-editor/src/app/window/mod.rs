@@ -958,13 +958,18 @@ pub struct Window {
     /// per-window — different windows can prompt independently.
     pub user_dismissed_lsp_languages: std::collections::HashSet<String>,
 
-    /// This window's plugin editor mode (`setEditorMode`, e.g.
-    /// "markdown-source", flash's label mode). Per-window because such
+    /// This window's plugin editor mode (`setEditorMode`, e.g. flash's
+    /// label mode). Per-window because such
     /// modes drive affordances that belong to one window's flow. A modal
     /// editing personality that should hold in every window (vi) is the
     /// editor-wide input mode instead (`Editor::input_mode`), which this
     /// outranks in this window.
     pub editor_mode: Option<String>,
+
+    /// Which edit-rule rewrites Enter / Tab / Shift+Tab take: all, except
+    /// while `insert_line_below` (vi's `o`) runs its Enter, which opens a
+    /// line and must not clear an empty list item. Set around that step only.
+    pub edit_rule_reach: fresh_core::edit_rules::RuleReach,
 
     /// Per-window prompt histories (one ring per `PromptType`). Each
     /// window has its own minibuffer, so each maintains its own
@@ -2678,6 +2683,7 @@ impl Window {
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             editor_mode: None,
+            edit_rule_reach: Default::default(),
             prompt_histories: HashMap::new(),
             pending_close_buffer: None,
             completion_service: crate::services::completion::CompletionService::new(),

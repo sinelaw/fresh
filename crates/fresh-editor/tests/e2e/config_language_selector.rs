@@ -33,7 +33,7 @@ fn make_fish_config() -> Config {
             extensions: vec!["fish".to_string()],
             grammar: "fish".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );

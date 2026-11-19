@@ -156,6 +156,18 @@ pub struct BufferSettings {
     /// Set based on language config; can be changed per-buffer by user
     pub tab_size: usize,
 
+    /// Explicit per-buffer tab size, set by "Set Tab Size". `None` = follow
+    /// `.editorconfig` and the resolved language config. Wins over both, so
+    /// a config reload or a language pack re-resolving the buffer keeps it.
+    pub tab_size_override: Option<usize>,
+
+    /// Whether Enter indents the new line (and a typed closer re-indents
+    /// its line), from the resolved language config. `None` for a buffer
+    /// never given its language's settings (a plugin's virtual buffer, a log
+    /// opened directly): it follows `editor.auto_indent` when the key is
+    /// pressed (see [`Self::auto_indent`]).
+    pub auto_indent: Option<bool>,
+
     /// Whether to auto-close brackets, parentheses, and quotes.
     /// Set based on global + language config.
     pub auto_close: bool,
@@ -185,6 +197,12 @@ pub struct BufferSettings {
     /// config.
     pub indentation_guide: bool,
 
+    /// The language's `edit_rules`, compiled: what Enter / Tab / Shift+Tab
+    /// do on matching lines, tried before the rules plugins register. Set
+    /// from the language config, so a config reload or a language change
+    /// brings the current rules.
+    pub edit_rules: std::sync::Arc<[fresh_core::edit_rules::CompiledEditRule]>,
+
     /// Explicit per-buffer occurrence-highlight override, set by "Toggle
     /// Occurrence Highlight (Current Buffer)". `None` = follow the global
     /// `editor.highlight_occurrences` setting. Persisted in the per-file
@@ -209,12 +227,15 @@ impl Default for BufferSettings {
             whitespace_override: None,
             tab_indicators_override: None,
             tab_size: 4,
+            tab_size_override: None,
+            auto_indent: None,
             auto_close: true,
             auto_surround: true,
             virtual_space: crate::config::VirtualSpaceMode::default(),
             virtual_space_override: None,
             word_characters: String::new(),
             indentation_guide: true,
+            edit_rules: std::sync::Arc::from([]),
             highlight_occurrences_override: None,
             editorconfig: Default::default(),
         }
@@ -232,16 +253,20 @@ impl BufferSettings {
     ///
     /// Explicit per-buffer user overrides are preserved: `virtual_space`
     /// keeps following `virtual_space_override`, `use_tabs` follows
-    /// `use_tabs_override` and `whitespace` follows `whitespace_override`
-    /// when one is set. (The indentation-guide and fold-indicator pins live
+    /// `use_tabs_override`, `tab_size` follows `tab_size_override` and
+    /// `whitespace` follows `whitespace_override` when one is set. (The indentation-guide and fold-indicator pins live
     /// on `BufferViewState` — per split — and are consulted at render time,
     /// so re-stamping the language gate below can't clear them.)
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
-        self.tab_size = self.editorconfig.tab_size.unwrap_or(resolved.tab_size);
+        self.tab_size = self
+            .tab_size_override
+            .or(self.editorconfig.tab_size)
+            .unwrap_or(resolved.tab_size);
         self.use_tabs = self
             .use_tabs_override
             .or(self.editorconfig.use_tabs)
             .unwrap_or(resolved.use_tabs);
+        self.auto_indent = Some(resolved.auto_indent);
         self.auto_close = resolved.auto_close;
         self.auto_surround = resolved.auto_surround;
         self.virtual_space = self
@@ -251,6 +276,13 @@ impl BufferSettings {
         self.whitespace_in_selection = resolved.whitespace_in_selection;
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
+        self.edit_rules = std::sync::Arc::clone(&resolved.edit_rules);
+    }
+
+    /// Whether Enter auto-indents in this buffer: its resolved setting, or
+    /// `editor.auto_indent` (`global`) when it has none.
+    pub fn auto_indent(&self, global: bool) -> bool {
+        self.auto_indent.unwrap_or(global)
     }
 
     /// Drop every explicit per-buffer override, so the buffer goes back to
@@ -264,6 +296,7 @@ impl BufferSettings {
     pub fn clear_user_overrides(&mut self) {
         self.virtual_space_override = None;
         self.use_tabs_override = None;
+        self.tab_size_override = None;
         self.whitespace_override = None;
         self.tab_indicators_override = None;
         self.highlight_occurrences_override = None;
@@ -2043,6 +2076,17 @@ mod tests {
     use super::*;
     use crate::model::event::CursorId;
 
+    /// Buffer settings that never got a language's resolved settings follow
+    /// `editor.auto_indent`; resolved ones carry their own value.
+    #[test]
+    fn auto_indent_follows_the_global_setting_until_resolved() {
+        let mut settings = BufferSettings::default();
+        assert!(!settings.auto_indent(false));
+        assert!(settings.auto_indent(true));
+        settings.auto_indent = Some(false);
+        assert!(!settings.auto_indent(true));
+    }
+
     /// A restored session (or any later `apply_config`) has to land on the
     /// same visibility the master toggle produced when the user switched it
     /// on — otherwise the indicators quietly disappear on the next config
@@ -2092,6 +2136,24 @@ mod tests {
             ),
             "re-applying the stored override must reproduce the toggled state"
         );
+    }
+
+    /// A tab size pinned on the buffer ("Set Tab Size") outlasts the config
+    /// being re-applied, over `.editorconfig` too, until the pins are
+    /// cleared.
+    #[test]
+    fn test_tab_size_override_survives_apply_config() {
+        let config = crate::config::Config::default();
+        let resolved = crate::config::BufferConfig::resolve(&config, None);
+        let mut settings = BufferSettings::default();
+        settings.editorconfig.tab_size = Some(8);
+        settings.tab_size_override = Some(2);
+        settings.apply_config(&resolved);
+        assert_eq!(settings.tab_size, 2);
+
+        settings.clear_user_overrides();
+        settings.apply_config(&resolved);
+        assert_eq!(settings.tab_size, 8, "back to `.editorconfig`'s size");
     }
 
     #[test]

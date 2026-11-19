@@ -298,3 +298,160 @@ const editor = getEditor();
         })
         .unwrap();
 }
+
+/// Open `file`, wait for it to be detected as `language`, then check that its
+/// tab size is `tab_size` and that Enter on its `# one` line continues the
+/// comment (the language's edit rule).
+fn assert_language_settings_apply(
+    harness: &mut EditorTestHarness,
+    language: &str,
+    tab_size: usize,
+    when: &str,
+) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    assert!(
+        harness.config().languages.contains_key(language),
+        "{when}: the config has the language"
+    );
+    assert_eq!(
+        harness.editor().active_state().buffer_settings.tab_size,
+        tab_size,
+        "{when}: the open buffer keeps the language's tab size"
+    );
+    let before = harness.get_buffer_content().unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert!(
+        harness
+            .get_buffer_content()
+            .unwrap()
+            .starts_with("# one\n# \n"),
+        "{when}: the language's edit rule applies: {:?}",
+        harness.get_buffer_content()
+    );
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(harness.get_buffer_content().unwrap(), before);
+}
+
+/// A config reload re-resolves the open buffers' language settings, so the
+/// languages no config file holds must survive it: an installed language
+/// pack's (scanned at startup) and one a plugin registers with
+/// `registerLanguageConfig`. They were dropped, and their buffers fell back
+/// to the global settings and lost their edit rules.
+#[test]
+fn test_config_reload_keeps_pack_and_registered_languages() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(temp_dir.path());
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    let grammars_dir = plugins_dir.join("grammars");
+    fs::create_dir_all(&grammars_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+
+    let grammar = |name: &str| {
+        format!(
+            "%YAML 1.2\n---\nname: {name}\nscope: source.{name}\nfile_extensions: [{name}]\n\ncontexts:\n  main:\n    - match: '#.*$'\n      scope: comment.line.{name}\n"
+        )
+    };
+    let rule = r#"{ "on": "newline", "before": "^(\\s*# ?)\\S", "insert": "\\n$1" }"#;
+
+    // An installed language pack, as the package manager leaves it.
+    let pack_dir = dir_context
+        .config_dir
+        .join("languages")
+        .join("packages")
+        .join("tpack");
+    fs::create_dir_all(pack_dir.join("grammars")).unwrap();
+    fs::write(
+        pack_dir.join("grammars").join("tpack.sublime-syntax"),
+        grammar("tpack"),
+    )
+    .unwrap();
+    fs::write(
+        pack_dir.join("package.json"),
+        format!(
+            r##"{{
+    "name": "tpack",
+    "version": "1.0.0",
+    "description": "test pack",
+    "type": "language",
+    "fresh": {{
+        "grammar": {{ "file": "grammars/tpack.sublime-syntax", "extensions": ["tpack"] }},
+        "language": {{ "commentPrefix": "#", "tabSize": 3, "editRules": [{rule}] }}
+    }}
+}}"##
+        ),
+    )
+    .unwrap();
+
+    // A language a plugin registers.
+    let grammar_path = grammars_dir.join("treg.sublime-syntax");
+    fs::write(&grammar_path, grammar("treg")).unwrap();
+    fs::write(
+        plugins_dir.join("test_treg.ts"),
+        format!(
+            r###"
+const editor = getEditor();
+(async function() {{
+  editor.registerGrammar("treg", "{}", ["treg"]);
+  editor.registerLanguageConfig("treg", {{
+    commentPrefix: "#", blockCommentStart: null, blockCommentEnd: null,
+    useTabs: null, tabSize: 5, autoIndent: null, showWhitespaceTabs: null,
+    formatter: null,
+    editRules: [{rule}],
+  }});
+  await editor.reloadGrammars();
+}})();
+"###,
+            grammar_path.to_string_lossy().replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+
+    let pack_file = project_root.join("a.tpack");
+    let reg_file = project_root.join("b.treg");
+    fs::write(&pack_file, "# one\n").unwrap();
+    fs::write(&reg_file, "# one\n").unwrap();
+
+    // The full grammar registry, so the installed pack's grammar is loaded
+    // from the config directory as it is at startup (the default test
+    // registry is empty).
+    let mut harness = EditorTestHarness::create(
+        100,
+        24,
+        crate::common::harness::HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness
+        .wait_until(|h| h.config().languages.contains_key("treg"))
+        .unwrap();
+
+    harness.open_file(&pack_file).unwrap();
+    harness
+        .wait_until(|h| h.editor().active_state().language == "tpack")
+        .unwrap();
+    assert_language_settings_apply(&mut harness, "tpack", 3, "pack, before the reload");
+    harness.open_file(&reg_file).unwrap();
+    harness
+        .wait_until(|h| h.editor().active_state().language == "treg")
+        .unwrap();
+    assert_language_settings_apply(&mut harness, "treg", 5, "registered, before the reload");
+
+    harness.editor_mut().reload_config();
+
+    assert_language_settings_apply(&mut harness, "treg", 5, "registered, after the reload");
+    harness.open_file(&pack_file).unwrap();
+    assert_eq!(harness.editor().active_state().language, "tpack");
+    assert_language_settings_apply(&mut harness, "tpack", 3, "pack, after the reload");
+}

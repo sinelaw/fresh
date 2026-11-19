@@ -268,7 +268,7 @@ use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
-use crate::types::{LspLanguageConfig, LspServerConfig};
+use crate::types::LspServerConfig;
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
@@ -1029,6 +1029,10 @@ pub struct Editor {
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
 
+    /// Edit rules plugins register for Enter / Tab / Shift+Tab per language;
+    /// windows share it through `WindowResources::edit_rules`.
+    edit_rules: Arc<RwLock<fresh_core::edit_rules::EditRuleRegistry>>,
+
     /// Quick Open registry for unified prompt providers
     quick_open_registry: QuickOpenRegistry,
 
@@ -1066,11 +1070,16 @@ pub struct Editor {
     pub(crate) plugin_schemas:
         std::sync::Arc<std::sync::RwLock<HashMap<String, serde_json::Value>>>,
 
-    /// `setSetting(path, value)` writes, in the order they were made. They
-    /// live only in memory, so a config re-resolved from disk (a Settings
-    /// save, `reloadConfig()`) gets them laid back on top — otherwise the
-    /// next save would silently undo them (#3791).
-    pub(crate) runtime_settings: Vec<(String, serde_json::Value)>,
+    /// `setSetting(path, value)` writes and `registerLanguageConfig`
+    /// languages, in the order they were made. They live only in memory,
+    /// so a config re-resolved from disk (a Settings save,
+    /// `reloadConfig()`) gets them laid back on top — otherwise the next
+    /// save would silently undo them (#3791).
+    pub(crate) runtime_settings: editor_init::RuntimeSettings,
+
+    /// Installed language packs' languages, laid back under the files' own
+    /// on a config re-resolved from disk: see [`SessionLanguages`].
+    pub(crate) session_languages: SessionLanguages,
 
     // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`
     // which lives on `Window`, so the tracker follows the buffers.
@@ -4683,5 +4692,46 @@ mod tests {
             Some(keep),
             "and it is the tab the pane is on, so it is the tab revealed"
         );
+    }
+}
+
+/// Whether a write to one of two JSON pointers touches the other: the same
+/// setting, or one inside the other (a write above a setting replaces it).
+pub(crate) fn pointers_overlap(a: &str, b: &str) -> bool {
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+}
+
+/// The languages of the installed language packs (scanned at startup),
+/// which no config file holds. Without them a reload or a Settings save
+/// re-resolved the open buffers' settings without the language: its edit
+/// rules, tab size, comment prefix and the rest fell back to the global
+/// defaults. (A language a plugin registers with `registerLanguageConfig`
+/// — a pack installed while the editor runs comes this way too — replaces
+/// the language's entry, so it is kept as a runtime setting at
+/// `/languages/<id>` instead: see `RuntimeSettings`.)
+#[derive(Debug, Default)]
+pub(crate) struct SessionLanguages {
+    /// The scanned packs' languages and LSP servers, laid under the files'
+    /// own entries (a language or server the user configured wins), as at
+    /// startup.
+    pub packs: Vec<(String, crate::config::LanguageConfig)>,
+    pub pack_lsp: Vec<(String, crate::types::LspServerConfig)>,
+}
+
+impl SessionLanguages {
+    /// Lay these languages under `config`, freshly resolved from disk.
+    pub(crate) fn reapply(&self, config: &mut crate::config::Config) {
+        for (id, language) in &self.packs {
+            config
+                .languages
+                .entry(id.clone())
+                .or_insert_with(|| language.clone());
+        }
+        for (id, server) in &self.pack_lsp {
+            config
+                .lsp
+                .entry(id.clone())
+                .or_insert_with(|| crate::types::LspLanguageConfig::Multi(vec![server.clone()]));
+        }
     }
 }

@@ -172,7 +172,7 @@ The `lsp` map uses **deep merging with field-level override**:
 // Result: command="rust-analyzer" (from defaults) + your initialization_options
 ```
 
-### Lists (keybindings, on_save actions)
+### Lists (keybindings, on_save actions, edit_rules)
 
 Lists are **replaced entirely** by higher layers - they are not merged or appended.
 
@@ -251,8 +251,7 @@ To add syntax highlighting and LSP support for a new language, open **Settings �
     "mylang": {
       "extensions": ["ml", "myl"],
       "grammar": "mylang",
-      "comment_prefix": "#",
-      "auto_indent": true
+      "comment_prefix": "#"
     }
   },
   "lsp": {
@@ -405,6 +404,62 @@ These patterns are the same mechanism Fresh's built-in languages use, grouped
 into **families** (curly-brace, Python, Ruby-like, …). To add a language to
 Fresh's source tree — or to understand which family yours resembles — see
 [Adding a Built-in Language](/development/adding-languages).
+
+### Edit Rules
+
+A language's `edit_rules` change what Enter, Tab and Shift+Tab do on lines that
+match — continue a comment or a list, indent a blank item. Markdown's
+[list editing](../features/markdown.md#smart-editing) is its built-in
+`edit_rules`; other languages have none until you add them. Each rule names its
+key (`on`: `"newline"`, `"indent"` or `"dedent"`), optional regular expressions
+for the line's text `before` and `after` the cursor, and templates: `insert`
+(text at the cursor), `replace_before` / `replace_after` (rewrite either side).
+Templates take `$1` / `${name}` captures, `${inc:1}` (a number plus one),
+`${cycle:1:a|b|c}` (the next value in a list), `${indent}` / `${dedent:1}` (one
+indentation level added or taken off), `$$` for a `$`, and `\n` for a line
+break (also `\t`, `\r` and `\\`, the escapes search & replace takes; as there,
+`$12` is group 12, so write `${1}2` for group 1 then `2`). Rules are tried in
+order; the first that matches replaces the key's normal edit. The keys are
+snake_case, like the rest of config.json.
+
+This continues `#` comments on Enter in Python:
+
+```json
+{
+  "languages": {
+    "python": {
+      "edit_rules": [
+        { "on": "newline", "before": "^(\\s*# ?)\\S", "insert": "\n$1" }
+      ]
+    }
+  }
+}
+```
+
+In config.json a line break can be written either way: `"\n$1"` (a JSON line
+break) or `"\\n$1"` (the escape). The Settings UI (**Syntax & Languages**, a
+language's **Edit Rules**) shows each rule as `on: before` and its templates on
+one line, with `\n` for each line break, and takes `\n` typed there the same
+way.
+
+Your list replaces the language's built-in one as a whole (like other lists),
+and `"edit_rules": []` turns a language's rules off. A rule that doesn't compile
+(a bad pattern, an unknown template, a misspelled field) is skipped with a
+warning naming the language and the rule's index; the others still apply.
+Rules that plugins register (`registerEditRules`) are tried after the
+configured ones. Rules answer the keys you press (and a plugin's
+`executeAction` of them); the `insert_line_below` action (vi's `o`: line end,
+then Enter) takes only rules that add text at the cursor, so `o` on an empty
+list item continues the list rather than clearing the item. See `EditRule` in the
+[plugin type reference](../plugins/api/types.md) for the full format.
+
+Rules follow the language at the cursor, not just the file's. Inside a code
+block written in another language — a fenced block in Markdown, a `<script>`
+or `<style>` block in Vue — the block's language applies: its `edit_rules`
+(and the rules plugins registered for it) and its `auto_indent`, so Python's
+rules work in a ` ```python ` block and Markdown's list rules don't. A block
+whose language Fresh doesn't know gets no rules at all. The opening and
+closing lines of a block belong to the file's language.
 
 ### Set a Default Language for Unrecognized Files
 

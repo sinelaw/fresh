@@ -938,6 +938,11 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
+        // Open buffers re-resolve their language settings (tab size,
+        // auto_indent, edit_rules, …) as after a Settings save, keeping
+        // per-buffer pins.
+        self.refresh_open_buffer_settings_from_config();
+
         // A reload replaces the display settings too, so the open views owe the
         // same re-resolution a toggle gives them (#3449). Only `editor.reloadConfig()`
         // reaches here — there is no command or menu item for it.

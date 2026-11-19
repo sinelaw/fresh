@@ -72,6 +72,14 @@ fn strip_empty_defaults(value: Value, existing: Option<&Value>) -> Option<Value>
                     if k == "args" && matches!(&v, Value::Array(a) if a.is_empty()) {
                         return Some((k, v));
                     }
+                    // A language's `edit_rules` are kept exactly: `[]` turns
+                    // its rules off, and an empty template (`"replace_before":
+                    // ""`) means something other than a missing one. The
+                    // Settings UI writes a whole language entry on any change,
+                    // so stripping would break the rules on an unrelated save.
+                    if k == "edit_rules" {
+                        return Some((k, v));
+                    }
                     strip_empty_defaults(v, sub_existing).map(|v| (k, v))
                 })
                 .collect();
@@ -323,7 +331,7 @@ fn read_existing_json(path: &Path) -> Result<Value, ConfigError> {
 
 /// Current config schema version.
 /// Increment this when making breaking changes to config structure.
-pub const CURRENT_CONFIG_VERSION: u32 = 3;
+pub const CURRENT_CONFIG_VERSION: u32 = 4;
 
 /// Apply all necessary migrations to bring a config JSON to the current version.
 pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
@@ -338,6 +346,9 @@ pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
     }
     if version < 3 {
         value = migrate_v2_to_v3(value)?;
+    }
+    if version < 4 {
+        value = migrate_v3_to_v4(value)?;
     }
     // Whatever the version says: an old name can come back into a current
     // file (pasted from older docs, or written by an older build sharing the
@@ -408,17 +419,69 @@ fn migrate_v2_to_v3(mut value: Value) -> Result<Value, ConfigError> {
     Ok(value)
 }
 
+/// Migration from v3 to v4: `languages.<id>.auto_indent` now takes effect.
+///
+/// Before v4 it was a bool defaulting to `true` that nothing read, and the
+/// Settings dialog wrote it into every language entry it saved. Read as
+/// written it would now override `editor.auto_indent: false`, so a `true` is
+/// dropped (the language follows `editor.auto_indent`, as before); a `false`
+/// is left alone.
+fn migrate_v3_to_v4(mut value: Value) -> Result<Value, ConfigError> {
+    if let Value::Object(ref mut map) = value {
+        map.insert("version".to_string(), Value::Number(4.into()));
+        if let Some(Value::Object(languages)) = map.get_mut("languages") {
+            for language in languages.values_mut() {
+                if let Value::Object(language) = language {
+                    if language.get("auto_indent") == Some(&Value::Bool(true)) {
+                        language.remove("auto_indent");
+                    }
+                }
+            }
+        }
+    }
+    Ok(value)
+}
+
 /// Rename the top-level keys a later name replaced, keeping the new key's
 /// value when a file has both. Part of the v3 migration, and also applied to
 /// a file before it is written back, so a file still on an old name moves to
 /// the new one the first time any setting is saved — rather than holding the
 /// two side by side.
+///
+/// Also retires the `markdown_source` plugin's entry, whose list editing is
+/// now Markdown's built-in `edit_rules`: a file that disabled the plugin gets
+/// `languages.markdown.edit_rules: []` instead, unless it sets those itself.
 pub fn rename_legacy_keys(value: &mut Value) {
     const RENAMED: [(&str, &str); 1] = [("orchestrator_mode", "auto_attach")];
     if let Value::Object(map) = value {
         for (old, new) in RENAMED {
             if let Some(v) = map.remove(old) {
                 map.entry(new).or_insert(v);
+            }
+        }
+        let markdown_source = map
+            .get_mut("plugins")
+            .and_then(Value::as_object_mut)
+            .and_then(|plugins| plugins.remove("markdown_source"));
+        if markdown_source
+            .as_ref()
+            .and_then(|p| p.get("enabled"))
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            let markdown = map
+                .entry("languages")
+                .or_insert_with(|| Value::Object(Default::default()))
+                .as_object_mut()
+                .map(|languages| {
+                    languages
+                        .entry("markdown")
+                        .or_insert_with(|| Value::Object(Default::default()))
+                });
+            if let Some(Value::Object(markdown)) = markdown {
+                markdown
+                    .entry("edit_rules")
+                    .or_insert_with(|| Value::Array(Vec::new()));
             }
         }
         if let Some(Value::Object(plugins)) = map.get_mut("plugins") {
@@ -714,8 +777,9 @@ impl ConfigResolver {
         // Preserve any manual edits made externally; delta takes precedence.
         // Fail loudly on an unparseable existing file rather than discarding it
         // (which would clobber the user's whole config on write).
-        let mut original = read_existing_json(&path)?;
-        rename_legacy_keys(&mut original);
+        // Brought to the current version first, as it reads on load, so the
+        // file is written at that version (see `migrate_config`).
+        let original = migrate_config(read_existing_json(&path)?)?;
         // Invalid fields the file already has (the loader ignores them with a
         // warning) don't block the save: the rest of the file is merged, and
         // they are put back afterwards for the user to fix.
@@ -752,8 +816,11 @@ impl ConfigResolver {
     ) -> Result<(), ConfigError> {
         let path = self.layer_write_path(layer)?;
 
-        let mut config_value = read_existing_json(&path)?;
-        rename_legacy_keys(&mut config_value);
+        // Brought to the current version first, as it reads on load, so the
+        // file is written at that version: a value a migration would drop on
+        // the next load (an old file's stale entry) is dropped now, and one
+        // the changes write isn't mistaken for it.
+        let mut config_value = migrate_config(read_existing_json(&path)?)?;
 
         // A change that replaces a whole array or object the file had an
         // invalid entry in drops that entry: say so, since the user's file
@@ -2083,9 +2150,14 @@ mod tests {
 
         let user_config_path = resolver.user_config_path();
         std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        // At the current version, so no migration touches the file: a save
+        // brings an older one up to date first, and v1→v2 adds `{remote}` to
+        // a customised `status_bar.left`, as loading it would.
         std::fs::write(
             &user_config_path,
-            "{\n  \"editor\": {\n    \"status_bar\": { \"left\": [] },\n    \"theme\": \"\"\n  }\n}",
+            format!(
+                "{{\n  \"version\": {CURRENT_CONFIG_VERSION},\n  \"editor\": {{\n    \"status_bar\": {{ \"left\": [] }},\n    \"theme\": \"\"\n  }}\n}}"
+            ),
         )
         .unwrap();
 
@@ -2535,6 +2607,177 @@ mod tests {
         );
     }
 
+    /// The `before` pattern of each of a language's resolved edit rules.
+    fn edit_rule_patterns(config: &Config, language: &str) -> Vec<String> {
+        config.languages[language]
+            .edit_rules
+            .iter()
+            .map(|r| r.rule().before.clone().unwrap_or_default())
+            .collect()
+    }
+
+    /// A rule whose regex doesn't compile is caught while the layer loads,
+    /// not at the first key press: only that element goes (reported at its
+    /// index under the language), and the language's other rules and the
+    /// rest of the layer stay.
+    #[test]
+    fn invalid_edit_rule_drops_only_that_rule() {
+        let user = r#"{"theme": "light", "languages": {"python": {
+            "tab_size": 3,
+            "edit_rules": [
+                {"on": "newline", "before": "^(\\s*# ?)\\S", "insert": "\n$1"},
+                {"on": "newline", "before": "(", "insert": ""},
+                {"on": "indent", "insert": "${nope}"},
+                {"on": "newline", "befor": "x", "insert": ""},
+                {"on": "dedent", "before": "^x", "replace_before": ""}
+            ]
+        }}}"#;
+        let mut value: Value = serde_json::from_str(user).unwrap();
+        let removed = prune_invalid_fields(&mut value);
+        let pointers: Vec<&str> = removed.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            pointers,
+            vec![
+                "/languages/python/edit_rules/1",
+                "/languages/python/edit_rules/2",
+                "/languages/python/edit_rules/3"
+            ]
+        );
+        assert!(removed[0].1.contains("before:"), "{:?}", removed[0]);
+
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(&resolver, user, "{}");
+        let config = resolver.resolve().unwrap();
+        assert_eq!(&*config.theme, "light");
+        assert_eq!(config.languages["python"].tab_size, Some(3));
+        assert_eq!(
+            edit_rule_patterns(&config, "python"),
+            vec![r"^(\s*# ?)\S", "^x"]
+        );
+    }
+
+    /// `edit_rules` merges like other arrays: a higher layer's list replaces
+    /// a lower one's, `[]` turns the built-in Markdown rules off, and a layer
+    /// that doesn't set it keeps the one below.
+    #[test]
+    fn edit_rules_layers_replace_whole_lists() {
+        let (_temp, resolver) = create_test_resolver();
+        let builtin = Config::default().languages["markdown"].edit_rules.len();
+        assert!(builtin > 0, "Markdown has list editing by default");
+
+        write_user_and_project(
+            &resolver,
+            r#"{"languages": {"markdown": {"tab_size": 2}}}"#,
+            "{}",
+        );
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.languages["markdown"].edit_rules.len(), builtin);
+
+        write_user_and_project(
+            &resolver,
+            r#"{"languages": {"markdown": {"edit_rules": []}}}"#,
+            "{}",
+        );
+        assert!(resolver.resolve().unwrap().languages["markdown"]
+            .edit_rules
+            .is_empty());
+
+        write_user_and_project(
+            &resolver,
+            r#"{"languages": {"markdown": {"edit_rules": []}}}"#,
+            r#"{"languages": {"markdown": {"edit_rules": [
+                {"on": "newline", "before": "^> ", "insert": "\n> "}
+            ]}}}"#,
+        );
+        let config = resolver.resolve().unwrap();
+        assert_eq!(edit_rule_patterns(&config, "markdown"), vec!["^> "]);
+    }
+
+    /// Saving one field of the Markdown entry in the Settings UI writes the
+    /// whole entry (its rules included) to the user's file. The rules must
+    /// read back exactly: `"replace_before": ""` used to be stripped as an
+    /// empty default, which left the empty-item rule with no template, so it
+    /// was dropped on load and Enter no longer ended a list. A user's `[]`
+    /// (rules off) must survive a save the same way.
+    #[test]
+    fn settings_save_of_a_language_entry_keeps_its_edit_rules() {
+        use fresh_core::api::EditRuleTrigger;
+        use fresh_core::edit_rules::{LineContext, LineEdit};
+
+        let (_temp, resolver) = create_test_resolver();
+        let builtin = Config::default().languages["markdown"].edit_rules.clone();
+
+        // What the Settings dialog saves after toggling Auto Close.
+        let mut markdown = Config::default().languages["markdown"].clone();
+        markdown.auto_close = Some(false);
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "/languages/markdown".to_string(),
+            serde_json::to_value(&markdown).unwrap(),
+        );
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(resolver.user_config_path()).unwrap())
+                .unwrap();
+        assert_eq!(
+            written.pointer("/languages/markdown/edit_rules/0/replace_before"),
+            Some(&Value::String(String::new())),
+            "{written:#}"
+        );
+
+        let config = resolver.resolve().unwrap();
+        let markdown = &config.languages["markdown"];
+        assert_eq!(markdown.auto_close, Some(false));
+        assert_eq!(markdown.edit_rules, builtin, "the rules read back the same");
+        // Enter on an empty item still ends the list.
+        let ctx = LineContext {
+            before: "- ",
+            after: "",
+            indent_unit: "    ",
+            tab_width: 4,
+            line_ending: "\n",
+        };
+        let edit = markdown
+            .edit_rules
+            .iter()
+            .map(|r| r.compiled())
+            .filter(|r| r.trigger() == EditRuleTrigger::Newline)
+            .find_map(|r| r.apply(&ctx));
+        assert_eq!(
+            edit,
+            Some(LineEdit {
+                before: String::new(),
+                after: String::new()
+            })
+        );
+
+        // A second save over that file changes nothing in the rules.
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        assert_eq!(
+            resolver.resolve().unwrap().languages["markdown"].edit_rules,
+            builtin
+        );
+
+        // `[]` written by a save (rules off) is kept, not stripped as empty.
+        let mut off = Config::default().languages["markdown"].clone();
+        off.edit_rules.clear();
+        changes.insert(
+            "/languages/markdown".to_string(),
+            serde_json::to_value(&off).unwrap(),
+        );
+        std::fs::remove_file(resolver.user_config_path()).unwrap();
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        assert!(resolver.resolve().unwrap().languages["markdown"]
+            .edit_rules
+            .is_empty());
+    }
+
     const KEYBINDINGS_WITH_ONE_BAD: &str = r#"{"keybindings": [
         {"key": "a", "modifiers": ["alt"], "action": "move_left"},
         {"key": 5, "action": "move_right"},
@@ -2974,6 +3217,153 @@ mod tests {
         assert_eq!(editor.get("tab_size"), Some(&serde_json::json!(4)));
     }
 
+    /// Effective `auto_indent` of a buffer in `language` under `config`.
+    fn language_auto_indent(config: &Config, language: &str) -> bool {
+        crate::config::BufferConfig::resolve(config, Some(language)).auto_indent
+    }
+
+    /// A pre-v4 file's `languages.<id>.auto_indent: true` (written by the
+    /// old Settings dialog, and never read on Enter) is dropped on load, in
+    /// every layer, so the language follows `editor.auto_indent`; a `false`
+    /// and the entry's other fields stay.
+    #[test]
+    fn migration_v3_to_v4_drops_stale_language_auto_indent() {
+        let v3 = r#"{
+            "version": 3,
+            "editor": { "auto_indent": false },
+            "languages": {
+                "python": { "auto_indent": true, "tab_size": 2 },
+                "rust": { "auto_indent": false }
+            }
+        }"#;
+        for layer in [ConfigLayer::User, ConfigLayer::Project] {
+            let (temp, resolver) = create_test_resolver();
+            let path = resolver.layer_write_path(layer).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, v3).unwrap();
+
+            let config = resolver.resolve().unwrap();
+            assert_eq!(config.languages["python"].auto_indent, None, "{layer:?}");
+            assert!(!language_auto_indent(&config, "python"), "{layer:?}");
+            assert_eq!(config.languages["python"].tab_size, Some(2), "{layer:?}");
+            assert_eq!(
+                config.languages["rust"].auto_indent,
+                Some(false),
+                "{layer:?}"
+            );
+            drop(temp);
+        }
+
+        // A version-less file (written by the old Settings dialog into a
+        // new file) migrates through v4 as well.
+        let migrated = migrate_config(serde_json::json!({
+            "languages": { "python": { "auto_indent": true } }
+        }))
+        .unwrap();
+        assert!(migrated.pointer("/languages/python/auto_indent").is_none());
+        assert_eq!(
+            migrated.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+    }
+
+    /// A v4 file's explicit `auto_indent: true` is the user's choice and
+    /// overrides `editor.auto_indent: false`.
+    #[test]
+    fn migration_v4_keeps_explicit_language_auto_indent() {
+        let (temp, resolver) = create_test_resolver();
+        let path = resolver.user_config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+                "version": 4,
+                "editor": { "auto_indent": false },
+                "languages": { "python": { "auto_indent": true } }
+            }"#,
+        )
+        .unwrap();
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.languages["python"].auto_indent, Some(true));
+        assert!(language_auto_indent(&config, "python"));
+        drop(temp);
+    }
+
+    /// Saving a setting writes the file at the current version, with the
+    /// stale value gone; an explicit `true` saved afterwards (or into a new
+    /// file) then survives the reload.
+    #[test]
+    fn save_upgrades_a_v3_file_and_keeps_a_new_explicit_auto_indent() {
+        let (temp, resolver) = create_test_resolver();
+        let path = resolver.user_config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+                "version": 3,
+                "editor": { "auto_indent": false },
+                "languages": { "python": { "auto_indent": true } }
+            }"#,
+        )
+        .unwrap();
+        let read =
+            || -> Value { serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap() };
+
+        let changes = std::collections::HashMap::from([(
+            "/check_for_updates".to_string(),
+            serde_json::json!(false),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written = read();
+        assert_eq!(
+            written.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION)),
+            "{written}"
+        );
+        assert!(
+            written.pointer("/languages/python/auto_indent").is_none(),
+            "{written}"
+        );
+        assert!(!language_auto_indent(
+            &resolver.resolve().unwrap(),
+            "python"
+        ));
+
+        let changes = std::collections::HashMap::from([(
+            "/languages/python/auto_indent".to_string(),
+            serde_json::json!(true),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        assert!(language_auto_indent(&resolver.resolve().unwrap(), "python"));
+
+        // `save_to_layer` writes the current version too.
+        let mut config = resolver.resolve().unwrap();
+        config.editor.line_numbers = !config.editor.line_numbers;
+        resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
+        assert_eq!(
+            read().get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+        assert!(language_auto_indent(&resolver.resolve().unwrap(), "python"));
+
+        // A new file, too.
+        let project = resolver.layer_write_path(ConfigLayer::Project).unwrap();
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::Project)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&project).unwrap()).unwrap();
+        assert_eq!(
+            written.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+        drop(temp);
+    }
+
     /// `orchestrator_mode` is now `auto_attach`; when a file somehow holds
     /// both, the new name wins — also in a file already at the current
     /// version.
@@ -3121,6 +3511,79 @@ mod tests {
             setting(&resolver.resolve().unwrap()),
             Some(serde_json::json!(true))
         );
+        drop(temp);
+    }
+
+    /// A file that disabled the old `markdown_source` plugin had no list
+    /// editing; it keeps none: the entry is read as Markdown's
+    /// `edit_rules: []` (keeping the rest of the user's Markdown entry, and
+    /// any `edit_rules` it sets), and the first save drops the plugin entry
+    /// and writes the rules setting.
+    #[test]
+    fn a_disabled_markdown_source_plugin_turns_list_editing_off() {
+        let (temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        let write = |text: &str| std::fs::write(&user_config_path, text).unwrap();
+
+        write(
+            r#"{"plugins": {"markdown_source": {"enabled": false}},
+                "languages": {"markdown": {"tab_size": 3}}}"#,
+        );
+        let config = resolver.resolve().unwrap();
+        assert!(config.languages["markdown"].edit_rules.is_empty());
+        assert_eq!(config.languages["markdown"].tab_size, Some(3));
+        assert!(!config.plugins.contains_key("markdown_source"));
+
+        let changes = std::collections::HashMap::from([(
+            "/editor/tab_size".to_string(),
+            serde_json::json!(2),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        assert!(
+            written.pointer("/plugins/markdown_source").is_none(),
+            "{written:#}"
+        );
+        assert_eq!(
+            written.pointer("/languages/markdown/edit_rules"),
+            Some(&serde_json::json!([])),
+            "{written:#}"
+        );
+        assert_eq!(
+            written.pointer("/languages/markdown/tab_size"),
+            Some(&serde_json::json!(3))
+        );
+        assert!(resolver.resolve().unwrap().languages["markdown"]
+            .edit_rules
+            .is_empty());
+
+        // The user's own Markdown rules stand.
+        write(
+            r#"{"plugins": {"markdown_source": {"enabled": false}},
+                "languages": {"markdown": {"edit_rules": [
+                    {"on": "newline", "before": "^> ", "insert": "\\n> "}
+                ]}}}"#,
+        );
+        assert_eq!(
+            resolver.resolve().unwrap().languages["markdown"]
+                .edit_rules
+                .len(),
+            1
+        );
+
+        // An enabled (or merely configured) plugin entry just goes: the
+        // built-in rules apply.
+        write(r#"{"plugins": {"markdown_source": {"enabled": true}}}"#);
+        let config = resolver.resolve().unwrap();
+        assert_eq!(
+            config.languages["markdown"].edit_rules,
+            Config::default().languages["markdown"].edit_rules
+        );
+        assert!(!config.plugins.contains_key("markdown_source"));
         drop(temp);
     }
 

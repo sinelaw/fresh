@@ -1,5 +1,6 @@
 use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
 
+use fresh_core::edit_rules::{CompiledEditRule, ConfiguredEditRule};
 use fresh_i18n::t;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -2590,9 +2591,9 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub comment_prefix: Option<String>,
 
-    /// Auto-indent new lines.
-    #[serde(default = "default_true")]
-    pub auto_indent: bool,
+    /// Auto-indent new lines. `null` uses `editor.auto_indent`.
+    #[serde(default)]
+    pub auto_indent: Option<bool>,
 
     /// Auto-close brackets and quotes. `null` uses `editor.auto_close`.
     #[serde(default)]
@@ -2664,6 +2665,18 @@ pub struct LanguageConfig {
     /// except plain text, where guides are off unless set to `true`.
     #[serde(default)]
     pub indentation_guide: Option<bool>,
+
+    /// What Enter, Tab and Shift+Tab do on lines that match. Rules are tried in
+    /// order; the first that applies replaces the key's normal edit. `[]` turns
+    /// a language's rules off (Markdown's list editing is its default). Each
+    /// rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
+    /// `before` / `after` (the line's text before / after the cursor), and
+    /// templates `insert`, `replace_before`, `replace_after` using `$1`,
+    /// `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}`, `$$`, and
+    /// `\n` for a line break. A rule that doesn't compile is skipped with a
+    /// warning. Rules that plugins register are tried after these.
+    #[serde(default)]
+    pub edit_rules: Vec<ConfiguredEditRule>,
 }
 
 /// Auto-indent rules used when you press Enter. Each is an optional regex (no
@@ -2706,6 +2719,60 @@ impl IndentRulesConfig {
             && self.indent_next_line_pattern.is_none()
             && self.dedent_next_line_pattern.is_none()
             && self.self_close_pattern.is_none()
+    }
+}
+
+/// Markdown's built-in `edit_rules` ([`fresh_core::edit_rules::markdown_list_rules`]),
+/// as the default `languages.markdown` holds them.
+pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
+    fresh_core::edit_rules::markdown_list_rules()
+        .into_iter()
+        .map(|rule| {
+            ConfiguredEditRule::new(rule).expect("the built-in Markdown edit rules compile")
+        })
+        .collect()
+}
+
+/// A language pack's `editRules`, compiled: a rule that doesn't compile is
+/// dropped with a warning naming the language and its index, like an invalid
+/// rule in config.json, and the rest still apply.
+pub fn configured_edit_rules(
+    language: &str,
+    rules: Vec<fresh_core::api::EditRule>,
+) -> Vec<ConfiguredEditRule> {
+    rules
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, rule)| match ConfiguredEditRule::new(rule) {
+            Ok(rule) => Some(rule),
+            Err(e) => {
+                tracing::warn!("language {language:?}: ignoring edit_rules[{i}]: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
+impl LanguageConfig {
+    /// The settings a language pack gives `language`: a plugin's
+    /// `registerLanguageConfig`, or a package manifest's `language` section.
+    /// Its formatter reads from stdin with a 10-second timeout.
+    pub fn from_pack(language: &str, pack: fresh_core::api::LanguagePackConfig) -> Self {
+        Self {
+            comment_prefix: pack.comment_prefix,
+            auto_indent: pack.auto_indent,
+            show_whitespace_tabs: pack.show_whitespace_tabs.unwrap_or(true),
+            use_tabs: pack.use_tabs,
+            tab_size: pack.tab_size,
+            formatter: pack.formatter.map(|f| FormatterConfig {
+                command: f.command,
+                args: f.args,
+                stdin: true,
+                timeout_ms: 10000,
+            }),
+            edit_rules: configured_edit_rules(language, pack.edit_rules.unwrap_or_default()),
+            ..Default::default()
+        }
     }
 }
 
@@ -2796,6 +2863,10 @@ pub struct BufferConfig {
     /// guides are a source-code aid, and undetected/plain-text files rarely
     /// have meaningful indentation nesting.
     pub indentation_guide: bool,
+
+    /// The language's `edit_rules`, compiled: tried by Enter / Tab /
+    /// Shift+Tab before the rules plugins register.
+    pub edit_rules: std::sync::Arc<[CompiledEditRule]>,
 }
 
 impl BufferConfig {
@@ -2829,6 +2900,7 @@ impl BufferConfig {
             textmate_grammar: None,
             word_characters: String::new(),
             indentation_guide: language_id.is_none_or(|id| id != "text"),
+            edit_rules: std::sync::Arc::from([]),
         };
 
         // Apply language-specific overrides if available.
@@ -2872,8 +2944,10 @@ impl BufferConfig {
                 config.wrap_column = lang_config.wrap_column;
             }
 
-            // Auto indent: language override
-            config.auto_indent = lang_config.auto_indent;
+            // Auto indent: language override (only if explicitly set)
+            if let Some(auto_indent) = lang_config.auto_indent {
+                config.auto_indent = auto_indent;
+            }
 
             // Auto close: language override (only if globally enabled)
             if config.auto_close {
@@ -2909,6 +2983,12 @@ impl BufferConfig {
             if let Some(ref wc) = lang_config.word_characters {
                 config.word_characters = wc.clone();
             }
+
+            config.edit_rules = lang_config
+                .edit_rules
+                .iter()
+                .map(|r| r.compiled().clone())
+                .collect();
         }
 
         config
@@ -4083,7 +4163,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "rust".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4105,6 +4185,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4115,7 +4196,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "javascript".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4137,6 +4218,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4147,7 +4229,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "typescript".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4169,6 +4251,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4179,7 +4262,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "python".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4205,6 +4288,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4215,7 +4299,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "gdscript".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4232,6 +4316,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4242,7 +4327,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "c".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4264,6 +4349,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4281,7 +4367,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "cpp".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4303,6 +4389,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4313,7 +4400,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "C#".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4330,6 +4417,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4355,7 +4443,7 @@ impl Config {
                 ],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4372,6 +4460,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4382,7 +4471,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "fish".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4399,6 +4488,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4413,7 +4503,7 @@ impl Config {
                 ],
                 grammar: "Makefile".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4430,6 +4520,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4440,7 +4531,7 @@ impl Config {
                 filenames: vec!["Dockerfile".to_string(), "Containerfile".to_string()],
                 grammar: "dockerfile".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4457,6 +4548,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4467,7 +4559,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "json".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4489,6 +4581,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4527,7 +4620,7 @@ impl Config {
                 ],
                 grammar: "jsonc".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4549,6 +4642,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4559,7 +4653,7 @@ impl Config {
                 filenames: vec!["Cargo.lock".to_string()],
                 grammar: "toml".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4576,6 +4670,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4586,7 +4681,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "yaml".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4608,6 +4703,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4616,6 +4712,11 @@ impl Config {
         // auto-close nor auto-surround is on by default here. Set
         // `languages.markdown.auto_close` / `.auto_surround` to `true` to get
         // the global behaviour back; they are independent of each other.
+        // `auto_indent` is off: the generic indenter (Markdown has no indent
+        // rules) indents after a line ending in `:`, `(`, `[` or `{` ("Steps:"
+        // + Enter would start a code block) and carries indentation across
+        // blank lines. Keeping an indented line's indentation is an edit rule
+        // instead, so `"edit_rules": []` turns that off too.
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
@@ -4623,7 +4724,7 @@ impl Config {
                 filenames: vec!["README".to_string()],
                 grammar: "markdown".to_string(),
                 comment_prefix: None,
-                auto_indent: false,
+                auto_indent: Some(false),
                 auto_close: Some(false),
                 auto_surround: Some(false),
                 textmate_grammar: None,
@@ -4640,6 +4741,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: markdown_list_edit_rules(),
             },
         );
 
@@ -4651,7 +4753,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "go".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4673,6 +4775,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4683,7 +4786,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "zig".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4700,6 +4803,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4715,7 +4819,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "odin".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4732,6 +4836,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4742,7 +4847,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "c3".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4759,6 +4864,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4769,7 +4875,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "slang".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4786,6 +4892,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4812,7 +4919,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "glsl".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4829,6 +4936,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4844,7 +4952,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "hlsl".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4861,6 +4969,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4871,7 +4980,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "wgsl".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4888,6 +4997,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4898,7 +5008,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Metal".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4915,6 +5025,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4925,7 +5036,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "CUDA".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4942,6 +5053,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4952,7 +5064,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "HIP".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4969,6 +5081,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4988,7 +5101,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Fortran".to_string(),
                 comment_prefix: Some("!".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5005,6 +5118,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5015,7 +5129,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "MLIR".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5032,6 +5146,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5042,7 +5157,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "LLVM IR".to_string(),
                 comment_prefix: Some(";".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5059,6 +5174,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5069,7 +5185,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "java".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5086,6 +5202,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5106,7 +5223,7 @@ impl Config {
                 ],
                 grammar: "LaTeX".to_string(),
                 comment_prefix: Some("%".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5123,6 +5240,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5156,7 +5274,7 @@ impl Config {
                 ],
                 grammar: "TeX".to_string(),
                 comment_prefix: Some("%".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5173,6 +5291,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5183,7 +5302,7 @@ impl Config {
                 filenames: vec!["*.bib.in".to_string()],
                 grammar: "BibTeX".to_string(),
                 comment_prefix: Some("%".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5200,6 +5319,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5210,7 +5330,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "BibTeX Style".to_string(),
                 comment_prefix: Some("%".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5227,6 +5347,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5237,7 +5358,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "go".to_string(), // Templ uses Go-like syntax
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5254,6 +5375,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5264,7 +5386,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Smali".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5281,6 +5403,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5291,7 +5414,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Gettext PO".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5308,6 +5431,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5318,7 +5442,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "M4".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5335,6 +5459,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5345,7 +5470,7 @@ impl Config {
                 filenames: vec!["project.pbxproj".to_string()],
                 grammar: "Xcode Project".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5362,6 +5487,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5373,7 +5499,7 @@ impl Config {
                 filenames: vec!["git-rebase-todo".to_string()],
                 grammar: "Git Rebase Todo".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5390,6 +5516,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5405,7 +5532,7 @@ impl Config {
                 ],
                 grammar: "Git Commit Message".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5422,6 +5549,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5437,7 +5565,7 @@ impl Config {
                 ],
                 grammar: "Gitignore".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5454,6 +5582,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5464,7 +5593,7 @@ impl Config {
                 filenames: vec![".gitconfig".to_string(), ".gitmodules".to_string()],
                 grammar: "Git Config".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5481,6 +5610,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5491,7 +5621,7 @@ impl Config {
                 filenames: vec![".gitattributes".to_string()],
                 grammar: "Git Attributes".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5508,6 +5638,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5518,7 +5649,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Typst".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5535,6 +5666,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5549,7 +5681,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Kotlin".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5566,6 +5698,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5576,7 +5709,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Swift".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5593,6 +5726,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5603,7 +5737,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Scala".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5620,6 +5754,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5630,7 +5765,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Dart".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5647,6 +5782,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5657,7 +5793,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Elixir".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5674,6 +5810,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5684,7 +5821,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Erlang".to_string(),
                 comment_prefix: Some("%".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5701,6 +5838,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5711,7 +5849,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Haskell".to_string(),
                 comment_prefix: Some("--".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5728,6 +5866,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5738,7 +5877,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "OCaml".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5755,6 +5894,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5770,7 +5910,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Clojure".to_string(),
                 comment_prefix: Some(";".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5787,6 +5927,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5797,7 +5938,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "R".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5814,6 +5955,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5824,7 +5966,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Julia".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5841,6 +5983,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5851,7 +5994,7 @@ impl Config {
                 filenames: vec!["latexmkrc".to_string(), ".latexmkrc".to_string()],
                 grammar: "Perl".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5868,6 +6011,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5878,7 +6022,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Nim".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5895,6 +6039,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5905,7 +6050,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Gleam".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5922,6 +6067,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5937,7 +6083,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Racket".to_string(),
                 comment_prefix: Some(";".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5954,6 +6100,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5964,7 +6111,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "FSharp".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5981,6 +6128,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5991,7 +6139,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Nix".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6008,6 +6156,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6018,7 +6167,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Nushell".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6035,6 +6184,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6045,7 +6195,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Solidity".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6062,6 +6212,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6072,7 +6223,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Verilog".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6089,6 +6240,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6104,7 +6256,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "SystemVerilog".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6121,6 +6273,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6131,7 +6284,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "VHDL".to_string(),
                 comment_prefix: Some("--".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6148,6 +6301,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6161,7 +6315,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Assembly".to_string(),
                 comment_prefix: Some(";".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6178,6 +6332,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6190,7 +6345,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Assembly".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6207,6 +6362,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6221,7 +6377,7 @@ impl Config {
                 ],
                 grammar: "Ruby".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6238,6 +6394,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6248,7 +6405,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "PHP".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6265,6 +6422,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6275,7 +6433,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Lua".to_string(),
                 comment_prefix: Some("--".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6292,6 +6450,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6302,7 +6461,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "HTML".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6319,6 +6478,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6329,7 +6489,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "CSS".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6346,6 +6506,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6356,7 +6517,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "SQL".to_string(),
                 comment_prefix: Some("--".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6373,6 +6534,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6383,7 +6545,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "GraphQL".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6400,6 +6562,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6410,7 +6573,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Protocol Buffers".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6427,6 +6590,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6437,7 +6601,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Thrift".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6454,6 +6618,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6464,7 +6629,7 @@ impl Config {
                 filenames: vec!["CMakeLists.txt".to_string(), "*.cmake.in".to_string()],
                 grammar: "CMake".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6481,6 +6646,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6491,7 +6657,7 @@ impl Config {
                 filenames: vec!["CMakeCache.txt".to_string(), "cmakecache.txt".to_string()],
                 grammar: "CMake Cache".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6508,6 +6674,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6518,7 +6685,7 @@ impl Config {
                 filenames: vec!["*.pc.in".to_string()],
                 grammar: "pkg-config".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6535,6 +6702,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6545,7 +6713,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Wavefront OBJ".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6562,6 +6730,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6572,7 +6741,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Doxygen".to_string(),
                 comment_prefix: Some("///".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6589,6 +6758,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6599,7 +6769,7 @@ impl Config {
                 filenames: vec!["Doxyfile".to_string(), "Doxyfile.in".to_string()],
                 grammar: "Doxygen Config".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6616,6 +6786,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6626,7 +6797,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Windows Resource Script".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6643,6 +6814,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6653,7 +6825,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "HCL".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6670,6 +6842,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6680,7 +6853,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Vue".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6697,6 +6870,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6707,7 +6881,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Svelte".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6724,6 +6898,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6734,7 +6909,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Astro".to_string(),
                 comment_prefix: None,
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6751,6 +6926,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6763,7 +6939,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "SCSS".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6780,6 +6956,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6790,7 +6967,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "LESS".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6807,6 +6984,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6817,7 +6995,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "PowerShell".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6834,6 +7012,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6844,7 +7023,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "KDL".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6861,6 +7040,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6878,7 +7058,7 @@ impl Config {
                 ],
                 grammar: "Starlark".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6895,6 +7075,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6909,7 +7090,7 @@ impl Config {
                 ],
                 grammar: "Justfile".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6926,6 +7107,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6936,7 +7118,7 @@ impl Config {
                 filenames: vec!["Earthfile".to_string()],
                 grammar: "Earthfile".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6953,6 +7135,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6963,7 +7146,7 @@ impl Config {
                 filenames: vec!["go.mod".to_string(), "go.sum".to_string()],
                 grammar: "Go Module".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6980,6 +7163,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6990,7 +7174,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "V".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -7007,6 +7191,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -7017,7 +7202,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "INI".to_string(),
                 comment_prefix: Some(";".to_string()),
-                auto_indent: false,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -7034,6 +7219,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -7044,7 +7230,7 @@ impl Config {
                 filenames: vec!["hyprland.conf".to_string()],
                 grammar: "Hyprlang".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -7061,6 +7247,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -9157,7 +9344,7 @@ mod tests {
                 filenames: vec![],
                 grammar: "go".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -9179,6 +9366,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -9190,6 +9378,43 @@ mod tests {
         assert!(buffer_config.format_on_save);
         assert!(buffer_config.formatter.is_some());
         assert_eq!(buffer_config.formatter.as_ref().unwrap().command, "gofmt");
+    }
+
+    /// A language's `auto_indent` wins over `editor.auto_indent` either way;
+    /// a language that leaves it unset follows the global (#3815).
+    #[test]
+    fn test_buffer_config_auto_indent_language_override() {
+        let mut config = Config::default();
+        let rust = config.languages.get_mut("rust").unwrap();
+        assert_eq!(rust.auto_indent, None, "built-in rust follows the global");
+
+        config.editor.auto_indent = false;
+        assert!(!BufferConfig::resolve(&config, Some("rust")).auto_indent);
+        config.editor.auto_indent = true;
+        assert!(BufferConfig::resolve(&config, Some("rust")).auto_indent);
+
+        config.languages.get_mut("rust").unwrap().auto_indent = Some(false);
+        assert!(!BufferConfig::resolve(&config, Some("rust")).auto_indent);
+        config.editor.auto_indent = false;
+        config.languages.get_mut("rust").unwrap().auto_indent = Some(true);
+        assert!(BufferConfig::resolve(&config, Some("rust")).auto_indent);
+
+        // Of the built-ins only Markdown turns it off (its edit rules keep
+        // an indented line's indent); the rest follow the global, so a
+        // Makefile recipe line keeps its tab on Enter.
+        config.editor.auto_indent = true;
+        assert!(!BufferConfig::resolve(&config, Some("markdown")).auto_indent);
+        let off: Vec<String> = Config::default()
+            .languages
+            .into_iter()
+            .filter(|(_, l)| l.auto_indent.is_some())
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(off, vec!["markdown"], "built-ins that set auto_indent");
+        assert!(BufferConfig::resolve(&config, Some("makefile")).auto_indent);
+        assert!(BufferConfig::resolve(&config, Some("ini")).auto_indent);
+        config.editor.auto_indent = false;
+        assert!(!BufferConfig::resolve(&config, Some("makefile")).auto_indent);
     }
 
     #[test]
@@ -9330,6 +9555,43 @@ mod tests {
         let rust = BufferConfig::resolve(&config, Some("rust"));
         assert!(rust.auto_close);
         assert!(rust.auto_surround);
+    }
+
+    /// Markdown's list editing is its built-in `edit_rules`; no other
+    /// built-in language has any, and a buffer gets its language's rules.
+    #[test]
+    fn test_markdown_list_editing_is_a_builtin_edit_rules_default() {
+        use fresh_core::api::EditRuleTrigger;
+        use fresh_core::edit_rules::LineContext;
+
+        let config = Config::default();
+        for (id, lang) in &config.languages {
+            assert_eq!(
+                lang.edit_rules.is_empty(),
+                id != "markdown",
+                "only Markdown has built-in edit rules ({id})"
+            );
+        }
+
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md.edit_rules.len(), markdown_list_edit_rules().len());
+        let ctx = LineContext {
+            before: "  9. nine",
+            after: "",
+            indent_unit: "    ",
+            tab_width: 4,
+            line_ending: "\n",
+        };
+        let edit = md
+            .edit_rules
+            .iter()
+            .filter(|r| r.trigger() == EditRuleTrigger::Newline)
+            .find_map(|r| r.apply(&ctx))
+            .unwrap();
+        assert_eq!(edit.before, "  9. nine\n  10. ");
+        assert!(BufferConfig::resolve(&config, Some("rust"))
+            .edit_rules
+            .is_empty());
     }
 
     #[test]

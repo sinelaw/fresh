@@ -5,12 +5,13 @@ use std::fs;
 use std::path::Path;
 
 /// The Markdown plugins the outline needs, into `<project>/plugins`.
+/// Markdown's built-in edit rules change what Enter does in the buffer, and
+/// a focused section's Enter must still reach the row.
 pub fn install_markdown_plugins(project: &Path) {
     let plugins_dir = project.join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "markdown_toc");
     copy_plugin(&plugins_dir, "markdown_compose");
-    copy_plugin(&plugins_dir, "markdown_source");
     copy_plugin_lib(&plugins_dir);
 }
 

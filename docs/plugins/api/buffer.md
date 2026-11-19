@@ -287,6 +287,58 @@ Insert text at cursor position in active buffer
 insertAtCursor(text: string): boolean;
 ```
 
+## Edit Rules
+
+### `registerEditRules`
+
+Register edit rules: what Enter, Tab and Shift+Tab do to the cursor's
+line in buffers of some languages, given as data that the editor
+applies itself, synchronously, as part of the key's own edit.
+
+Each key first offers every cursor (without a selection, alone on its
+line) to the rules for the buffer's language; the first rule that
+applies rewrites the line, and a cursor no rule takes gets the key's
+normal behaviour. The edit is one undo step with the rest of the key,
+it lands before the next key is read, and it applies whatever keymap
+sent the key — vi's insert mode included. Tab with a selection always
+indents the selected lines. See `EditRule` for the rule format.
+
+Rules that never change belong in the language's config instead (its
+`edit_rules` setting, or `editRules` in a language pack). A buffer's
+configured rules are tried first, then the sets plugins registered,
+in registration order.
+
+Registering the same `id` again replaces that set. A plugin's rules
+are dropped when it is unloaded, reloaded or disabled. Throws when the
+set is malformed (a bad pattern, an unknown template function, a
+capture the patterns do not have), naming the rule.
+
+
+@example
+// Continue `#` comments on Enter in shell scripts and Python.
+editor.registerEditRules("comments", &#123;
+  languages: ["bash", "python"],
+  rules: [&#123; on: "newline", before: "^([ \\t]*# ?)\\S", insert: "\n$1" }],
+});
+
+```typescript
+registerEditRules(id: string, rules: EditRuleSet): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | This plugin's name for the set |
+| `rules` | The languages and the rules |
+
+### `unregisterEditRules`
+
+Drop this plugin's edit rule set `id` (see `registerEditRules`).
+Returns whether the plugin had registered one under that id.
+
+```typescript
+unregisterEditRules(id: string): boolean;
+```
+
 ## Opening, Saving & Closing
 
 ### `saveBufferToPath`

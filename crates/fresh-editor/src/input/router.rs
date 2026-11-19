@@ -574,7 +574,7 @@ pub fn mode_key_disposition(
         // A chord is in flight: the mode's ui-fallthrough single-key
         // resolution must not claim the next key before the Normal-
         // context chord it extends has had its say. Without this, a plugin
-        // mode (e.g. markdown-source) made C-x C-c abandon the pending C-x
+        // mode (e.g. a non-read-only window mode) made C-x C-c abandon the pending C-x
         // and run the whitelisted Copy action instead ("Copied line"),
         // breaking every keymap chord whose second key resolves to a
         // ui-fallthrough action. Resolve the in-flight chord against
@@ -1220,7 +1220,7 @@ mod tests {
         });
         let kb = KeybindingResolver::new(&config);
         let view = ModeKeyView {
-            effective_mode: Some("markdown-source".to_string()),
+            effective_mode: Some("test-window-mode".to_string()),
             allows_text_input: false,
             global_mode_read_only: None,
         };

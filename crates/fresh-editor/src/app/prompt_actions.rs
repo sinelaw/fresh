@@ -1155,6 +1155,10 @@ impl Editor {
                     .expect("active window present")
                     .get_mut(&buffer_id)
                 {
+                    // A pin, like the other "(Current Buffer)" settings: a
+                    // config reload re-resolving the buffer keeps it, and
+                    // "Reset Buffer Settings" drops it.
+                    state.buffer_settings.tab_size_override = Some(val);
                     state.buffer_settings.tab_size = val;
                 }
                 self.set_status_message(t!("settings.tab_size_set", value = val).to_string());

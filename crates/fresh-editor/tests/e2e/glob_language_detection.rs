@@ -117,7 +117,7 @@ fn test_glob_star_dot_conf_language_detection() {
             filenames: vec!["*.conf".to_string()],
             grammar: "bash".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -172,7 +172,7 @@ fn test_path_glob_pattern_language_detection() {
             filenames: vec![path_pattern],
             grammar: "bash".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -225,7 +225,7 @@ fn test_exact_filename_priority_over_glob() {
             filenames: vec!["*rc".to_string()],
             grammar: "bash".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -238,7 +238,7 @@ fn test_exact_filename_priority_over_glob() {
             filenames: vec!["lfrc".to_string()],
             grammar: "python".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -347,7 +347,7 @@ fn test_settings_ui_with_language_config_via_command_palette() {
             filenames: vec!["*.conf".to_string(), "*rc".to_string()],
             grammar: "bash".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -550,7 +550,7 @@ fn test_grammar_short_name_alias_resolves_in_config() {
             extensions: vec!["mysh".to_string()],
             grammar: "bash".to_string(), // short alias, NOT the full syntect name
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -602,7 +602,7 @@ fn test_grammar_short_name_cpp_alias() {
             extensions: vec!["mycxx".to_string()],
             grammar: "cpp".to_string(), // short alias for "C++"
             comment_prefix: Some("//".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );
@@ -666,7 +666,7 @@ fn test_custom_language_extension_not_misdetected_as_builtin() {
             extensions: vec!["fish".to_string()],
             grammar: "fish".to_string(),
             comment_prefix: Some("#".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             ..Default::default()
         },
     );

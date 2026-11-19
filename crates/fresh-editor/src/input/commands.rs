@@ -505,6 +505,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.insert_line_below",
+        desc_key: "cmd.insert_line_below_desc",
+        action: || Action::InsertLineBelow,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.duplicate_line",
         desc_key: "cmd.duplicate_line_desc",
         action: || Action::DuplicateLine,

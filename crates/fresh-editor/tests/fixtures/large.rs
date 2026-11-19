@@ -1815,7 +1815,7 @@ impl Editor {
     ///
     /// Buffer-local mode (virtual buffers) takes precedence over the global
     /// editor mode, so that e.g. a search-replace panel isn't hijacked by
-    /// a markdown-source or vi-mode global mode.
+    /// a window mode or vi-mode global mode.
     pub fn effective_mode(&self) -> Option<&str> {
         self.active_buffer_mode().or(self.editor_mode.as_deref())
     }

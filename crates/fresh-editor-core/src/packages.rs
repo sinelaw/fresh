@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::config::{FormatterConfig, LanguageConfig};
+use crate::config::LanguageConfig;
 use crate::primitives::grammar::GrammarSpec;
 use crate::types::{LspServerConfig, ProcessLimits};
 
@@ -186,6 +186,12 @@ pub struct LanguageManifestConfig {
     /// Formatter configuration
     #[serde(default)]
     pub formatter: Option<FormatterManifestConfig>,
+
+    /// Edit rules for Enter / Tab / Shift+Tab: the language's `edit_rules`
+    /// setting, in the same format. A rule that doesn't compile is skipped
+    /// with a warning.
+    #[serde(default)]
+    pub edit_rules: Vec<fresh_core::api::EditRule>,
 }
 
 /// Formatter configuration within a package manifest.
@@ -286,22 +292,32 @@ pub enum ThemeVariant {
 // ── Conversion helpers ──────────────────────────────────────────────────
 
 impl LanguageManifestConfig {
-    /// Convert to the internal `LanguageConfig` used by the editor.
-    pub fn to_language_config(&self) -> LanguageConfig {
-        LanguageConfig {
+    /// The same settings in the form a plugin registers them
+    /// (`registerLanguageConfig`).
+    pub fn to_pack_config(&self) -> fresh_core::api::LanguagePackConfig {
+        fresh_core::api::LanguagePackConfig {
             comment_prefix: self.comment_prefix.clone(),
-            auto_indent: self.auto_indent.unwrap_or(true),
-            show_whitespace_tabs: self.show_whitespace_tabs.unwrap_or(true),
+            block_comment_start: self.block_comment_start.clone(),
+            block_comment_end: self.block_comment_end.clone(),
             use_tabs: self.use_tabs,
             tab_size: self.tab_size,
-            formatter: self.formatter.as_ref().map(|f| FormatterConfig {
-                command: f.command.clone(),
-                args: f.args.clone(),
-                stdin: true,
-                timeout_ms: 10000,
-            }),
-            ..Default::default()
+            auto_indent: self.auto_indent,
+            show_whitespace_tabs: self.show_whitespace_tabs,
+            formatter: self
+                .formatter
+                .as_ref()
+                .map(|f| fresh_core::api::FormatterPackConfig {
+                    command: f.command.clone(),
+                    args: f.args.clone(),
+                }),
+            edit_rules: Some(self.edit_rules.clone()),
         }
+    }
+
+    /// Convert to the internal `LanguageConfig`, as a plugin-registered
+    /// config is ([`LanguageConfig::from_pack`]).
+    pub fn to_language_config(&self, language: &str) -> LanguageConfig {
+        LanguageConfig::from_pack(language, self.to_pack_config())
     }
 }
 
@@ -424,7 +440,7 @@ fn process_language_pack(
     if let Some(lang_config) = &fresh.language {
         result
             .language_configs
-            .push((lang_id.clone(), lang_config.to_language_config()));
+            .push((lang_id.clone(), lang_config.to_language_config(&lang_id)));
     }
 
     // LSP config
@@ -489,7 +505,7 @@ fn process_bundle(pkg_dir: &Path, manifest: &PackageManifest, result: &mut Packa
         if let Some(lang_config) = &lang.language {
             result
                 .language_configs
-                .push((lang.id.clone(), lang_config.to_language_config()));
+                .push((lang.id.clone(), lang_config.to_language_config(&lang.id)));
         }
 
         // LSP config
@@ -585,7 +601,7 @@ mod tests {
         assert_eq!(lang.show_whitespace_tabs, Some(false));
 
         // Verify conversion to LanguageConfig
-        let lang_config = lang.to_language_config();
+        let lang_config = lang.to_language_config("hare");
         assert_eq!(lang_config.comment_prefix, Some("//".to_string()));
         assert_eq!(lang_config.use_tabs, Some(true));
         assert_eq!(lang_config.tab_size, Some(8));
@@ -868,12 +884,63 @@ mod tests {
             ..Default::default()
         };
 
-        let config = lang.to_language_config();
+        let config = lang.to_language_config("x");
         let fmt = config.formatter.unwrap();
         assert_eq!(fmt.command, "prettier");
         assert_eq!(fmt.args, vec!["--stdin-filepath", "$FILE"]);
         assert!(fmt.stdin);
         assert_eq!(fmt.timeout_ms, 10000);
+    }
+
+    /// A pack ships edit rules with no code: they become the language's
+    /// `edit_rules`, and one that doesn't compile is dropped on its own.
+    #[test]
+    fn test_edit_rules_conversion() {
+        let lang: LanguageManifestConfig = serde_json::from_value(serde_json::json!({
+            "editRules": [
+                { "on": "newline", "before": "(", "insert": "" },
+                { "on": "newline", "before": "^(\\s*;+ ?)\\S", "insert": "\n$1" }
+            ]
+        }))
+        .unwrap();
+        let config = lang.to_language_config("lisp");
+        assert_eq!(config.edit_rules.len(), 1, "the bad rule is dropped");
+        assert_eq!(
+            config.edit_rules[0].rule().before.as_deref(),
+            Some("^(\\s*;+ ?)\\S")
+        );
+    }
+
+    /// A manifest's `language` section and a plugin's `registerLanguageConfig`
+    /// with the same fields make the same `LanguageConfig`: the manifest
+    /// maps onto the plugin's form field for field, and both convert through
+    /// `LanguageConfig::from_pack`.
+    #[test]
+    fn test_manifest_converts_like_a_registered_language_config() {
+        let json = serde_json::json!({
+            "commentPrefix": "#",
+            "blockCommentStart": "/*",
+            "blockCommentEnd": "*/",
+            "tabSize": 3,
+            "useTabs": true,
+            "autoIndent": false,
+            "showWhitespaceTabs": false,
+            "formatter": { "command": "fmt", "args": ["-"] },
+            "editRules": [{ "on": "newline", "before": "^#", "insert": "\n# " }]
+        });
+        let manifest: LanguageManifestConfig = serde_json::from_value(json.clone()).unwrap();
+        let pack: fresh_core::api::LanguagePackConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            serde_json::to_value(manifest.to_pack_config()).unwrap(),
+            serde_json::to_value(&pack).unwrap()
+        );
+        let from_manifest = manifest.to_language_config("x");
+        assert_eq!(
+            serde_json::to_value(&from_manifest).unwrap(),
+            serde_json::to_value(LanguageConfig::from_pack("x", pack)).unwrap()
+        );
+        assert_eq!(from_manifest.tab_size, Some(3));
+        assert_eq!(from_manifest.edit_rules.len(), 1);
     }
 
     #[test]

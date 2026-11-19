@@ -203,13 +203,7 @@ impl DetectedLanguage {
     ) -> Option<Self> {
         let entry = registry.find_by_name(name)?;
         let mut detected = Self::from_entry(entry, registry);
-        // Prefer a matching config language ID so LSP lookup works when the
-        // user has declared the language under a different key. `display_name`
-        // keeps the catalog's canonical value ("Bourne Again Shell (bash)"),
-        // not whatever casing the caller typed ("BASH").
-        if let Some(id) = resolve_language_id(&entry.display_name, registry, languages) {
-            detected.name = id;
-        }
+        detected.name = entry_language_id(entry, registry, languages);
         Some(detected)
     }
 
@@ -239,6 +233,32 @@ impl DetectedLanguage {
             .map(|entry| Self::from_entry_for_path(entry, Path::new(filename), registry))
             .unwrap_or_else(Self::plain_text)
     }
+}
+
+/// The language id a catalog entry stands for: the config language whose
+/// grammar it is, else the catalog's own id. Prefers a matching config
+/// language ID so LSP lookup works when the user has declared the language
+/// under a different key. `display_name` keeps the catalog's canonical value
+/// ("Bourne Again Shell (bash)"), not whatever casing a caller typed ("BASH").
+fn entry_language_id(
+    entry: &GrammarEntry,
+    registry: &GrammarRegistry,
+    languages: &HashMap<String, LanguageConfig>,
+) -> String {
+    resolve_language_id(&entry.display_name, registry, languages)
+        .unwrap_or_else(|| entry.language_id.clone())
+}
+
+/// The language id of the grammar named `syntax_name` — the same id
+/// [`DetectedLanguage::from_syntax_name`] gives a buffer set to it, without
+/// building a highlighter. `None` when no catalog entry has that name.
+pub fn language_id_for_syntax_name(
+    syntax_name: &str,
+    registry: &GrammarRegistry,
+    languages: &HashMap<String, LanguageConfig>,
+) -> Option<String> {
+    let entry = registry.find_by_name(syntax_name)?;
+    Some(entry_language_id(entry, registry, languages))
 }
 
 /// Resolve a syntect syntax display name to its canonical config language ID.

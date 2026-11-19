@@ -1,5 +1,8 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
+use crate::input::edit_rules::{
+    apply_edit_rules, cursor_languages, CursorLanguages, LanguageLookup, RegionLanguage,
+};
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
@@ -17,6 +20,8 @@ use crate::primitives::word_navigation::{
     find_word_start_right,
 };
 use crate::state::EditorState;
+use fresh_core::api::EditRuleTrigger;
+use fresh_core::edit_rules::{EditRuleRegistry, RuleReach};
 use std::ops::Range;
 
 /// Direction for block selection movement
@@ -88,9 +93,18 @@ fn next_logical_line(
 fn logical_line_start(buffer: &mut Buffer, pos: usize) -> usize {
     // A cap of the whole buffer cannot run out, so `None` is unreachable here
     // — the search returns 0 once its floor reaches the start of the buffer.
-    buffer
-        .prev_line_start_within(pos, buffer.len())
-        .unwrap_or(0)
+    let len = buffer.len();
+    logical_line_start_within(buffer, pos, len).unwrap_or(0)
+}
+
+/// [`logical_line_start`], looking no further back than `cap` bytes: `None`
+/// when the line starts further back than that.
+pub(crate) fn logical_line_start_within(
+    buffer: &mut Buffer,
+    pos: usize,
+    cap: usize,
+) -> Option<usize> {
+    buffer.prev_line_start_within(pos, cap)
 }
 
 /// The byte `End` rests on for the line containing `pos`: the first byte of the
@@ -102,12 +116,30 @@ fn logical_line_start(buffer: &mut Buffer, pos: usize) -> usize {
 /// of anything — `End` on a file that is one long line landed on byte 100,000,
 /// which is the cap's value and no part of the document's structure.
 fn logical_line_end(buffer: &mut Buffer, pos: usize) -> usize {
+    // A cap of the whole buffer always reaches its end, so `None` is
+    // unreachable here.
     let len = buffer.len();
-    let Some(next_line) = buffer.next_line_start_within(pos, len) else {
-        // No line break between here and the end of the buffer, so the line
-        // ends where the buffer does. Unambiguous only because the cap was the
-        // whole buffer: a smaller one could not tell this from "didn't reach".
-        return len;
+    logical_line_end_within(buffer, pos, len).map_or(len, |(end, _)| end)
+}
+
+/// [`logical_line_end`], looking no further ahead than `cap` bytes, with where
+/// the next line starts: `(end, next)`, `next` being one past the line's
+/// terminator, or the end of the buffer on a line that has none. `None` when
+/// the line runs further than `cap` bytes past `pos`.
+///
+/// A `pos` between the `\r` and `\n` of a CRLF pair is inside the terminator:
+/// the line still ends on the `\r`, so `end` is then before `pos`.
+pub(crate) fn logical_line_end_within(
+    buffer: &mut Buffer,
+    pos: usize,
+    cap: usize,
+) -> Option<(usize, usize)> {
+    let len = buffer.len();
+    let Some(next_line) = buffer.next_line_start_within(pos, cap) else {
+        // No line break within reach. When the reach got to the end of the
+        // buffer the line ends where the buffer does; otherwise the search
+        // can't tell that from "didn't reach".
+        return (len.saturating_sub(pos) <= cap).then_some((len, len));
     };
     // `next_line` is one past the terminator. Step back over it — over both
     // bytes of a CRLF pair — so the caret rests on the terminator's first byte.
@@ -119,7 +151,7 @@ fn logical_line_end(buffer: &mut Buffer, pos: usize) -> usize {
     {
         end -= 1;
     }
-    end
+    Some((end, next_line))
 }
 
 /// What lies above the cursor's line, for a vertical motion.
@@ -468,8 +500,9 @@ fn calculate_leading_whitespace_removal(
     }
 }
 
-/// Add a MoveCursor event to restore cursor position after indent/dedent
-fn add_move_cursor_event(
+/// Add a MoveCursor event that clears the goal column, as indent/dedent and
+/// the edit rules use to put a cursor back after their edits.
+pub(crate) fn add_move_cursor_event(
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     old_position: usize,
@@ -494,11 +527,22 @@ fn add_move_cursor_event(
 fn move_each_cursor(
     cursors: &Cursors,
     events: &mut Vec<Event>,
+    new_pos_fn: impl FnMut(&Cursor) -> usize,
+) {
+    move_cursors(cursors, events, false, new_pos_fn);
+}
+
+/// [`move_each_cursor`]; with `deselect`, every selection collapses,
+/// whatever the cursor's `deselect_on_move` says.
+fn move_cursors(
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    deselect: bool,
     mut new_pos_fn: impl FnMut(&Cursor) -> usize,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
         let new_pos = new_pos_fn(cursor);
-        let new_anchor = if cursor.deselect_on_move {
+        let new_anchor = if deselect || cursor.deselect_on_move {
             None
         } else {
             cursor.anchor
@@ -872,40 +916,87 @@ fn byte_is_code(state: &EditorState, pos: usize) -> bool {
     )
 }
 
-/// Resolve the per-language regex indentation rules for a buffer that has no
-/// tree-sitter grammar.
+/// The regex indentation rules for text in `language` (a config language
+/// id; `None` for none) whose syntax is `syntax`.
 ///
 /// A user-supplied `[languages.<id>.indent]` override is registered under the
-/// buffer's *config* language id (`state.language`), which the syntax-name
-/// lookup can never resolve for a config-only language with no grammar (e.g. a
-/// user-defined filetype). So those explicit overrides are consulted first, by
-/// config id. Everything else defers to the existing syntect-syntax-name path,
-/// which keeps built-in languages on their established tiering (notably letting
-/// curly-brace languages fall through to the C-style bracket scanner). Returns
-/// `None` when no rules exist either way so the caller can fall back.
+/// *config* language id, which the syntax-name lookup can never resolve for a
+/// config-only language with no grammar (e.g. a user-defined filetype). So
+/// those explicit overrides are consulted first, by config id. Everything else
+/// defers to the existing syntect-syntax-name path, which keeps built-in
+/// languages on their established tiering (notably letting curly-brace
+/// languages fall through to the C-style bracket scanner). Returns `None`
+/// when no rules exist either way so the caller can fall back.
+fn indent_rules_for(
+    language: Option<&str>,
+    syntax: Option<&str>,
+) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
+    language
+        .and_then(crate::primitives::indent_rules::user_rule_for_id)
+        .or_else(|| syntax.and_then(crate::primitives::indent_rules::rules_for_syntax_name))
+}
+
+/// [`indent_rules_for`] the buffer's own language and syntax.
 fn buffer_indent_rules(
     state: &EditorState,
 ) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
-    crate::primitives::indent_rules::user_rule_for_id(&state.language).or_else(|| {
-        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)
-    })
+    indent_rules_for(Some(&state.language), state.highlighter.syntax_name())
 }
 
-/// Try the per-language regex indentation rules for a buffer that has no
-/// tree-sitter grammar. Returns `None` when no rules exist for the language so
-/// the caller can fall back.
-fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option<usize> {
-    let rules = buffer_indent_rules(state)?;
-    Some(
-        rules.calculate_indent(&state.buffer, position, tab_size, |b| {
+/// Indent for a new line split at `position` by the tiers below tree-sitter:
+/// `language`'s regex rules (scope-masked), else the language-agnostic
+/// heuristic, or for plain text or no language the prose one (#3165).
+fn non_grammar_indent(
+    state: &EditorState,
+    position: usize,
+    tab_size: usize,
+    language: Option<&str>,
+    syntax: Option<&str>,
+) -> usize {
+    if let Some(rules) = indent_rules_for(language, syntax) {
+        return rules.calculate_indent(&state.buffer, position, tab_size, |b| {
             byte_is_code(state, b)
-        }),
-    )
+        });
+    }
+    match language {
+        // `highlighter.language()` is not the signal for plain text, since a
+        // grammar can still be loading.
+        Some(language) if language != "text" => {
+            crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
+                &state.buffer,
+                position,
+                tab_size,
+            )
+        }
+        _ => crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
+            &state.buffer,
+            position,
+            tab_size,
+        ),
+    }
 }
 
-/// Closing-delimiter variant of [`rules_indent`].
-fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize) -> Option<usize> {
-    let rules = buffer_indent_rules(state)?;
+/// The regex indentation rules at a cursor: its embedded region's language's
+/// when on a region's content line, else the buffer's.
+fn indent_rules_at(
+    state: &EditorState,
+    region: Option<&RegionLanguage>,
+) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
+    match region {
+        Some(region) => indent_rules_for(region.language.as_deref(), region.syntax.as_deref()),
+        None => buffer_indent_rules(state),
+    }
+}
+
+/// Closing-delimiter dedent by the regex rules at the cursor.
+fn rules_dedent(
+    state: &EditorState,
+    region: Option<&RegionLanguage>,
+    position: usize,
+    ch: char,
+    tab_size: usize,
+) -> Option<usize> {
+    let rules = indent_rules_at(state, region)?;
     rules.calculate_dedent_for_delimiter(&state.buffer, position, ch, tab_size, |b| {
         byte_is_code(state, b)
     })
@@ -918,13 +1009,18 @@ fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize)
 /// AST dedent; everything else uses the per-language regex rules tier
 /// (scope-masked, keyed by syntax name), then the generic C-style bracket
 /// scanner for unknown syntaxes.
+///
+/// On a content line of an embedded region (a fenced code block), the
+/// region's language decides, as for Enter: tree-sitter parses only the
+/// buffer's language.
 fn calculate_closing_delimiter_indent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     insert_position: usize,
     ch: char,
     tab_size: usize,
 ) -> usize {
-    if let Some(language) = state.highlighter.language() {
+    if let (None, Some(language)) = (region, state.highlighter.language()) {
         if language.ts_language().is_some() {
             return state
                 .indent_calculator
@@ -939,7 +1035,7 @@ fn calculate_closing_delimiter_indent(
                 .unwrap_or(0);
         }
     }
-    if let Some(indent) = rules_dedent(state, insert_position, ch, tab_size) {
+    if let Some(indent) = rules_dedent(state, region, insert_position, ch, tab_size) {
         return indent;
     }
     // No bundled grammar and no rules: language-agnostic bracket scanner.
@@ -950,6 +1046,15 @@ fn calculate_closing_delimiter_indent(
         tab_size,
     )
     .unwrap_or(0)
+}
+
+/// One level of indentation, as Tab inserts it.
+pub(crate) fn indent_unit(use_tabs: bool, tab_size: usize) -> String {
+    if use_tabs {
+        "\t".to_string()
+    } else {
+        " ".repeat(tab_size)
+    }
 }
 
 /// Convert a visual indent width to actual indent characters.
@@ -975,6 +1080,7 @@ fn indent_to_string(indent_width: usize, use_tabs: bool, tab_size: usize) -> Str
 /// Returns true if handled (caller should continue to next cursor).
 fn handle_skip_over_with_dedent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     ch: char,
@@ -982,7 +1088,8 @@ fn handle_skip_over_with_dedent(
     line_start: usize,
     tab_size: usize,
 ) -> bool {
-    let correct_indent = calculate_closing_delimiter_indent(state, insert_position, ch, tab_size);
+    let correct_indent =
+        calculate_closing_delimiter_indent(state, region, insert_position, ch, tab_size);
     let use_tabs = state.buffer_settings.use_tabs;
 
     // Calculate current visual indent width (tabs count as tab_size columns)
@@ -1045,33 +1152,35 @@ fn handle_skip_over(events: &mut Vec<Event>, cursor_id: CursorId, insert_positio
     });
 }
 
-/// Rebase the skip-over `MoveCursor`s in `events` (at the given indices)
-/// onto the buffer as it will be once every *other* cursor's edit in the
-/// same list has applied.
+/// Rebase explicit `MoveCursor`s onto edits *other* cursors make below them
+/// in the same event list.
 ///
-/// A skip-over owns no edit — its whole effect is the move — and
-/// [`handle_skip_over`] emits it in pre-edit coordinates
-/// (`insert_position + 1`). The multi-cursor applier
-/// (`apply_events_as_bulk_edit`) shifts a cursor's `MoveCursor` for other
-/// cursors' edits only when that cursor also carries an `Insert` at its own
-/// position (the auto-close shape); a move from a cursor with no such
-/// insert is taken as already post-edit, because that is what indent and
-/// the other bulk emitters produce. So with `xx` above `a()`, both cursors
-/// at end of line, typing `)` inserted one at the first cursor and left the
-/// second one byte short of stepping over its `)` — the `;` typed next went
-/// inside the parens (#3166). Bringing the skip-over moves into post-edit
-/// coordinates here, at the emitter, keeps the applier's one rule true.
+/// The multi-cursor applier (`apply_events_as_bulk_edit`) applies every
+/// `Insert`/`Delete` against the pre-key buffer, then shifts a cursor's
+/// `MoveCursor` for the other edits below it only when that cursor also
+/// carries an `Insert` at its own position (the auto-close shape); any other
+/// move is taken as already post-edit, as indent and the other bulk emitters
+/// produce. Emitters whose moves ignore edits made elsewhere in the list
+/// bring them into post-edit coordinates here, keeping that rule true:
 ///
-/// Only edits by *other* cursors at strictly lower positions count. A
-/// cursor's own edits are already folded into the move it emits: the
-/// dedent variant deletes and re-inserts its own line's indent and moves
-/// relative to the result, and a selection is deleted at the position the
-/// move starts from, not below it.
-fn shift_skip_over_moves(events: &mut [Event], skip_over_moves: &[usize]) {
-    if skip_over_moves.is_empty() {
-        return;
-    }
-    let edits: Vec<(CursorId, usize, isize)> = events
+/// * the skip-over moves of [`insert_char_events`], which own no edit (a
+///   second cursor stopped one byte short of its `)`, #3166);
+/// * the normal Enter / Shift+Tab moves of the cursors no edit rule handled
+///   ([`apply_edit_rules`]).
+///
+/// `events[edits]` and `events[moves]` are both in pre-key coordinates. Each
+/// move is keyed on `origin(cursor, old_position)` and shifted (target and
+/// anchor) by the net length of *other* cursors' edits strictly below it. A
+/// cursor's own edits are already folded into its move (the dedent skip-over
+/// re-inserts its own indent; a selection is deleted where the move starts).
+/// A move whose cursor has an `Insert` at its origin is left to the applier.
+fn rebase_moves_onto_edits(
+    events: &mut [Event],
+    edits: Range<usize>,
+    moves: impl IntoIterator<Item = usize>,
+    origin: impl Fn(CursorId, usize) -> usize,
+) {
+    let edits: Vec<(CursorId, usize, isize)> = events[edits]
         .iter()
         .filter_map(|event| match event {
             Event::Insert {
@@ -1085,29 +1194,59 @@ fn shift_skip_over_moves(events: &mut [Event], skip_over_moves: &[usize]) {
             _ => None,
         })
         .collect();
-    for &index in skip_over_moves {
+    if edits.is_empty() {
+        return;
+    }
+    for index in moves {
         let Event::MoveCursor {
             cursor_id,
             old_position,
-            new_position,
             ..
-        } = &mut events[index]
+        } = events[index]
         else {
             continue;
         };
+        let origin = origin(cursor_id, old_position);
+        let applier_shifts = events.iter().any(|e| {
+            matches!(e, Event::Insert { position, cursor_id: c, .. }
+                if *c == cursor_id && *position == origin)
+        });
+        if applier_shifts {
+            continue;
+        }
         let shift: isize = edits
             .iter()
-            .filter(|(id, position, _)| *id != *cursor_id && *position < *old_position)
+            .filter(|(id, position, _)| *id != cursor_id && *position < origin)
             .map(|(_, _, delta)| delta)
             .sum();
-        *new_position = (*new_position as isize + shift).max(0) as usize;
+        if let Event::MoveCursor {
+            new_position,
+            new_anchor,
+            ..
+        } = &mut events[index]
+        {
+            *new_position = new_position.saturating_add_signed(shift);
+            *new_anchor = new_anchor.map(|a| a.saturating_add_signed(shift));
+        }
     }
+}
+
+/// Whether the text before `insert_position` on the line starting at
+/// `line_start` begins with indentation: the only lines a typed closing
+/// delimiter or keyword re-indents.
+fn starts_indented(state: &mut EditorState, line_start: usize, insert_position: usize) -> bool {
+    insert_position > line_start
+        && state
+            .buffer
+            .get_text_range_mut(line_start, 1)
+            .is_ok_and(|b| matches!(b.first(), Some(b' ' | b'\t')))
 }
 
 /// Handle auto-dedent: when typing a closing delimiter on a line with only spaces,
 /// fix the indentation and insert the delimiter.
 fn handle_auto_dedent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     ch: char,
@@ -1115,7 +1254,8 @@ fn handle_auto_dedent(
     line_start: usize,
     tab_size: usize,
 ) {
-    let correct_indent = calculate_closing_delimiter_indent(state, insert_position, ch, tab_size);
+    let correct_indent =
+        calculate_closing_delimiter_indent(state, region, insert_position, ch, tab_size);
 
     // Delete the incorrect spacing
     let spaces_to_delete = insert_position - line_start;
@@ -1163,6 +1303,7 @@ fn handle_auto_dedent(
 #[allow(clippy::too_many_arguments)]
 fn handle_keyword_dedent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     ch: char,
@@ -1182,7 +1323,7 @@ fn handle_keyword_dedent(
     if !matches!(char_after, None | Some(b'\n') | Some(b'\r')) {
         return false;
     }
-    let Some(rules) = buffer_indent_rules(state) else {
+    let Some(rules) = indent_rules_at(state, region) else {
         return false;
     };
 
@@ -1413,7 +1554,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 /// `apply_events_as_bulk_edit`, which applies every edit against the
 /// original buffer and shifts cursor targets itself: a skip-over's
 /// `MoveCursor` is rebased onto the other cursors' edits before it leaves
-/// here (see [`shift_skip_over_moves`]), while an auto-close's is left
+/// here (see [`rebase_moves_onto_edits`]), while an auto-close's is left
 /// pre-edit for that applier to shift. Feeding the same list to
 /// `EditorState::apply` one event at a time would shift the skip-over
 /// moves a second time. Every multi-cursor dispatcher already routes lists
@@ -1430,6 +1571,7 @@ fn insert_char_events(
     auto_close: bool,
     auto_surround: bool,
     block_pads: &[(CursorId, usize)],
+    language_lookup: Option<&LanguageLookup<'_>>,
 ) {
     let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
     let auto_close_char = get_auto_close_char(ch, auto_close, &state.language);
@@ -1442,7 +1584,21 @@ fn insert_char_events(
     // they are rebased onto the other cursors' edits after the loop.
     let mut skip_over_moves: Vec<usize> = Vec::new();
 
+    // A fenced code block re-indents a typed closer or keyword by its own
+    // language. Only indented lines re-indent, so look the languages up
+    // (once, for all cursors) only when some cursor's line is indented.
+    let languages = if cursor_data
+        .iter()
+        .any(|d| starts_indented(state, d.line_start, d.insert_position))
+    {
+        cursor_languages(state, cursors, language_lookup)
+    } else {
+        CursorLanguages::default()
+    };
+
     for data in cursor_data {
+        let region = languages.get(data.cursor_id);
+        let indent_here = region.map_or(auto_indent, |r| r.auto_indent);
         // Virtual space: materialize the gap between the buffer/line content
         // end and the cursor, then the typed character — as one Insert so a
         // single undo removes both. Auto-close/skip-over don't apply out in
@@ -1525,6 +1681,7 @@ fn insert_char_events(
                         && data.insert_position > data.line_start
                         && handle_skip_over_with_dedent(
                             state,
+                            region,
                             events,
                             data.cursor_id,
                             ch,
@@ -1546,12 +1703,13 @@ fn insert_char_events(
 
         // Try auto-dedent for closing delimiters
         if is_closing_delimiter
-            && auto_indent
+            && indent_here
             && data.only_spaces
             && data.insert_position > data.line_start
         {
             handle_auto_dedent(
                 state,
+                region,
                 events,
                 data.cursor_id,
                 ch,
@@ -1565,11 +1723,12 @@ fn insert_char_events(
         // Electric keyword dedent (issue #2582): typing the char that
         // completes a dedent-trigger line (`else:`, `end`, custom `CLOSE`, …)
         // re-indents the line the same way `}` does above.
-        if auto_indent
+        if indent_here
             && !is_closing_delimiter
             && !had_selection
             && handle_keyword_dedent(
                 state,
+                region,
                 events,
                 data.cursor_id,
                 ch,
@@ -1602,7 +1761,10 @@ fn insert_char_events(
         });
     }
 
-    shift_skip_over_moves(events, &skip_over_moves);
+    let len = events.len();
+    rebase_moves_onto_edits(events, 0..len, skip_over_moves, |_, old_position| {
+        old_position
+    });
 }
 
 /// Calculate the maximum valid cursor position in the buffer.
@@ -1658,6 +1820,7 @@ fn transform_case<F>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_insert_newline(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -1666,6 +1829,7 @@ fn handle_insert_newline(
     auto_indent: bool,
     auto_close: bool,
     _estimated_line_length: usize,
+    languages: &CursorLanguages,
 ) {
     // Sort cursors by position (reverse order) to avoid position shifts
     let mut cursor_vec: Vec<_> = cursors.iter().collect();
@@ -1753,6 +1917,10 @@ fn handle_insert_newline(
         // After bracket expansion, cursor should be at end of cursor line, not at end of closing bracket line
         let mut cursor_line_end_position: Option<usize> = None;
 
+        // In an embedded region (a fenced code block), its language decides.
+        let region = languages.get(cursor_id);
+        let auto_indent = region.map_or(auto_indent, |r| r.auto_indent);
+
         if auto_indent {
             let use_tabs = state.buffer_settings.use_tabs;
             // Tiering: a language with a *bundled* tree-sitter grammar (Go,
@@ -1762,36 +1930,28 @@ fn handle_insert_newline(
             // tier (keyed by syntax name, with comment/string scope masking),
             // falling back to the language-agnostic heuristic for unknown
             // syntaxes (.txt, …). `IndentCalculator` itself also falls back to
-            // the rules tier when a language has no grammar.
-            let indent_width_opt = match state.highlighter.language() {
-                Some(language) if language.ts_language().is_some() => state
+            // the rules tier when a language has no grammar. A cursor in an
+            // embedded region skips the tree-sitter tier, which parses the
+            // whole buffer as one language, and indents by the region's rules.
+            let indent_width_opt = match (region, state.highlighter.language()) {
+                (Some(region), _) => Some(non_grammar_indent(
+                    state,
+                    indent_position,
+                    tab_size,
+                    region.language.as_deref(),
+                    region.syntax.as_deref(),
+                )),
+                (None, Some(language)) if language.ts_language().is_some() => state
                     .indent_calculator
                     .borrow_mut()
                     .calculate_indent(&state.buffer, indent_position, language, tab_size),
-                _ => {
-                    if let Some(w) = rules_indent(state, indent_position, tab_size) {
-                        Some(w)
-                    } else if state.language != "text" {
-                        // Only plain text treats a blank line as prose
-                        // (#3165); `highlighter.language()` is not the
-                        // signal, since a grammar can still be loading.
-                        Some(
-                            crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
-                                &state.buffer,
-                                indent_position,
-                                tab_size,
-                            ),
-                        )
-                    } else {
-                        Some(
-                            crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
-                                &state.buffer,
-                                indent_position,
-                                tab_size,
-                            ),
-                        )
-                    }
-                }
+                _ => Some(non_grammar_indent(
+                    state,
+                    indent_position,
+                    tab_size,
+                    Some(&state.language),
+                    state.highlighter.syntax_name(),
+                )),
             };
             if let Some(indent_width) = indent_width_opt {
                 let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
@@ -1979,11 +2139,7 @@ fn handle_insert_tab(
     estimated_line_length: usize,
 ) {
     // Insert a tab character or spaces based on language config
-    let tab_str = if state.buffer_settings.use_tabs {
-        "\t".to_string()
-    } else {
-        " ".repeat(tab_size)
-    };
+    let tab_str = indent_unit(state.buffer_settings.use_tabs, tab_size);
 
     // Check if any cursor has a selection
     let has_selection = cursors
@@ -2770,6 +2926,26 @@ fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &m
     }
 }
 
+/// The cursor moves that start `Action::InsertLineBelow`: each cursor to the
+/// end of its logical line (not a wrapped row's end), dropping any selection.
+/// The newline that follows is a separate step, as Enter, so its edits are
+/// computed from the cursors where they then are.
+pub(crate) fn line_end_moves(state: &mut EditorState, cursors: &Cursors) -> Vec<Event> {
+    if !state.show_cursors {
+        return Vec::new();
+    }
+    let mut events = Vec::new();
+    move_cursors(cursors, &mut events, true, |c| {
+        logical_line_end(&mut state.buffer, c.position)
+    });
+    // A cursor already at its line's end, with no selection, stays put.
+    events.retain(|e| {
+        !matches!(e, Event::MoveCursor { old_position, new_position, old_anchor: None, .. }
+            if old_position == new_position)
+    });
+    events
+}
+
 /// `Action::OpenLine` — insert a newline at each cursor without advancing it
 /// (Emacs C-o: "open a blank line after the cursor"). The follow-up
 /// `MoveCursor` cancels the advance `apply_insert` would otherwise make,
@@ -3180,6 +3356,9 @@ fn handle_duplicate_line(
 /// # Returns
 /// * `Some(Vec<Event>)` - Events to apply for this action
 /// * `None` - If the action doesn't generate events (like Quit, Save, etc.)
+///
+/// Applies the buffer's configured edit rules (its language's `edit_rules`)
+/// but none that plugins registered; see [`action_to_events_with_edit_rules`].
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events(
     state: &mut EditorState,
@@ -3191,6 +3370,42 @@ pub fn action_to_events(
     auto_surround: bool,
     estimated_line_length: usize,
     viewport_height: u16,
+) -> Option<Vec<Event>> {
+    action_to_events_with_edit_rules(
+        state,
+        cursors,
+        action,
+        tab_size,
+        auto_indent,
+        auto_close,
+        auto_surround,
+        estimated_line_length,
+        viewport_height,
+        None,
+        RuleReach::Line,
+        None,
+    )
+}
+
+/// [`action_to_events`], with the plugin-registered edit rules too (see
+/// [`crate::input::edit_rules`]); `rule_reach` says which of the rules'
+/// rewrites the key takes. With a `language_lookup`, a cursor on a content
+/// line of an embedded region (a fenced code block) uses that region's
+/// language's edit rules, `auto_indent` and indentation rules.
+#[allow(clippy::too_many_arguments)]
+pub fn action_to_events_with_edit_rules(
+    state: &mut EditorState,
+    cursors: &mut Cursors,
+    action: Action,
+    tab_size: usize,
+    auto_indent: bool,
+    auto_close: bool,
+    auto_surround: bool,
+    estimated_line_length: usize,
+    viewport_height: u16,
+    edit_rules: Option<&EditRuleRegistry>,
+    rule_reach: RuleReach,
+    language_lookup: Option<&LanguageLookup<'_>>,
 ) -> Option<Vec<Event>> {
     // For virtual buffers with hidden cursors, ignore movement and editing actions
     if !state.show_cursors && action.is_movement_or_editing() {
@@ -3228,27 +3443,100 @@ pub fn action_to_events(
                 auto_close,
                 auto_surround,
                 &block_pads,
+                language_lookup,
             );
         }
 
+        // Enter, Shift+Tab and Tab first offer each cursor to the buffer's
+        // edit rules (its language's config, then plugins'); the cursors no
+        // rule handles get the key's normal edit, in the same event list
+        // (one undo step).
         Action::InsertNewline => {
-            handle_insert_newline(
+            let languages = cursor_languages(state, cursors, language_lookup);
+            let rules_from = events.len();
+            let ruled = apply_edit_rules(
                 state,
                 cursors,
                 &mut events,
-                tab_size,
-                auto_indent,
-                auto_close,
-                estimated_line_length,
+                EditRuleTrigger::Newline,
+                edit_rules,
+                rule_reach,
+                &languages,
             );
+            let rest = match &ruled {
+                Some(r) => r.rest.as_ref(),
+                None => Some(&*cursors),
+            };
+            if let Some(rest) = rest {
+                let from = events.len();
+                handle_insert_newline(
+                    state,
+                    rest,
+                    &mut events,
+                    tab_size,
+                    auto_indent,
+                    auto_close,
+                    estimated_line_length,
+                    &languages,
+                );
+                let to = events.len();
+                rebase_moves_onto_edits(&mut events, rules_from..from, from..to, |id, old| {
+                    rest.get(id).map_or(old, |c| c.position)
+                });
+            }
         }
 
         Action::DedentSelection => {
-            handle_dedent_selection(state, cursors, &mut events, tab_size, estimated_line_length);
+            let languages = cursor_languages(state, cursors, language_lookup);
+            let rules_from = events.len();
+            let ruled = apply_edit_rules(
+                state,
+                cursors,
+                &mut events,
+                EditRuleTrigger::Dedent,
+                edit_rules,
+                rule_reach,
+                &languages,
+            );
+            let rest = match &ruled {
+                Some(r) => r.rest.as_ref(),
+                None => Some(&*cursors),
+            };
+            if let Some(rest) = rest {
+                let from = events.len();
+                handle_dedent_selection(state, rest, &mut events, tab_size, estimated_line_length);
+                let to = events.len();
+                rebase_moves_onto_edits(&mut events, rules_from..from, from..to, |id, old| {
+                    rest.get(id).map_or(old, |c| c.position)
+                });
+            }
         }
 
         Action::InsertTab => {
-            handle_insert_tab(state, cursors, &mut events, tab_size, estimated_line_length);
+            // A selection anywhere makes Tab indent the selected lines
+            // (#3666); rules only stand in for Tab's plain insert.
+            let any_selection = cursors.iter().any(|(_, c)| c.selection_range().is_some());
+            let ruled = if any_selection {
+                None
+            } else {
+                let languages = cursor_languages(state, cursors, language_lookup);
+                apply_edit_rules(
+                    state,
+                    cursors,
+                    &mut events,
+                    EditRuleTrigger::Indent,
+                    edit_rules,
+                    rule_reach,
+                    &languages,
+                )
+            };
+            let rest = match &ruled {
+                Some(r) => r.rest.as_ref(),
+                None => Some(&*cursors),
+            };
+            if let Some(rest) = rest {
+                handle_insert_tab(state, rest, &mut events, tab_size, estimated_line_length);
+            }
         }
 
         // Basic movement - move each cursor
@@ -4057,6 +4345,10 @@ pub fn action_to_events(
         | Action::WorkspaceTrustRestrict
         | Action::WorkspaceTrustBlock
         | Action::WorkspaceTrustPrompt => return None,
+
+        // Two steps, each applied before the next is computed: the Editor
+        // runs it (`Editor::insert_line_below`), with [`line_end_moves`].
+        Action::InsertLineBelow => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {
@@ -7182,6 +7474,142 @@ mod tests {
         let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nelse");
         type_char(&mut state, &mut cursors, ':');
         assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
+    }
+
+    /// The capped line searches answer as the uncapped ones do when the line
+    /// is within reach, `None` when it is not, and put a CRLF line's end on
+    /// its `\r` — also for a position between the `\r` and the `\n`.
+    #[test]
+    fn logical_line_within_cap() {
+        let mut buffer = Buffer::from_bytes(b"ab\r\ncdef\r\ngh".to_vec(), test_fs());
+        // "cdef" spans 4..8, its CRLF 8..10; "gh" (no terminator) 10..12.
+        assert_eq!(logical_line_start_within(&mut buffer, 6, 8), Some(4));
+        assert_eq!(logical_line_end_within(&mut buffer, 6, 8), Some((8, 10)));
+        assert_eq!(logical_line_start_within(&mut buffer, 6, 1), None);
+        assert_eq!(logical_line_end_within(&mut buffer, 6, 1), None);
+        // The last line: reaching the buffer's end is an answer.
+        assert_eq!(logical_line_end_within(&mut buffer, 11, 1), Some((12, 12)));
+        assert_eq!(logical_line_end_within(&mut buffer, 12, 0), Some((12, 12)));
+        // Between `\r` and `\n`: the line still ends on the `\r`.
+        assert_eq!(logical_line_end_within(&mut buffer, 9, 8), Some((8, 10)));
+        assert_eq!(logical_line_end(&mut buffer, 9), 8);
+        assert_eq!(logical_line_end(&mut buffer, 0), 2);
+        assert_eq!(logical_line_start(&mut buffer, 11), 10);
+    }
+
+    /// `rebase_moves_onto_edits` shifts a move (target and anchor) by the
+    /// net length of the other cursors' edits below where its cursor was,
+    /// among the events it is told to count, and leaves alone a move whose
+    /// cursor has an insert at that position (the applier shifts that one).
+    #[test]
+    fn rebase_moves_onto_edits_counts_other_cursors_edits_below() {
+        let mv = |id: usize, old: usize, new: usize, anchor: Option<usize>| Event::MoveCursor {
+            cursor_id: CursorId(id),
+            old_position: old,
+            new_position: new,
+            old_anchor: None,
+            new_anchor: anchor,
+            old_sticky_column: None,
+            new_sticky_column: None,
+        };
+        let ins = |id: usize, at: usize, text: &str| Event::Insert {
+            position: at,
+            text: text.to_string().into(),
+            cursor_id: CursorId(id),
+        };
+        let del = |id: usize, range: Range<usize>| Event::Delete {
+            deleted_text: "x".repeat(range.len()).into(),
+            range,
+            cursor_id: CursorId(id),
+        };
+        let target = |e: &Event| match e {
+            Event::MoveCursor {
+                new_position,
+                new_anchor,
+                ..
+            } => (*new_position, *new_anchor),
+            _ => unreachable!(),
+        };
+
+        let mut events = vec![
+            // The edits counted: cursor 1's, below cursor 2 and 3.
+            ins(1, 2, "abc"),
+            del(1, 5..6),
+            // Cursor 2's own edit and an edit past its origin: not counted.
+            ins(2, 8, "zz"),
+            ins(3, 40, "qqqq"),
+            // The moves.
+            mv(2, 20, 21, Some(19)),
+            mv(3, 30, 31, None),
+            mv(4, 50, 50, None),
+            // Outside the counted range: not an edit to rebase onto.
+            ins(5, 0, "nope"),
+            ins(4, 50, "!"),
+        ];
+        rebase_moves_onto_edits(&mut events, 0..4, 4..7, |_, old| old);
+        assert_eq!(target(&events[4]), (23, Some(21)), "+3 -1 below 20");
+        assert_eq!(target(&events[5]), (35, None), "+3 -1 +2 below 30");
+        assert_eq!(
+            target(&events[6]),
+            (50, None),
+            "an insert at the cursor's own position: the applier shifts it"
+        );
+
+        // The origin is the caller's: keyed on 10 rather than the move's
+        // `old_position`, only the edits below 10 count.
+        let mut events = vec![ins(1, 2, "abc"), ins(1, 12, "zz"), mv(2, 30, 31, None)];
+        rebase_moves_onto_edits(&mut events, 0..2, 2..3, |_, _| 10);
+        assert_eq!(target(&events[2]), (34, None));
+    }
+
+    /// `line_end_moves` takes each cursor to its logical line's end and
+    /// drops its selection, even one kept by a mark (`deselect_on_move`
+    /// off); a cursor already there with no selection gets no move.
+    #[test]
+    fn line_end_moves_go_to_line_end_and_drop_selections() {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "one\r\ntwo\r\nthree".to_string().into(),
+                cursor_id: CursorId(0),
+            },
+        );
+        // "one" 0..3, "two" 5..8, "three" 10..15.
+        let mut marked = Cursor::with_selection(5, 6);
+        marked.deselect_on_move = false;
+        let mut cursors = Cursors::new();
+        cursors.primary_mut().position = 1;
+        let marked = cursors.add(marked);
+        let at_end = cursors.add(Cursor::new(15));
+
+        let events = line_end_moves(&mut state, &cursors);
+        let moves: Vec<_> = events
+            .iter()
+            .map(|e| match e {
+                Event::MoveCursor {
+                    cursor_id,
+                    new_position,
+                    new_anchor,
+                    ..
+                } => (*cursor_id, *new_position, *new_anchor),
+                other => panic!("not a move: {other:?}"),
+            })
+            .collect();
+        assert!(moves.contains(&(CursorId(0), 3, None)), "{moves:?}");
+        assert!(moves.contains(&(marked, 8, None)), "{moves:?}");
+        assert!(
+            moves.iter().all(|(id, _, _)| *id != at_end),
+            "no move for a cursor already at its line's end: {moves:?}"
+        );
+        assert_eq!(moves.len(), 2);
     }
 }
 

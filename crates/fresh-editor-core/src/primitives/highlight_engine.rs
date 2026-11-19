@@ -428,10 +428,33 @@ struct LineStructure {
     start: usize,
     /// One past the line's terminator.
     end: usize,
-    region_before: bool,
-    region_after: bool,
+    region_before: Option<RegionState>,
+    region_after: Option<RegionState>,
     table_before: bool,
     table_after: bool,
+}
+
+/// The embedded-language region open at a line boundary: its index in the
+/// host's `EMBEDDING_SPECS`, and the syntax its child parser runs (`None`
+/// when none resolved).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RegionState {
+    spec: u8,
+    syntax: Option<u32>,
+}
+
+/// The language a line is written in, as the host grammar's embedded
+/// regions (`EMBEDDING_SPECS`) say. See [`TextMateEngine::line_language`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineLanguage {
+    /// The buffer's own language: the line is outside every embedded
+    /// region, is one of a region's delimiter lines, or lies in a region
+    /// whose rows are not wholly the embedded language's text (a unified
+    /// diff's, whose rows carry a patch marker).
+    Host,
+    /// A content line of an embedded region, with the syntax the highlighter
+    /// resolved its language to for the child parser (`None`: none resolved).
+    Embedded(Option<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -1308,12 +1331,21 @@ impl TextMateEngine {
         !self.embedding.is_empty() || self.table_body_scope.is_some()
     }
 
-    /// (inside a region, inside a table body) for a scope stack.
-    fn structure_state(&self, scopes: &syntect::parsing::ScopeStack) -> (bool, bool) {
+    /// (the region open, inside a table body) for a parse state.
+    fn structure_state(&self, snapshot: &ParseSnapshot) -> (Option<RegionState>, bool) {
+        let region = self
+            .active_region_spec(&snapshot.scopes)
+            .map(|spec| RegionState {
+                spec: spec as u8,
+                syntax: snapshot
+                    .embedded
+                    .as_ref()
+                    .map(|child| child.syntax_index as u32),
+            });
         (
-            self.active_region_spec(scopes).is_some(),
+            region,
             self.table_body_scope
-                .is_some_and(|scope| scopes_contain(scopes, scope)),
+                .is_some_and(|scope| scopes_contain(&snapshot.scopes, scope)),
         )
     }
 
@@ -1336,11 +1368,11 @@ impl TextMateEngine {
     ) -> bool {
         let before = self
             .hosts_structure()
-            .then(|| self.structure_state(&snapshot.scopes));
+            .then(|| self.structure_state(snapshot));
         let parsed = self.parse_snapshot_line(snapshot, prepared, line_start, on_span);
         if let Some((region_before, table_before)) = before {
             if parsed && (prepared.ends_with_newline || line_end >= buffer_len) {
-                let (region_after, table_after) = self.structure_state(&snapshot.scopes);
+                let (region_after, table_after) = self.structure_state(snapshot);
                 lines.push(LineStructure {
                     start: line_start,
                     end: line_end,
@@ -1857,6 +1889,26 @@ impl TextMateEngine {
             .collect()
     }
 
+    /// Where a parse for a viewport starting at `viewport_start` begins: the
+    /// buffer's start when the whole buffer is parsed, else `context_bytes`
+    /// before the viewport.
+    fn desired_parse_start(buf_len: usize, viewport_start: usize, context_bytes: usize) -> usize {
+        if buf_len <= MAX_PARSE_BYTES {
+            0
+        } else {
+            viewport_start.saturating_sub(context_bytes)
+        }
+    }
+
+    /// Whether the cache starts at or before `start` and reaches `end`:
+    /// what lets [`Self::sync_cache`] extend or repair it rather than parse
+    /// from scratch.
+    fn cache_reaches(&self, start: usize, end: usize) -> bool {
+        self.cache
+            .as_ref()
+            .is_some_and(|c| c.range.start <= start && c.range.end >= end)
+    }
+
     /// Bring the cache up to date for a viewport and return the viewport's
     /// spans, uncoloured. This is the one dispatcher over the cache paths —
     /// hit, forward extension, partial update, cold parse — shared by
@@ -1869,18 +1921,11 @@ impl TextMateEngine {
         context_bytes: usize,
     ) -> Vec<CachedSpan> {
         let buf_len = buffer.len();
-        let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
-            (0, (viewport_end + context_bytes).min(buf_len))
-        } else {
-            let s = viewport_start.saturating_sub(context_bytes);
-            let e = (viewport_end + context_bytes).min(buf_len);
-            (s, e)
-        };
+        let desired_parse_start = Self::desired_parse_start(buf_len, viewport_start, context_bytes);
+        let parse_end = (viewport_end + context_bytes).min(buf_len);
 
         let dirty = self.dirty_from.take();
-        let cache_covers_viewport = self.cache.as_ref().is_some_and(|c| {
-            c.range.start <= desired_parse_start && c.range.end >= desired_parse_start
-        });
+        let cache_covers_viewport = self.cache_reaches(desired_parse_start, desired_parse_start);
         let exact_cache_hit = cache_covers_viewport
             && dirty.is_none()
             && self.last_buffer_len == buffer.len()
@@ -2773,11 +2818,39 @@ impl TextMateEngine {
             .unwrap_or_default()
     }
 
+    /// Indices into `cache.lines` from the line holding `start` through the
+    /// first reaching `need_end`, or `None` when the cache cannot vouch for
+    /// them: it falls short, was parsed from a guessed mid-file state, has an
+    /// unrepaired edit before `need_end`, or the lines are not contiguous (a
+    /// missing line is unknown, not "no structure").
+    fn vouched_lines(&self, start: usize, need_end: usize) -> Option<Range<usize>> {
+        let cache = self.cache.as_ref()?;
+        if !cache.anchored || cache.range.end < need_end {
+            return None;
+        }
+        if self.dirty_from.is_some_and(|dirty| dirty < need_end) {
+            return None;
+        }
+        let lines = &cache.lines;
+        let at = lines.partition_point(|line| line.end <= start);
+        let first = lines.get(at).filter(|line| line.start <= start)?;
+        let mut last = at;
+        let mut end = first.end;
+        while end < need_end {
+            let next = lines.get(last + 1)?;
+            if next.start != end {
+                return None;
+            }
+            last += 1;
+            end = next.end;
+        }
+        Some(at..last + 1)
+    }
+
     /// Read `range`'s structure off the cache's recorded lines, or `None` when
-    /// the cache cannot vouch for every line it needs: the lines of `range`
-    /// and those up to `need_end` (whether its last row closes the table).
-    /// The lines must be recorded contiguously — a missing one is unknown,
-    /// not "no structure" — and none may sit at or past an unrepaired edit.
+    /// the cache cannot vouch for every line it needs ([`Self::vouched_lines`]):
+    /// the lines of `range` and those up to `need_end` (whether its last row
+    /// closes the table).
     ///
     /// The line *before* `range` is read when it is recorded, and only
     /// settles whether the range's first line is a table's first row. When it
@@ -2790,20 +2863,13 @@ impl TextMateEngine {
         need_end: usize,
         buffer_len: usize,
     ) -> Option<StructureLines> {
-        let cache = self.cache.as_ref()?;
-        if !cache.anchored || cache.range.end < need_end {
-            return None;
-        }
-        if self.dirty_from.is_some_and(|dirty| dirty < need_end) {
-            return None;
-        }
-        let lines = &cache.lines;
+        let vouched = self.vouched_lines(range.start, need_end)?;
+        let lines = &self.cache.as_ref()?.lines;
         // The line holding `range.start`, and the one before it when it is
         // recorded (see above for when it is not).
-        let at = lines.partition_point(|line| line.end <= range.start);
-        let first = lines.get(at).filter(|line| line.start <= range.start)?;
+        let at = vouched.start;
         let from = match at.checked_sub(1) {
-            Some(prev) if lines[prev].end == first.start => prev,
+            Some(prev) if lines[prev].end == lines[at].start => prev,
             _ => at,
         };
 
@@ -2821,12 +2887,9 @@ impl TextMateEngine {
         // on it, so a table continuing past `range.end` never closes early.
         let mut last_table_line_start: Option<usize> = None;
         let mut after_delimiter = false;
-        for line in &lines[from..] {
-            if prev.is_some_and(|p| p.end != line.start) {
-                return None;
-            }
+        for line in &lines[from..vouched.end] {
             let in_range = line.start >= range.start && line.start < range.end;
-            let role = match (line.region_before, line.region_after) {
+            let role = match (line.region_before.is_some(), line.region_after.is_some()) {
                 (false, true) => Some(RegionLine::Open),
                 (true, true) => Some(RegionLine::Body),
                 (true, false) => Some(RegionLine::Close),
@@ -2864,14 +2927,8 @@ impl TextMateEngine {
                 }
             }
             prev = Some(line);
-            if line.end >= need_end {
-                break;
-            }
         }
         let last = prev?;
-        if last.end < need_end {
-            return None;
-        }
         // A table that runs to the end of the buffer has no line below it to
         // close it, so the transition above never fires. The buffer's own end
         // is that closing edge.
@@ -2879,6 +2936,91 @@ impl TextMateEngine {
             out.mark_table_line_last(last_table_line_start);
         }
         Some(out)
+    }
+
+    /// Whether this syntax hosts embedded-language regions
+    /// (`EMBEDDING_SPECS`) at all: only Markdown, Vue and unified diffs do,
+    /// so a caller can skip [`Self::line_language`] for any other buffer.
+    pub fn hosts_embedded_regions(&self) -> bool {
+        !self.embedding.is_empty()
+    }
+
+    /// The language the line `line_start..line_end` is written in (`line_end`
+    /// past its line break; the caller locates the line):
+    /// [`LineLanguage::Embedded`] for a content line of a region,
+    /// [`LineLanguage::Host`] otherwise.
+    ///
+    /// Read off the highlight cache, like [`Self::structure_lines_in`], after
+    /// bringing it up to date through `line_end` with the dispatcher
+    /// highlighting uses: on a key press that is normally a hit, since the
+    /// frame before it parsed the viewport. The cache is only extended or
+    /// repaired here, never rebuilt, so the answer is `None` (unknown)
+    /// whenever the cache cannot vouch for the line ([`Self::vouched_lines`])
+    /// rather than a parse that would throw away the viewport's cache.
+    ///
+    /// The empty line after a final line break, which the parser never sees,
+    /// is in the state the parse ended the previous line in.
+    pub fn line_language(
+        &mut self,
+        buffer: &Buffer,
+        line_start: usize,
+        line_end: usize,
+    ) -> Option<LineLanguage> {
+        if self.embedding.is_empty() {
+            return Some(LineLanguage::Host);
+        }
+        let buffer_len = buffer.len();
+        if line_start > buffer_len || line_end < line_start || line_end > buffer_len {
+            return None;
+        }
+        // Never a cold parse: only a cache that already reaches the line.
+        let desired_start = Self::desired_parse_start(buffer_len, line_start, 0);
+        if !self.cache_reaches(desired_start, desired_start.max(line_start)) {
+            return None;
+        }
+        // Bring the cache up to the end of the line, past its line break, so
+        // a repair after an edit re-parses the whole line and records the
+        // region state after it; repairing to just past `line_start` leaves
+        // the line itself unrecorded (and the edit unrepaired).
+        let _ = self.sync_cache(buffer, line_start, line_end, 0);
+
+        let (before, after) = if line_start < line_end {
+            let vouched = self.vouched_lines(line_start, line_end)?;
+            let line = &self.cache.as_ref()?.lines[vouched.start];
+            if line.start != line_start || line.end != line_end {
+                return None;
+            }
+            (line.region_before, line.region_after)
+        } else if line_start == buffer_len && line_start > 0 {
+            // The empty line after the final line break.
+            let vouched = self.vouched_lines(line_start - 1, line_start)?;
+            let prev = &self.cache.as_ref()?.lines[vouched.end - 1];
+            if prev.end != line_start {
+                return None;
+            }
+            (prev.region_after, prev.region_after)
+        } else {
+            return None;
+        };
+        let (Some(before), Some(after)) = (before, after) else {
+            return Some(LineLanguage::Host);
+        };
+        let spec = &self.embedding[before.spec as usize];
+        // A content line: the same region open on both sides of it, its rows
+        // the embedded language's text as they stand, and — for a host whose
+        // regions can hand over on one line — no new region begun on it.
+        let content = before.spec == after.spec
+            && matches!(spec.content_mode, EmbeddedContentMode::WholeLine)
+            && !(spec.retargets_on_same_line && before.syntax != after.syntax);
+        if !content {
+            return Some(LineLanguage::Host);
+        }
+        Some(LineLanguage::Embedded(before.syntax.and_then(|index| {
+            self.syntax_set
+                .syntaxes()
+                .get(index as usize)
+                .map(|syntax| syntax.name.clone())
+        })))
     }
 
     /// Merge adjacent spans with the same foreground and background categories.
@@ -3049,6 +3191,30 @@ impl HighlightEngine {
         match self {
             Self::TextMate(h) => h.structure_lines_in(buffer, range),
             Self::TreeSitter(_) | Self::None => StructureLines::default(),
+        }
+    }
+
+    /// Whether this engine reports embedded-language regions at all; see
+    /// `TextMateEngine::hosts_embedded_regions`. False for tree-sitter
+    /// (injections disabled) and for no highlighter.
+    pub fn hosts_embedded_regions(&self) -> bool {
+        match self {
+            Self::TextMate(h) => h.hosts_embedded_regions(),
+            Self::TreeSitter(_) | Self::None => false,
+        }
+    }
+
+    /// See `TextMateEngine::line_language`. Engines with no regions answer
+    /// [`LineLanguage::Host`].
+    pub fn line_language(
+        &mut self,
+        buffer: &Buffer,
+        line_start: usize,
+        line_end: usize,
+    ) -> Option<LineLanguage> {
+        match self {
+            Self::TextMate(h) => h.line_language(buffer, line_start, line_end),
+            Self::TreeSitter(_) | Self::None => Some(LineLanguage::Host),
         }
     }
 
@@ -4550,6 +4716,171 @@ mod tests {
         let mut engine = HighlightEngine::for_file(Path::new("main.rs"), None, &registry);
         let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}\n", 0, test_fs());
         assert!(engine.region_lines_in(&buffer, 0..buffer.len()).is_empty());
+    }
+
+    /// The end of the line starting at `start` in `content`, past its line
+    /// break: what a caller of `line_language` passes as `line_end`.
+    fn line_end(content: &str, start: usize) -> usize {
+        content[start..]
+            .find('\n')
+            .map_or(content.len(), |i| start + i + 1)
+    }
+
+    /// `line_language` reads each line's language off the parse: a fence's
+    /// content lines are in the fence's language (as the highlighter resolved
+    /// its token), its delimiter lines and the prose around it in the host's,
+    /// and a fence naming no language — or one nothing resolves — is a region
+    /// with no language.
+    #[test]
+    fn test_line_language_follows_markdown_fences() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        assert!(engine.hosts_embedded_regions());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let content = "- item\n\n```py\ndef f():\n- x\n```\n- after\n\n```\nbare\n```\n\n```nosuchlang\nzzz\n```\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let at = |needle: &str| content.find(needle).unwrap();
+        let mut language = |needle: &str| {
+            let start = at(needle);
+            engine.line_language(&buffer, start, line_end(content, start))
+        };
+
+        let python = Some(LineLanguage::Embedded(Some("Python".to_string())));
+        assert_eq!(language("- item"), Some(LineLanguage::Host));
+        assert_eq!(language("```py"), Some(LineLanguage::Host), "opening line");
+        assert_eq!(language("def f():"), python);
+        assert_eq!(language("- x"), python, "a list marker inside the fence");
+        assert_eq!(
+            language("```\n- after"),
+            Some(LineLanguage::Host),
+            "closing line"
+        );
+        assert_eq!(language("- after"), Some(LineLanguage::Host));
+        assert_eq!(language("bare"), Some(LineLanguage::Embedded(None)));
+        assert_eq!(language("zzz"), Some(LineLanguage::Embedded(None)));
+    }
+
+    /// The empty line after the final line break is in the state the parse
+    /// ended the line above in: inside an unclosed fence, the fence's.
+    #[test]
+    fn test_line_language_of_the_empty_last_line() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let buffer = Buffer::from_str("text\n```python\ndef f():\n", 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        assert_eq!(
+            engine.line_language(&buffer, buffer.len(), buffer.len()),
+            Some(LineLanguage::Embedded(Some("Python".to_string())))
+        );
+
+        let closed = Buffer::from_str("```python\ndef f():\n```\n", 0, test_fs());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        engine.highlight_viewport(&closed, 0, closed.len(), &theme, 0);
+        assert_eq!(
+            engine.line_language(&closed, closed.len(), closed.len()),
+            Some(LineLanguage::Host)
+        );
+    }
+
+    /// With no cache to read — nothing highlighted yet — the answer is
+    /// unknown, not "outside every region", and asking parses nothing.
+    #[test]
+    fn test_line_language_is_unknown_without_a_cache() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let content = "```python\ndef f():\n```\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        assert_eq!(
+            engine.line_language(&buffer, content.find("def").unwrap(), content.len()),
+            None
+        );
+        if let HighlightEngine::TextMate(h) = &engine {
+            assert_eq!(h.stats().bytes_parsed, 0, "the lookup must not parse");
+        }
+    }
+
+    /// An edit since the last highlight is repaired before the answer: a
+    /// fence opened above a line makes it the fence's.
+    #[test]
+    fn test_line_language_sees_an_unrendered_edit() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut buffer = Buffer::from_str("intro\nx = 1\n", 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        assert_eq!(
+            engine.line_language(&buffer, 6, 12),
+            Some(LineLanguage::Host)
+        );
+
+        buffer.insert(6, "```python\n");
+        engine.notify_insert(6, 10);
+        assert_eq!(
+            engine.line_language(&buffer, 16, 22),
+            Some(LineLanguage::Embedded(Some("Python".to_string())))
+        );
+    }
+
+    /// Any host with embedding specs answers the same way: a Vue `<script>`
+    /// with no `lang` is in the spec's default language.
+    #[test]
+    fn test_line_language_follows_vue_script_blocks() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("App.vue"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let content = "<template>\n  <div/>\n</template>\n<script>\nconst a = 1;\n</script>\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let mut language = |needle: &str| {
+            let start = content.find(needle).unwrap();
+            engine.line_language(&buffer, start, line_end(content, start))
+        };
+
+        match language("const a") {
+            Some(LineLanguage::Embedded(Some(name))) => assert!(
+                name.to_ascii_lowercase().contains("javascript"),
+                "script content is JavaScript, got {name}"
+            ),
+            other => panic!("script content must be embedded JavaScript, got {other:?}"),
+        }
+        assert_eq!(language("<script>"), Some(LineLanguage::Host));
+        assert_eq!(language("</script>"), Some(LineLanguage::Host));
+    }
+
+    /// A unified diff's rows carry a patch marker, so they are not the
+    /// embedded language's text as they stand: every line is the host's.
+    /// And a syntax hosting no regions answers the host, asking nothing.
+    #[test]
+    fn test_line_language_host_for_diff_rows_and_plain_syntaxes() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let content = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-def old():\n+def new():\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let start = content.find("+def new").unwrap();
+        assert_eq!(
+            engine.line_language(&buffer, start, line_end(content, start)),
+            Some(LineLanguage::Host)
+        );
+
+        let mut engine = HighlightEngine::for_file(Path::new("main.rs"), None, &registry);
+        assert!(!engine.hosts_embedded_regions());
+        let buffer = Buffer::from_str("fn main() {}\n", 0, test_fs());
+        assert_eq!(
+            engine.line_language(&buffer, 0, buffer.len()),
+            Some(LineLanguage::Host)
+        );
     }
 
     /// Unified diffs select a source grammar from each target path and parse

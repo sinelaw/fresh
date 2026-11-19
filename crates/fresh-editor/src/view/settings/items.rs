@@ -431,19 +431,25 @@ pub fn map_display_value(display_field: Option<&str>, value: &serde_json::Value)
 /// What an object array's row says for an item: the key combination and
 /// the action, for a keybinding-shaped item, or just the display field's
 /// value — a server's command — when there is no key combination.
+///
+/// `display_field` is a JSON pointer (`/command`), or several separated by
+/// commas (`/on,/before`), whose values the row shows joined by `: ` (an
+/// edit rule's row reads `newline: ^([ \t]*)([-*+]) `); a field the item
+/// lacks is left out.
 pub fn object_array_row(display_field: Option<&str>, item: &serde_json::Value) -> (String, String) {
-    // `display_field` is a JSON pointer (`/command`); the lookup key is the
-    // bare field name.
-    let field = display_field
-        .and_then(|p| p.strip_prefix('/'))
-        .or(display_field)
-        .unwrap_or("action");
     let combo = format_key_combo(item);
-    let action = item
-        .get(field)
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| fresh_i18n::t!("settings.no_action").to_string());
+    // The lookup key is the bare field name.
+    let parts: Vec<&str> = display_field
+        .unwrap_or("/action")
+        .split(',')
+        .map(|p| p.trim())
+        .map(|p| p.strip_prefix('/').unwrap_or(p))
+        .filter_map(|field| item.get(field).and_then(|v| v.as_str()))
+        .collect();
+    let action = match parts.is_empty() {
+        true => fresh_i18n::t!("settings.no_action").to_string(),
+        false => parts.join(": "),
+    };
     (combo, action)
 }
 
@@ -1843,5 +1849,28 @@ mod tests {
         );
         let sections: Vec<&str> = page.sections.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(sections, ["Display", "Search"]);
+    }
+
+    /// An object array row shows each field a comma-separated display field
+    /// names, joined by `: ` (an edit rule: its key and its pattern), and
+    /// leaves out a field the item lacks.
+    #[test]
+    fn object_array_row_joins_several_display_fields() {
+        let rule = serde_json::json!({
+            "on": "newline",
+            "before": "^([ \\t]*)([-*+]) ",
+            "insert": "\\n$1$2 "
+        });
+        let (combo, row) = object_array_row(Some("/on,/before"), &rule);
+        assert!(combo.trim().is_empty(), "{combo:?}");
+        assert_eq!(row, "newline: ^([ \\t]*)([-*+]) ");
+        let no_before = serde_json::json!({ "on": "indent", "insert": "x" });
+        assert_eq!(
+            object_array_row(Some("/on,/before"), &no_before).1,
+            "indent"
+        );
+        // One pointer, as before.
+        let server = serde_json::json!({ "command": "pylsp" });
+        assert_eq!(object_array_row(Some("/command"), &server).1, "pylsp");
     }
 }

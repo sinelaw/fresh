@@ -27,8 +27,6 @@ struct Setup {
     window_a: WindowId,
     other_root: PathBuf,
     b_file: PathBuf,
-    /// Reports `tim_report_mode` has made so far (see `wait_for_editor_mode`).
-    mode_reports: usize,
     _temp: tempfile::TempDir,
 }
 
@@ -36,19 +34,16 @@ struct Setup {
 /// first window. A second project directory holding `b.txt` is ready for a
 /// window created later.
 fn setup() -> Setup {
-    setup_with(&[], true)
+    setup_with(true)
 }
 
-fn setup_with(extra_plugins: &[&str], auto_start: bool) -> Setup {
+fn setup_with(auto_start: bool) -> Setup {
     init_tracing_from_env();
     let temp = tempfile::TempDir::new().unwrap();
     let project_root = temp.path().join("project_root");
     let plugins_dir = project_root.join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "vi_mode");
-    for plugin in extra_plugins {
-        copy_plugin(&plugins_dir, plugin);
-    }
     copy_plugin_lib(&plugins_dir);
     fs::write(
         plugins_dir.join("test_input_mode_scope.ts"),
@@ -102,7 +97,6 @@ fn setup_with(extra_plugins: &[&str], auto_start: bool) -> Setup {
         window_a,
         other_root,
         b_file,
-        mode_reports: 0,
         _temp: temp,
     }
 }
@@ -139,24 +133,6 @@ fn press_j(h: &mut EditorTestHarness, line: usize) -> String {
     })
     .unwrap();
     h.screen_to_string()
-}
-
-/// Wait until the status bar shows the active window's editor mode to be
-/// `mode` ("none" for none), as reported by `tim_report_mode`. Each report
-/// is numbered, so a stale one is never taken for the answer; the mode is
-/// set by another plugin's hook, so ask again until it has taken effect.
-fn wait_for_editor_mode(s: &mut Setup, mode: &str) {
-    loop {
-        s.mode_reports += 1;
-        let prefix = format!("MODE{}=", s.mode_reports);
-        s.h.editor_mut()
-            .dispatch_action_for_tests(PluginAction("tim_report_mode".to_string()));
-        s.h.wait_until(|h| h.get_status_bar().contains(&prefix))
-            .unwrap();
-        if s.h.get_status_bar().contains(&format!("{prefix}{mode};")) {
-            return;
-        }
-    }
 }
 
 fn assert_vi_j_moves_to(h: &mut EditorTestHarness, line: usize, where_: &str) {
@@ -268,26 +244,153 @@ fn disabling_vi_takes_effect_in_every_window() {
     let _ = window_b;
 }
 
-/// markdown-source is a window-scoped mode, which outranks the input mode, so
-/// it has to step aside for vi: turning vi on while a markdown file is open
-/// must give vi the keys there, not leave markdown-source shadowing it.
+/// Turning vi on while a markdown file is open gives vi the keys there.
+/// Markdown's list editing claims no keys — it is edit rules (a language
+/// setting) the editor applies inside its own Enter / Tab — so nothing
+/// shadows vi.
 #[test]
 fn turning_vi_on_in_a_markdown_file_gives_vi_the_keys() {
-    let mut s = setup_with(&["markdown_source"], false);
+    let mut s = setup_with(false);
     let md = s.other_root.join("notes.md");
     fs::write(&md, "m1\nm2\nm3\n").unwrap();
     s.h.open_file(&md).unwrap();
     s.h.wait_until(|h| h.screen_to_string().contains("notes.md"))
         .unwrap();
-    // Synchronisation only: markdown-source has claimed the window.
-    wait_for_editor_mode(&mut s, "markdown-source");
 
     s.h.editor_mut()
         .dispatch_action_for_tests(PluginAction("vi_mode_toggle".to_string()));
     s.h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
         .unwrap();
-    // Synchronisation only: markdown-source hears `input_mode_changed`
-    // through the plugin queue, after vi's status line is already up.
-    wait_for_editor_mode(&mut s, "none");
     assert_vi_j_moves_to(&mut s.h, 2, "a markdown file, vi turned on there");
+}
+
+/// #3814: with vi `auto_start`, a Markdown file opened at startup — before
+/// vi has finished loading, as `fresh notes.md` does — gets vi's
+/// keys: `jjx` moves down twice and deletes a character instead of typing.
+/// And Enter in vi's insert mode on a list item continues the list.
+#[test]
+fn vi_autostart_with_a_markdown_file_opened_at_startup() {
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin_lib(&plugins_dir);
+    let md = project_root.join("notes.md");
+    fs::write(&md, "- one\n- two\n- three\n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "auto_start": true }),
+        },
+    );
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, project_root).unwrap();
+    // Opened straight away, while the plugins are still starting.
+    h.open_file(&md).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
+        .unwrap();
+
+    assert_vi_j_moves_to(&mut h, 2, "a markdown file opened at startup");
+    assert_vi_j_moves_to(&mut h, 3, "a markdown file opened at startup");
+    h.send_key(KeyCode::Char('x'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        h.get_buffer_content()
+            .is_some_and(|c| c == "- one\n- two\n three\n")
+    })
+    .unwrap();
+
+    // Line 2, append at its end, Enter: the list continues in vi insert.
+    h.send_key(KeyCode::Char('k'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Ln 2, Col 1"))
+        .unwrap();
+    h.send_key(KeyCode::Char('A'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("INSERT"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.type_text("new").unwrap();
+    h.wait_until(|h| {
+        h.get_buffer_content()
+            .is_some_and(|c| c == "- one\n- two\n- new\n three\n")
+    })
+    .unwrap();
+}
+
+/// vi's `o` opens a new line below, also on an empty list item (`- `,
+/// `1. `, `- [ ] `), and `.` repeats it the same way. The item continues on
+/// the new line; the line `o` was pressed on keeps its marker. `o` is the
+/// `insert_line_below` action (line end, then Enter taking only the rules
+/// that add text): Enter on an empty item clears it, so `o` as plain line
+/// end + Enter used to clear the item and open no line.
+#[test]
+fn vi_o_on_an_empty_list_item_opens_a_line() {
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin_lib(&plugins_dir);
+    let md = project_root.join("items.md");
+    fs::write(&md, "- \n1. \n- [ ] \n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "auto_start": true }),
+        },
+    );
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, project_root).unwrap();
+    h.open_file(&md).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
+        .unwrap();
+
+    let wait_for = |h: &mut EditorTestHarness, text: &str| {
+        h.wait_until(|h| h.get_buffer_content().is_some_and(|c| c == text))
+            .unwrap();
+    };
+    let open_and_type = |h: &mut EditorTestHarness, text: &str| {
+        h.send_key(KeyCode::Char('o'), KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.screen_to_string().contains("INSERT"))
+            .unwrap();
+        h.type_text(text).unwrap();
+        h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| !h.screen_to_string().contains("INSERT"))
+            .unwrap();
+    };
+
+    // `- `: a new bullet below, the empty one stays.
+    open_and_type(&mut h, "a");
+    wait_for(&mut h, "- \n- a\n1. \n- [ ] \n");
+
+    // `1. `: the next number below.
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Ln 3,"))
+        .unwrap();
+    open_and_type(&mut h, "b");
+    wait_for(&mut h, "- \n- a\n1. \n2. b\n- [ ] \n");
+
+    // `- [ ] ` with `.`: the repeat opens a line too.
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Ln 5,"))
+        .unwrap();
+    h.send_key(KeyCode::Char('.'), KeyModifiers::NONE).unwrap();
+    wait_for(&mut h, "- \n- a\n1. \n2. b\n- [ ] \n- [ ] b\n");
+
+    // Enter in insert mode is still the key: on an empty item it clears it.
+    h.send_key(KeyCode::Char('A'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("INSERT"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    wait_for(&mut h, "- \n- a\n1. \n2. b\n- [ ] \n- [ ] b\n\n");
 }

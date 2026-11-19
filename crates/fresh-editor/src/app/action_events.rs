@@ -7,17 +7,29 @@
 //! which walks the cached layout to translate visual-row movement into
 //! the right buffer byte offset.
 
-use crate::input::actions::action_to_events as convert_action_to_events;
+use crate::input::actions::action_to_events_with_edit_rules as convert_action_to_events;
 use crate::input::actions::clear_block_selection_if_active;
 use crate::input::keybindings::Action;
 use crate::model::event::{Event, LeafId};
 
 impl crate::app::window::Window {
+    /// The first step of `Action::InsertLineBelow`: the moves taking each
+    /// cursor of the active buffer to the end of its line.
+    pub fn line_end_moves(&mut self) -> Vec<Event> {
+        let active_split = self.effective_active_split();
+        let buffer_id = self.active_buffer();
+        self.buffers
+            .with_buffer_and_split(buffer_id, active_split, |state, vs| {
+                crate::input::actions::line_end_moves(state, &vs.cursors)
+            })
+            .unwrap_or_default()
+    }
+
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
-        let auto_indent = self.config().editor.auto_indent;
         let estimated_line_length = self.config().editor.estimated_line_length;
+        let global_auto_indent = self.config().editor.auto_indent;
 
         // Use the *effective* active split: when the user is focused on an
         // inner panel of a grouped buffer (e.g. a magit-style review panel),
@@ -74,9 +86,24 @@ impl crate::app::window::Window {
         }
 
         let buffer_id = self.active_buffer();
+        let edit_rules = std::sync::Arc::clone(&self.resources.edit_rules);
+        let edit_rules = edit_rules.read().ok();
+        let rule_reach = self.edit_rule_reach;
+        // Enter / Tab / Shift+Tab on a content line of an embedded region (a
+        // fenced code block) follow the region's language; this resolves it.
+        let config = std::sync::Arc::clone(&self.resources.config);
+        let registry = std::sync::Arc::clone(&self.resources.grammar_registry);
+        let language_lookup = crate::input::edit_rules::LanguageLookup {
+            config: &config,
+            registry: &registry,
+        };
         self.buffers
             .with_buffer_and_split(buffer_id, active_split, |state, vs| {
                 let tab_size = state.buffer_settings.tab_size;
+                // Per buffer: the language's `auto_indent` when it sets one,
+                // else `editor.auto_indent` (#3815), also for a buffer that
+                // never got its language's settings.
+                let auto_indent = state.buffer_settings.auto_indent(global_auto_indent);
                 let auto_close = state.buffer_settings.auto_close;
                 let auto_surround = state.buffer_settings.auto_surround;
                 convert_action_to_events(
@@ -89,6 +116,9 @@ impl crate::app::window::Window {
                     auto_surround,
                     estimated_line_length,
                     viewport_height,
+                    edit_rules.as_deref(),
+                    rule_reach,
+                    Some(&language_lookup),
                 )
             })
             .expect("active window must have a populated split layout")

@@ -2671,7 +2671,7 @@ mod tests {
                 filenames: vec!["*.conf".to_string(), "*rc".to_string()],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2688,6 +2688,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         registry.apply_language_config(&languages);
@@ -2717,7 +2718,7 @@ mod tests {
                 filenames: vec!["/etc/**/rc.*".to_string()],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2734,6 +2735,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         registry.apply_language_config(&languages);
@@ -2766,7 +2768,7 @@ mod tests {
                 filenames: vec!["lfrc".to_string()],
                 grammar: "python".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2783,6 +2785,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -2794,7 +2797,7 @@ mod tests {
                 filenames: vec!["*rc".to_string()],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2811,6 +2814,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -3286,7 +3290,7 @@ mod tests {
             filenames: filenames.iter().map(|s| s.to_string()).collect(),
             grammar: grammar.to_string(),
             comment_prefix: None,
-            auto_indent: true,
+            auto_indent: Some(true),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -3303,6 +3307,7 @@ mod tests {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         }
     }
 

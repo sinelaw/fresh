@@ -709,6 +709,7 @@ pub struct PartialLanguageConfig {
     pub word_characters: Option<Option<String>>,
     pub indent: Option<crate::config::IndentRulesConfig>,
     pub indentation_guide: Option<bool>,
+    pub edit_rules: Option<Vec<fresh_core::edit_rules::ConfiguredEditRule>>,
 }
 
 impl Merge for PartialLanguageConfig {
@@ -735,6 +736,8 @@ impl Merge for PartialLanguageConfig {
         self.word_characters.merge_from(&other.word_characters);
         self.indent.merge_from(&other.indent);
         self.indentation_guide.merge_from(&other.indentation_guide);
+        // A higher layer's list replaces a lower one's, like other arrays.
+        self.edit_rules.merge_from(&other.edit_rules);
     }
 }
 
@@ -1273,7 +1276,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             filenames: Some(cfg.filenames.clone()),
             grammar: Some(cfg.grammar.clone()),
             comment_prefix: cfg.comment_prefix.clone(),
-            auto_indent: Some(cfg.auto_indent),
+            auto_indent: cfg.auto_indent,
             auto_close: cfg.auto_close,
             auto_surround: cfg.auto_surround,
             textmate_grammar: cfg.textmate_grammar.clone(),
@@ -1290,6 +1293,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             word_characters: Some(cfg.word_characters.clone()),
             indent: cfg.indent.clone(),
             indentation_guide: cfg.indentation_guide,
+            edit_rules: Some(cfg.edit_rules.clone()),
         }
     }
 }
@@ -1305,7 +1309,7 @@ impl PartialLanguageConfig {
             comment_prefix: self
                 .comment_prefix
                 .or_else(|| defaults.comment_prefix.clone()),
-            auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
+            auto_indent: self.auto_indent.or(defaults.auto_indent),
             auto_close: self.auto_close.or(defaults.auto_close),
             auto_surround: self.auto_surround.or(defaults.auto_surround),
             textmate_grammar: self
@@ -1328,6 +1332,9 @@ impl PartialLanguageConfig {
                 .unwrap_or_else(|| defaults.word_characters.clone()),
             indent: self.indent.or_else(|| defaults.indent.clone()),
             indentation_guide: self.indentation_guide.or(defaults.indentation_guide),
+            edit_rules: self
+                .edit_rules
+                .unwrap_or_else(|| defaults.edit_rules.clone()),
         }
     }
 }
@@ -1654,7 +1661,7 @@ impl Default for LanguageConfig {
             filenames: Vec::new(),
             grammar: String::new(),
             comment_prefix: None,
-            auto_indent: true,
+            auto_indent: None,
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -1671,6 +1678,7 @@ impl Default for LanguageConfig {
             word_characters: None,
             indent: None,
             indentation_guide: None,
+            edit_rules: Vec::new(),
         }
     }
 }

@@ -223,8 +223,8 @@ pub enum HookArgs {
     /// The editor-wide input mode changed (`setInputMode`): a modal-editing
     /// personality such as vi was turned on or off, or moved between its
     /// sub-modes. For a plugin whose window-scoped mode should step aside
-    /// while one is on (markdown-source), since a window's editor mode
-    /// outranks the input mode.
+    /// while one is on, since a window's editor mode outranks the input
+    /// mode.
     InputModeChanged {
         /// The new input mode, or `None` when it was cleared.
         mode: Option<String>,

@@ -8,6 +8,7 @@
 //! assertions fail without the fix. Tests drive only keyboard events and assert
 //! on rendered output, per CONTRIBUTING.md ("E2E Tests Observe, Not Inspect").
 
+use crate::common::dialog::{focus_field, row_with};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -22,22 +23,6 @@ fn typescript_only_config() -> Config {
         "precondition: typescript ships as a built-in language"
     );
     config
-}
-
-/// Return the full text of the first rendered row that contains `needle`.
-fn row_with(harness: &EditorTestHarness, needle: &str) -> String {
-    harness
-        .screen_to_string()
-        .lines()
-        .find(|line| line.contains(needle))
-        .unwrap_or("")
-        .to_string()
-}
-
-/// True when the row showing `label` carries the dialog's focus marker (`>`).
-fn row_is_focused(harness: &EditorTestHarness, label: &str) -> bool {
-    let row = row_with(harness, label);
-    row.split(label).next().unwrap_or("").contains('>')
 }
 
 /// Open the single language entry's Edit Value dialog. Leaves it open.
@@ -66,21 +51,6 @@ fn open_language_dialog(harness: &mut EditorTestHarness) {
     assert!(
         harness.screen_to_string().contains("Edit Value"),
         "language entry dialog should open; screen was:\n{}",
-        harness.screen_to_string()
-    );
-}
-
-/// Walk the dialog's field focus down until `label`'s row is the focused one.
-fn focus_field(harness: &mut EditorTestHarness, label: &str) {
-    for _ in 0..80 {
-        if row_is_focused(harness, label) {
-            return;
-        }
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
-    panic!(
-        "could not focus the {label:?} field; screen was:\n{}",
         harness.screen_to_string()
     );
 }

@@ -130,3 +130,28 @@ registerHandler("process_file", () => {
   }
 });
 ```
+
+### Smart Enter and Tab: Edit Rules
+
+To change what Enter, Tab or Shift+Tab do in some languages — continue a list or a comment, indent a blank item — use **edit rules** rather than binding the keys in a mode. Rules that never change belong in the language's config: its `edit_rules` setting (`languages.<id>.edit_rules`, see [Edit rules](../../configuration/index.md#edit-rules)), which a [language pack](language-packs.md) ships as `editRules` in its `package.json`, with no code. Markdown's list editing is built in this way. A plugin registers rules at run time for what depends on its state — rules it turns on and off, or builds from its own settings. Rules are data: the editor applies them itself, inside the key's own edit, so they keep up with fast typing, work under any keymap (vi's insert mode included), apply at every cursor, and undo with the key in one step. A key whose line no rule matches does what it always does.
+
+```typescript
+const editor = getEditor();
+
+// Markdown-style lists in plain-text files.
+editor.registerEditRules("lists", {
+  languages: ["text"],
+  rules: [
+    // Enter on an empty item: remove the marker.
+    { on: "newline", before: "^[ \\t]*[-*+] \\s*$", after: "^\\s*$",
+      replaceBefore: "", replaceAfter: "" },
+    // Enter on an ordered item: the next number.
+    { on: "newline", before: "^([ \\t]*)(\\d+)\\. ", insert: "\n$1${inc:2}. " },
+    // Tab on a blank bullet: one level deeper, next bullet.
+    { on: "indent", before: "^([ \\t]*)([-*+]) \\s*$", after: "^\\s*$",
+      replaceBefore: "$1${indent}${cycle:2:*|-|+} ", replaceAfter: "" },
+  ],
+});
+```
+
+Each rule names its key (`on`: `"newline"`, `"indent"` or `"dedent"`) and two optional regular expressions, searched in the cursor's line before and after the cursor. The first rule whose patterns both match rewrites the line as `(replaceBefore ?? before) + (insert ?? "") + cursor + (replaceAfter ?? after)`. Templates take `$1` / `${name}` captures, `${inc:N}` (a number plus one), `${cycle:N:a|b|c}` (the next value in a list), `${indent}` / `${dedent:N}` (one indentation level of the buffer, added or taken off), and a line break (a real one, or the escape `\n`) for the buffer's line ending. In config.json and a pack's manifest the keys are snake_case (`replace_before`, `replace_after`). An action a plugin runs with `executeAction` behaves as the user's key; the `insert_line_below` action (vi's `o`) takes only the rules that add text at the cursor, so it opens a new item below an empty one instead of clearing it. See [`registerEditRules`](../api/buffer.md) and `EditRule` in the [type reference](../api/types.md) for the details. A malformed rule throws when registered; a plugin's rules go away when it is unloaded or disabled. A buffer's configured `edit_rules` are tried before the rules plugins register, so the user's config wins on a line both match; `"edit_rules": []` leaves only the plugins' rules. Rules follow the language at the cursor: on a line inside a code block in another language (a fenced block in Markdown, a Vue `<script>`), the rules registered for the block's language apply, not the file's — and none for a block whose language isn't known. Markdown's built-in rules (`languages.markdown.edit_rules` in the default config) are a complete example.

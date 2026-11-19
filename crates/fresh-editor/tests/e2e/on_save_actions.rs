@@ -41,7 +41,7 @@ fn test_format_on_save() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -58,6 +58,7 @@ fn test_format_on_save() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -112,7 +113,7 @@ fn test_on_save_linter_style() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -129,6 +130,7 @@ fn test_on_save_linter_style() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -183,7 +185,7 @@ fn test_on_save_action_failure() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -200,6 +202,7 @@ fn test_on_save_action_failure() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -263,7 +266,7 @@ fn test_on_save_file_placeholder() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -280,6 +283,7 @@ fn test_on_save_file_placeholder() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -337,7 +341,7 @@ fn test_formatter_stdin_mode() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -354,6 +358,7 @@ fn test_formatter_stdin_mode() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -418,7 +423,7 @@ fn test_on_save_stops_on_failure() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -435,6 +440,7 @@ fn test_on_save_stops_on_failure() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -520,7 +526,7 @@ fn test_formatter_not_found_shows_message() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -537,6 +543,7 @@ fn test_formatter_not_found_shows_message() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -835,7 +842,7 @@ fn test_format_on_save_keeps_cursor_anchored_to_its_text() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -852,6 +859,7 @@ fn test_format_on_save_keeps_cursor_anchored_to_its_text() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -908,7 +916,7 @@ fn test_format_on_save_cursor_before_edit_stays_put() {
             filenames: vec![],
             grammar: "plaintext".to_string(),
             comment_prefix: None,
-            auto_indent: false,
+            auto_indent: Some(false),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -925,6 +933,7 @@ fn test_format_on_save_cursor_before_edit_stays_put() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 

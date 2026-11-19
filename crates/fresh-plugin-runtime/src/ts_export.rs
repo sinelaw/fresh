@@ -20,14 +20,14 @@ use fresh_core::api::{
     CompareResult, CompareSide, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, FormatterPackConfig,
-    GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
-    KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
-    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
-    ProcessLimitsPackConfig, ReleaseNotes, RemoteBackendInfo, ReplaceResult, ScreenSize,
-    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
-    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
-    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, EditRule, EditRuleSet,
+    EditRuleTrigger, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
+    JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
+    LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
+    PluginAnimationKind, ProcessLimitsPackConfig, ReleaseNotes, RemoteBackendInfo, ReplaceResult,
+    ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
+    TerminalScreen, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -174,6 +174,11 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "LspServerPackConfig" => Some(decl_with_docs::<LspServerPackConfig>(&cfg)),
         "ProcessLimitsPackConfig" => Some(decl_with_docs::<ProcessLimitsPackConfig>(&cfg)),
         "FormatterPackConfig" => Some(decl_with_docs::<FormatterPackConfig>(&cfg)),
+
+        // Edit rule types
+        "EditRuleSet" => Some(decl_with_docs::<EditRuleSet>(&cfg)),
+        "EditRule" => Some(decl_with_docs::<EditRule>(&cfg)),
+        "EditRuleTrigger" => Some(decl_with_docs::<EditRuleTrigger>(&cfg)),
 
         // Overlay/inline styling types
         "OverlayOptions" => Some(decl_with_docs::<OverlayOptions>(&cfg)),
@@ -412,6 +417,8 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "FileExplorerTrailingSlot",        // Used by FileExplorerSlotEntry
     "FileExplorerTooltip",             // Used by FileExplorerTrailingSlot
     "FormatterPackConfig",             // Used by LanguagePackConfig.formatter
+    "EditRule",                        // Used by EditRuleSet.rules
+    "EditRuleTrigger",                 // Used by EditRule.on
     "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
     "TerminalResult",                  // Used by createTerminal return type
     "TerminalScreen",                  // Used by getTerminalScreens return type

@@ -2131,7 +2131,7 @@ mod tests {
                 filenames: vec![],
                 grammar: "rust".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2148,6 +2148,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         languages.insert(
@@ -2157,7 +2158,7 @@ mod tests {
                 filenames: vec![],
                 grammar: "javascript".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2174,6 +2175,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         languages.insert(
@@ -2183,7 +2185,7 @@ mod tests {
                 filenames: vec![],
                 grammar: "c_sharp".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2200,6 +2202,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         languages
@@ -2265,7 +2268,7 @@ mod tests {
                 filenames: vec!["/etc/**/rc.*".to_string(), "*rc".to_string()],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -2282,6 +2285,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -2556,7 +2560,7 @@ mod tests {
             filenames: vec![],
             grammar: String::new(),
             comment_prefix: Some("//".to_string()),
-            auto_indent: true,
+            auto_indent: Some(true),
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,
@@ -2573,6 +2577,7 @@ mod tests {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         };
         languages.insert(
             "c".to_string(),

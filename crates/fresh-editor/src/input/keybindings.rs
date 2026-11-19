@@ -432,6 +432,9 @@ pub enum Action {
     DeleteViWordEnd, // Delete from cursor to end of word (vim de)
     TransposeChars,
     OpenLine,
+    /// Open a new line below the cursor's line (vi's `o`): line end, then
+    /// Enter taking only the edit rules that add text at the cursor.
+    InsertLineBelow,
     DuplicateLine,
     DuplicateLineAbove,
 
@@ -1057,6 +1060,7 @@ impl Action {
             "delete_vi_word_end" => DeleteViWordEnd,
             "transpose_chars" => TransposeChars,
             "open_line" => OpenLine,
+            "insert_line_below" => InsertLineBelow,
             "duplicate_line" => DuplicateLine,
             "duplicate_line_above" => DuplicateLineAbove,
             "recenter" => Recenter,
@@ -1607,6 +1611,7 @@ impl Action {
                 | Action::DeleteToLineStart
                 | Action::TransposeChars
                 | Action::OpenLine
+                | Action::InsertLineBelow
                 | Action::DuplicateLine
                 | Action::DuplicateLineAbove
                 | Action::MoveLineUp
@@ -1638,6 +1643,7 @@ impl Action {
                 | Action::DeleteViWordEnd
                 | Action::TransposeChars
                 | Action::OpenLine
+                | Action::InsertLineBelow
                 | Action::DuplicateLine
                 | Action::DuplicateLineAbove
                 | Action::MoveLineUp
@@ -2235,6 +2241,7 @@ impl KeybindingResolver {
                 | Action::ToLowerCase
                 | Action::SortLines
                 | Action::OpenLine
+                | Action::InsertLineBelow
                 | Action::DuplicateLine
                 | Action::DuplicateLineAbove
                 | Action::ToggleComment
@@ -3109,6 +3116,7 @@ impl KeybindingResolver {
             Action::DeleteViWordEnd => t!("action.delete_word_forward"),
             Action::TransposeChars => t!("action.transpose_chars"),
             Action::OpenLine => t!("action.open_line"),
+            Action::InsertLineBelow => t!("action.insert_line_below"),
             Action::DuplicateLine => t!("action.duplicate_line"),
             Action::DuplicateLineAbove => t!("action.duplicate_line_above"),
             Action::Recenter => t!("action.recenter"),

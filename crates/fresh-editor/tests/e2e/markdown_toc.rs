@@ -117,10 +117,9 @@ fn toc_harness(md: &str) -> (EditorTestHarness, std::path::PathBuf, tempfile::Te
     std::fs::create_dir(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "markdown_toc");
     copy_plugin(&plugins_dir, "markdown_compose");
-    // The source-mode plugin binds Enter / Tab / Shift+Tab for the buffer.
-    // Loaded on purpose: a focused section's Enter must reach the row, not
-    // the buffer's list-continuation handler (found by driving, not here).
-    copy_plugin(&plugins_dir, "markdown_source");
+    // Markdown's built-in edit rules change what Enter / Tab / Shift+Tab do
+    // in the buffer: a focused section's Enter must reach the row, not the
+    // buffer's list continuation.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("guide.md");

@@ -215,7 +215,7 @@ defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextI
 ### `setEditorMode`
 
 Set the active window's editor mode — a plugin mode scoped to that
-window, such as `markdown-source`. It outranks the editor-wide input
+window, such as flash's label mode. It outranks the editor-wide input
 mode in that window and is invisible in every other. `null` clears
 it. A modal-editing personality that should apply everywhere (vi)
 belongs in `setInputMode` instead.
