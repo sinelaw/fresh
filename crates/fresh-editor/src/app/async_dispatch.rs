@@ -1558,6 +1558,7 @@ impl Editor {
             title: None,
             auto_title: None,
             held_by_trust: false,
+            resume_requires: window.terminal_resume_requires.get(&terminal_id).cloned(),
             failed_first_run: match window.terminal_resume_requires.get(&terminal_id) {
                 // The launcher named what a conversation leaves behind: ask
                 // the window's own machine whether it is there.

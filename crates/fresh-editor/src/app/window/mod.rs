@@ -162,6 +162,9 @@ pub struct ExitedTerminal {
     /// way it quit before a conversation began (a declined trust prompt, a
     /// failed start), so a restart re-runs the launch command instead.
     pub failed_first_run: bool,
+    /// The terminal's `resume_requires` path, carried so a workspace save
+    /// keeps it for the next restore.
+    pub resume_requires: Option<std::path::PathBuf>,
 }
 
 /// How long an agent's first run has to last before an error exit can be
@@ -5826,6 +5829,7 @@ mod exited_terminal_tests {
             auto_title: None,
             held_by_trust: false,
             failed_first_run: false,
+            resume_requires: None,
         }
     }
 
