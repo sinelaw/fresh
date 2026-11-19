@@ -16,7 +16,7 @@ Smart editing for Markdown files, on by default:
 - Enter on an empty list marker removes it
 - Enter on any other indented line keeps its indentation
 - Tab on an empty bullet or checkbox item indents it one level (your `tab_size` / `use_tabs`) and cycles the bullet `*` → `-` → `+`; Shift+Tab takes the level back off and cycles the other way. Elsewhere Tab and Shift+Tab work as usual, and Tab with a selection indents the selected lines
-- Single-quote auto-close is disabled so apostrophes don't interfere
+- Auto-closing of quotes and brackets is off (`auto_close: false`), so apostrophes and prose parentheses don't interfere; turn it back on with `languages.markdown.auto_close`
 - Inside a fenced code block none of this applies: the lines are code in the block's language, so Enter, Tab and Shift+Tab follow that language's settings — its edit rules and auto-indent (in a ` ```python ` block, Enter after `def f():` indents the next line). A block whose language Fresh doesn't recognize, or that names none, gets no list editing, and Enter indents as it does in a plain text file
 
 It applies at every cursor, keeps up with typing however fast (or a paste of keystrokes), and each Enter or Tab is one undo step. It works the same in vi mode's insert mode and in compose mode; vi's `o` continues the list below the current item, and on an empty item opens a new one rather than clearing it. It applies to buffers whose language is Markdown (`.md`, `.markdown`, `README`); an `.mdx` file is plain text unless you add `mdx` to `languages.markdown.extensions` (or define an `mdx` language with these rules).
@@ -27,7 +27,7 @@ The list editing is Markdown's built-in `edit_rules` setting (see [Edit rules](.
 { "languages": { "markdown": { "edit_rules": [] } } }
 ```
 
-That also turns off keeping an indented line's indentation on Enter, which is one of the rules (Markdown's `auto_indent` is off). Setting your own `languages.markdown.edit_rules` replaces the built-in rules as a whole; the Settings UI lists them under **Syntax & Languages → markdown → Edit Rules**.
+That also turns off keeping an indented line's indentation on Enter, which is one of the rules (Markdown's `auto_indent` is off). Setting your own `languages.markdown.edit_rules` replaces the built-in rules as a whole; the Settings UI lists them under **Syntax & Languages → Languages → markdown → Edit Rules**.
 
 If you had turned off the old `markdown_source` plugin (`"plugins": {"markdown_source": {"enabled": false}}`), Fresh reads that as `"edit_rules": []` and writes it that way the next time it saves your config.
 
