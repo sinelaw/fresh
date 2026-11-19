@@ -424,12 +424,44 @@ fn migrate_v2_to_v3(mut value: Value) -> Result<Value, ConfigError> {
 /// a file before it is written back, so a file still on an old name moves to
 /// the new one the first time any setting is saved — rather than holding the
 /// two side by side.
+///
+/// Also retires the `markdown_source` plugin's entry: its list editing is
+/// now Markdown's built-in `edit_rules`, so a file that disabled the plugin
+/// (`"plugins": {"markdown_source": {"enabled": false}}`) turned list editing
+/// off and gets `"languages": {"markdown": {"edit_rules": []}}` instead —
+/// unless it sets Markdown's `edit_rules` itself, which then stand. The
+/// plugin entry goes either way.
 pub fn rename_legacy_keys(value: &mut Value) {
     const RENAMED: [(&str, &str); 1] = [("orchestrator_mode", "auto_attach")];
     if let Value::Object(map) = value {
         for (old, new) in RENAMED {
             if let Some(v) = map.remove(old) {
                 map.entry(new).or_insert(v);
+            }
+        }
+        let markdown_source = map
+            .get_mut("plugins")
+            .and_then(Value::as_object_mut)
+            .and_then(|plugins| plugins.remove("markdown_source"));
+        if markdown_source
+            .as_ref()
+            .and_then(|p| p.get("enabled"))
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            let markdown = map
+                .entry("languages")
+                .or_insert_with(|| Value::Object(Default::default()))
+                .as_object_mut()
+                .map(|languages| {
+                    languages
+                        .entry("markdown")
+                        .or_insert_with(|| Value::Object(Default::default()))
+                });
+            if let Some(Value::Object(markdown)) = markdown {
+                markdown
+                    .entry("edit_rules")
+                    .or_insert_with(|| Value::Array(Vec::new()));
             }
         }
         if let Some(Value::Object(plugins)) = map.get_mut("plugins") {
@@ -3303,6 +3335,79 @@ mod tests {
             setting(&resolver.resolve().unwrap()),
             Some(serde_json::json!(true))
         );
+        drop(temp);
+    }
+
+    /// A file that disabled the old `markdown_source` plugin had no list
+    /// editing; it keeps none: the entry is read as Markdown's
+    /// `edit_rules: []` (keeping the rest of the user's Markdown entry, and
+    /// any `edit_rules` it sets), and the first save drops the plugin entry
+    /// and writes the rules setting.
+    #[test]
+    fn a_disabled_markdown_source_plugin_turns_list_editing_off() {
+        let (temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        let write = |text: &str| std::fs::write(&user_config_path, text).unwrap();
+
+        write(
+            r#"{"plugins": {"markdown_source": {"enabled": false}},
+                "languages": {"markdown": {"tab_size": 3}}}"#,
+        );
+        let config = resolver.resolve().unwrap();
+        assert!(config.languages["markdown"].edit_rules.is_empty());
+        assert_eq!(config.languages["markdown"].tab_size, Some(3));
+        assert!(!config.plugins.contains_key("markdown_source"));
+
+        let changes = std::collections::HashMap::from([(
+            "/editor/tab_size".to_string(),
+            serde_json::json!(2),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        assert!(
+            written.pointer("/plugins/markdown_source").is_none(),
+            "{written:#}"
+        );
+        assert_eq!(
+            written.pointer("/languages/markdown/edit_rules"),
+            Some(&serde_json::json!([])),
+            "{written:#}"
+        );
+        assert_eq!(
+            written.pointer("/languages/markdown/tab_size"),
+            Some(&serde_json::json!(3))
+        );
+        assert!(resolver.resolve().unwrap().languages["markdown"]
+            .edit_rules
+            .is_empty());
+
+        // The user's own Markdown rules stand.
+        write(
+            r#"{"plugins": {"markdown_source": {"enabled": false}},
+                "languages": {"markdown": {"edit_rules": [
+                    {"on": "newline", "before": "^> ", "insert": "\\n> "}
+                ]}}}"#,
+        );
+        assert_eq!(
+            resolver.resolve().unwrap().languages["markdown"]
+                .edit_rules
+                .len(),
+            1
+        );
+
+        // An enabled (or merely configured) plugin entry just goes: the
+        // built-in rules apply.
+        write(r#"{"plugins": {"markdown_source": {"enabled": true}}}"#);
+        let config = resolver.resolve().unwrap();
+        assert_eq!(
+            config.languages["markdown"].edit_rules,
+            Config::default().languages["markdown"].edit_rules
+        );
+        assert!(!config.plugins.contains_key("markdown_source"));
         drop(temp);
     }
 
