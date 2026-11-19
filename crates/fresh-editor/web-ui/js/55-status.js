@@ -9,11 +9,10 @@ function statusBarEl(sb){
     const s=document.createElement("span"); s.className=(seg.name==="text"?"txt":"seg"); s.dataset.name=seg.name; s.textContent=seg.text;
     if(seg.tone) s.dataset.tone=seg.tone;
     // Who gives way when the bar is short is the layout's call, as in the
-    // terminal: the left side shrinks, the right never does, and an element
-    // the layout already cut (given fewer cells than its text and padding)
-    // is the one that yields first, with an ellipsis.
+    // terminal: the left side shrinks, the right never does, and the element
+    // the layout already cut is the one that yields, with an ellipsis.
     s.dataset.side=seg.side;
-    if(seg.side!=="right" && seg.w<[...seg.text].length+2) s.classList.add("cut");
+    if(seg.side!=="right" && seg.cut) s.classList.add("cut");
     const c=rectCell({x:seg.x,y:sb.rect.y,w:seg.w,h:1});
     s.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); };
     return s;

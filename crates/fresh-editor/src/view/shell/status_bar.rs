@@ -486,9 +486,12 @@ pub fn segments(
                 return None;
             }
             let r = rect_of(ui, &key_of(side, i, it), size)?;
+            // Laid out narrower than its text: the layout elided it.
+            let cut = (r.width as usize) < crate::primitives::display_width::str_width(&it.text());
             Some(crate::view::scene::StatusSegment {
                 name: it.name,
                 tone: it.tone,
+                cut,
                 key: it.token_key.clone(),
                 text,
                 x: r.x,

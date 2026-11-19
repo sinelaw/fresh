@@ -818,6 +818,7 @@ mod tests {
             left: vec![("  ".to_string(), Explorer::panel())],
             chain: Vec::new(),
             name: vec![(name.to_string(), Explorer::panel())],
+            name_fg: String::new(),
             trailing: None,
             error: None,
             segment: None,

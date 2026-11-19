@@ -947,11 +947,13 @@ fn lsp_look(state: LspIndicatorState) -> (Keys, Hover) {
 }
 
 /// The tone an element's keys give it, for the web: the role of its colours
-/// ("error", "warning", "ok", "actionable", "info", "palette", "highlight"),
+/// ("error", "diagnosticError", "warning", "ok", "actionable", "info",
+/// "palette", "highlight"),
 /// or "" for the bar's own. Read from the keys before a hover swaps them.
 fn tone(keys: Keys) -> &'static str {
     match keys {
-        ERROR | ("diagnostic.error_fg", "diagnostic.error_bg") => "error",
+        ERROR => "error",
+        ("diagnostic.error_fg", "diagnostic.error_bg") => "diagnosticError",
         WARNING => "warning",
         ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg") => "ok",
         ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg") => "actionable",

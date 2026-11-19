@@ -8,6 +8,8 @@
   body .statusbar .seg[data-tone],body .statusbar .txt[data-tone]{border-radius:var(--r-sm,3px)}
   body .statusbar .seg[data-tone="error"],body .statusbar .txt[data-tone="error"]{
     color:var(--tone-error-fg,#fff);background:var(--tone-error-bg,#c0392b)}
+  body .statusbar .seg[data-tone="diagnosticError"],body .statusbar .txt[data-tone="diagnosticError"]{
+    color:var(--tone-diagnosticError-fg,#fff);background:var(--tone-diagnosticError-bg,#c0392b)}
   body .statusbar .seg[data-tone="warning"],body .statusbar .txt[data-tone="warning"]{
     color:var(--tone-warning-fg,#000);background:var(--tone-warning-bg,#e5c07b)}
   body .statusbar .seg[data-tone="actionable"],body .statusbar .txt[data-tone="actionable"]{
@@ -20,7 +22,7 @@
 
   /* Winamp: the tones as LCD inks on the black display, not coloured pills. */
   body.theme-winamp .statusbar .seg[data-tone],body.theme-winamp .statusbar .txt[data-tone]{background:transparent;border-radius:0}
-  body.theme-winamp .statusbar [data-tone="error"]{color:#ff5a4a;text-shadow:0 0 6px rgba(255,90,74,.55)}
+  body.theme-winamp .statusbar :is([data-tone="error"],[data-tone="diagnosticError"]){color:#ff5a4a;text-shadow:0 0 6px rgba(255,90,74,.55)}
   body.theme-winamp .statusbar [data-tone="warning"]{color:var(--wa-amber);text-shadow:0 0 6px rgba(255,190,80,.5)}
   body.theme-winamp .statusbar [data-tone="actionable"],
   body.theme-winamp .statusbar [data-tone="info"],

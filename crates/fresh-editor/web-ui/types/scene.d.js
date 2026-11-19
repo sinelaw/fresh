@@ -226,6 +226,7 @@
 /** type StatusSegment = {
     name: String,
     tone: String,
+    cut: Boolean,
     key: String | Null,
     text: String,
     x: Number,

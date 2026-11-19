@@ -47,7 +47,7 @@
      hiding the tail behind a "…". */
   .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:clip}
   .palette.input-only .pinput .q{flex:1}
-  .palette .pinput .q .caret2{display:inline-block;width:1px;background:var(--caret,var(--fg));animation:blink 1.05s steps(1) infinite}
+  .palette .pinput .q .caret2{display:inline-block;width:1px;background:currentColor;animation:blink 1.05s steps(1) infinite}
   .palette .pinput .status{color:var(--muted)}
   .palette .pinput .count{color:var(--muted)}
   .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}

@@ -55,6 +55,9 @@
     color:transparent;font-size:calc(var(--check-size) * .74);line-height:1;font-weight:700;
     font-family:var(--font-family)}
   .ui-check.ui-check::after{content:"✓"}
+  /* An unchecked box shows no tick whatever ink its row gives it (a
+     selected tree row colours its glyphs). */
+  .ui-check.ui-check.ui-check:not(.on){color:transparent}
   .ui-check.ui-check.on{background:var(--check-on-bg);border-color:var(--check-on-border);
     color:var(--check-on-fg);box-shadow:var(--check-on-shadow);text-shadow:var(--check-on-glow)}
   .w-tree-check.ui-check{margin-right:.45em}

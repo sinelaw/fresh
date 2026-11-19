@@ -1918,7 +1918,10 @@ fn test_keys_typed_right_after_alt_slash_go_to_the_live_grep_prompt() {
     harness.open_file(&start_file).unwrap();
     harness.render().unwrap();
 
-    // Wait until the plugin has registered Live Grep, then close the palette.
+    // Make sure the plugin is loaded: open Live Grep once from the palette
+    // and wait for its own prompt (its scope toolbar), which only a loaded
+    // plugin draws — the typed query alone would match "Live Grep" at once.
+    // Then close it again.
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -1926,9 +1929,16 @@ fn test_keys_typed_right_after_alt_slash_go_to_the_live_grep_prompt() {
     harness
         .wait_until(|h| h.screen_to_string().contains("Live Grep"))
         .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
+        .unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    assert!(harness.editor().prompt_input().is_none());
+    harness
+        .wait_until(|h| h.editor().prompt_input().is_none())
+        .unwrap();
 
     // Alt+/ and the search, with nothing in between to let the plugin run.
     harness

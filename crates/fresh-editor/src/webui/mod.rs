@@ -2254,6 +2254,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             // paints them: [fg, bg] each.
             "tones": {
                 "error": [color_css(t.status_error_indicator_fg), color_css(t.status_error_indicator_bg)],
+                "diagnosticError": [color_css(t.diagnostic_error_fg), color_css(t.diagnostic_error_bg)],
                 "warning": [color_css(t.status_warning_indicator_fg), color_css(t.status_warning_indicator_bg)],
                 "ok": [color_css(t.status_lsp_on_fg), color_css(t.status_lsp_on_bg)],
                 "actionable": [color_css(t.status_lsp_actionable_fg), color_css(t.status_lsp_actionable_bg)],

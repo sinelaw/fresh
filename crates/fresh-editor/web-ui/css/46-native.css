@@ -10,7 +10,6 @@
    native surface's gaps. */
 body .tree-surface.confirm,
 body .tree-item[data-surface-kind="confirm"],
-body .tree:has(> .tree-surface.confirm) .tree-scrim,
 body .tree-item[data-interior],
 body .tree-item[data-surface-kind="dock"],
 body .tree-item[data-surface-kind="floating"],

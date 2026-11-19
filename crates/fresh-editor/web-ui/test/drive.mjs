@@ -246,11 +246,10 @@ const clickLine = async (it, opts) => clickCell(it.x + Math.min(it.w - 1, 2), it
 // a press goes to the control, as a user's does.
 const nativeDock = () => page.locator('.native-panel.np-dock');
 const dockMenuButton = () => nativeDock().locator('.w-dd-pill, .w-button', { hasText: /Menu/ }).first();
-const dockRow = async re => {
-  const rows = nativeDock().locator('.w-tree-row, .w-list-row');
-  const named = rows.filter({ hasText: re });
-  return (await named.count()) ? named.first() : rows.last();
-};
+const dockRow = re => nativeDock().locator('.w-tree-row, .w-list-row').filter({ hasText: re }).first();
+// Press a control if it is on screen. A missing one is not papered over: the
+// check after it finds the state unchanged and fails.
+const press = async (loc, opts) => { if (await loc.count()) await loc.click(opts); };
 const waitTree = (pred, arg, ms) => page.waitForFunction((a) => {
   const t = window.fresh.scene.regions.tree; if (!t || !t.surfaces) return false;
   const lines = kind => { const si = t.surfaces.findIndex(s => s.kind === kind); return t.items.filter(i => i.surface === si && i.kind === 'lines').map(i => (i.lines || []).join('\n')); };
@@ -383,14 +382,14 @@ if (webDockPanels) {
   // settings row leaves the menu open, so both clicks land on the same menu.
   const DOCK_MENU = /Menu ▾/;
   const openDockMenu = async () => {
-    await dockMenuButton().click().catch(() => {});
+    await press(dockMenuButton());
     await waitTree((t, lines) => lines('floating').some(l => /empty/i.test(l)), null, 5000);
   };
   const toggleLine = async () => findLine(await treeOf(), 'floating', /empty/i);
   const toggleText = async () => { const it = await toggleLine(); return it ? it.text : null; };
   // The toggle's own row, within the menu's text: the item is the whole menu.
   const clickToggle = async () => {
-    await page.locator('.native-panel.card').getByText(/Empty workspaces/i).first().click().catch(() => {});
+    await press(page.locator('.native-panel.card').getByText(/Empty workspaces/i).first());
   };
   await openDockMenu();
   const t0 = await toggleText();
@@ -415,7 +414,7 @@ if (webDockPanels) {
   const sessionRow = async () => dockRow(/fresh/);
   const floating = async () => (await treeOf()).surfaces.find(s => s.kind === 'floating');
   let row = await sessionRow();
-  await row.click({ button: 'right' }).catch(() => {});
+  await press(row, { button: 'right' });
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
   const ctxM = await floating();
   check('right-click on a dock row opens the context-menu panel', !!ctxM);
@@ -429,7 +428,7 @@ if (webDockPanels) {
   await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
   check('Esc closes the context menu', !(await floating()));
   row = await sessionRow();
-  await row.click({ button: 'right' }).catch(() => {});
+  await press(row, { button: 'right' });
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
   {
     const sc = await scene(page);
@@ -445,7 +444,7 @@ if (webDockPanels) {
   const search = findLine(await treeOf(), 'dock', /Search/i);
   check('the search field is in the dock', !!search);
   if (search) {
-    await nativeDock().locator('.w-text-input').first().click().catch(() => {});
+    await press(nativeDock().locator('.w-text-input').first());
     await page.waitForTimeout(300);
     await page.keyboard.type('zq');
     await waitTree((t, lines) => lines('dock').some(l => /zq/.test(l)), null, 5000);
@@ -458,7 +457,7 @@ if (webDockPanels) {
   // The header's `Menu ▾` opens the dock's menu as a floating layer anchored
   // to the button; its rows are display-list items below the trigger.
   const menuTrigger = findLine(await treeOf(), 'dock', DOCK_MENU);
-  await dockMenuButton().click().catch(() => {});
+  await press(dockMenuButton());
   await waitTree((t, lines) => lines('floating').some(l => /Import sessions/i.test(l)), null, 5000);
   const option = findLine(await treeOf(), 'floating', /Import sessions/i);
   const optionRow = option ? option.y + option.text.split('\n').findIndex(l => /Import sessions/i.test(l)) : null;
@@ -1037,7 +1036,7 @@ if (webDockPanels) {
   // `+ New` goes straight to the dialog — one click since the dock's header
   // collapsed to two controls (it used to be "New Task… ▾" and then an option
   // row in the dropdown it opened).
-  await nativeDock().locator('.w-button', { hasText: /New$/ }).first().click().catch(() => {});
+  await press(nativeDock().locator('.w-button', { hasText: /New$/ }).first());
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating' && !s.anchored));
   await page.waitForTimeout(200);
   const modal = (await treeOf()).surfaces.find(s => s.kind === 'floating' && !s.anchored);
@@ -1407,13 +1406,14 @@ await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'compac
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 const nerrs = []; page.on('pageerror', e => nerrs.push(String(e)));
-check('Compact lays the shell\'s surfaces out natively',
-  await page.evaluate(() => !!document.querySelector('.native-panel')));
 if (!(await page.evaluate(() => (window.fresh.scene.regions.native.panels || []).some(p => p.kind === 'dock')))) {
   await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
 }
 await page.waitForSelector('.native-panel.np-dock', { timeout: 8000 }).catch(() => {});
 check('the dock is a native panel', !!(await page.$('.native-panel.np-dock')));
+check('no surface is drawn as display-list cells', await page.evaluate(() =>
+  [...document.querySelectorAll('.tree-item[data-surface-kind="dock"], .tree-item[data-surface-kind="floating"]')]
+    .every(e => getComputedStyle(e).visibility === 'hidden')));
 check('the dock\'s cell items are hidden under it', await page.evaluate(() => {
   const items = [...document.querySelectorAll('.tree-item[data-surface-kind="dock"]')];
   return items.length > 0 && items.every(e => getComputedStyle(e).visibility === 'hidden');

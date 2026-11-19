@@ -349,6 +349,9 @@ pub struct StatusSegment {
     /// The role of its colours: "error" | "warning" | "ok" | "actionable" |
     /// "info" | "palette" | "highlight", or "" for the bar's own.
     pub tone: &'static str,
+    /// The layout gave it fewer cells than its text: the terminal elides it,
+    /// and it is the element that gives way first.
+    pub cut: bool,
     /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
     pub text: String,
@@ -507,11 +510,22 @@ impl Editor {
                     let bid = r.target.as_buffer();
                     // The terminal's label, whole (the web elides with CSS)
                     // and without the modified mark, which the web draws from
-                    // `modified`.
-                    let label =
-                        crate::view::shell::tabs::label(tab, usize::MAX, &preview_label, "")
-                            .trim()
-                            .to_string();
+                    // `modified`. A group's pieced title is the exception:
+                    // its marks belong to the pieces they follow (`a.rs* ↔
+                    // b.rs`, #3691) and the tab itself has no `modified`, so
+                    // they stay in its label.
+                    let piece_mark = match tab.title.is_some() {
+                        true => theme.chrome.glyphs().tab_modified.clone(),
+                        false => String::new(),
+                    };
+                    let label = crate::view::shell::tabs::label(
+                        tab,
+                        usize::MAX,
+                        &preview_label,
+                        &piece_mark,
+                    )
+                    .trim()
+                    .to_string();
                     // A group's tab has no file type, so no icon.
                     let icon = bid
                         .and_then(|_| crate::view::file_icons::shown(&theme, &tab.name, None))
@@ -1063,13 +1077,13 @@ impl Editor {
                 let r = &mut rows[i];
                 let plain =
                     crate::view::shell::file_explorer::neutral_key(r.hidden, r.symlink, r.is_dir);
-                r.name_color =
-                    d.name
-                        .first()
-                        .and_then(|(_, ink)| match st::names(ink).0.as_deref() {
-                            Some(k) if k == plain || k == "editor.fg" => None,
-                            _ => fg(ink),
-                        });
+                // The name's own ink, whatever runs a search highlight split
+                // the name into; none for the panel's plain ink, which is
+                // the skin's to choose.
+                r.name_color = match d.name_fg.as_str() {
+                    k if k == plain || k == "editor.fg" => None,
+                    k => fg(&st::pair(k, "ui.file_explorer_bg")),
+                };
                 r.trailing = d.trailing.as_ref().map(|s| SlotView {
                     text: s.text.trim().to_string(),
                     color: fg(&s.theme),

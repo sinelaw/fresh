@@ -1029,7 +1029,8 @@ function settingsWindowEls(s){
     btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=aria(div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")),"button",{}); bb.textContent=b;
       bb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryButton", button:b.toLowerCase()}); }; db.appendChild(bb);}); dlg.appendChild(db);
     el.appendChild(dlg); }
-  if(s.showingHelp){ const h=div("set-overlay"); h.innerHTML="<b>Settings help</b><br>↑↓ navigate · Tab switch panel · Space/Enter activate · Ctrl+S save · Esc close"; el.appendChild(h); }
+  // The shortcuts help (`showingHelp`) is one of the settings' dialogs,
+  // drawn over the window by settingsDialogEls.
   out.push(el);
   return out;
 }
