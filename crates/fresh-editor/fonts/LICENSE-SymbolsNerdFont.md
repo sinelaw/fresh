@@ -74,7 +74,14 @@ v3.5.1 release notes for this font):
 
 - CC BY 4.0: the full text is in `LICENSE-CC-BY-4.0.txt`. Attribution:
   Codicons © Microsoft Corporation; Font Awesome Free © Fonticons, Inc.
-- OFL 1.1: the full text is in `LICENSE-OFL.txt`.
-- Apache 2.0: <https://www.apache.org/licenses/LICENSE-2.0>.
+- OFL 1.1: the license terms are in `LICENSE-OFL.txt` (that file's header
+  names JetBrains Mono, the other font in this directory; the terms are the
+  same). For the icon sets in this font under it:
+  - Pomicons: Copyright (c) 2021, Gabriele Lana, with Reserved Font Name
+    Pomicons.
+  - Weather Icons: icon designs by Lukas Bischoff and Erik Flowers
+    (<https://github.com/erikflowers/weather-icons>).
+- Apache 2.0 (MaterialDesign, © Pictogrammers / Templarian): the full text is
+  in `LICENSE-Apache-2.0.txt`.
 - Font Logos: brand icons are trademarks of their respective owners and
   should only be used to represent the company or product they refer to.

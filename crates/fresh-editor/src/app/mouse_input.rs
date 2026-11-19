@@ -708,7 +708,12 @@ impl Editor {
 
         // Check if mouse is over a transient popup - if so, keep hover active
         if self.is_mouse_over_transient_popup(col, row) {
-            self.active_window_mut().mouse_state.hover_dismiss_at = None;
+            // On the card: it stays. Anything the pointer crossed on its way
+            // here is dropped with the grace deadline — a request still
+            // pending for a cell it passed over would otherwise fire while the
+            // pointer rests on the card, and an empty answer would take the
+            // card down under it.
+            self.settle_on_hover_card();
             return false;
         }
 
@@ -845,8 +850,10 @@ impl Editor {
         // Check if mouse is within the hovered symbol range - if so, keep hover active
         if let Some((start, end)) = self.active_window_mut().hover.symbol_range() {
             if byte_pos >= start && byte_pos < end {
-                // Mouse is still over the hovered symbol - keep hover state
-                self.active_window_mut().mouse_state.hover_dismiss_at = None;
+                // Back on the hovered symbol: the card stays, and a request
+                // made for somewhere the pointer passed is no longer the
+                // pointer's (see `settle_on_hover_card`).
+                self.settle_on_hover_card();
                 return false;
             }
         }
@@ -879,15 +886,32 @@ impl Editor {
         false
     }
 
+    /// The pointer is on the hover card or its symbol: no grace deadline, and
+    /// no pending request for a cell it crossed to get here.
+    fn settle_on_hover_card(&mut self) {
+        let ms = &mut self.active_window_mut().mouse_state;
+        ms.hover_dismiss_at = None;
+        ms.lsp_hover_state = None;
+        ms.lsp_hover_request_sent = false;
+    }
+
+    /// The least time the pointer may spend off the card before it comes
+    /// down, however short `mouse_hover_delay_ms` is: at 0 (instant hover)
+    /// the card would otherwise go on the next tick after the pointer crossed
+    /// one gutter cell on its way to it (#692).
+    const HOVER_DISMISS_MIN_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
     /// The pointer left the hover card for ground with nothing to hover:
     /// start the grace period after which `check_hover_dismiss_timer` takes
     /// the card down (#3733). Only the first such move arms it, so wandering
-    /// around does not keep pushing the deadline out.
+    /// around does not keep pushing the deadline out. Only a card the pointer
+    /// opened is the pointer's to take down (`pointer_hover_card_showing`).
     fn arm_hover_dismiss(&mut self) {
-        if !self.transient_popup_showing() || self.chrome_owns_transient_popup() {
+        if !self.config.editor.mouse_hover_enabled || !self.pointer_hover_card_showing() {
             return;
         }
-        let grace = std::time::Duration::from_millis(self.config.editor.mouse_hover_delay_ms);
+        let grace = std::time::Duration::from_millis(self.config.editor.mouse_hover_delay_ms)
+            .max(Self::HOVER_DISMISS_MIN_GRACE);
         let now = self.time_source.now();
         let ms = &mut self.active_window_mut().mouse_state;
         if ms.hover_dismiss_at.is_none() {
@@ -906,11 +930,28 @@ impl Editor {
             return false;
         }
         self.active_window_mut().mouse_state.hover_dismiss_at = None;
-        if self.transient_popup_showing() && !self.chrome_owns_transient_popup() {
+        if self.pointer_hover_card_showing() {
             self.dismiss_transient_popups();
             return true;
         }
         false
+    }
+
+    /// Is the popup on top a hover card the pointer opened?
+    ///
+    /// Of the transient popups — hover cards, signature help, the explorer's
+    /// status tooltip — only a hover card requested by the pointer is placed
+    /// at a fixed screen cell (the pointer's, `HoverState::screen_position`);
+    /// a keyboard hover and signature help sit at the cursor, and the
+    /// tooltip belongs to the explorer (`chrome_owns_transient_popup`). Only
+    /// that card is the pointer's to take down: moving the mouse must not
+    /// close a hover the keyboard asked for, or signature help while typing.
+    pub(crate) fn pointer_hover_card_showing(&self) -> bool {
+        self.transient_popup_showing()
+            && !self.chrome_owns_transient_popup()
+            && self.active_state().popups.top().is_some_and(|p| {
+                matches!(p.position, crate::view::popup::PopupPosition::Fixed { .. })
+            })
     }
 
     /// Is the pointer over a transient popup (hover, signature help)?

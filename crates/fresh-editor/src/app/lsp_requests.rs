@@ -1145,15 +1145,21 @@ impl Editor {
             self.set_status_message(message);
             self.active_window_mut().hover.set_symbol_range(None);
             // A request the pointer made (it left a screen position to anchor
-            // the card at) and that found nothing means the pointer rested on
-            // something with no hover: the previous card is about something
-            // else and comes down (#3733). A keyboard request leaves it.
-            if self
+            // the card at), for where the pointer still rests, that found
+            // nothing: the pointer is on something with no hover, so the card
+            // it opened earlier is about something else and comes down
+            // (#3733). Not when the pointer has since moved on — back to the
+            // card or its symbol clears `lsp_hover_state` — and never a card
+            // the keyboard asked for or signature help
+            // (`pointer_hover_card_showing`).
+            let from_pointer = self
                 .active_window_mut()
                 .hover
                 .take_screen_position()
-                .is_some()
-            {
+                .is_some();
+            let ms = &self.active_window().mouse_state;
+            let still_resting = ms.lsp_hover_request_sent && ms.lsp_hover_state.is_some();
+            if from_pointer && still_resting && self.pointer_hover_card_showing() {
                 self.dismiss_transient_popups();
             }
             return;

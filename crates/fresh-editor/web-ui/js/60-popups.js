@@ -29,6 +29,19 @@ function popupRun(run){
 /** function popupEl(Popup) => El */
 function popupEl(p){
   const el=div("popup"); place(el,p.rect);
+  // The pointer on the card is news to the editor: a hover card stays while
+  // the pointer is on it and comes down once it has left (#3733), and the
+  // card is DOM here, so the document's cell-motion forwarding skips it
+  // (`onChrome`). Report the card's own cell — one the editor reads as on
+  // the card — sharing the document handler's de-dupe, so a move back to the
+  // buffer is reported too.
+  { const c=rectCell(p.rect);
+    el.onmousemove=()=>{
+      const lm=lastMoveCell;
+      if(lm&&lm.col===c.col&&lm.row===c.row) return;
+      lastMoveCell={col:c.col,row:c.row,ctrl:false};
+      sendMouse({kind:"moved",col:c.col,row:c.row});
+    }; }
   const title=p.title, desc=p.description;
   if(title){ const t=div("popup-title"); t.textContent=title; el.appendChild(t); }
   if(desc){ const dd=div("popup-desc"); dd.textContent=desc; el.appendChild(dd); }

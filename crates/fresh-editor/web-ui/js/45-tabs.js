@@ -14,22 +14,24 @@
 // 80-input.js, which see the pointer wherever it goes).
 //
 // The bar is laid out by CSS, so a pixel over it is not the editor's cell;
-// the pointer is sent as the cell it stands for. Over the pressed tab: the
-// cell the press went to, so moving within it is no motion at all and the
+// the pointer is sent as the cell it stands for. Over the pressed tab (the
+// same pane's same buffer — not the same column, which a stacked pane's tab
+// can share, and which moves when the press scrolls a cut-off tab into view):
+// the cell the press went to, so moving within it is no motion at all and the
 // editor's own rule alone tells a click from a drag. Over another tab: that
 // tab's first or last cell, by which half (the editor's insert-before /
 // insert-after rule). Over the bar past the tabs: the cell just after the
 // last one. Anywhere else the pane grid is cell-exact: `cellAt`.
-/** let tabDrag: {press: Cell, pressL: String, last: Cell} | Null */
+/** let tabDrag: {press: Cell, pressKey: String, last: Cell} | Null */
 let tabDrag=null;
 // A cell coordinate the bar stored in a `data-*` attribute.
 /** function dnum(String | Undefined) => Number */
 function dnum(s){ return parseInt(s??"0",10); }
-/** function tabDragCell({press: Cell, pressL: String, last: Cell}, UiEvent) => Cell */
+/** function tabDragCell({press: Cell, pressKey: String, last: Cell}, UiEvent) => Cell */
 function tabDragCell(d, e){
   const tab=e.target.closest(".tabbar .tab");
   if(tab){
-    if(tab.dataset.l===d.pressL) return d.press;
+    if(tab.dataset.key===d.pressKey) return d.press;
     const r=tab.getBoundingClientRect();
     const left=e.clientX<r.left+r.width/2;
     return {col:dnum(left?tab.dataset.l:tab.dataset.r), row:dnum(tab.dataset.row)};
@@ -47,14 +49,16 @@ function tabDragMove(e){
   document.body.classList.toggle("tabdragging", c!==d.press);
   sendMouse({kind:"drag",button:"left",col:c.col,row:c.row});
 }
-// The release, at the cell the pointer stands for — or, when the window lost
-// the pointer (blur), at the last cell sent.
+// The release, at the cell the pointer stands for. When the window loses the
+// pointer instead (blur) there is no release to honour: the drag goes back to
+// the press cell first, which the editor reads as no drag, so nothing drops.
 /** function tabDragEnd(UiEvent | Null) => Undefined */
 function tabDragEnd(e){
   const d=tabDrag; if(!d) return;
   tabDrag=null;
   document.body.classList.remove("tabdragging");
-  const c=e?tabDragCell(d, e):d.last;
+  if(!e) sendMouse({kind:"drag",button:"left",col:d.press.col,row:d.press.row});
+  const c=e?tabDragCell(d, e):d.press;
   sendMouse({kind:"up",button:"left",col:c.col,row:c.row});
 }
 window.addEventListener("blur",()=>tabDragEnd(null));
@@ -65,6 +69,11 @@ function tabBarEl(p, rect){
   bar.dataset.row=String(rect.y);
   for(const t of p.tabs){
     const el=div("tab"+(t.active?" active":"")+(t.modified?" modified":""));
+    // Which tab this is, across rebuilds: its pane and its buffer (a group
+    // tab, which has none, by its label).
+    const bid=t.bufferId;
+    const key=`${p.leaf}:`+(bid===null?"g:"+t.label:String(bid));
+    el.dataset.key=key;
     el.dataset.l=String(t.rect.x);
     el.dataset.r=String(t.rect.x+Math.max(1,t.rect.w)-1);
     el.dataset.row=String(t.rect.y);
@@ -73,7 +82,7 @@ function tabBarEl(p, rect){
         if(e.target.classList.contains("x")) return;
         e.preventDefault(); e.stopPropagation();
         if(e.button!==0){ sendClick({button:btn(e),col:c.col,row:c.row}); return; }
-        tabDrag={press:c, pressL:String(t.rect.x), last:c};
+        tabDrag={press:c, pressKey:key, last:c};
         sendMouse({kind:"down",button:"left",col:c.col,row:c.row});
       }; }
     // The file-type icon the terminal's tab shows, while `editor.nerd_font_icons` is on.

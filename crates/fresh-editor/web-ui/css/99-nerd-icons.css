@@ -2,11 +2,14 @@
      editor's `editor.nerd_font_icons` is on). Last in the cascade so it is the
      one place their color is decided, over every skin's rules for the web's own
      line icons (which color by row state and folder-ness):
-       - the editor theme's color for the file type (`--icon-color`, set per
-         icon from the scene), as the terminal draws it — the editor theme's
-         colors are made for its own background, which the explorer and tab
-         bar keep in every skin but one;
-       - macOS Light, which paints the sidebar and tabs with its own light
-         palette, draws them in that palette's text color, as Finder does. */
+       - on skins whose sidebar and tab bar follow the editor theme (Cosmos
+         takes its palette as is, Compact derives from it): the editor theme's
+         color for the file type (`--icon-color`, set per icon from the scene),
+         as the terminal draws it — those colors are made for that background;
+       - on skins that paint the sidebar and tab bar with a fixed palette of
+         their own (macOS Light, macOS Dark, Winamp): the color of the name
+         beside the icon, as Finder does — the editor theme's colors were not
+         made for that background and can vanish on it. */
   .fileexplorer .fx-icon.nerd,.tab .ticon{color:var(--icon-color,currentColor) !important}
-  body.theme-macos .fileexplorer .fx-icon.nerd,body.theme-macos .tab .ticon{color:var(--muted) !important}
+  body.macfam .fileexplorer .fx-icon.nerd,body.macfam .tab .ticon,
+  body.theme-winamp .fileexplorer .fx-icon.nerd,body.theme-winamp .tab .ticon{color:inherit !important}

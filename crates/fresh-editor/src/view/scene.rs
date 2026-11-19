@@ -451,17 +451,7 @@ impl Editor {
         let rects = self.tab_rects(leaf);
         // The names the strip resolves for its tabs, which is what the
         // terminal's tab icons are looked up by.
-        let names = {
-            let w = self.active_window();
-            let targets: Vec<_> = rects.iter().map(|t| t.target).collect();
-            crate::view::ui::tabs::resolve_tab_names(
-                &targets,
-                w.buffers.as_map(),
-                &w.buffer_metadata,
-                &w.composite_buffers,
-                &HashMap::new(),
-            )
-        };
+        let names = self.active_window().pane_tab_names(leaf);
         let theme = self.theme.read().unwrap();
         TabBarView {
             bar: Some(RectView::from(bar)),

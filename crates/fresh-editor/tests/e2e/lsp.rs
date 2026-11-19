@@ -4644,6 +4644,73 @@ fn test_hover_popup_dismissed_after_pointer_stays_away() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The grace-period dismissal (#3733) is the pointer's, for the card the
+/// pointer opened (placed at the pointer's cell). A card at the cursor — a
+/// keyboard hover, or signature help while typing — stays however the mouse
+/// wanders; the pointer's card, given the same wandering, comes down.
+#[test]
+fn test_mouse_motion_only_dismisses_the_pointers_hover_card() -> anyhow::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
+
+    fn show_card(harness: &mut EditorTestHarness, position: PopupPositionData) {
+        harness
+            .apply_event(Event::ShowPopup {
+                popup: PopupData {
+                    kind: PopupKindHint::Text,
+                    title: Some("Hover".to_string()),
+                    description: None,
+                    transient: true,
+                    content: PopupContentData::Text(vec!["fn example() -> i32".to_string()]),
+                    position,
+                    width: 30,
+                    max_height: 5,
+                    bordered: true,
+                },
+            })
+            .unwrap();
+    }
+
+    let mut harness = EditorTestHarness::new(100, 30)?;
+    harness.load_buffer_from_text("fn example() {}\n")?;
+    harness.render()?;
+    let delay =
+        std::time::Duration::from_millis(harness.editor().config().editor.mouse_hover_delay_ms)
+            .max(std::time::Duration::from_millis(300));
+
+    // At the cursor: stays.
+    show_card(&mut harness, PopupPositionData::BelowCursor);
+    harness.render()?;
+    harness.mouse_move(60, 20)?; // an empty row of the editor
+    harness.advance_time(delay * 3);
+    harness.tick_and_render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "a card at the cursor is not the pointer's to take down"
+    );
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
+    assert!(!harness.editor().active_state().popups.is_visible());
+
+    // At the pointer's cell: the same wandering takes it down.
+    show_card(&mut harness, PopupPositionData::Fixed { x: 10, y: 3 });
+    harness.render()?;
+    harness.mouse_move(60, 21)?;
+    harness.tick_and_render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "the pointer's card survives the move itself"
+    );
+    harness.advance_time(delay * 3);
+    harness.tick_and_render()?;
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "the pointer's card comes down once the pointer has stayed away"
+    );
+    Ok(())
+}
+
 /// Regression test: a fresh hover response must not stack on top of an
 /// existing hover popup. Earlier the `update_lsp_hover_state` path
 /// dismissed the prior popup whenever the mouse left the symbol; once the

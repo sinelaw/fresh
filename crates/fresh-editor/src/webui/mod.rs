@@ -954,13 +954,24 @@ fn handle_http(
             Ok(false)
         }
         ("GET", NERD_FONT_PATH) => {
-            respond_with(
-                stream,
-                "200 OK",
-                "font/woff2",
-                "Cache-Control: public, max-age=31536000, immutable\r\n",
-                NERD_FONT,
-            )?;
+            // 1.2 MB, on every first page load (the page preloads it): written
+            // from its own thread on a handle to the same socket, so the editor
+            // loop — every browser's ticks and pushes — never waits on a slow
+            // link for it. The handle carries the write deadline set above,
+            // and the socket closes when the write is done.
+            let mut font_stream = stream.try_clone()?;
+            std::thread::Builder::new()
+                .name("webui-font".into())
+                .spawn(move || {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = respond_with(
+                        &mut font_stream,
+                        "200 OK",
+                        "font/woff2",
+                        "Cache-Control: public, max-age=31536000, immutable\r\n",
+                        NERD_FONT,
+                    );
+                })?;
             Ok(false)
         }
         ("GET", "/favicon.ico") => {

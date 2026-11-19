@@ -3110,6 +3110,54 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
+    /// The names grouped panes' tabs go by, for `tab_names`.
+    fn group_names(&self) -> HashMap<LeafId, String> {
+        self.grouped_subtrees
+            .iter()
+            .filter_map(|(leaf, node)| match node {
+                crate::view::split::SplitNode::Grouped { name, .. } => Some((*leaf, name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The names a strip of these tabs shows — told apart from each other
+    /// where they collide — by tab.
+    fn tab_names(
+        &self,
+        targets: &[crate::view::split::TabTarget],
+        group_names: &HashMap<LeafId, String>,
+    ) -> HashMap<crate::view::split::TabTarget, String> {
+        crate::view::ui::tabs::resolve_tab_names(
+            targets,
+            self.buffers.as_map(),
+            &self.buffer_metadata,
+            &self.composite_buffers,
+            group_names,
+        )
+    }
+
+    /// The names `leaf`'s tab strip shows, by tab — the same lookup
+    /// `pane_strips` makes, over all of the pane's tabs, for a reader that
+    /// needs a tab's name outside the strip (the web scene's file icons).
+    pub(crate) fn pane_tab_names(
+        &self,
+        leaf: LeafId,
+    ) -> HashMap<crate::view::split::TabTarget, String> {
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return HashMap::new();
+        };
+        let targets = match vs_map.get(&leaf) {
+            Some(vs) => vs.open_buffers.clone(),
+            None => mgr
+                .buffer_for_split(leaf)
+                .map(|b| vec![TabTarget::Buffer(b)])
+                .unwrap_or_default(),
+        };
+        self.tab_names(&targets, &self.group_names())
+    }
+
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
@@ -3123,14 +3171,7 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return Default::default();
         };
-        let group_names: HashMap<LeafId, String> = self
-            .grouped_subtrees
-            .iter()
-            .filter_map(|(leaf, node)| match node {
-                crate::view::split::SplitNode::Grouped { name, .. } => Some((*leaf, name.clone())),
-                _ => None,
-            })
-            .collect();
+        let group_names = self.group_names();
         let preview = self.preview.map(|(_, b)| b);
         let preview_label = fresh_i18n::t!("buffer.preview_indicator").to_string();
         let active_split = mgr.active_split();
@@ -3146,13 +3187,7 @@ impl Window {
                     TabTarget::Buffer(buffer_id),
                 ),
             };
-            let names = crate::view::ui::tabs::resolve_tab_names(
-                &targets,
-                self.buffers.as_map(),
-                &self.buffer_metadata,
-                &self.composite_buffers,
-                &group_names,
-            );
+            let names = self.tab_names(&targets, &group_names);
             let tabs: Vec<Tab> = targets
                 .iter()
                 .filter_map(|t| {
