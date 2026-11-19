@@ -159,10 +159,10 @@ fn extract_plugins() -> Result<PathBuf, std::io::Error> {
     };
 
     if result.is_ok() {
-        tracing::info!(
-            "Successfully extracted {} embedded plugin files",
-            count_files(&EMBEDDED_PLUGINS)
-        );
+        let files = count_files(&EMBEDDED_PLUGINS);
+        #[cfg(feature = "precompiled-plugins")]
+        let files = files + PRECOMPILED.len();
+        tracing::info!("Successfully extracted {} embedded plugin files", files);
         // Clean up old cache versions (other content hashes) and stale
         // pending/stale-rename leftovers from prior crashes. Only does
         // anything once we've successfully committed our extraction.
