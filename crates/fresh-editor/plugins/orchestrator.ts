@@ -1931,9 +1931,15 @@ function loadInteracted(): Record<string, number> {
   return out;
 }
 
+// Written under the root as well as the stable id: a window that is not
+// restored but re-made (the launch window of a fresh editor) comes back with
+// a new stable id, and the root is what still says it is the same workspace.
+// The stable id's own entry wins where both exist, so co-tenants sharing a
+// root keep their own dates.
 function recordInteraction(stableId: string | undefined, root: string, at = Date.now()): void {
   const store = loadInteracted();
-  store[stableId ? stableIdKey(stableId) : normRoot(root)] = at;
+  if (stableId) store[stableIdKey(stableId)] = at;
+  store[normRoot(root)] = at;
   editor.setGlobalState(INTERACTED_KEY, store as unknown as object);
 }
 
