@@ -3753,8 +3753,12 @@ mod tests {
         assert_eq!(state.entry_dialog_stack.len(), 1);
         let parent = state.entry_dialog_stack.last().unwrap();
         assert!(parent.user_edited);
-        let Some(SettingControl::ObjectArray { items, .. }) =
-            parent.items.first().map(|i| &i.control)
+        // The entry's value item (after the read-only key field).
+        let Some(SettingControl::ObjectArray { items, .. }) = parent
+            .items
+            .iter()
+            .find(|i| i.path == crate::view::settings::entry_dialog::SINGLE_VALUE_PATH)
+            .map(|i| &i.control)
         else {
             panic!("the parent's array control");
         };
