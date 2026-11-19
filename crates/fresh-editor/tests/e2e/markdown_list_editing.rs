@@ -1454,7 +1454,10 @@ fn test_plugin_insert_newline_on_an_empty_item_is_enter() {
 const editor = getEditor();
 registerHandler("t_enter", () => { editor.executeAction("insert_newline"); });
 registerHandler("t_below", () => { editor.executeAction("insert_line_below"); });
-editor.setStatus("NEWLINE-ACTIONS-READY");
+// A handler runs as a plugin action only once a command names it: that is
+// what ties the action to this plugin.
+editor.registerCommand("Test Enter", "", "t_enter", null);
+editor.registerCommand("Test Line Below", "", "t_below", null);
 "#,
     )
     .unwrap();
@@ -1465,8 +1468,17 @@ editor.setStatus("NEWLINE-ACTIONS-READY");
         project_root.clone(),
     )
     .unwrap();
+    // The commands reaching the registry means the plugin is loaded.
     harness
-        .wait_until(|h| h.get_status_bar().contains("NEWLINE-ACTIONS-READY"))
+        .wait_until(|h| {
+            let registry = h.editor().command_registry().read().unwrap();
+            let commands = registry.get_all();
+            ["t_enter", "t_below"].iter().all(|name| {
+                commands
+                    .iter()
+                    .any(|c| c.action == Action::PluginAction(name.to_string()))
+            })
+        })
         .unwrap();
 
     let md = project_root.join("items.md");
