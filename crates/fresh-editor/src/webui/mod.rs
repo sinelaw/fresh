@@ -2240,6 +2240,17 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             "tabActiveBg": color_css(t.tab_active_bg),
             "scrollbarThumb": color_css(t.scrollbar_thumb_fg),
             "scrollbarThumbHover": color_css(t.scrollbar_thumb_hover_fg),
+            // The status bar's tones (`StatusSegment.tone`), as the terminal
+            // paints them: [fg, bg] each.
+            "tones": {
+                "error": [color_css(t.status_error_indicator_fg), color_css(t.status_error_indicator_bg)],
+                "warning": [color_css(t.status_warning_indicator_fg), color_css(t.status_warning_indicator_bg)],
+                "ok": [color_css(t.status_lsp_on_fg), color_css(t.status_lsp_on_bg)],
+                "actionable": [color_css(t.status_lsp_actionable_fg), color_css(t.status_lsp_actionable_bg)],
+                "info": [color_css(t.help_indicator_fg), color_css(t.help_indicator_bg)],
+                "palette": [color_css(t.status_palette_fg), color_css(t.status_palette_bg)],
+                "highlight": [color_css(t.menu_highlight_fg), color_css(t.menu_dropdown_bg)],
+            },
         })
     };
 

@@ -70,7 +70,8 @@
     statusFg: String | Null,
     tabActiveBg: String | Null,
     scrollbarThumb: String | Null,
-    scrollbarThumbHover: String | Null
+    scrollbarThumbHover: String | Null,
+    tones: Dict<[String | Null, String | Null]>
 } */
 
 // src/webui/mod.rs `scene_json` (`regions`). The menu fields are
@@ -218,6 +219,7 @@
 // "plugin" | "text" (per the Rust doc comment).
 /** type StatusSegment = {
     name: String,
+    tone: String,
     key: String | Null,
     text: String,
     x: Number,

@@ -260,6 +260,8 @@ function applyTheme(t){
   set("--ed-caret",t.accent);
   // The pane scrollbar's thumb, as the terminal draws it.
   set("--ed-thumb",t.scrollbarThumb); set("--ed-thumb-hover",t.scrollbarThumbHover);
+  // The status bar's tones, [fg, bg] each: --tone-<name>-fg / -bg.
+  for(const [name,[fg,bg]] of Object.entries(t.tones)){ set(`--tone-${name}-fg`,fg); set(`--tone-${name}-bg`,bg); }
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
   set("--on-accent", onColor(t.accent));
   // Same question for a row filled SOLID with the menu-highlight: a theme

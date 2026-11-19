@@ -7,6 +7,7 @@ function statusBarEl(sb){
   const bar=div("region statusbar"); place(bar,sb.rect);
   const segEl=seg=>{
     const s=document.createElement("span"); s.className=(seg.name==="text"?"txt":"seg"); s.dataset.name=seg.name; s.textContent=seg.text;
+    if(seg.tone) s.dataset.tone=seg.tone;
     const c=rectCell({x:seg.x,y:sb.rect.y,w:seg.w,h:1});
     s.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); };
     return s;

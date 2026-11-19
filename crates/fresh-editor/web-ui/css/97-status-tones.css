@@ -1,0 +1,27 @@
+  /* Status-bar tones (55-status.js `data-tone`, view/ui/status_bar.rs `tone`):
+     an element that needs attention — an error, a warning, an LSP that can be
+     started, a remote connection, an update — wears the pill the terminal
+     gives it, in the theme's own colours (--tone-<name>-fg / -bg, from
+     20-cells.js applyTheme). The bar's healthy states ("ok", "palette") stay
+     in the skin's bar ink. Late in the cascade so every skin's segment ink
+     yields to it; a skin restyles a tone with a more specific rule below. */
+  body .statusbar .seg[data-tone],body .statusbar .txt[data-tone]{border-radius:var(--r-sm,3px)}
+  body .statusbar .seg[data-tone="error"],body .statusbar .txt[data-tone="error"]{
+    color:var(--tone-error-fg,#fff);background:var(--tone-error-bg,#c0392b)}
+  body .statusbar .seg[data-tone="warning"],body .statusbar .txt[data-tone="warning"]{
+    color:var(--tone-warning-fg,#000);background:var(--tone-warning-bg,#e5c07b)}
+  body .statusbar .seg[data-tone="actionable"],body .statusbar .txt[data-tone="actionable"]{
+    color:var(--tone-actionable-fg);background:var(--tone-actionable-bg)}
+  body .statusbar .seg[data-tone="info"],body .statusbar .txt[data-tone="info"]{
+    color:var(--tone-info-fg);background:var(--tone-info-bg)}
+  body .statusbar .seg[data-tone="highlight"],body .statusbar .txt[data-tone="highlight"]{
+    color:var(--tone-highlight-fg);background:var(--tone-highlight-bg)}
+  body .statusbar [data-tone]:hover{filter:brightness(1.12)}
+
+  /* Winamp: the tones as LCD inks on the black display, not coloured pills. */
+  body.theme-winamp .statusbar .seg[data-tone],body.theme-winamp .statusbar .txt[data-tone]{background:transparent;border-radius:0}
+  body.theme-winamp .statusbar [data-tone="error"]{color:#ff5a4a;text-shadow:0 0 6px rgba(255,90,74,.55)}
+  body.theme-winamp .statusbar [data-tone="warning"]{color:var(--wa-amber);text-shadow:0 0 6px rgba(255,190,80,.5)}
+  body.theme-winamp .statusbar [data-tone="actionable"],
+  body.theme-winamp .statusbar [data-tone="info"],
+  body.theme-winamp .statusbar [data-tone="highlight"]{color:#8fd8ff;text-shadow:0 0 6px rgba(143,216,255,.45)}

@@ -946,6 +946,22 @@ fn lsp_look(state: LspIndicatorState) -> (Keys, Hover) {
     }
 }
 
+/// The tone an element's keys give it, for the web: the role of its colours
+/// ("error", "warning", "ok", "actionable", "info", "palette", "highlight"),
+/// or "" for the bar's own. Read from the keys before a hover swaps them.
+fn tone(keys: Keys) -> &'static str {
+    match keys {
+        ERROR | ("diagnostic.error_fg", "diagnostic.error_bg") => "error",
+        WARNING => "warning",
+        ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg") => "ok",
+        ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg") => "actionable",
+        ("ui.help_indicator_fg", "ui.help_indicator_bg") => "info",
+        PALETTE => "palette",
+        ("ui.menu_highlight_fg", "ui.menu_dropdown_bg") => "highlight",
+        _ => "",
+    }
+}
+
 /// An element as one run, padded by a cell on either side in its own colours
 /// so an element with a distinct background reads as a pill. `None` for empty
 /// text: an element with nothing to say is not on the bar.
@@ -959,6 +975,7 @@ fn item(
     if text.is_empty() {
         return None;
     }
+    let tone = tone(keys);
     let (keys, underline) = match click {
         Some((id, hover)) if Some(id) == hovered => match hover {
             Hover::None => (keys, false),
@@ -970,6 +987,7 @@ fn item(
     Some(Item {
         runs: vec![(format!(" {text} "), ink(keys, underline))],
         name,
+        tone,
         clickable: click.map(|(id, _)| id),
         token_key: None,
         joined: false,
@@ -993,6 +1011,7 @@ fn disconnected_filename(text: String) -> Option<Item> {
             (format!("{rest} "), ink(BAR, false)),
         ],
         name: "text",
+        tone: "error",
         clickable: None,
         token_key: None,
         joined: false,

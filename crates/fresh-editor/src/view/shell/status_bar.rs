@@ -50,6 +50,9 @@ pub struct Item {
     /// The stable semantic name `status_view` projects — "lsp", "warning",
     /// "language", …
     pub name: &'static str,
+    /// The role of the element's colours ("error", "warning", "ok", …, or ""
+    /// for the bar's own), which the web paints as the terminal does.
+    pub tone: &'static str,
     /// Set when the element answers a click.
     pub clickable: Option<StatusBarClickable>,
     /// `"<plugin>:<token>"` for a plugin-registered token, which is how the
@@ -485,6 +488,7 @@ pub fn segments(
             let r = rect_of(ui, &key_of(side, i, it), size)?;
             Some(crate::view::scene::StatusSegment {
                 name: it.name,
+                tone: it.tone,
                 key: it.token_key.clone(),
                 text,
                 x: r.x,
@@ -636,6 +640,7 @@ mod tests {
         Item {
             runs: vec![(text.to_string(), base())],
             name,
+            tone: "",
             clickable: None,
             token_key: None,
             joined: false,

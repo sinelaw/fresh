@@ -339,6 +339,9 @@ pub struct StatusSegment {
     /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
     /// "searchNext" | "searchPrevious" | "plugin" | "text".
     pub name: &'static str,
+    /// The role of its colours: "error" | "warning" | "ok" | "actionable" |
+    /// "info" | "palette" | "highlight", or "" for the bar's own.
+    pub tone: &'static str,
     /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
     pub text: String,
