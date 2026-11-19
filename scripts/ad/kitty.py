@@ -50,8 +50,16 @@ class Display:
     def __enter__(self):
         self.name = f":{self.num}"
         lock = f"/tmp/.X{self.num}-lock"
-        if os.path.exists(lock):        # stale or ours from an earlier run: reuse it
-            return self
+        if os.path.exists(lock):
+            try:
+                os.kill(int(open(lock).read().strip()), 0)
+                return self             # a live server from an earlier run: reuse it
+            except (ValueError, ProcessLookupError, PermissionError):
+                os.remove(lock)         # stale: its server is gone
+                try:
+                    os.remove(f"/tmp/.X11-unix/X{self.num}")
+                except FileNotFoundError:
+                    pass
         self.proc = subprocess.Popen(
             ["Xvfb", self.name, "-screen", "0", f"{self.size}x24", "-dpi", "96", "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
