@@ -4672,12 +4672,14 @@ fn test_mouse_motion_only_dismisses_the_pointers_hover_card() -> anyhow::Result<
             .unwrap();
     }
 
-    let mut harness = EditorTestHarness::new(100, 30)?;
+    // Mouse hover is off by default on Windows.
+    let mut config = fresh::config::Config::default();
+    config.editor.mouse_hover_enabled = true;
+    let delay = std::time::Duration::from_millis(config.editor.mouse_hover_delay_ms)
+        .max(std::time::Duration::from_millis(300));
+    let mut harness = EditorTestHarness::with_config(100, 30, config)?;
     harness.load_buffer_from_text("fn example() {}\n")?;
     harness.render()?;
-    let delay =
-        std::time::Duration::from_millis(harness.editor().config().editor.mouse_hover_delay_ms)
-            .max(std::time::Duration::from_millis(300));
 
     // At the cursor: stays.
     show_card(&mut harness, PopupPositionData::BelowCursor);
