@@ -2537,12 +2537,19 @@ const DOCK_CARD_HEIGHT = 2;
 // — which knows the card's *actual* inner width, responsive or dragged
 // — inserts the gap. Plugin-side padding could only estimate that width
 // and drifted at every other one.
+//
+// `fadeTail` asks the host to fade a name that runs out of room into the
+// row's ground rather than end it in `…` (the pane edge fade's blend).
 function cardSplitRow(left: Entry[], right: Entry[]): TextPropertyEntry {
   const row = styledRow([...left, ...right] as Parameters<typeof styledRow>[0]);
-  if (right.length === 0) return row;
+  if (right.length === 0) {
+    row.properties = { fadeTail: true };
+    return row;
+  }
   row.properties = {
     align: "between",
     splitByte: left.reduce((n, e) => n + utf8Len(e.text), 0),
+    fadeTail: true,
   };
   return row;
 }

@@ -5095,11 +5095,25 @@ fn entry_runs(
         // renderer relies on it — a placeholder sets fg + italic and the
         // focused overlay sets bg only, and replacing would clear the italic.
         let mut ink = base.clone();
+        let mut fade = None;
         for o in &normalized.inline_overlays {
             let (os, oe) = (o.start.min(text.len()), o.end.min(text.len()));
             if a >= os && b <= oe && oe > os {
                 ink = ink_of(&o.style, &ink);
+                if let Some(keep) = o
+                    .properties
+                    .get(crate::widgets::render::FADE_PROPERTY)
+                    .and_then(|v| v.as_u64())
+                {
+                    fade = Some(keep.min(100) as u8);
+                }
             }
+        }
+        // A cut row's tail fades into the run's own ground rather than ending
+        // in `…` (see `widgets::render::FADE_KEEP`). Applied
+        // after every other overlay, so it fades the colour actually drawn.
+        if let Some(keep) = fade {
+            ink = ink.clone().with_fg(Paint::mix(ink.fg, ink.bg, keep));
         }
         out.push((a..b, Run::themed(&text[a..b], ink.to_string())));
     }

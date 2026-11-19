@@ -1146,6 +1146,24 @@ pub mod shell_theme {
             name: Cow<'static, str>,
             under: Box<Paint>,
         },
+        /// `over`, faded toward `toward`, keeping `keep` percent of it.
+        ///
+        /// What a truncated row's tail is drawn in: a name that runs out of
+        /// room fades into the row's own ground instead of ending in `…`, so
+        /// it reads as "continues" and spends no column on a marker. `toward`
+        /// is the run's own background, so the fade lands on whatever the
+        /// row is painted over — the selection band included.
+        ///
+        /// The blend is the pane edge fade's (`view::animation::
+        /// fade_color_toward`). A pair it cannot mix (a 256-palette index)
+        /// paints `over` as is, so the text stays legible rather than guessing.
+        /// The mixed colour is a 24-bit literal and goes through the same
+        /// down-conversion as every other on a 256- or 16-colour terminal.
+        Mix {
+            over: Box<Paint>,
+            toward: Box<Paint>,
+            keep: u8,
+        },
     }
 
     impl Paint {
@@ -1163,6 +1181,15 @@ pub mod shell_theme {
             }
         }
 
+        /// `over` faded toward `toward`; see [`Paint::Mix`].
+        pub fn mix(over: Paint, toward: Paint, keep: u8) -> Paint {
+            Paint::Mix {
+                over: Box::new(over),
+                toward: Box::new(toward),
+                keep: keep.min(100),
+            }
+        }
+
         /// The key behind this half, when there is one.
         ///
         /// A plugin's asked-for name counts: it is what this half is *for*,
@@ -1173,6 +1200,7 @@ pub mod shell_theme {
                 Paint::Key(k) => Some(k),
                 Paint::Asked { name, .. } => Some(name),
                 Paint::Lit(_) => None,
+                Paint::Mix { over, .. } => over.name(),
             }
         }
 
@@ -1182,6 +1210,7 @@ pub mod shell_theme {
             match self {
                 Paint::Key(k) => Some(k),
                 Paint::Asked { .. } | Paint::Lit(_) => None,
+                Paint::Mix { over, toward, .. } => over.declared().or(toward.declared()),
             }
         }
 
@@ -1196,6 +1225,21 @@ pub mod shell_theme {
                 Paint::Asked { name, under } => crate::view::theme::named_color_from_str(name)
                     .or_else(|| theme.resolve_theme_key(name))
                     .or_else(|| under.color(theme)),
+                // The pane edge fade's own blend (`shade_row_toward_background`),
+                // so a faded name and a faded scroll edge are the same fade.
+                Paint::Mix { over, toward, keep } => {
+                    let fg = over.color(theme)?;
+                    toward
+                        .color(theme)
+                        .and_then(|bg| {
+                            crate::view::animation::fade_color_toward(
+                                fg,
+                                bg,
+                                f32::from(*keep) / 100.0,
+                            )
+                        })
+                        .or(Some(fg))
+                }
             }
         }
 
@@ -1204,6 +1248,18 @@ pub mod shell_theme {
         /// `#7ee787` is a 24-bit literal, `#i42` a palette index, `#Yellow`
         /// one of the sixteen names; anything else is a theme key.
         fn parse(half: &str) -> Option<Paint> {
+            // `~keep:over^toward`: checked first, because either side may
+            // itself be an `asked|under` pair. Neither a key, a literal nor an
+            // asked pair contains a `^`, so the first one separates them.
+            if let Some(rest) = half.strip_prefix('~') {
+                let (keep, pair) = rest.split_once(':')?;
+                let (over, toward) = pair.split_once('^')?;
+                return Some(Paint::mix(
+                    Paint::parse(over)?,
+                    Paint::parse(toward)?,
+                    keep.parse().ok()?,
+                ));
+            }
             // `asked|under`: neither a key nor a literal contains a pipe, so
             // the first one separates the plugin's name from its fallback.
             if let Some((name, under)) = half.split_once('|') {
@@ -1239,6 +1295,7 @@ pub mod shell_theme {
             match self {
                 Paint::Key(k) => f.write_str(k),
                 Paint::Asked { name, under } => write!(f, "{name}|{under}"),
+                Paint::Mix { over, toward, keep } => write!(f, "~{keep}:{over}^{toward}"),
                 Paint::Lit(Color::Rgb(r, g, b)) => write!(f, "#{r:02x}{g:02x}{b:02x}"),
                 Paint::Lit(Color::Indexed(i)) => write!(f, "#i{i}"),
                 Paint::Lit(other) => write!(
@@ -4122,6 +4179,23 @@ mod shell_theme_tests {
     /// built-in dark theme — so every plugin-decorated row in the file explorer
     /// silently painted in the panel's ordinary ink instead of its status
     /// colour. Nothing failed; it just looked undecorated.
+    #[test]
+    fn a_faded_half_round_trips_and_blends_toward_its_ground() {
+        let ink = Ink::new(
+            Paint::mix(
+                Paint::Lit(Color::Rgb(200, 100, 0)),
+                Paint::key("editor.bg"),
+                50,
+            ),
+            Paint::key("editor.bg"),
+        );
+        let written = ink.to_string();
+        assert_eq!(Ink::parse(&written), Some(ink), "{written}");
+        let toward = Paint::Lit(Color::Rgb(0, 0, 0));
+        let half = Paint::mix(Paint::Lit(Color::Rgb(200, 100, 0)), toward, 50);
+        assert_eq!(half.color(&theme()), Some(Color::Rgb(100, 50, 0)));
+    }
+
     #[test]
     fn a_literal_colour_survives_the_round_trip() {
         let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)

@@ -2398,6 +2398,102 @@ pub fn window_row_body(
     }
 }
 
+/// The overlay property a faded cell carries: the percent of its ink it
+/// keeps. The shell's painter mixes the cell's foreground toward its own
+/// background by that much (`Paint::Mix`).
+pub const FADE_PROPERTY: &str = "fade";
+
+/// The row property a plugin sets to have a cut tail fade out instead of
+/// ending in `…`.
+const FADE_OPT_IN: &str = "fadeTail";
+
+/// What each of the last cells of a faded tail keeps of its ink, from the
+/// last visible cell backwards.
+pub const FADE_KEEP: [u8; 3] = [25, 50, 75];
+
+fn wants_fade(entry: &TextPropertyEntry) -> bool {
+    entry
+        .properties
+        .get(FADE_OPT_IN)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// [`window_row_body`], with a cut tail **faded** instead of marked.
+///
+/// The `…` a cut row ends in spends a column on saying "cut", and reads as
+/// part of the name. A fade spends nothing — the column goes back to the
+/// text — and reads as "continues", which is what Claude Desktop's sidebar
+/// does with a long session title. The returned overlays are offsets into the
+/// window's own text and carry [`FADE_PROPERTY`]; a row that fits, or one
+/// that did not ask (`fade == false`), gets none and is the plain window.
+fn window_row_body_fading(
+    body: &str,
+    budget: usize,
+    anchor: Option<(usize, usize)>,
+    pan: i32,
+    fade: bool,
+) -> (WindowedBody, Vec<InlineOverlay>) {
+    let window = window_row_body(body, budget, anchor, pan);
+    let content_end = body.trim_end_matches(' ').len();
+    if !fade || !window.text.ends_with('…') || window.slice_end >= content_end {
+        return (window, Vec::new());
+    }
+    let lead = &window.text[..window.lead_bytes];
+    let content_budget = budget.saturating_sub(usize::from(window.lead_bytes > 0));
+    let slice_end = byte_after_cols(body, window.slice_start, content_budget);
+    let mut text = String::with_capacity(lead.len() + slice_end - window.slice_start);
+    text.push_str(lead);
+    text.push_str(&body[window.slice_start..slice_end]);
+    let overlays = text
+        .char_indices()
+        .rev()
+        .skip_while(|(_, c)| *c == ' ')
+        .zip(FADE_KEEP)
+        .map(|((at, c), keep)| InlineOverlay {
+            start: at,
+            end: at + c.len_utf8(),
+            style: OverlayOptions::default(),
+            properties: [(FADE_PROPERTY.to_string(), serde_json::json!(keep))].into(),
+            unit: OffsetUnit::Byte,
+        })
+        .collect();
+    (
+        WindowedBody {
+            text,
+            slice_end,
+            ..window
+        },
+        overlays,
+    )
+}
+
+/// A one-group row that asked for a faded tail, fitted to `width` — or
+/// `None` when it fits already or did not ask, leaving the caller's own cut.
+fn fade_whole_row(src: &TextPropertyEntry, width: usize) -> Option<TextPropertyEntry> {
+    if !wants_fade(src) || between_split(src).is_some() {
+        return None;
+    }
+    let (window, fades) = window_row_body_fading(&src.text, width, None, 0, true);
+    if fades.is_empty() {
+        return None;
+    }
+    let mut overlays: Vec<InlineOverlay> = overlays_in_bytes(src)
+        .iter()
+        .filter_map(|o| rebase_overlay(o, &window, 0))
+        .collect();
+    overlays.extend(fades);
+    Some(TextPropertyEntry {
+        text: window.text,
+        properties: src.properties.clone(),
+        style: src.style.clone(),
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    })
+}
+
 /// Fewest columns a left group is cut down to before the right group gives
 /// way instead. Below this the name is unreadable, and a name nobody can read
 /// makes the status beside it useless too.
@@ -2493,7 +2589,7 @@ pub fn fit_between_row(
     if left_budget < BETWEEN_MIN_LEFT_COLS.min(left_cols) {
         return None;
     }
-    let window = window_row_body(left, left_budget, None, 0);
+    let (window, fades) = window_row_body_fading(left, left_budget, None, 0, wants_fade(src));
     let left_text = window.text.trim_end_matches(' ');
     let pad = width
         .saturating_sub(str_width(left_text) + right_cols)
@@ -2532,6 +2628,7 @@ pub fn fit_between_row(
             overlays.push(r);
         }
     }
+    overlays.extend(fades.into_iter().filter(|f| f.end <= left_len));
 
     Some(TextPropertyEntry {
         text: out,
@@ -2860,7 +2957,13 @@ pub fn render_tree_row(
             a.len as usize,
         )
     });
-    let window = window_row_body(rest, budget.saturating_sub(pinned_cols), anchor, h_offset);
+    let (window, fades) = window_row_body_fading(
+        rest,
+        budget.saturating_sub(pinned_cols),
+        anchor,
+        h_offset,
+        wants_fade(&node.text),
+    );
     text.push_str(&window.text);
 
     // The right group, flush against the edge (or the action button's gap).
@@ -2925,6 +3028,13 @@ pub fn render_tree_row(
         })
         .flatten()
         .collect();
+
+    // The faded tail, if the body was cut and the row asked for one.
+    overlays.extend(fades.into_iter().map(|mut f| {
+        f.start += rest_start;
+        f.end += rest_start;
+        f
+    }));
 
     // The right group's own styling, moved to where the group was drawn.
     if let (Some(r), Some(at)) = (right_group.as_ref(), right_range) {
@@ -3149,7 +3259,9 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
             ("between", Some(b)) => Some(b),
             _ => None,
         };
-        let fitted = split.and_then(|b| fit_between_row(&src, b, inner_width));
+        let fitted = split
+            .and_then(|b| fit_between_row(&src, b, inner_width))
+            .or_else(|| fade_whole_row(&src, inner_width));
         if let Some(fitted) = fitted {
             src = fitted;
         } else if let Some(at) = pad_at {
@@ -4967,6 +5079,35 @@ pub mod tests {
         let short = draw("○ perf/db-pool");
         assert_eq!(long, "○ fix/auth-bypass-in… +3");
         assert_eq!(short, "○ perf/db-pool        +3");
+    }
+
+    /// **A cut tail can fade instead of ending in `…`.** The column the
+    /// marker took goes back to the text, and the last cells carry the
+    /// `fade` property, dimmest last, for the painter to blend.
+    #[test]
+    fn a_row_that_asks_for_a_fade_gets_one_instead_of_an_ellipsis() {
+        let mut e = between_row("○ fix/auth-bypass-in-login-handler", "+3");
+        e.properties
+            .insert("fadeTail".into(), serde_json::json!(true));
+        let f = fit_between_row(&e, "○ fix/auth-bypass-in-login-handler".len(), 24).unwrap();
+        assert_eq!(f.text, "○ fix/auth-bypass-in- +3");
+        let faded: Vec<(&str, u64)> = f
+            .inline_overlays
+            .iter()
+            .filter_map(|o| {
+                let keep = o.properties.get(FADE_PROPERTY)?.as_u64()?;
+                Some((&f.text[o.start..o.end], keep))
+            })
+            .collect();
+        assert_eq!(faded, vec![("-", 25), ("n", 50), ("i", 75)]);
+        // Not asked: the plain `…`, and no fade.
+        let plain = fit_between_row(
+            &between_row("○ fix/auth-bypass-in-login-handler", "+3"),
+            34,
+            24,
+        )
+        .unwrap();
+        assert!(plain.text.contains('…'));
     }
 
     /// The fitted row carries its styling with it: the name's overlay is cut
