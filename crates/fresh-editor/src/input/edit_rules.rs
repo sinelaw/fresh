@@ -101,6 +101,9 @@ impl RegionLanguage {
 #[derive(Debug, Default)]
 pub(crate) struct CursorLanguages {
     by_cursor: Vec<(CursorId, Arc<RegionLanguage>)>,
+    /// The line each cursor was looked up on, by the position looked up, so
+    /// [`apply_edit_rules`] locates it once.
+    lines: Vec<(CursorId, usize, LineSpan)>,
 }
 
 impl CursorLanguages {
@@ -114,6 +117,14 @@ impl CursorLanguages {
 
     fn iter(&self) -> impl Iterator<Item = &RegionLanguage> {
         self.by_cursor.iter().map(|(_, lang)| &**lang)
+    }
+
+    /// The line [`cursor_languages`] located for `cursor` at `pos`.
+    fn line(&self, cursor: CursorId, pos: usize) -> Option<LineSpan> {
+        self.lines
+            .iter()
+            .find(|(id, at, _)| *id == cursor && *at == pos)
+            .map(|(_, _, line)| *line)
     }
 }
 
@@ -144,11 +155,14 @@ pub(crate) fn cursor_languages(
         let pos = cursor
             .selection_range()
             .map_or(cursor.position, |r| r.start);
-        let Some(line_start) = state.buffer.prev_line_start_within(pos, LINE_CAP) else {
+        let Some(line) = line_span(state, pos) else {
             continue;
         };
+        out.lines.push((id, pos, line));
         let Some(LineLanguage::Embedded(syntax)) =
-            state.highlighter.line_language(&state.buffer, line_start)
+            state
+                .highlighter
+                .line_language(&state.buffer, line.start, line.next)
         else {
             continue;
         };
@@ -180,23 +194,36 @@ pub(crate) struct RuleEdits {
     pub edits: Vec<(usize, usize, usize)>,
 }
 
-/// The line holding `pos`: its start and its end before the line break.
-/// `None` when either lies further than [`LINE_CAP`] away.
-fn line_bounds(state: &mut EditorState, pos: usize) -> Option<(usize, usize)> {
+/// Where a cursor's line lies in the buffer.
+#[derive(Debug, Clone, Copy)]
+struct LineSpan {
+    /// The line's first byte.
+    start: usize,
+    /// The end of its text, before the line break.
+    end: usize,
+    /// The start of the next line, past the line break; the buffer's end on
+    /// the last line.
+    next: usize,
+}
+
+/// The line holding `pos`, located with the buffer's line-start primitives
+/// (which walk the piece tree's line-feed counts rather than copy the
+/// line). `None` when either end lies further than [`LINE_CAP`] away.
+fn line_span(state: &mut EditorState, pos: usize) -> Option<LineSpan> {
     let start = state.buffer.prev_line_start_within(pos, LINE_CAP)?;
     let len = state.buffer.len();
-    let end = match state.buffer.next_line_start_within(pos, LINE_CAP) {
+    let (end, next) = match state.buffer.next_line_start_within(pos, LINE_CAP) {
         Some(next) => {
             let mut end = next - 1;
             if end > pos && state.buffer.slice_bytes(end - 1..end).first() == Some(&b'\r') {
                 end -= 1;
             }
-            end
+            (end, next)
         }
-        None if len - pos <= LINE_CAP => len,
+        None if len - pos <= LINE_CAP => (len, len),
         None => return None,
     };
-    Some((start, end))
+    Some(LineSpan { start, end, next })
 }
 
 /// The buffer's bytes in `start..end` as text, or `None` when they are not
@@ -290,7 +317,12 @@ pub(crate) fn apply_edit_rules(
             continue;
         }
         let pos = cursor.position;
-        let Some((line_start, line_end)) = line_bounds(state, pos) else {
+        let Some(LineSpan {
+            start: line_start,
+            end: line_end,
+            ..
+        }) = languages.line(id, pos).or_else(|| line_span(state, pos))
+        else {
             continue;
         };
         // Alone on its line: no earlier span reaches the line start, and the
