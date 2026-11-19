@@ -13629,9 +13629,9 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
   if (!worktreeEnabled) {
     // Not a git path: say so where the toggle would be, and stop.
     out.push(
-      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
+      toggle(false, editor.t("form.create_worktree_short"), {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.menu_disabled_fg" },
+        disabled: true,
       }),
       fieldNote(editor.t("form.disabled_non_git").replace(/^\s*[(（]|[)）]\s*$/g, ""), {
         fg: "ui.menu_disabled_fg",
@@ -13735,9 +13735,9 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   const out: WidgetSpec[] = [];
   if (f.remoteProbing) {
     out.push(
-      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
+      toggle(false, editor.t("form.create_worktree_short"), {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.menu_disabled_fg" },
+        disabled: true,
       }),
       fieldNote(editor.t("form.remote_probing"), {
         fg: "ui.menu_disabled_fg",
@@ -13767,9 +13767,9 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   }
   if (f.remoteIsGit === false) {
     out.push(
-      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
+      toggle(false, editor.t("form.create_worktree_short"), {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.menu_disabled_fg" },
+        disabled: true,
       }),
       fieldNote(editor.t("form.remote_non_git"), {
         fg: "ui.menu_disabled_fg",

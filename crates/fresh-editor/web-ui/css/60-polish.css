@@ -49,7 +49,8 @@
   .settings-modal .set-title,.kbedit .kb-title,.auxmodal .am-title{background:var(--surface-2)}
   .settings-modal .set-footer{background:var(--surface-2)}
   .kbedit .kb-table .kb-row.kb-head{background:var(--surface)}
-  .set-overlay,.kb-overlay,.trustdialog{background:var(--surface-2)!important}
+  /* Not `!important`: a skin's own window ground (Winamp's metal) wins. */
+  .set-overlay,.kb-overlay,.trustdialog{background:var(--surface-2)}
 
   /* Consistent inner radii for the small controls — pills, fields, steppers,
      buttons, cards — all share the small radius. */

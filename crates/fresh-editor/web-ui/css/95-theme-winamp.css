@@ -164,7 +164,7 @@
     border-bottom:none}
   body.theme-winamp .menu{color:#e7d6bd;text-shadow:0 1px 0 rgba(0,0,0,.7)}
   body.theme-winamp .menu:hover{background:rgba(255,208,150,.12)}
-  body.theme-winamp .menu.open{background:var(--sel);color:#fff}
+  body.theme-winamp .menu.open{background:var(--wa-olive);color:#f6f2df}
   /* Engraved menu separators: a dark groove capped by a thin warm highlight. */
   body.theme-winamp .msep{background:rgba(0,0,0,.6);
     box-shadow:0 1px 0 rgba(255,214,158,.16);margin:4px 8px}
@@ -236,15 +236,18 @@
   /* Their list bodies and input lines are LCD panes: `.ui-well`, below. */
   body.theme-winamp .palette .ptitle,body.theme-winamp .palette .ptitlebar{
     color:var(--wa-amber);letter-spacing:.12em;text-transform:uppercase}
-  body.theme-winamp .ctxmenu .ctxitem.sel,body.theme-winamp .w-list-row.sel{background:var(--sel);color:#fff;border-radius:0}
+  body.theme-winamp .w-list-row.sel{background:var(--sel);color:#fff;border-radius:0}
   /* Menu-bar dropdown highlight: the theme's lit olive-green plate (the same
      highlight as the right-click context menu), not the blue list-selection —
      which read as foreign in the warm chrome. */
-  body.theme-winamp .mitem.hi{
-    background:
+  /* Every menu's highlight is this plate: the menu bar's titles and items,
+     the right-click menus, the trust dialog's choice. */
+  body.theme-winamp{--wa-olive:
       radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.35),transparent 62%),
-      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%);
-    color:#f6f2df;border-radius:0}
+      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%)}
+  body.theme-winamp .mitem.hi,body.theme-winamp .ctxmenu .ctxitem.sel.sel,
+  body.theme-winamp .trustdialog .td-opt.sel.sel{background:var(--wa-olive);color:#f6f2df;border-radius:0}
+  body.theme-winamp .trustdialog .td-opt.sel .td-odesc{color:rgba(246,242,223,.78)}
   body.theme-winamp .mitem.hi .accel{color:rgba(246,242,223,.72)}
   body.theme-winamp .mitem.hi::before,body.theme-winamp .ctxmenu .ctxitem.sel::before,
   body.theme-winamp .popup .popup-row.sel::before{display:none}
@@ -308,7 +311,6 @@
   body.theme-winamp .auxmodal .am-title{background:none;border-bottom:1px solid rgba(0,0,0,.55);
     color:var(--wa-amber);letter-spacing:.12em;text-transform:uppercase}
   body.theme-winamp .kbedit .kb-row.kb-head{background:#120d0a;color:var(--wa-amber)}
-  body.theme-winamp .trustdialog .td-opt.sel{background:var(--sel);color:#fff;border-radius:0}
   body.theme-winamp .kbedit .kb-btn{background:var(--wa-gloss),var(--wa-plate);color:#f0dcc2;
     border:none;border-radius:2px;box-shadow:var(--wa-ctl)}
   body.theme-winamp .kbedit .kb-overlay,body.theme-winamp .settings-modal .set-overlay{
@@ -445,3 +447,20 @@
     box-shadow:var(--wa-seam),4px 6px 0 rgba(0,0,0,.5)}
   body.theme-winamp .w-dd-row{color:var(--wa-lcd-fg);text-shadow:var(--wa-glow)}
   body.theme-winamp .w-dd-row.sel{background:var(--wa-lcd-sel);color:#e4ffec;box-shadow:inset 2px 0 0 var(--wa-green)}
+
+  /* The trust dialog: the lit metal window every dialog is. */
+  body.theme-winamp .trustdialog{background:var(--wa-light),var(--wa-metal)}
+  body.theme-winamp .trustdialog .td-path{color:#e9d9c2}
+  body.theme-winamp .trustdialog .td-triggers,body.theme-winamp .trustdialog .td-odesc{color:var(--wa-muted)}
+  /* Settings: a metal window with an amber caption and footer on the metal. */
+  body.theme-winamp .settings-modal{background:var(--wa-light),var(--wa-metal)}
+  body.theme-winamp .settings-modal .set-title{background:none;color:var(--wa-amber);letter-spacing:.12em;
+    text-transform:uppercase;border-bottom:1px solid rgba(0,0,0,.55)}
+  body.theme-winamp .settings-modal .set-footer{background:none;border-top:1px solid rgba(0,0,0,.55)}
+  /* The Settings dropdown's list: an LCD card, as every dropdown's. */
+  body.theme-winamp .set-dd{background:var(--wa-lcd);border:1px solid #000;border-radius:0;
+    box-shadow:var(--wa-seam),4px 6px 0 rgba(0,0,0,.5)}
+  body.theme-winamp .set-dd-row{color:var(--wa-lcd-fg);text-shadow:var(--wa-glow);border-radius:0}
+  body.theme-winamp .set-dd-row.sel.sel{background:var(--wa-lcd-sel);color:#e4ffec;box-shadow:inset 2px 0 0 var(--wa-green)}
+  /* A popup with no title is its content in a thin metal frame. */
+  body.theme-winamp .popup{box-shadow:var(--wa-seam),var(--wa-out),4px 6px 0 rgba(0,0,0,.45)}

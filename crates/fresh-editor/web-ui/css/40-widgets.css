@@ -11,7 +11,7 @@
   .trustdialog .td-triggers{color:var(--muted);margin:2px 0 8px}
   .trustdialog .td-opt{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:5px;cursor:default}
   .trustdialog .td-opt.sel{background:var(--menuhi);color:#fff}
-  .trustdialog .td-opt .td-radio{flex:0 0 auto}
+  .trustdialog .td-opt .td-radio{flex:0 0 auto;margin-top:.25em}
   .trustdialog .td-opt .td-otext .td-olabel{font-weight:600}
   .trustdialog .td-opt .td-otext .td-odesc{color:var(--muted)}
   .trustdialog .td-opt.sel .td-odesc{color:#dfe8ff}

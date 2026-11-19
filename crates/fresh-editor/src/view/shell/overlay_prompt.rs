@@ -625,6 +625,7 @@ mod tests {
                 label_first: false,
                 label_width: 0,
                 mnemonic: None,
+                disabled: false,
                 key: Some(format!("t{i}")),
             })
             .collect();

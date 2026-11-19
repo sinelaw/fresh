@@ -99,3 +99,22 @@
     border-radius:50%;border:1.5px solid var(--radio-border);background:var(--radio-bg);box-shadow:var(--radio-shadow)}
   .ui-radio.ui-radio.on{border-color:var(--radio-on-border);box-shadow:var(--radio-shadow),var(--radio-on-glow);
     background:radial-gradient(circle,var(--radio-on-dot) 0 38%,transparent 42%),var(--radio-bg)}
+  /* A control that is shown but not available. */
+  .w-toggle.disabled{opacity:.45;cursor:default}
+
+  /* ---- the status bar: who gives way (55-status.js) ----
+     Nothing wraps or spills: the left side shrinks (the element the layout
+     already cut first) with an ellipsis, the right side never does. */
+  .statusbar{overflow:hidden}
+  .statusbar.statusbar > span{flex:0 0 auto;white-space:nowrap}
+  .statusbar.statusbar > .cut{flex-shrink:1;min-width:0;max-width:none;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---- a one-row prompt (Go to Line, Search, Replace): one cell tall, on
+     the row the terminal gives it, so it never covers the status bar above. */
+  .palette.input-only{height:var(--cell-h);box-sizing:border-box}
+  .palette.input-only .pinput{height:var(--cell-h);padding-top:0;padding-bottom:0;box-sizing:border-box}
+
+  /* ---- a key-hint strip: each hint on one line, never wrapping under the
+     strip's edge ---- */
+  .w-hintbar{flex-wrap:nowrap;overflow:hidden}
+  .w-hint{white-space:nowrap;flex:0 0 auto}

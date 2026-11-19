@@ -599,7 +599,7 @@
     | { kind: "hintBar", entries: HintEntry[], key?: String }
     | { kind: "toggle", checked: Boolean, label: String, focused: Boolean,
         indeterminate: Boolean, labelFirst: Boolean, labelWidth: Number,
-        mnemonic?: String, key?: String }
+        mnemonic?: String, disabled?: Boolean, key?: String }
     | { kind: "number", value: Number, min?: Number, max?: Number, step: Number,
         integer: Boolean, percent: Boolean, label?: String, focused: Boolean,
         labelWidth: Number, key?: String }

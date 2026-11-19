@@ -51,7 +51,17 @@ function popupEl(p){
   // taller than a cell outgrew the box and pushed the last rows out of it.
   const title=p.title, desc=p.description;
   const cr=p.contentRect, n=Math.max(0,cr.h), start=p.scrollOffset||0;
-  const head=div("popup-head"); head.style.height=`${px(Math.max(0,cr.y-p.rect.y),CH)}px`;
+  // With no title or description the rows above and below the content are
+  // only the terminal's border: the card is the content and a thin frame,
+  // its rows still on the cells the terminal draws them on.
+  const bare=!title&&!desc, pad=4;
+  if(bare){
+    el.style.top=`${px(cr.y,CH)-pad}px`;
+    el.style.height=`${px(n,CH)+2*pad}px`;
+    el.style.paddingTop=el.style.paddingBottom=`${pad}px`;
+    el.style.boxSizing="border-box";
+  }
+  const head=div("popup-head"); head.style.height=bare?"0px":`${px(Math.max(0,cr.y-p.rect.y),CH)}px`;
   if(title){ const t=div("popup-title"); t.textContent=title; head.appendChild(t); }
   if(desc){ const dd=div("popup-desc"); dd.textContent=desc; head.appendChild(dd); }
   el.appendChild(head);

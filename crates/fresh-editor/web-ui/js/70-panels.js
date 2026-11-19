@@ -17,7 +17,8 @@ function trustDialogEls(t){
   for(const o of t.options){
     const row=aria(div("td-opt"+(o.selected?" sel":"")), "radio", {checked:!!o.selected, label:o.label});
     row.dataset.level=o.data;
-    const rad=document.createElement("span"); rad.className="td-radio"; rad.textContent=o.selected?"◉":"○"; row.appendChild(rad);
+    // The shared radio (47-components.css).
+    const rad=document.createElement("span"); rad.className="td-radio ui-radio"+(o.selected?" on":""); row.appendChild(rad);
     const tx=document.createElement("div"); tx.className="td-otext";
     tx.innerHTML='<div class="td-olabel">'+esc(o.label)+'</div><div class="td-odesc">'+esc(o.description)+'</div>';
     row.appendChild(tx);
@@ -30,8 +31,9 @@ function trustDialogEls(t){
   const mk=(label,rect,cls)=>{ const b=aria(div("td-btn "+cls),"button",{}); b.textContent=label; const c=rectCell(rect);
     b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); }; return b; };
   btns.appendChild(mk(t.okLabel, t.ok, "primary td-ok"));
-  // Quitting the editor is the answer a skin may want to mark as one.
-  btns.appendChild(mk(t.quitLabel, t.quit, "destructive td-quit"));
+  // The second answer quits the editor unless the dialog can be cancelled,
+  // when it is Cancel; only quitting is marked as destructive.
+  btns.appendChild(mk(t.quitLabel, t.quit, t.cancellable?"td-quit":"destructive td-quit"));
   el.appendChild(btns);
   out.push(el);
   return out;

@@ -121,6 +121,7 @@ pub fn setting_control_to_widget_aligned(
             label_first: true,
             label_width: lw,
             mnemonic: None,
+            disabled: false,
             key,
         },
         // The value as the JSON carries it; the kind formats a percent as

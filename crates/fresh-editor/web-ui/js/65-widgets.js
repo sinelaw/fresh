@@ -392,7 +392,8 @@ function widgetNodeOf(spec, ctx){
     return el;
   }
   if(spec.kind==="toggle"){
-    const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":"")+(spec.labelFirst?" labelfirst":""));
+    const off=!!spec.disabled;
+    const el=div("w-toggle"+(spec.checked?" on":"")+(focused&&!off?" focus":"")+(spec.labelFirst?" labelfirst":"")+(off?" disabled":""));
     // A sliding switch (CSS-drawn), matching the Settings UI toggles —
     // not a unicode ☑/☐ glyph. `labelFirst` renders the form layout
     // (`Auto mode : [switch]`) so the chip aligns under a column of controls;
@@ -402,11 +403,15 @@ function widgetNodeOf(spec, ctx){
       if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
       el.appendChild(box);
     } else {
+      // Chip-first in a form: the chip stands in the field column, as a
+      // radio group without a label does and as the terminal indents it.
+      if(spec.labelWidth>0) el.style.paddingLeft=`${spec.labelWidth}ch`;
       el.appendChild(box);
       const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
     }
     aria(el, "switch", {checked:!!spec.checked, label:(spec.label||"").replace(/\s*:\s*$/,"").trim()||null});
-    if(wkey) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,wkey,kind); };
+    if(off) el.setAttribute("aria-disabled","true");
+    else if(wkey) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,wkey,kind); };
     return el;
   }
   if(spec.kind==="button"){

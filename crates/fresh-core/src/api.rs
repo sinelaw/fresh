@@ -2647,6 +2647,11 @@ pub enum WidgetSpec {
         /// letter the label does not contain, underlines nothing.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mnemonic: Option<String>,
+        /// Shown but not available: drawn dimmed, never focused, and a press
+        /// or a key on it does nothing. For a choice the form cannot offer
+        /// right now (a git worktree on a folder that is not a repository).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        disabled: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

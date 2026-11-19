@@ -177,7 +177,11 @@ pub(crate) fn resolve(
             _ => None,
         },
         "toggle" => match keyed(spec, wk)? {
-            WidgetSpec::Toggle { checked, .. } => Some(event(
+            WidgetSpec::Toggle {
+                checked,
+                disabled: false,
+                ..
+            } => Some(event(
                 "toggle",
                 wk,
                 "toggle",
