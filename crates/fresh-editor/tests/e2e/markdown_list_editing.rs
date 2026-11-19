@@ -1490,12 +1490,60 @@ editor.registerEditRules("comments", {
         .unload_plugin("py_comments")
         .unwrap();
     harness.wait_until(|h| !python_rules(h)).unwrap();
+    assert!(
+        !harness
+            .editor()
+            .edit_rules()
+            .read()
+            .unwrap()
+            .has_rules("python", EditRuleTrigger::Indent),
+        "nothing of the plugin's is left registered"
+    );
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert!(
-        !buf(&harness).ends_with("# more\n    # \n"),
-        "an unloaded plugin's rules no longer apply: {:?}",
-        buf(&harness)
+    harness.type_text("x").unwrap();
+    let content = buf(&harness);
+    let lines: Vec<&str> = content.split('\n').collect();
+    assert_eq!(
+        lines[..2],
+        ["    # note", "    # more"],
+        "the lines before are untouched: {content:?}"
     );
+    assert_eq!(
+        lines[2].trim_start(),
+        "x",
+        "an unloaded plugin's rules no longer apply (no `# ` continued): {content:?}"
+    );
+    assert_eq!(lines.len(), 4, "{content:?}");
+}
+
+/// The documented way to get list editing in `.mdx` files: add `mdx` to
+/// Markdown's extensions (in config.json, here as the config the editor
+/// starts with). The `.mdx` buffer is then Markdown, with its rules.
+#[test]
+fn test_mdx_added_to_markdown_extensions_gets_list_editing() {
+    let mut config = fresh::config::Config::default();
+    config
+        .languages
+        .get_mut("markdown")
+        .unwrap()
+        .extensions
+        .push("mdx".to_string());
+    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
+    let content = enter_at_end_of_first_line(&mut harness, "page.mdx", "1. one\n");
+    assert_eq!(harness.editor().active_state().language, "markdown");
+    assert_eq!(content, "1. one\n2. \n");
+
+    // The same from the user's config.json, after a reload.
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "markdown": {
+            "extensions": ["md", "markdown", "mdx"]
+        } } }),
+    );
+    let content = enter_at_end_of_first_line(&mut harness, "other.mdx", "- item\n");
+    assert_eq!(harness.editor().active_state().language, "markdown");
+    assert_eq!(content, "- item\n- \n");
 }

@@ -417,8 +417,10 @@ for the line's text `before` and `after` the cursor, and templates: `insert`
 (text at the cursor), `replace_before` / `replace_after` (rewrite either side).
 Templates take `$1` / `${name}` captures, `${inc:1}` (a number plus one),
 `${cycle:1:a|b|c}` (the next value in a list), `${indent}` / `${dedent:1}` (one
-indentation level added or taken off) and `$$` for a `$`. Rules are tried in
-order; the first that matches replaces the key's normal edit.
+indentation level added or taken off), `$$` for a `$`, and `\n` for a line
+break (also `\t` for a tab and `\\` for a backslash). Rules are tried in
+order; the first that matches replaces the key's normal edit. The keys are
+snake_case, like the rest of config.json.
 
 This continues `#` comments on Enter in Python:
 
@@ -434,13 +436,22 @@ This continues `#` comments on Enter in Python:
 }
 ```
 
+In config.json a line break can be written either way: `"\n$1"` (a JSON line
+break) or `"\\n$1"` (the escape). The Settings UI (**Syntax & Languages**, a
+language's **Edit Rules**) shows each rule as `on: before` and its templates on
+one line, with `\n` for each line break, and takes `\n` typed there the same
+way.
+
 Your list replaces the language's built-in one as a whole (like other lists),
 and `"edit_rules": []` turns a language's rules off. A rule that doesn't compile
 (a bad pattern, an unknown template, a misspelled field) is skipped with a
 warning naming the language and the rule's index; the others still apply.
 Rules that plugins register (`registerEditRules`) are tried after the
-configured ones. See `EditRule` in the [plugin type reference](../plugins/api/types.md)
-for the full format.
+configured ones. Rules answer the keys you press; when a command uses one of
+these keys as a step of its own (vi's `o` opens a line with line end + Enter),
+only rules that add text at the cursor apply, so `o` on an empty list item
+continues the list rather than clearing the item. See `EditRule` in the
+[plugin type reference](../plugins/api/types.md) for the full format.
 
 ### Set a Default Language for Unrecognized Files
 

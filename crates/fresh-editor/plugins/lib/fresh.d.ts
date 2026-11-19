@@ -1345,7 +1345,9 @@ type FormatterPackConfig = {
 *
 * The same format serves a language's `edit_rules` setting
 * (`languages.<id>.edit_rules` in config.json), a language pack's
-* `editRules`, and `registerEditRules`.
+* `editRules`, and `registerEditRules`. In config.json and a pack's
+* manifest the keys are snake_case (`replace_before`, `replace_after`);
+* the plugin API spells those two `replaceBefore` / `replaceAfter`.
 *
 * The line is split at the cursor into the text **before** it (from the
 * line start) and the text **after** it (to the line end, without the line
@@ -1355,7 +1357,7 @@ type FormatterPackConfig = {
 * out matches anything. The result is
 *
 * ```text
-* (replaceBefore ?? before) + (insert ?? "") + CURSOR + (replaceAfter ?? after)
+* (replace_before ?? before) + (insert ?? "") + CURSOR + (replace_after ?? after)
 * ```
 *
 * so `insert` adds text at the cursor and the `replace*` templates rewrite
@@ -1385,6 +1387,12 @@ type FormatterPackConfig = {
 * When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
 * number, a value not in the list, less than a level of indentation), the
 * rule does not apply and the next one is tried.
+*
+* Rules answer the keys as the user presses them. When a plugin's command
+* runs one of these actions as a step of its own edit (vi's `o` is line
+* end + Enter), only a rule that adds text at the cursor applies there; a
+* rule that would rewrite the line (clear an empty list item, cycle a
+* bullet) is passed over for the next one.
 */
 type EditRule = {
 	/**
@@ -4070,7 +4078,9 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	*
 	* The same format serves a language's `edit_rules` setting
 	* (`languages.<id>.edit_rules` in config.json), a language pack's
-	* `editRules`, and `registerEditRules`.
+	* `editRules`, and `registerEditRules`. In config.json and a pack's
+	* manifest the keys are snake_case (`replace_before`, `replace_after`);
+	* the plugin API spells those two `replaceBefore` / `replaceAfter`.
 	*
 	* The line is split at the cursor into the text **before** it (from the
 	* line start) and the text **after** it (to the line end, without the line
@@ -4080,7 +4090,7 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	* out matches anything. The result is
 	*
 	* ```text
-	* (replaceBefore ?? before) + (insert ?? "") + CURSOR + (replaceAfter ?? after)
+	* (replace_before ?? before) + (insert ?? "") + CURSOR + (replace_after ?? after)
 	* ```
 	*
 	* so `insert` adds text at the cursor and the `replace*` templates rewrite
@@ -4110,6 +4120,12 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	* When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
 	* number, a value not in the list, less than a level of indentation), the
 	* rule does not apply and the next one is tried.
+	*
+	* Rules answer the keys as the user presses them. When a plugin's command
+	* runs one of these actions as a step of its own edit (vi's `o` is line
+	* end + Enter), only a rule that adds text at the cursor applies there; a
+	* rule that would rewrite the line (clear an empty list item, cycle a
+	* bullet) is passed over for the next one.
 	*/
 type EditRule = {
 		/**
