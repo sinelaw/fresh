@@ -339,6 +339,20 @@ struct FileCache {
     /// The latest load's cancel flag. Each load gets its own, so starting a
     /// new one can't revive one that was told to stop.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set when the file finder opens: the cached list was built at some
+    /// earlier point and the tree may have moved under it since. The next
+    /// request for the list serves the cached entries *and* starts a reload,
+    /// so the user waits for no walk but also never holds a list that only a
+    /// restart can refresh.
+    ///
+    /// A load already in flight satisfies the mark — it was started no
+    /// earlier than the previous time the finder opened.
+    stale: bool,
+    /// Whether the in-flight load is refreshing a list that is already on
+    /// screen. Such a load's partial results are dropped: swapping a
+    /// complete list for a growing prefix of a new walk makes rows the user
+    /// is reading vanish and come back.
+    revalidating: bool,
 }
 
 /// Provider for finding files in the project.
@@ -399,6 +413,8 @@ impl FileProvider {
                 loaded_cwd: None,
                 generation: 0,
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                stale: false,
+                revalidating: false,
             })),
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             filesystem,
@@ -480,6 +496,30 @@ impl FileProvider {
             c.files = None;
             c.loading = false;
             c.loaded_cwd = None;
+            // Nothing is cached to be stale, and the next load starts cold.
+            c.stale = false;
+            c.revalidating = false;
+        }
+    }
+
+    /// Mark the cached file list as possibly out of date without discarding
+    /// it, so the next request for it serves the cached entries and starts a
+    /// reload in the background.
+    ///
+    /// Called when the file finder opens. The list is loaded once per cwd and
+    /// nothing else invalidates it, so a file created outside the editor —
+    /// `git switch`, a scaffolding tool, another editor — stayed invisible to
+    /// the finder until the editor was restarted (issue #3765). Only files
+    /// under a subdirectory went missing in practice: for a name typed at the
+    /// project root [`Self::probe_prefix`] reads the directory directly and
+    /// never consults this cache.
+    ///
+    /// Unlike [`Self::clear_cache`] this keeps the entries, because the
+    /// finder is wired to avoid making the user wait on a walk: dropping them
+    /// would put "Loading files…" in front of every open on a large project.
+    pub fn mark_stale(&self) {
+        if let Ok(mut c) = self.cache.lock() {
+            c.stale = true;
         }
     }
 
@@ -503,6 +543,7 @@ impl FileProvider {
             }
             c.files = Some(files);
             c.loading = false;
+            c.revalidating = false;
         }
     }
 
@@ -516,6 +557,14 @@ impl FileProvider {
     ) {
         if let Ok(mut c) = self.cache.lock() {
             if c.loaded_cwd.as_deref() != Some(cwd) || c.generation != generation {
+                return;
+            }
+            // Refreshing a list the user can already see: a growing prefix of
+            // the new walk is a *smaller* list than the one on screen, so
+            // showing it would drop rows and then bring them back. Partial
+            // results exist to fill an empty finder; wait for the complete
+            // one instead.
+            if c.revalidating {
                 return;
             }
             c.files = Some(files);
@@ -662,12 +711,22 @@ impl FileProvider {
         // picker keeps showing the first project's files.
         let cwd_matches = cache.loaded_cwd.as_deref() == Some(cwd);
         if cwd_matches {
-            if let Some(files) = &cache.files {
-                return Some(std::sync::Arc::clone(files));
-            }
             if cache.loading {
-                return None; // already loading this cwd
+                // A load for this cwd is already running and will deliver a
+                // list no older than one started now, so it satisfies any
+                // staleness mark. Serve what there is (`None` while the first
+                // load is still filling the cache, which shows "Loading…").
+                cache.stale = false;
+                return cache.files.clone();
             }
+            if !cache.stale {
+                if let Some(files) = &cache.files {
+                    return Some(std::sync::Arc::clone(files));
+                }
+            }
+            // Nothing cached yet, or the list is stale and no load is
+            // running: fall through to start one. A stale list is returned
+            // below so the finder keeps showing results meanwhile.
         } else {
             // Stale cwd: cancel any in-flight load for the old cwd and
             // reset so the load below starts fresh for `cwd`.
@@ -678,9 +737,15 @@ impl FileProvider {
             cache.loading = false;
         }
 
-        // No cache for this cwd, not loading — kick off background load
+        // No usable cache for this cwd, not loading — kick off background load
+        let serving = cache.files.clone();
         cache.loaded_cwd = Some(cwd.to_string());
         cache.generation += 1;
+        // The load starting here reflects the tree as of now, so it discharges
+        // the staleness mark immediately rather than on completion — otherwise
+        // every keystroke would start another walk.
+        cache.stale = false;
+        cache.revalidating = serving.is_some();
         let generation = cache.generation;
         let (sender, runtime) = match (&self.async_sender, &self.runtime) {
             (Some(s), Some(rt)) => (s.clone(), rt.clone()),
@@ -764,7 +829,8 @@ impl FileProvider {
             );
         });
 
-        None
+        // Whatever was cached stays on screen until the reload completes.
+        serving
     }
 
     /// Synchronous fallback when no tokio runtime is available (e.g., tests).

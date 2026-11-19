@@ -303,6 +303,18 @@ impl QuickOpenRegistry {
         }
     }
 
+    /// Mark the file picker's cached list as possibly out of date, keeping
+    /// the entries it already has. Called when the finder opens, so a file
+    /// created outside the editor shows up on the next open rather than only
+    /// after a restart (issue #3765).
+    pub fn mark_file_list_stale(&self) {
+        if let Some((provider, _)) = self.get_provider_for_input("") {
+            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
+                fp.mark_stale();
+            }
+        }
+    }
+
     /// Leave out of the file picker what `file_explorer.custom_ignore_patterns`
     /// ignores.
     pub fn set_file_ignore_patterns(&self, patterns: &[String]) {

@@ -239,6 +239,14 @@ impl Editor {
         prompt.set_input_plain(prefix.to_string());
         self.set_prompt(prompt);
 
+        // The file list is cached per cwd for the life of the process, and
+        // closing the prompt only cancels an in-flight walk. Mark it stale on
+        // every open so files created outside the editor since the last open
+        // are picked up; the cached entries stay on screen while the reload
+        // runs, and no reload starts at all unless the user actually asks the
+        // file provider for suggestions.
+        self.quick_open_registry.mark_file_list_stale();
+
         self.update_quick_open_suggestions(prefix);
     }
 
