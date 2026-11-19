@@ -268,7 +268,7 @@ use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
-use crate::types::{LspLanguageConfig, LspServerConfig};
+use crate::types::LspServerConfig;
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
@@ -4695,6 +4695,12 @@ mod tests {
     }
 }
 
+/// Whether a write to one of two JSON pointers touches the other: the same
+/// setting, or one inside the other (a write above a setting replaces it).
+pub(crate) fn pointers_overlap(a: &str, b: &str) -> bool {
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+}
+
 /// Languages the session has that no config file holds: the installed
 /// language packs' (scanned at startup) and those plugins registered with
 /// `registerLanguageConfig` (a pack installed while the editor runs comes
@@ -4727,7 +4733,7 @@ impl SessionLanguages {
             let pointer = format!("/languages/{id}");
             !changed_pointers
                 .iter()
-                .any(|c| *c == pointer || c.starts_with(&format!("{pointer}/")))
+                .any(|c| pointers_overlap(&pointer, c))
         });
         for (id, language) in &self.packs {
             config
@@ -4743,6 +4749,32 @@ impl SessionLanguages {
         }
         for (id, language) in &self.registered {
             config.languages.insert(id.clone(), language.clone());
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_languages_tests {
+    use super::SessionLanguages;
+
+    /// A registered language is forgotten once the user saves its entry —
+    /// or anything above it, which replaces it — and kept through a save of
+    /// anything else.
+    #[test]
+    fn a_save_at_or_above_a_registered_language_forgets_it() {
+        let mut config = crate::config::Config::default();
+        let language = config.languages["markdown"].clone();
+        let mut session = SessionLanguages::default();
+        for (changed, kept) in [
+            ("/languages/other", true),
+            ("/editor/tab_size", true),
+            ("/languages/mylang/tab_size", false),
+            ("/languages/mylang", false),
+            ("/languages", false),
+        ] {
+            session.registered.insert("mylang".into(), language.clone());
+            session.reapply(&mut config, &[changed.to_string()]);
+            assert_eq!(session.registered.contains_key("mylang"), kept, "{changed}");
         }
     }
 }

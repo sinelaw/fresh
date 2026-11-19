@@ -1129,21 +1129,14 @@ impl Editor {
             crate::services::packages::scan_installed_packages(&dir_context.config_dir);
         t.phase("scan_installed_packages");
 
-        // Apply package language configs (user config takes priority via or_insert)
-        for (lang_id, lang_config) in &scan_result.language_configs {
-            config
-                .languages
-                .entry(lang_id.clone())
-                .or_insert_with(|| lang_config.clone());
-        }
-
-        // Apply package LSP configs (user config takes priority via or_insert)
-        for (lang_id, lsp_config) in &scan_result.lsp_configs {
-            config
-                .lsp
-                .entry(lang_id.clone())
-                .or_insert_with(|| LspLanguageConfig::Multi(vec![lsp_config.clone()]));
-        }
+        // Apply the packages' language and LSP configs (the user's config
+        // takes priority), by the rule a reload re-applies them with.
+        let mut session_languages = super::SessionLanguages {
+            packs: scan_result.language_configs.clone(),
+            pack_lsp: scan_result.lsp_configs.clone(),
+            registered: HashMap::new(),
+        };
+        session_languages.reapply(&mut config, &[]);
 
         let theme_registry = Arc::new(theme_loader.load_all(&scan_result.bundle_theme_dirs));
         t.phase("theme_loader.load_all");
@@ -1697,11 +1690,7 @@ impl Editor {
             time_source: time_source.clone(),
             plugin_global_state,
             plugin_schemas,
-            session_languages: super::SessionLanguages {
-                packs: scan_result.language_configs.clone(),
-                pack_lsp: scan_result.lsp_configs.clone(),
-                registered: HashMap::new(),
-            },
+            session_languages,
             event_broadcaster: event_broadcaster.clone(),
             orchestrator_mode,
             file_launch,
@@ -2228,12 +2217,11 @@ impl Editor {
         // Language packs' and plugin-registered languages first: a
         // `setSetting` on one of them applies on top, as it did before.
         self.session_languages.reapply(config, changed_pointers);
-        let overlaps = |a: &str, b: &str| {
-            a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
-        };
         self.runtime_settings.retain(|(path, _)| {
             let pointer = json_pointer_for_dot_path(path);
-            !changed_pointers.iter().any(|c| overlaps(&pointer, c))
+            !changed_pointers
+                .iter()
+                .any(|c| super::pointers_overlap(&pointer, c))
         });
         if !self.runtime_settings.is_empty() {
             let mut json = serde_json::to_value(&*config).unwrap_or_default();
