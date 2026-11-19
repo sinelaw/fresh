@@ -480,6 +480,17 @@ pub enum HookArgs {
         root: String,
     },
 
+    /// The user typed into a window's content — a key that reached one of its
+    /// buffers or its terminal, as opposed to chrome (the dock, a prompt, the
+    /// file tree). Switching to a window or looking at it does not fire this;
+    /// it is "the user did something here", which is what the Orchestrator
+    /// dates a workspace by. Throttled: at most once per window per
+    /// half-minute, so a handler can afford to persist on every call.
+    WindowInteraction {
+        /// The window the key went to.
+        window_id: u64,
+    },
+
     /// An editor session was closed and its state dropped. The id
     /// is still valid in the payload but is no longer present in
     /// `editor.listWindows()`.

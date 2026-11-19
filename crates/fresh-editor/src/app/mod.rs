@@ -698,6 +698,10 @@ pub struct Editor {
     /// Blend amount for the ANSI background (0..1)
     background_fade: f32,
 
+    /// The last `window_interaction` hook: the window and when it fired.
+    /// See [`Editor::note_window_interaction`].
+    last_interaction_hook: Option<(fresh_core::WindowId, Instant)>,
+
     /// Keybinding resolver (shared with Quick Open CommandProvider)
     keybindings: Arc<RwLock<KeybindingResolver>>,
 

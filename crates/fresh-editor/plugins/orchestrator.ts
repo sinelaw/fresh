@@ -1908,6 +1908,97 @@ function setPinned(s: AgentSession, on: boolean): void {
   editor.setGlobalState(PINNED_KEY, [...set] as unknown as object);
 }
 
+// ── Last interaction, and the dock's "By date" grouping ──────────────────
+//
+// When the user last *did* something in a workspace: typed into one of its
+// buffers or its terminal (the host's `window_interaction`), or created it.
+// Switching to a workspace, or an agent printing in it, is not an
+// interaction — a workspace you only glanced at is no more recent for it.
+// Keyed like a pin (stable id, else root), in ms, persisted.
+const INTERACTED_KEY = "orchestrator.dock.last_interaction";
+let dockInteracted: Record<string, number> | null = null;
+
+function loadInteracted(): Record<string, number> {
+  if (dockInteracted) return dockInteracted;
+  const raw = editor.getGlobalState(INTERACTED_KEY);
+  const out: Record<string, number> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+  }
+  dockInteracted = out;
+  return out;
+}
+
+function recordInteraction(stableId: string | undefined, root: string, at = Date.now()): void {
+  const store = loadInteracted();
+  store[stableId ? stableIdKey(stableId) : normRoot(root)] = at;
+  editor.setGlobalState(INTERACTED_KEY, store as unknown as object);
+}
+
+function lastInteractionMs(s: AgentSession): number | null {
+  const store = loadInteracted();
+  const own = s.stableId ? store[stableIdKey(s.stableId)] : undefined;
+  return own ?? store[normRoot(s.root)] ?? null;
+}
+
+// How the dock arranges workspaces: the user's folders, or headings by
+// when each was last interacted with. Persisted.
+const GROUP_BY_KEY = "orchestrator.dock.group_by";
+type DockGroupBy = "folders" | "date";
+
+function dockGroupBy(): DockGroupBy {
+  return editor.getGlobalState(GROUP_BY_KEY) === "date" ? "date" : "folders";
+}
+
+function setDockGroupBy(g: DockGroupBy): void {
+  editor.setGlobalState(GROUP_BY_KEY, g as unknown as object);
+}
+
+// The date headings, nearest first, each covering a longer stretch than the
+// one before it. A workspace goes under the first whose start it is not
+// before; a heading whose stretch is empty this time round (Earlier this
+// week, on a Monday) simply has no rows and is not drawn.
+const DATE_BUCKETS = [
+  "today",
+  "yesterday",
+  "this_week",
+  "last_week",
+  "this_month",
+  "last_month",
+  "this_year",
+  "older",
+  "none",
+] as const;
+type DateBucket = typeof DATE_BUCKETS[number];
+
+function dateViewId(b: DateBucket): string {
+  return VIEW_FOLDER_PREFIX + "date:" + b;
+}
+for (const b of DATE_BUCKETS) VIEW_FOLDER_IDS.push(dateViewId(b));
+
+// Which heading `at` (ms) falls under, on the local calendar as of `now`.
+// Weeks start on Monday.
+function dateBucketOf(at: number | null, now: Date = new Date()): DateBucket {
+  if (at === null) return "none";
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const d = now.getDate();
+  const sinceMonday = (now.getDay() + 6) % 7;
+  const starts: [DateBucket, number][] = [
+    ["today", new Date(y, m, d).getTime()],
+    ["yesterday", new Date(y, m, d - 1).getTime()],
+    ["this_week", new Date(y, m, d - sinceMonday).getTime()],
+    ["last_week", new Date(y, m, d - sinceMonday - 7).getTime()],
+    ["this_month", new Date(y, m, 1).getTime()],
+    ["last_month", new Date(y, m - 1, 1).getTime()],
+    ["this_year", new Date(y, 0, 1).getTime()],
+  ];
+  for (const [b, start] of starts) if (at >= start) return b;
+  return "older";
+}
+
 // The last answer drawn, so a poll that changed nothing costs no repaint.
 let externalSignature = "";
 
@@ -2344,10 +2435,13 @@ function buildDockTree(filtered: number[]): DockTree {
   // still external: filing forks nothing); the rest stay in their
   // product's group, emitted last.
   const allLive = dockMode ? externalVisible() : [];
+  // By date, folders are not drawn: an external session filed into one goes
+  // back to its product's group.
+  const byDate = dockMode && dockGroupBy() === "date";
   const liveByFolder = new Map<string, LiveSession[]>();
   const liveUnfiled: LiveSession[] = [];
   for (const s of allLive) {
-    const fid = externalFolderOf(s.key);
+    const fid = byDate ? null : externalFolderOf(s.key);
     if (fid) liveByFolder.set(fid, [...(liveByFolder.get(fid) ?? []), s]);
     else liveUnfiled.push(s);
   }
@@ -2462,8 +2556,36 @@ function buildDockTree(filtered: number[]): DockTree {
     model.push({ kind: "folder", folderId: PINNED_VIEW_ID });
     for (const sid of pinned) emitSession(sid, 1);
   }
-  for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
-  walk(null, 0);
+  if (byDate) {
+    // One heading per stretch of time, nearest first; under each, the most
+    // recently interacted-with first (never-used rows keep their order).
+    const byBucket = new Map<DateBucket, { id: number; at: number | null }[]>();
+    const now = new Date();
+    for (const id of filtered) {
+      if (pinnedSet.has(id)) continue;
+      const s = orchestratorSessions.get(id);
+      if (!s) continue;
+      const at = lastInteractionMs(s);
+      const b = dateBucketOf(at, now);
+      byBucket.set(b, [...(byBucket.get(b) ?? []), { id, at }]);
+    }
+    for (const b of DATE_BUCKETS) {
+      const rows = (byBucket.get(b) ?? []).sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
+      if (rows.length === 0) continue;
+      const ids = rows.map((r) => r.id);
+      const heading: DockFolder = { id: dateViewId(b), name: editor.t("dock.date_" + b), parent: null };
+      nodes.push(treeNode(folderNodeEntry(heading, ids.length, attentionCounts(ids)), {
+        depth: 0,
+        hasChildren: true,
+      }));
+      keys.push(folderNodeKey(heading.id));
+      model.push({ kind: "folder", folderId: heading.id });
+      for (const sid of ids) emitSession(sid, 1);
+    }
+  } else {
+    for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
+    walk(null, 0);
+  }
 
   // The external sessions groups, last: the dock's own workspaces come first.
   // Absent while there is nothing in them (or the feed plugin is not loaded).
@@ -6513,6 +6635,14 @@ function dockMainGroups(): DockMenuGroup[] {
       ],
     },
     {
+      heading: editor.t("dock.menu_h_group"),
+      side: "right",
+      opts: [
+        { key: "main:group:folders", label: radio(dockGroupBy() === "folders") + editor.t("dock.menu_group_folders") },
+        { key: "main:group:date", label: radio(dockGroupBy() === "date") + editor.t("dock.menu_group_date") },
+      ],
+    },
+    {
       heading: editor.t("dock.menu_h_show"),
       side: "right",
       opts: [
@@ -6691,6 +6821,12 @@ function runDockMenuOption(optKey: string): void {
   // the published verb, so the menu and a script take the same path.
   if (optKey === "main:view:compact" || optKey === "main:view:card") {
     apiSetDockView(optKey === "main:view:card" ? "card" : "compact");
+    renderMainMenu();
+    return;
+  }
+  if (optKey === "main:group:folders" || optKey === "main:group:date") {
+    setDockGroupBy(optKey === "main:group:date" ? "date" : "folders");
+    refreshOpenDialog();
     renderMainMenu();
     return;
   }
@@ -16070,6 +16206,8 @@ async function runLocalCreate(id: number): Promise<void> {
       settleCreateOutcome(id, { ok: false, error: "workspace creation was dismissed" });
       return;
     }
+    // Creating it is the user's doing: it is dated today until they type in it.
+    recordInteraction(result.stableId || undefined, root);
     // Tag the new window by id: a background or scripted create leaves
     // another window active, and the tag must not land there (#3786).
     editor.setWindowState("project_path", effectiveProjectPath, winId);
@@ -19181,6 +19319,16 @@ editor.on("window_created", () => {
   // host actions creating windows just need the picker to
   // refresh.
   refreshOpenDialog();
+});
+
+// The user typed into a workspace (throttled by the host): it is now the
+// most recent, and By date may have to move it up to Today.
+editor.on("window_interaction", (args) => {
+  const s = orchestratorSessions.get(args.window_id);
+  if (!s) return;
+  const before = dateBucketOf(lastInteractionMs(s));
+  recordInteraction(s.stableId, s.root);
+  if (dockMode && dockGroupBy() === "date" && before !== "today") refreshOpenDialog();
 });
 
 editor.on("window_closed", (args) => {

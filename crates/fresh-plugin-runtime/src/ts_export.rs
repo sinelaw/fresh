@@ -1063,6 +1063,12 @@ interface HookEventMap {
   window_created: { id: number; label: string; root: string };
   /** A window was closed. */
   window_closed: { id: number };
+  /**
+   * The user typed into a window's content: a key that reached one of its
+   * buffers or its terminal, not the chrome around them. Switching to a
+   * window does not fire it. At most once per window per half-minute.
+   */
+  window_interaction: { window_id: number };
   /** The active window changed, once the switch has finished. */
   active_window_changed: { previous_id: number | null; active_id: number };
   /**

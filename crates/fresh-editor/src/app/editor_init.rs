@@ -792,6 +792,7 @@ impl Editor {
             ansi_background: None,
             ansi_background_path: None,
             background_fade: crate::primitives::ansi_background::DEFAULT_BACKGROUND_FADE,
+            last_interaction_hook: None,
             clipboard: crate::services::clipboard::Clipboard::new(),
             should_quit: false,
             workspace_trust_prompt_cancellable: false,

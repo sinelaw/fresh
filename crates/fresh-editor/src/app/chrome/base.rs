@@ -17,7 +17,33 @@ use super::Editor;
 /// Behavior owned by this component: the key pipeline's tail (moved
 /// verbatim from `handle_key` — the editor content's own keyboard
 /// handling, reached when every layer above has declined).
+/// How often `window_interaction` may fire for the same window. The
+/// Orchestrator dates workspaces by the day, so a half-minute is far finer
+/// than anything reads it, and coarse enough that typing costs nothing.
+const INTERACTION_HOOK_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl Editor {
+    /// Tell plugins the user did something in the active window
+    /// (`window_interaction`), at most once per window per
+    /// [`INTERACTION_HOOK_EVERY`].
+    pub(crate) fn note_window_interaction(&mut self) {
+        let window = self.active_window_id();
+        let now = self.time_source.now();
+        if let Some((w, at)) = self.last_interaction_hook {
+            if w == window && now.saturating_duration_since(at) < INTERACTION_HOOK_EVERY {
+                return;
+            }
+        }
+        self.last_interaction_hook = Some((window, now));
+        #[cfg(feature = "plugins")]
+        self.plugin_manager.read().unwrap().run_hook(
+            "window_interaction",
+            fresh_core::hooks::HookArgs::WindowInteraction {
+                window_id: window.0,
+            },
+        );
+    }
+
     /// Mode bindings, composite-buffer routing, then chord/keybinding
     /// resolution against the current context. The context is derived
     /// fresh from the layer stack here: a rung above may have
@@ -25,6 +51,34 @@ impl Editor {
     /// deferred actions), and the old pipeline's post-modal recalc is
     /// exactly this.
     pub(crate) fn dispatch_base_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> AnyhowResult<()> {
+        // In a buffer, only a key that changed it is the user *doing*
+        // something there: moving the cursor or pressing Esc is reading, and
+        // must not make a workspace look recent. (A terminal key is noted
+        // where it is forwarded, below.)
+        let before = self.active_edit_mark();
+        let r = self.dispatch_base_key_inner(code, modifiers);
+        let after = self.active_edit_mark();
+        // The same buffer, a new version. A key that switched buffer or
+        // window changed what is active, not what is in it.
+        if before.0 == after.0 && before.1 != after.1 {
+            self.note_window_interaction();
+        }
+        r
+    }
+
+    /// Which buffer of which window is active, and that buffer's version.
+    fn active_edit_mark(&self) -> ((fresh_core::WindowId, fresh_core::BufferId), u64) {
+        (
+            (self.active_window_id(), self.active_buffer()),
+            self.active_state().buffer.version(),
+        )
+    }
+
+    fn dispatch_base_key_inner(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
@@ -61,6 +115,9 @@ impl Editor {
                 | crate::input::keybindings::KeyContext::Normal
         ) && self.dispatch_terminal_input(&key_event, &context).is_some()
         {
+            // Every key a program in the terminal receives is input to it — an
+            // agent's TUI is driven by arrows and Enter as much as by text.
+            self.note_window_interaction();
             return Ok(());
         }
 
