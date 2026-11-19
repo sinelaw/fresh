@@ -350,8 +350,14 @@ fn generate_test_roots() {
     let manifest = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
     let tests_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
 
-    let mut roots: Vec<String> = fs::read_dir(&tests_dir)
-        .expect("read tests/")
+    // A source tree without tests/ (Debian's source package) has no roots.
+    let entries: Vec<_> = match fs::read_dir(&tests_dir) {
+        Ok(entries) => entries.collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => panic!("read tests/: {e}"),
+    };
+    let mut roots: Vec<String> = entries
+        .into_iter()
         .filter_map(|entry| {
             let entry = entry.ok()?;
             if !entry.path().is_file() {
