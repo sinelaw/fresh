@@ -673,6 +673,8 @@
   "cmd.open_keybinding_editor_desc": "Apre l'editor delle scorciatoie da tastiera per visualizzare e personalizzare le combinazioni di tasti",
   "cmd.open_line": "Apri riga",
   "cmd.open_line_desc": "Inserisce una nuova riga sotto il cursore senza spostarlo",
+  "cmd.insert_line_below": "Inserisci riga sotto",
+  "cmd.insert_line_below_desc": "Inizia una nuova riga sotto la riga di ogni cursore, continuando un elemento di elenco",
   "cmd.open_settings": "Apri impostazioni",
   "cmd.open_settings_desc": "Apre l'editor delle impostazioni",
   "cmd.open_terminal": "Apri terminale",

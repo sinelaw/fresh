@@ -698,6 +698,8 @@
   "cmd.recent_files_desc": "Reopen a file recently closed in this workspace",
   "cmd.open_line": "Open Line",
   "cmd.open_line_desc": "Insert newline at cursor without moving cursor",
+  "cmd.insert_line_below": "Insert Line Below",
+  "cmd.insert_line_below_desc": "Start a new line below each cursor's line, continuing a list item",
   "cmd.open_settings": "Open Settings",
   "cmd.open_settings_desc": "Open the settings editor",
   "cmd.open_keybinding_editor": "Open Keybinding Editor",

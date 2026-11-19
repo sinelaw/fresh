@@ -673,6 +673,8 @@
   "cmd.open_keybinding_editor_desc": "キーバインドエディタを開いてキーボードショートカットを表示・カスタマイズします",
   "cmd.open_line": "行を開く",
   "cmd.open_line_desc": "カーソルを移動せずにカーソル位置に改行を挿入します",
+  "cmd.insert_line_below": "下に行を挿入",
+  "cmd.insert_line_below_desc": "各カーソルの行の下に新しい行を開始し、リスト項目を続けます",
   "cmd.open_settings": "設定を開く",
   "cmd.open_settings_desc": "設定エディタを開きます",
   "cmd.open_terminal": "ターミナルを開く",

@@ -673,6 +673,8 @@
   "cmd.open_keybinding_editor_desc": "Abrir el editor de atajos de teclado para ver y personalizar las combinaciones de teclas",
   "cmd.open_line": "Abrir línea",
   "cmd.open_line_desc": "Insertar nueva línea en el cursor sin mover el cursor",
+  "cmd.insert_line_below": "Insertar línea debajo",
+  "cmd.insert_line_below_desc": "Inicia una línea nueva debajo de la línea de cada cursor, continuando un elemento de lista",
   "cmd.open_settings": "Abrir configuración",
   "cmd.open_settings_desc": "Abrir el editor de configuración",
   "cmd.open_terminal": "Abrir terminal",

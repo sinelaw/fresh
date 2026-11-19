@@ -673,6 +673,8 @@
   "cmd.open_keybinding_editor_desc": "Tastenkürzel-Editor zum Anzeigen und Anpassen von Tastenkombinationen öffnen",
   "cmd.open_line": "Zeile öffnen",
   "cmd.open_line_desc": "Neue Zeile am Cursor einfügen ohne Cursor zu bewegen",
+  "cmd.insert_line_below": "Zeile darunter einfügen",
+  "cmd.insert_line_below_desc": "Neue Zeile unter der Zeile jedes Cursors beginnen und einen Listeneintrag fortsetzen",
   "cmd.open_settings": "Einstellungen öffnen",
   "cmd.open_settings_desc": "Den Einstellungseditor öffnen",
   "cmd.open_terminal": "Terminal öffnen",

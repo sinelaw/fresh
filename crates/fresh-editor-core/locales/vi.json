@@ -673,6 +673,8 @@
   "cmd.open_keybinding_editor_desc": "Mở trình chỉnh sửa phím tắt để xem và tùy chỉnh các phím tắt bàn phím",
   "cmd.open_line": "Mở dòng",
   "cmd.open_line_desc": "Chèn dòng mới tại con trỏ mà không di chuyển con trỏ",
+  "cmd.insert_line_below": "Chèn dòng bên dưới",
+  "cmd.insert_line_below_desc": "Bắt đầu dòng mới bên dưới dòng của mỗi con trỏ, tiếp tục mục danh sách",
   "cmd.open_settings": "Mở cài đặt",
   "cmd.open_settings_desc": "Mở trình chỉnh sửa cài đặt",
   "cmd.open_terminal": "Mở Terminal",
