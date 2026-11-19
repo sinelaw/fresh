@@ -241,6 +241,16 @@ const cellPx = async (col, row) => {
 };
 const clickCell = async (col, row, opts) => { const p = await cellPx(col, row); await page.mouse.click(p.x, p.y, opts || {}); };
 const clickLine = async (it, opts) => clickCell(it.x + Math.min(it.w - 1, 2), it.y, opts);
+// Every skin draws the panels as real controls (73-native.js) over the
+// display list, which the scene still carries and these checks still read;
+// a press goes to the control, as a user's does.
+const nativeDock = () => page.locator('.native-panel.np-dock');
+const dockMenuButton = () => nativeDock().locator('.w-dd-pill, .w-button', { hasText: /Menu/ }).first();
+const dockRow = async re => {
+  const rows = nativeDock().locator('.w-tree-row, .w-list-row');
+  const named = rows.filter({ hasText: re });
+  return (await named.count()) ? named.first() : rows.last();
+};
 const waitTree = (pred, arg, ms) => page.waitForFunction((a) => {
   const t = window.fresh.scene.regions.tree; if (!t || !t.surfaces) return false;
   const lines = kind => { const si = t.surfaces.findIndex(s => s.kind === kind); return t.items.filter(i => i.surface === si && i.kind === 'lines').map(i => (i.lines || []).join('\n')); };
@@ -373,20 +383,14 @@ if (webDockPanels) {
   // settings row leaves the menu open, so both clicks land on the same menu.
   const DOCK_MENU = /Menu ▾/;
   const openDockMenu = async () => {
-    const trigger = findLine(await treeOf(), 'dock', DOCK_MENU);
-    if (trigger) await clickLine(trigger);
+    await dockMenuButton().click().catch(() => {});
     await waitTree((t, lines) => lines('floating').some(l => /empty/i.test(l)), null, 5000);
   };
   const toggleLine = async () => findLine(await treeOf(), 'floating', /empty/i);
   const toggleText = async () => { const it = await toggleLine(); return it ? it.text : null; };
   // The toggle's own row, within the menu's text: the item is the whole menu.
   const clickToggle = async () => {
-    const it = await toggleLine();
-    if (!it) return;
-    // The menu is two columns side by side: click the label's own cell.
-    const rows = it.text.split('\n');
-    const row = rows.findIndex(l => /empty/i.test(l));
-    await clickCell(it.x + rows[row].search(/empty/i), it.y + row);
+    await page.locator('.native-panel.card').getByText(/Empty workspaces/i).first().click().catch(() => {});
   };
   await openDockMenu();
   const t0 = await toggleText();
@@ -408,15 +412,10 @@ if (webDockPanels) {
   // the TUI's right-click does, and the orchestrator raises its anchored
   // Visit / Move / Archive / Delete popup as a floating panel — undimmed,
   // dismissed by Esc or an outside click.
-  const sessionRow = async () => {
-    const t = await treeOf();
-    const rows = treeLines(t, 'dock');
-    const named = rows.find(i => /fresh/.test(i.text) && !/Filters|New Task|Search/.test(i.text));
-    return named || rows[rows.length - 1];
-  };
+  const sessionRow = async () => dockRow(/fresh/);
   const floating = async () => (await treeOf()).surfaces.find(s => s.kind === 'floating');
   let row = await sessionRow();
-  if (row) await clickLine(row, { button: 'right' });
+  await row.click({ button: 'right' }).catch(() => {});
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
   const ctxM = await floating();
   check('right-click on a dock row opens the context-menu panel', !!ctxM);
@@ -430,7 +429,7 @@ if (webDockPanels) {
   await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
   check('Esc closes the context menu', !(await floating()));
   row = await sessionRow();
-  if (row) await clickLine(row, { button: 'right' });
+  await row.click({ button: 'right' }).catch(() => {});
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
   {
     const sc = await scene(page);
@@ -446,7 +445,7 @@ if (webDockPanels) {
   const search = findLine(await treeOf(), 'dock', /Search/i);
   check('the search field is in the dock', !!search);
   if (search) {
-    await clickLine(search);
+    await nativeDock().locator('.w-text-input').first().click().catch(() => {});
     await page.waitForTimeout(300);
     await page.keyboard.type('zq');
     await waitTree((t, lines) => lines('dock').some(l => /zq/.test(l)), null, 5000);
@@ -459,7 +458,7 @@ if (webDockPanels) {
   // The header's `Menu ▾` opens the dock's menu as a floating layer anchored
   // to the button; its rows are display-list items below the trigger.
   const menuTrigger = findLine(await treeOf(), 'dock', DOCK_MENU);
-  if (menuTrigger) await clickLine(menuTrigger);
+  await dockMenuButton().click().catch(() => {});
   await waitTree((t, lines) => lines('floating').some(l => /Import sessions/i.test(l)), null, 5000);
   const option = findLine(await treeOf(), 'floating', /Import sessions/i);
   const optionRow = option ? option.y + option.text.split('\n').findIndex(l => /Import sessions/i.test(l)) : null;
@@ -1038,13 +1037,12 @@ if (webDockPanels) {
   // `+ New` goes straight to the dialog — one click since the dock's header
   // collapsed to two controls (it used to be "New Task… ▾" and then an option
   // row in the dropdown it opened).
-  const nt = findLine(await treeOf(), 'dock', /\+ New/);
-  if (nt) await clickLine(nt);
+  await nativeDock().locator('.w-button', { hasText: /New$/ }).first().click().catch(() => {});
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating' && !s.anchored));
   await page.waitForTimeout(200);
   const modal = (await treeOf()).surfaces.find(s => s.kind === 'floating' && !s.anchored);
   check('New Workspace dialog is a centered floating panel', !!modal);
-  check('a dimming scrim sits behind it', (await page.locator('.tree .tree-scrim').count()) === 1);
+  check('a dimming scrim sits behind it', (await page.locator('.native-panel-scrim:not(.clear)').count()) === 1);
   // A click over the dock lands on the scrim, which the tree routes to the
   // modal: the dock's selection is untouched and the dialog stays open.
   // The dock repaints on its own (project detection, titles), so the
@@ -1062,7 +1060,7 @@ if (webDockPanels) {
   await page.keyboard.press('Escape');
   await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
   check('Escape closed the New Workspace dialog', !(await treeOf()).surfaces.some(s => s.kind === 'floating'));
-  check('scrim gone once the modal closed', (await page.locator('.tree .tree-scrim').count()) === 0);
+  check('scrim gone once the modal closed', (await page.locator('.native-panel-scrim').count()) === 0);
   // Close the dock again: the sections below assert on status-bar text, and
   // the dock's width pushes long status messages into truncation.
   await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
@@ -1410,7 +1408,7 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 const nerrs = []; page.on('pageerror', e => nerrs.push(String(e)));
 check('Compact lays the shell\'s surfaces out natively',
-  await page.evaluate(() => document.body.classList.contains('native-panels')));
+  await page.evaluate(() => !!document.querySelector('.native-panel')));
 if (!(await page.evaluate(() => (window.fresh.scene.regions.native.panels || []).some(p => p.kind === 'dock')))) {
   await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
 }
