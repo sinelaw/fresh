@@ -3115,13 +3115,13 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     })
     .unwrap();
 
-    // Pre-collapse steady state: the card is visible (git probe landed
-    // its "clean" line) AND the hint bar is pinned to the dock bottom.
-    // A single semantic wait rides out interleaved probe re-renders.
+    // Pre-collapse steady state: the card is visible (its rounded top
+    // border is drawn in the dock) AND the hint bar is pinned to the dock
+    // bottom. A single semantic wait rides out interleaved probe re-renders.
     let hint_row = |s: &str| s.lines().position(|l| l.contains("F2 menu"));
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("clean") && hint_row(&s) == Some(31)
+        s.contains('╭') && hint_row(&s) == Some(31)
     })
     .unwrap();
 
@@ -3133,7 +3133,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     h.mouse_click(0, folder_row).unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("clean") && hint_row(&s) == Some(31)
+        !s.contains('╭') && hint_row(&s) == Some(31)
     })
     .unwrap();
 }
@@ -3152,11 +3152,11 @@ fn dock_compact_rows_drop_branch_name() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Wait for the git probe: the card's second line shows the branch
-    // marker + summary ("clean" — fresh repo, no upstream, no HEAD
-    // diff). The same probe caches the session's branch name, which the
-    // compact row used to trail as a "▸<branch>" suffix.
-    h.wait_until(|h| h.screen_to_string().contains("clean"))
+    // Wait for the git probe: the card's second line swaps the project
+    // (`▣`) for the branch marker (`▸`) once the probe caches the
+    // session's branch name, which the compact row used to trail as a
+    // "▸<branch>" suffix.
+    h.wait_until(|h| h.screen_to_string().contains('▸'))
         .unwrap();
 
     // Now flip to compact — the density under test.
@@ -3165,7 +3165,7 @@ fn dock_compact_rows_drop_branch_name() {
     // Final steady state, waited on semantically: compact density active
     // AND the session row (dock column, left of the wall) carries the
     // name but no branch marker — even though the git probe has already
-    // cached the branch (the "clean" gate above), which the compact row
+    // cached the branch (the `▸` gate above), which the compact row
     // used to trail as a "▸<branch>" suffix.
     h.wait_until(|h| {
         let Some(name_row) = dock_card_name_row(h, "alphaproj") else {
@@ -3189,14 +3189,10 @@ fn dock_card_git_line_right_aligned_to_card_border() {
     // A second (inactive) session in its own git repo: the ACTIVE card's
     // right border is scooped away by the seamless tab, so flushness is
     // asserted on the inactive card, whose `│` border is intact.
-    let other = root.parent().unwrap().join("zzz_other");
-    fs::create_dir(&other).unwrap();
-    assert!(std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&other)
-        .status()
-        .unwrap()
-        .success());
+    // A clean tree shows no summary at all, so it is given a change to
+    // report ("+2").
+    let (_tmp_other, other) = setup_committed_project("zzz_other");
+    fs::write(other.join("readme.txt"), "a\nb\nc\nd\ne\n").unwrap();
 
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
@@ -3209,8 +3205,8 @@ fn dock_card_git_line_right_aligned_to_card_border() {
     // inactive, fully-bordered card.
     assert_eq!(h.editor().active_window().label, "alphaproj");
 
-    // Wait for the git probe to land zzz_other's summary ("clean" —
-    // fresh repo, nothing to diff) on its name row, flush against the
+    // Wait for the git probe to land zzz_other's summary ("+2") on its
+    // name row, flush against the
     // card's right border: the summary is IMMEDIATELY followed by the
     // rounded `│` side border, with no interior padding after it, while
     // the name still leads the row from the left. Waiting for the final
@@ -3223,10 +3219,13 @@ fn dock_card_git_line_right_aligned_to_card_border() {
         let Some(line) = screen.lines().find(|l| l.contains("zzz_other")) else {
             return false;
         };
-        let Some(b) = line.find("clean") else {
+        let Some(b) = line.find("+2") else {
             return false;
         };
-        line[b + "clean".len()..].starts_with('│') && line[..b].contains("zzz_other")
+        let Some(inner) = line.split('│').nth(1) else {
+            return false;
+        };
+        !inner.ends_with(' ') && line[..b].contains("zzz_other")
     })
     .unwrap();
 }
@@ -3623,10 +3622,11 @@ fn dock_git_summary_survives_transient_probe_failure() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // First probes (no TTL gate): target shows "+2", witness shows "clean".
+    // First probes (no TTL gate): target shows "+2"; the witness is clean,
+    // which shows as no summary at all.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("+2") && s.contains("clean")
+        s.contains("+2") && s.contains("witness")
     })
     .unwrap();
 
@@ -3651,7 +3651,7 @@ fn dock_git_summary_survives_transient_probe_failure() {
 /// against the card's right border:
 ///
 ///   ╭──────────────────────────╮
-///   │ · beta              clean│
+///   │ · beta                 +2│
 ///   │ ▸ master                 │
 ///   ╰──────────────────────────╯
 ///
@@ -3668,6 +3668,8 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
     // for the seamless tab.
     let (_tmp_b, beta_root) = setup_committed_project("betaproj");
     let branch = git_head_branch(&beta_root);
+    // A change to report: a clean tree shows no summary at all.
+    fs::write(beta_root.join("readme.txt"), "a\nb\nc\nd\ne\n").unwrap();
 
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
@@ -3684,7 +3686,7 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
         let Some(r) = screen.lines().position(|l| l.contains("beta")) else {
             return false;
         };
-        screen.lines().nth(r).is_some_and(|l| l.contains("clean"))
+        screen.lines().nth(r).is_some_and(|l| l.contains("+2"))
             && screen
                 .lines()
                 .nth(r + 1)
@@ -3714,7 +3716,7 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
         "the name leads the card's first row, got {row1:?}"
     );
     assert!(
-        row1.ends_with("clean"),
+        row1.contains("+2") && !row1.ends_with(' '),
         "the git summary sits flush against the card's right border, got {row1:?}"
     );
     assert!(
@@ -3755,6 +3757,8 @@ fn dock_card_shows_the_project_when_the_branch_just_repeats_the_name() {
         .status()
         .unwrap()
         .success());
+    // A change to report, so the probe landing is visible on the row.
+    fs::write(twin_root.join("readme.txt"), "a\nb\nc\nd\ne\n").unwrap();
 
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
@@ -3774,7 +3778,7 @@ fn dock_card_shows_the_project_when_the_branch_just_repeats_the_name() {
         let Some(r) = screen.lines().position(|l| l.contains("feature-x")) else {
             return false;
         };
-        screen.lines().nth(r).is_some_and(|l| l.contains("clean"))
+        screen.lines().nth(r).is_some_and(|l| l.contains("+2"))
     })
     .unwrap();
 

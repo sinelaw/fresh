@@ -2490,14 +2490,9 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
   // by the connection state — the same detail the pill shows on the right,
   // and skipped when the label already names it (see `remoteDetailSegs`).
   segs.push(...remoteDetailSegs(s));
-  // A discovered on-disk worktree keeps its "· on-disk" tag — the "this
-  // row isn't an open session yet" indicator the pill also shows.
-  if (s.discovered) {
-    segs.push({
-      text: "  " + editor.t("pill.on_disk_worktree"),
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    });
-  }
+  // No "· on-disk worktree" tag: the hollow `○` in the status column
+  // already says "a worktree with no workspace open yet", and the tag only
+  // pushed the name off a narrow dock.
   // A being-created placeholder trails its status on the single compact line
   // (there's no second row to put it on).
   if (s.pending) {
@@ -2545,27 +2540,6 @@ function cardSplitRow(left: Entry[], right: Entry[]): TextPropertyEntry {
     splitByte: left.reduce((n, e) => n + utf8Len(e.text), 0),
   };
   return row;
-}
-
-// Truncate to `cols` display columns, ellipsising when it doesn't fit.
-// Code-point aware (`Array.from`), so a multi-byte name can't be cut
-// mid-character.
-function capText(s: string, cols: number): string {
-  const chars = Array.from(s);
-  if (chars.length <= cols) return s;
-  return chars.slice(0, Math.max(1, cols - 1)).join("") + "…";
-}
-
-// Columns a group of entries occupies, for the left-group cap below.
-function entriesWidth(entries: Entry[]): number {
-  return entries.reduce((n, e) => n + Array.from(e.text).length, 0);
-}
-
-// Inner width of a card at the dock's default width — an estimate (the
-// dock can be dragged), used only to cap the branch so it doesn't shove
-// the right-hand group off the row. The host does the exact alignment.
-function cardInnerColsEstimate(): number {
-  return Math.max(12, dockContentCols(dockWidth()) - 2);
 }
 
 // Card line 1 (the tree node's primary text): state glyph, optional
@@ -2625,7 +2599,9 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
     ];
   }
   const dim = "ui.menu_disabled_fg";
-  const right = prLineEntries(s);
+  // The PR badge, but not the picker's "· on-disk worktree" tag: in the
+  // dock the hollow `○` in the status column already says it.
+  const right = s.discovered ? [] : prLineEntries(s);
   // The branch earns the row only when it differs from the workspace
   // name — a worktree's branch is usually named after it, and printing
   // it twice was pure noise. Otherwise the project takes the slot: it's
@@ -2647,17 +2623,13 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   if (text === s.label) {
     return [cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right)];
   }
-  // Cap the branch/project so the badge keeps its columns: the host
-  // truncates the row's *end*, which is the badge. Budget = the card's
-  // inner width less this row's icon (2 cols), the badge, and the one
-  // column that always separates the two groups.
-  const cap = cardInnerColsEstimate() - 2 - entriesWidth(right) -
-    (right.length > 0 ? 1 : 0);
+  // No cap here: the host fits a split row to the card's real width,
+  // cutting the branch and keeping the badge whole (`fit_between_row`).
   return [
     cardSplitRow(
       [
         { text: icon + " ", style: { fg: dim } },
-        { text: capText(text, Math.max(8, cap)), style: { fg: dim, italic: !showBranch } },
+        { text, style: { fg: dim, italic: !showBranch } },
       ],
       right,
     ),
@@ -4039,9 +4011,9 @@ function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
   if (g.deleted) {
     right.push({ text: `${sep()}−${g.deleted}`, style: { fg: "ui.file_status_deleted_fg" } });
   }
-  if (right.length === 0) {
-    right.push({ text: editor.t("pill.clean"), style: { fg: dim, italic: true } });
-  }
+  // Nothing ahead, behind or changed says nothing: the right column stays
+  // empty rather than print "clean" on every row that has no news, so the
+  // rows that *do* carry a summary are the ones the eye lands on.
   return { left, right };
 }
 
@@ -4081,11 +4053,10 @@ function prLineEntries(s: AgentSession): Entry[] {
     }
     return out;
   }
-  // A discovered on-disk worktree keeps its "· on-disk worktree" tag —
-  // it's a useful "this row isn't an open session yet" indicator, not a
-  // PR placeholder. A live session with no PR returns nothing here; the
-  // caller renders a blank spacer line in its place (keeping the card a
-  // uniform three lines) rather than a "no PR yet" placeholder.
+  // A discovered on-disk worktree keeps its "· on-disk worktree" tag in the
+  // picker's pill — there it is the row's only "not open yet" marker. The
+  // dock leaves it out (see `sessionCardExtraLines`): its hollow `○` says it.
+  // A live session with no PR returns nothing here.
   if (s.discovered) {
     return [{ text: editor.t("pill.on_disk_worktree"), style: { fg: dim, italic: true } }];
   }
