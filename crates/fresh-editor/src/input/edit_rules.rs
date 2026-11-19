@@ -1,18 +1,19 @@
-//! Plugin-registered edit rules, applied inside Enter / Tab / Shift+Tab.
+//! Edit rules, applied inside Enter / Tab / Shift+Tab.
 //!
 //! The rules themselves — patterns, templates, the registry — live in
 //! [`fresh_core::edit_rules`] and know nothing about buffers. This module is
 //! the buffer side: for each cursor it reads the line around the cursor,
-//! asks the registry for a rewrite, and turns the answer into the key's own
-//! events, so a rule's edit is part of the keystroke (one undo step, applied
-//! before the next key is read) rather than something a plugin does later.
+//! asks the buffer's rules for a rewrite — its language's `edit_rules`
+//! setting first, then the sets plugins registered for the language — and
+//! turns the answer into the key's own events, so a rule's edit is part of
+//! the keystroke (one undo step, applied before the next key is read).
 
 use crate::model::cursor::Cursors;
 use crate::model::event::{CursorId, Event};
 use crate::model::virtual_space::virtual_gap_text;
 use crate::state::EditorState;
 use fresh_core::api::EditRuleTrigger;
-use fresh_core::edit_rules::{EditRuleRegistry, LineContext};
+use fresh_core::edit_rules::{BufferEditRules, EditRuleRegistry, LineContext};
 
 /// How far a line may run either side of the cursor for rules to look at
 /// it. A longer line (minified text, a data dump) just gets the key's
@@ -57,8 +58,10 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
         .map_or(a.len().min(b.len()), |((i, _), _)| i)
 }
 
-/// Apply the edit rules registered for the buffer's language and `trigger`
-/// at each cursor they can handle, pushing their events onto `events`.
+/// Apply the edit rules for the buffer and `trigger` at each cursor they can
+/// handle, pushing their events onto `events`: the buffer's configured rules
+/// (`buffer_settings.edit_rules`), then, when the caller passes the
+/// registry, the sets plugins registered for its language.
 ///
 /// A cursor is handled when it has no selection, is not in virtual space,
 /// shares its line with no other cursor (or another cursor's selection), and
@@ -69,9 +72,17 @@ pub(crate) fn apply_edit_rules(
     cursors: &Cursors,
     events: &mut Vec<Event>,
     trigger: EditRuleTrigger,
-    rules: &EditRuleRegistry,
+    registry: Option<&EditRuleRegistry>,
 ) -> Option<RuleEdits> {
-    if !rules.has_rules(&state.language, trigger) {
+    // Held apart from `state`, which the loop below reads mutably.
+    let configured = std::sync::Arc::clone(&state.buffer_settings.edit_rules);
+    let language = state.language.clone();
+    let rules = BufferEditRules {
+        language: &language,
+        configured: &configured,
+        registry,
+    };
+    if !rules.has_rules(trigger) {
         return None;
     }
     let vs_mode = state.buffer_settings.virtual_space;
@@ -136,7 +147,7 @@ pub(crate) fn apply_edit_rules(
             tab_width: state.buffer_settings.tab_size,
             line_ending,
         };
-        let Some(edit) = rules.apply(&state.language, trigger, &ctx) else {
+        let Some(edit) = rules.apply(trigger, &ctx) else {
             continue;
         };
         handled.push(id);

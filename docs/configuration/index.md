@@ -172,7 +172,7 @@ The `lsp` map uses **deep merging with field-level override**:
 // Result: command="rust-analyzer" (from defaults) + your initialization_options
 ```
 
-### Lists (keybindings, on_save actions)
+### Lists (keybindings, on_save actions, edit_rules)
 
 Lists are **replaced entirely** by higher layers - they are not merged or appended.
 
@@ -405,6 +405,42 @@ These patterns are the same mechanism Fresh's built-in languages use, grouped
 into **families** (curly-brace, Python, Ruby-like, …). To add a language to
 Fresh's source tree — or to understand which family yours resembles — see
 [Adding a Built-in Language](/development/adding-languages).
+
+### Edit Rules
+
+A language's `edit_rules` change what Enter, Tab and Shift+Tab do on lines that
+match — continue a comment or a list, indent a blank item. Markdown's
+[list editing](../features/markdown.md#smart-editing) is its built-in
+`edit_rules`; other languages have none until you add them. Each rule names its
+key (`on`: `"newline"`, `"indent"` or `"dedent"`), optional regular expressions
+for the line's text `before` and `after` the cursor, and templates: `insert`
+(text at the cursor), `replaceBefore` / `replaceAfter` (rewrite either side).
+Templates take `$1` / `${name}` captures, `${inc:1}` (a number plus one),
+`${cycle:1:a|b|c}` (the next value in a list), `${indent}` / `${dedent:1}` (one
+indentation level added or taken off) and `$$` for a `$`. Rules are tried in
+order; the first that matches replaces the key's normal edit.
+
+This continues `#` comments on Enter in Python:
+
+```json
+{
+  "languages": {
+    "python": {
+      "edit_rules": [
+        { "on": "newline", "before": "^(\\s*# ?)\\S", "insert": "\n$1" }
+      ]
+    }
+  }
+}
+```
+
+Your list replaces the language's built-in one as a whole (like other lists),
+and `"edit_rules": []` turns a language's rules off. A rule that doesn't compile
+(a bad pattern, an unknown template, a misspelled field) is skipped with a
+warning naming the language and the rule's index; the others still apply.
+Rules that plugins register (`registerEditRules`) are tried after the
+configured ones. See `EditRule` in the [plugin type reference](../plugins/api/types.md)
+for the full format.
 
 ### Set a Default Language for Unrecognized Files
 

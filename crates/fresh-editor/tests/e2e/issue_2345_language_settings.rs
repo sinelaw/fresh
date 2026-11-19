@@ -189,9 +189,10 @@ fn issue_2345_inherited_auto_surround_shows_neutral_chip() {
 /// that one field to inherited, without touching its siblings.
 #[test]
 fn issue_2345_per_field_inherit_button_reverts_single_field() {
-    // 32 rows: the dialog lists fields alphabetically and the assertion below
-    // needs the "Line Wrap" row on screen ("Indentation Guide" sits above it).
-    let mut harness = EditorTestHarness::with_config(120, 32, html_only_config()).unwrap();
+    // 34 rows: the dialog lists fields alphabetically and the assertion below
+    // needs the "Line Wrap" row on screen ("Edit Rules" and "Indentation
+    // Guide" sit above it).
+    let mut harness = EditorTestHarness::with_config(120, 34, html_only_config()).unwrap();
     harness.render().unwrap();
 
     open_html_language_dialog(&mut harness);
@@ -377,13 +378,25 @@ fn issue_2345_reset_button_restores_builtin_default() {
 }
 
 /// Walk from the dialog's first field down to `Format On Save` (past Auto
-/// Close/Indent/Surround, Comment Prefix, the two Extensions rows and the two
-/// "Add new" rows).
+/// Close/Indent/Surround, Comment Prefix, Edit Rules, the two Extensions rows
+/// and Filenames). Walked to rather than counted: list fields take a focus
+/// stop per row.
 fn focus_format_on_save(harness: &mut EditorTestHarness) {
-    for _ in 0..8 {
+    for _ in 0..40 {
+        // The focus marker `>` sits in the dialog, between its border and
+        // the label.
+        let row = row_with(harness, "Format On Save");
+        let before_label = row.split("Format On Save").next().unwrap_or("");
+        if before_label.rsplit('│').next().unwrap_or("").contains('>') {
+            return;
+        }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
     }
-    harness.render().unwrap();
+    panic!(
+        "could not focus Format On Save; screen was:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// Issue #2345: the `[Reset]` button is reachable both ways too. Tab forward

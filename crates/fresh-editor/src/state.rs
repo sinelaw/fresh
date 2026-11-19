@@ -190,6 +190,12 @@ pub struct BufferSettings {
     /// config.
     pub indentation_guide: bool,
 
+    /// The language's `edit_rules`, compiled: what Enter / Tab / Shift+Tab
+    /// do on matching lines, tried before the rules plugins register. Set
+    /// from the language config, so a config reload or a language change
+    /// brings the current rules.
+    pub edit_rules: std::sync::Arc<[fresh_core::edit_rules::CompiledEditRule]>,
+
     /// Explicit per-buffer occurrence-highlight override, set by "Toggle
     /// Occurrence Highlight (Current Buffer)". `None` = follow the global
     /// `editor.highlight_occurrences` setting. Persisted in the per-file
@@ -221,6 +227,7 @@ impl Default for BufferSettings {
             virtual_space_override: None,
             word_characters: String::new(),
             indentation_guide: true,
+            edit_rules: std::sync::Arc::from([]),
             highlight_occurrences_override: None,
             editorconfig: Default::default(),
         }
@@ -258,6 +265,7 @@ impl BufferSettings {
         self.whitespace_in_selection = resolved.whitespace_in_selection;
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
+        self.edit_rules = std::sync::Arc::clone(&resolved.edit_rules);
     }
 
     /// Drop every explicit per-buffer override, so the buffer goes back to

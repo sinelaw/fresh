@@ -2535,6 +2535,92 @@ mod tests {
         );
     }
 
+    /// The `before` pattern of each of a language's resolved edit rules.
+    fn edit_rule_patterns(config: &Config, language: &str) -> Vec<String> {
+        config.languages[language]
+            .edit_rules
+            .iter()
+            .map(|r| r.rule().before.clone().unwrap_or_default())
+            .collect()
+    }
+
+    /// A rule whose regex doesn't compile is caught while the layer loads,
+    /// not at the first key press: only that element goes (reported at its
+    /// index under the language), and the language's other rules and the
+    /// rest of the layer stay.
+    #[test]
+    fn invalid_edit_rule_drops_only_that_rule() {
+        let user = r#"{"theme": "light", "languages": {"python": {
+            "tab_size": 3,
+            "edit_rules": [
+                {"on": "newline", "before": "^(\\s*# ?)\\S", "insert": "\n$1"},
+                {"on": "newline", "before": "(", "insert": ""},
+                {"on": "indent", "insert": "${nope}"},
+                {"on": "newline", "befor": "x", "insert": ""},
+                {"on": "dedent", "before": "^x", "replaceBefore": ""}
+            ]
+        }}}"#;
+        let mut value: Value = serde_json::from_str(user).unwrap();
+        let removed = prune_invalid_fields(&mut value);
+        let pointers: Vec<&str> = removed.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            pointers,
+            vec![
+                "/languages/python/edit_rules/1",
+                "/languages/python/edit_rules/2",
+                "/languages/python/edit_rules/3"
+            ]
+        );
+        assert!(removed[0].1.contains("before:"), "{:?}", removed[0]);
+
+        let (_temp, resolver) = create_test_resolver();
+        write_user_and_project(&resolver, user, "{}");
+        let config = resolver.resolve().unwrap();
+        assert_eq!(&*config.theme, "light");
+        assert_eq!(config.languages["python"].tab_size, Some(3));
+        assert_eq!(
+            edit_rule_patterns(&config, "python"),
+            vec![r"^(\s*# ?)\S", "^x"]
+        );
+    }
+
+    /// `edit_rules` merges like other arrays: a higher layer's list replaces
+    /// a lower one's, `[]` turns the built-in Markdown rules off, and a layer
+    /// that doesn't set it keeps the one below.
+    #[test]
+    fn edit_rules_layers_replace_whole_lists() {
+        let (_temp, resolver) = create_test_resolver();
+        let builtin = Config::default().languages["markdown"].edit_rules.len();
+        assert!(builtin > 0, "Markdown has list editing by default");
+
+        write_user_and_project(
+            &resolver,
+            r#"{"languages": {"markdown": {"tab_size": 2}}}"#,
+            "{}",
+        );
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.languages["markdown"].edit_rules.len(), builtin);
+
+        write_user_and_project(
+            &resolver,
+            r#"{"languages": {"markdown": {"edit_rules": []}}}"#,
+            "{}",
+        );
+        assert!(resolver.resolve().unwrap().languages["markdown"]
+            .edit_rules
+            .is_empty());
+
+        write_user_and_project(
+            &resolver,
+            r#"{"languages": {"markdown": {"edit_rules": []}}}"#,
+            r#"{"languages": {"markdown": {"edit_rules": [
+                {"on": "newline", "before": "^> ", "insert": "\n> "}
+            ]}}}"#,
+        );
+        let config = resolver.resolve().unwrap();
+        assert_eq!(edit_rule_patterns(&config, "markdown"), vec!["^> "]);
+    }
+
     const KEYBINDINGS_WITH_ONE_BAD: &str = r#"{"keybindings": [
         {"key": "a", "modifiers": ["alt"], "action": "move_left"},
         {"key": 5, "action": "move_right"},

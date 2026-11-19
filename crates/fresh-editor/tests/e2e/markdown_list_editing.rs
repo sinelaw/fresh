@@ -1,42 +1,35 @@
-//! End-to-end tests for the markdown_source plugin
+//! End-to-end tests for Markdown list editing and language edit rules.
 //!
-//! The plugin registers edit rules (`editor.registerEditRules`) for Markdown
-//! buffers, which the editor applies inside Enter / Tab / Shift+Tab:
+//! Markdown's list editing is its built-in `edit_rules` setting
+//! (`languages.markdown.edit_rules`), which the editor applies inside
+//! Enter / Tab / Shift+Tab:
 //! - Enter continues list items (bullets, ordered, checkboxes)
 //! - Enter on an empty list item removes the marker
 //! - Tab on a blank list item indents and cycles the bullet; elsewhere Tab
 //!   is the normal Tab
-//! - The rules apply to Markdown buffers only, also in vi's insert mode,
-//!   and keep up with keys sent faster than the plugin runtime (#3813)
+//! - The rules apply to Markdown buffers only, and keep up with keys sent
+//!   back to back (#3813)
+//!
+//! Any language can have rules in config.json (`[]` turns them off), and
+//! plugins can register more (`registerEditRules`), tried after the config's.
 
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::EditorTestHarness;
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh_core::api::EditRuleTrigger;
 use std::fs;
 
-/// Create a harness with the markdown_source plugin loaded.
-/// Waits for the plugin to have registered its edit rules.
-fn markdown_source_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
-    markdown_source_harness_with_config(width, height, Default::default())
+/// Create a harness in a fresh project directory, with the built-in
+/// config: Markdown's list editing needs no plugin.
+fn markdown_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
+    markdown_harness_with_config(width, height, Default::default())
 }
 
-/// [`markdown_source_harness`] with a given config.
-fn markdown_source_harness_with_config(
+/// [`markdown_harness`] with a given config.
+fn markdown_harness_with_config(
     width: u16,
     height: u16,
     config: fresh::config::Config,
-) -> (EditorTestHarness, tempfile::TempDir) {
-    markdown_source_harness_with_plugins(width, height, config, &[])
-}
-
-/// [`markdown_source_harness_with_config`], with more bundled plugins.
-fn markdown_source_harness_with_plugins(
-    width: u16,
-    height: u16,
-    config: fresh::config::Config,
-    extra_plugins: &[&str],
 ) -> (EditorTestHarness, tempfile::TempDir) {
     init_tracing_from_env();
 
@@ -44,32 +37,10 @@ fn markdown_source_harness_with_plugins(
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-    copy_plugin(&plugins_dir, "markdown_source");
-    for plugin in extra_plugins {
-        copy_plugin(&plugins_dir, plugin);
-    }
-    copy_plugin_lib(&plugins_dir);
-
-    let mut harness =
+    let harness =
         EditorTestHarness::with_config_and_working_dir(width, height, config, project_root)
             .unwrap();
-
-    // The plugin registers its rules from its top-level body; the command
-    // reaches the editor through the plugin queue.
-    harness.wait_until(markdown_rules_registered).unwrap();
-
     (harness, temp_dir)
-}
-
-/// Whether the markdown_source plugin's rules are registered.
-fn markdown_rules_registered(h: &EditorTestHarness) -> bool {
-    h.editor()
-        .edit_rules()
-        .read()
-        .unwrap()
-        .has_rules("markdown", EditRuleTrigger::Newline)
 }
 
 /// Helper: open a markdown file. The rules need no activation: they apply
@@ -109,7 +80,7 @@ fn enter_at_end_of_first_line(
 /// In a .md file Enter continues a list item, with no activation step.
 #[test]
 fn test_rules_apply_in_md_file() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = enter_at_end_of_first_line(&mut harness, "readme.md", "- item\n");
     assert_eq!(content, "- item\n- \n");
@@ -119,7 +90,7 @@ fn test_rules_apply_in_md_file() {
 /// In a non-markdown file Enter is the plain newline: no list continuation.
 #[test]
 fn test_rules_do_not_apply_in_non_md_file() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = enter_at_end_of_first_line(&mut harness, "main.rs", "- item\n");
     assert_eq!(
@@ -137,7 +108,7 @@ fn test_rules_do_not_apply_in_non_md_file() {
 /// followed by the same indent and bullet.
 #[test]
 fn test_enter_continues_unordered_list() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "- top\n  - nested\n";
     let fixture = TestFixture::new("list.md", content).unwrap();
@@ -165,7 +136,7 @@ fn test_enter_continues_unordered_list() {
 /// Pressing Enter at the end of an ordered list item should insert the next number.
 #[test]
 fn test_enter_continues_ordered_list() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "1. first\n2. second\n";
     let fixture = TestFixture::new("ordered.md", content).unwrap();
@@ -193,7 +164,7 @@ fn test_enter_continues_ordered_list() {
 /// Pressing Enter at the end of a checkbox item should insert an unchecked checkbox.
 #[test]
 fn test_enter_continues_checkbox() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "- [x] done task\n";
     let fixture = TestFixture::new("checkbox.md", content).unwrap();
@@ -219,7 +190,7 @@ fn test_enter_continues_checkbox() {
 /// Pressing Enter on an empty list item (just the bullet) should remove the marker.
 #[test]
 fn test_enter_clears_empty_bullet() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "- item\n- \n";
     let fixture = TestFixture::new("empty.md", content).unwrap();
@@ -251,7 +222,7 @@ fn test_enter_clears_empty_bullet() {
 /// Pressing Enter on a line with no indentation should just insert a plain newline.
 #[test]
 fn test_enter_no_indent_on_unindented_line() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "Hello world\n";
     let fixture = TestFixture::new("plain.md", content).unwrap();
@@ -293,7 +264,7 @@ fn test_enter_no_indent_on_unindented_line() {
 /// match the *line's* leading whitespace (not the cursor column).
 #[test]
 fn test_enter_deep_indent() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "        deep indent text\n";
     let fixture = TestFixture::new("deep.md", content).unwrap();
@@ -324,7 +295,7 @@ fn test_enter_deep_indent() {
 /// Tab should insert 4 spaces at the cursor position.
 #[test]
 fn test_tab_inserts_spaces() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "text\n";
     let fixture = TestFixture::new("tab.md", content).unwrap();
@@ -353,7 +324,7 @@ fn test_tab_inserts_spaces() {
 fn test_tab_follows_editor_tab_size() {
     let mut config = fresh::config::Config::default();
     config.editor.tab_size = 2;
-    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
+    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
 
     let fixture = TestFixture::new("tab2.md", "text\n- \n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -389,13 +360,13 @@ fn test_tab_follows_editor_tab_size() {
 }
 
 /// `languages.markdown.tab_size` and `.use_tabs` override the global setting
-/// for the plugin's own indentation too (#3713).
+/// for the list rules' indentation too (#3713).
 #[test]
 fn test_tab_follows_markdown_language_settings() {
     let mut config = fresh::config::Config::default();
     config.editor.tab_size = 2;
     config.languages.get_mut("markdown").unwrap().tab_size = Some(3);
-    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config.clone());
+    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config.clone());
 
     let fixture = TestFixture::new("tab3.md", "text\n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -407,7 +378,7 @@ fn test_tab_follows_markdown_language_settings() {
     harness.assert_no_plugin_errors();
 
     config.languages.get_mut("markdown").unwrap().use_tabs = Some(true);
-    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
+    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
     let fixture = TestFixture::new("tabs.md", "text\n- \n").unwrap();
     open_md(&mut harness, &fixture.path);
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -443,7 +414,7 @@ fn test_tab_follows_markdown_language_settings() {
 fn test_new_markdown_file_uses_markdown_language_settings() {
     let mut config = fresh::config::Config::default();
     config.languages.get_mut("markdown").unwrap().tab_size = Some(3);
-    let (mut harness, temp_dir) = markdown_source_harness_with_config(80, 24, config);
+    let (mut harness, temp_dir) = markdown_harness_with_config(80, 24, config);
 
     let path = temp_dir.path().join("not_yet_saved.md");
     open_md(&mut harness, &path);
@@ -460,7 +431,7 @@ fn test_new_markdown_file_uses_markdown_language_settings() {
 /// outside Markdown, instead of replacing the selection with spaces (#3666).
 #[test]
 fn test_tab_indents_a_multi_line_selection() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "https://a.example/one\nhttps://b.example/two\nhttps://c.example/three\n";
     let fixture = TestFixture::new("urls.md", content).unwrap();
@@ -491,7 +462,7 @@ fn test_tab_indents_a_multi_line_selection() {
 /// Tab with several cursors indents at every cursor, not just the primary.
 #[test]
 fn test_tab_with_multiple_cursors_indents_each_line() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "one\ntwo\nthree\n";
     let fixture = TestFixture::new("multi.md", content).unwrap();
@@ -518,7 +489,7 @@ fn test_tab_with_multiple_cursors_indents_each_line() {
 /// Multiple Tab presses should accumulate spaces.
 #[test]
 fn test_multiple_tabs() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "x\n";
     let fixture = TestFixture::new("tabs.md", content).unwrap();
@@ -547,7 +518,7 @@ fn test_multiple_tabs() {
 /// Tab on a blank unordered list item should indent and cycle the bullet.
 #[test]
 fn test_tab_cycles_bullet_on_blank_item() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     // Start with "* " (asterisk bullet, no content)
     let content = "* \n";
@@ -583,7 +554,7 @@ fn test_tab_cycles_bullet_on_blank_item() {
 /// then presses Shift+Tab through a full reverse cycle.
 #[test]
 fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     // Start with "    - " — as if Tab was already pressed once on "* "
     let content = "    - \n";
@@ -611,7 +582,7 @@ fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
 /// then Shift+Tab reverses the entire sequence back to the starting state.
 #[test]
 fn test_tab_shift_tab_full_round_trip() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     // Start with "* " (asterisk bullet, no content)
     let content = "* \n";
@@ -708,7 +679,7 @@ fn test_tab_shift_tab_full_round_trip() {
 /// Characters should be inserted normally (the mode is not read-only).
 #[test]
 fn test_normal_typing_works() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "\n";
     let fixture = TestFixture::new("type.md", content).unwrap();
@@ -739,7 +710,7 @@ fn test_normal_typing_works() {
 /// the .md buffer it continues lists again.
 #[test]
 fn test_rules_follow_the_active_buffer() {
-    let (mut harness, temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, temp_dir) = markdown_harness(80, 24);
 
     let md_fixture = TestFixture::new("doc.md", "- a\n").unwrap();
     open_md(&mut harness, &md_fixture.path);
@@ -774,7 +745,7 @@ fn test_rules_follow_the_active_buffer() {
 /// the id `mdx` — or added to `markdown`'s extensions — they do.
 #[test]
 fn test_rules_apply_for_mdx_when_configured() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
     let content = enter_at_end_of_first_line(&mut harness, "plain.mdx", "- item\n");
     assert_eq!(harness.editor().active_state().language, "text");
     assert_eq!(content, "- item\n\n");
@@ -783,7 +754,7 @@ fn test_rules_apply_for_mdx_when_configured() {
     let mut mdx = config.languages["markdown"].clone();
     mdx.extensions = vec!["mdx".to_string()];
     config.languages.insert("mdx".to_string(), mdx);
-    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
+    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
     let content = enter_at_end_of_first_line(&mut harness, "component.mdx", "- item\n");
     assert_eq!(harness.editor().active_state().language, "mdx");
     assert_eq!(content, "- item\n- \n");
@@ -793,7 +764,7 @@ fn test_rules_apply_for_mdx_when_configured() {
 /// The rules also apply to .markdown files.
 #[test]
 fn test_rules_apply_for_markdown_extension() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = enter_at_end_of_first_line(&mut harness, "readme.markdown", "1. one\n");
     assert_eq!(content, "1. one\n2. \n");
@@ -808,7 +779,7 @@ fn test_rules_apply_for_markdown_extension() {
 /// (auto-continue bullet), then type a sub-item.
 #[test]
 fn test_enter_then_type_workflow() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let content = "- item\n";
     let fixture = TestFixture::new("workflow.md", content).unwrap();
@@ -851,7 +822,7 @@ fn test_enter_then_type_workflow() {
 /// Issue #1140: "Pressing enter with multiple cursors only adds a newline to the last cursor"
 #[test]
 fn test_multi_cursor_enter_inserts_at_all_cursors() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let fixture = TestFixture::new("multi.md", "aaa\nbbb\nccc\n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -874,7 +845,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for plugin to process the Enter action
+    // Wait for the Enter to land
     harness
         .wait_until(|h| {
             h.get_buffer_content()
@@ -914,7 +885,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
 /// at all cursor positions (falling back to insert_newline for multi-cursor).
 #[test]
 fn test_multi_cursor_enter_on_list_items() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
 
     let fixture =
         TestFixture::new("list_multi.md", "- item one\n- item two\n- item three\n").unwrap();
@@ -973,7 +944,7 @@ fn test_multi_cursor_enter_on_list_items() {
 }
 
 // ---------------------------------------------------------------------------
-// Keys sent faster than the plugin runtime (#3813)
+// Keys sent back to back (#3813)
 // ---------------------------------------------------------------------------
 
 /// Hand keys to the editor back to back, as a fast typist or a paste-like
@@ -995,7 +966,7 @@ fn chars(text: &str) -> Vec<(KeyCode, KeyModifiers)> {
 /// handler, so the characters after Enter landed before it did.
 #[test]
 fn test_burst_typing_around_enter_keeps_key_order() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
     let fixture = TestFixture::new("burst.md", "").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -1034,7 +1005,7 @@ fn test_burst_typing_around_enter_keeps_key_order() {
 /// Enter continues the marker at every cursor, each with its own kind.
 #[test]
 fn test_multi_cursor_enter_continues_each_marker() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
     let fixture = TestFixture::new("mc.md", "- one\n* two\n1. th\n").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -1055,7 +1026,7 @@ fn test_multi_cursor_enter_continues_each_marker() {
 /// moved to.
 #[test]
 fn test_multi_cursor_shift_tab_mixes_rule_and_normal_dedent() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
     let fixture = TestFixture::new("mix.md", "    - \n    text\n").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -1073,7 +1044,7 @@ fn test_multi_cursor_shift_tab_mixes_rule_and_normal_dedent() {
 /// A rule's edit is one undo step, like the key it stands in for.
 #[test]
 fn test_rule_edits_undo_in_one_step() {
-    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
     let fixture = TestFixture::new("undo.md", "- one\n").unwrap();
     open_md(&mut harness, &fixture.path);
     let undo = |h: &mut EditorTestHarness| {
@@ -1104,14 +1075,135 @@ fn test_rule_edits_undo_in_one_step() {
 }
 
 // ---------------------------------------------------------------------------
-// The mechanism is not Markdown's: another plugin, another language
+// Edit rules are a language setting: config.json turns them off, adds them
+// for other languages, and a reload brings the current ones
+// ---------------------------------------------------------------------------
+
+/// Write `config` as the user's config.json and reload, as editing the file
+/// and `editor.reloadConfig()` do.
+fn write_user_config_and_reload(harness: &mut EditorTestHarness, config: serde_json::Value) {
+    let path = harness.editor().dir_context().config_path();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, config.to_string()).unwrap();
+    harness.editor_mut().reload_config();
+}
+
+/// `"edit_rules": []` for Markdown in config.json turns list editing off:
+/// Enter is the plain newline, Tab the plain Tab.
+#[test]
+fn test_user_config_turns_markdown_list_editing_off() {
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "markdown": { "edit_rules": [] } } }),
+    );
+    assert!(harness.config().languages["markdown"].edit_rules.is_empty());
+
+    let content = enter_at_end_of_first_line(&mut harness, "off.md", "- item\n");
+    assert_eq!(content, "- item\n\n", "no list continuation");
+    let fixture = TestFixture::new("off_tab.md", "* \n").unwrap();
+    open_md(&mut harness, &fixture.path);
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    assert!(
+        buf(&harness).starts_with("* "),
+        "no bullet cycling: {:?}",
+        buf(&harness)
+    );
+}
+
+/// Rules for another language, written in config.json, apply in its
+/// buffers. One that doesn't compile is dropped on its own (with a warning
+/// naming `languages.python.edit_rules` and its index); the others apply.
+#[test]
+fn test_user_config_edit_rules_for_another_language() {
+    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "python": { "edit_rules": [
+            { "on": "newline", "before": "([", "insert": "" },
+            { "on": "newline", "before": r"^([ \t]*# ?)\S", "insert": "\n$1" }
+        ] } } }),
+    );
+    let rules = &harness.config().languages["python"].edit_rules;
+    assert_eq!(
+        rules.len(),
+        1,
+        "the invalid rule is dropped, the other kept"
+    );
+
+    let py = temp_dir.path().join("project_root").join("t.py");
+    fs::write(&py, "    # note\nx = 1\n").unwrap();
+    harness.open_file(&py).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("more").unwrap();
+    assert_eq!(buf(&harness), "    # note\n    # more\nx = 1\n");
+
+    // Markdown keeps its built-in rules: the user's file set Python's only.
+    let content = enter_at_end_of_first_line(&mut harness, "still.md", "- item\n");
+    assert_eq!(content, "- item\n- \n");
+}
+
+/// A buffer already open follows a reload: it gets the rules config.json
+/// has now, not the ones it opened with.
+#[test]
+fn test_config_reload_brings_changed_edit_rules() {
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let fixture = TestFixture::new("reload.md", "- item\n> quote\n").unwrap();
+    open_md(&mut harness, &fixture.path);
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(buf(&harness), "- item\n- \n> quote\n");
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(buf(&harness), "- item\n> quote\n");
+
+    // Now Markdown's rules continue block quotes and nothing else.
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "markdown": { "edit_rules": [
+            { "on": "newline", "before": "^(>+ )", "insert": "\n$1" }
+        ] } } }),
+    );
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(
+        buf(&harness),
+        "- item\n\n> quote\n",
+        "the list rule is gone"
+    );
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(buf(&harness), "- item\n\n> quote\n> \n");
+}
+
+// ---------------------------------------------------------------------------
+// The mechanism is not Markdown's: a plugin's rules for another language
 // ---------------------------------------------------------------------------
 
 /// A test plugin's rules for Python: continue `#` comments on Enter. A
 /// malformed set is refused with an error naming the rule; unloading the
 /// plugin drops its rules.
+#[cfg(feature = "plugins")]
 #[test]
 fn test_edit_rules_from_another_plugin_for_another_language() {
+    use crate::common::harness::copy_plugin_lib;
+    use fresh_core::api::EditRuleTrigger;
+
     init_tracing_from_env();
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");

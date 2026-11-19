@@ -58,6 +58,7 @@ fn test_format_on_save() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -129,6 +130,7 @@ fn test_on_save_linter_style() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -200,6 +202,7 @@ fn test_on_save_action_failure() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -280,6 +283,7 @@ fn test_on_save_file_placeholder() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -354,6 +358,7 @@ fn test_formatter_stdin_mode() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -435,6 +440,7 @@ fn test_on_save_stops_on_failure() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -537,6 +543,7 @@ fn test_formatter_not_found_shows_message() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -852,6 +859,7 @@ fn test_format_on_save_keeps_cursor_anchored_to_its_text() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 
@@ -925,6 +933,7 @@ fn test_format_on_save_cursor_before_edit_stays_put() {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         },
     );
 

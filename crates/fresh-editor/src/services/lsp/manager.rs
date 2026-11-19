@@ -2148,6 +2148,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         languages.insert(
@@ -2174,6 +2175,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         languages.insert(
@@ -2200,6 +2202,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         languages
@@ -2282,6 +2285,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -2573,6 +2577,7 @@ mod tests {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         };
         languages.insert(
             "c".to_string(),

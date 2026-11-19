@@ -186,6 +186,12 @@ pub struct LanguageManifestConfig {
     /// Formatter configuration
     #[serde(default)]
     pub formatter: Option<FormatterManifestConfig>,
+
+    /// Edit rules for Enter / Tab / Shift+Tab: the language's `edit_rules`
+    /// setting, in the same format. A rule that doesn't compile is skipped
+    /// with a warning.
+    #[serde(default)]
+    pub edit_rules: Vec<fresh_core::api::EditRule>,
 }
 
 /// Formatter configuration within a package manifest.
@@ -286,8 +292,9 @@ pub enum ThemeVariant {
 // ── Conversion helpers ──────────────────────────────────────────────────
 
 impl LanguageManifestConfig {
-    /// Convert to the internal `LanguageConfig` used by the editor.
-    pub fn to_language_config(&self) -> LanguageConfig {
+    /// Convert to the internal `LanguageConfig` used by the editor, for the
+    /// language `language` (named in warnings about its edit rules).
+    pub fn to_language_config(&self, language: &str) -> LanguageConfig {
         LanguageConfig {
             comment_prefix: self.comment_prefix.clone(),
             auto_indent: self.auto_indent,
@@ -300,6 +307,7 @@ impl LanguageManifestConfig {
                 stdin: true,
                 timeout_ms: 10000,
             }),
+            edit_rules: crate::config::configured_edit_rules(language, self.edit_rules.clone()),
             ..Default::default()
         }
     }
@@ -424,7 +432,7 @@ fn process_language_pack(
     if let Some(lang_config) = &fresh.language {
         result
             .language_configs
-            .push((lang_id.clone(), lang_config.to_language_config()));
+            .push((lang_id.clone(), lang_config.to_language_config(&lang_id)));
     }
 
     // LSP config
@@ -489,7 +497,7 @@ fn process_bundle(pkg_dir: &Path, manifest: &PackageManifest, result: &mut Packa
         if let Some(lang_config) = &lang.language {
             result
                 .language_configs
-                .push((lang.id.clone(), lang_config.to_language_config()));
+                .push((lang.id.clone(), lang_config.to_language_config(&lang.id)));
         }
 
         // LSP config
@@ -585,7 +593,7 @@ mod tests {
         assert_eq!(lang.show_whitespace_tabs, Some(false));
 
         // Verify conversion to LanguageConfig
-        let lang_config = lang.to_language_config();
+        let lang_config = lang.to_language_config("hare");
         assert_eq!(lang_config.comment_prefix, Some("//".to_string()));
         assert_eq!(lang_config.use_tabs, Some(true));
         assert_eq!(lang_config.tab_size, Some(8));
@@ -868,12 +876,31 @@ mod tests {
             ..Default::default()
         };
 
-        let config = lang.to_language_config();
+        let config = lang.to_language_config("x");
         let fmt = config.formatter.unwrap();
         assert_eq!(fmt.command, "prettier");
         assert_eq!(fmt.args, vec!["--stdin-filepath", "$FILE"]);
         assert!(fmt.stdin);
         assert_eq!(fmt.timeout_ms, 10000);
+    }
+
+    /// A pack ships edit rules with no code: they become the language's
+    /// `edit_rules`, and one that doesn't compile is dropped on its own.
+    #[test]
+    fn test_edit_rules_conversion() {
+        let lang: LanguageManifestConfig = serde_json::from_value(serde_json::json!({
+            "editRules": [
+                { "on": "newline", "before": "(", "insert": "" },
+                { "on": "newline", "before": "^(\\s*;+ ?)\\S", "insert": "\n$1" }
+            ]
+        }))
+        .unwrap();
+        let config = lang.to_language_config("lisp");
+        assert_eq!(config.edit_rules.len(), 1, "the bad rule is dropped");
+        assert_eq!(
+            config.edit_rules[0].rule().before.as_deref(),
+            Some("^(\\s*;+ ?)\\S")
+        );
     }
 
     #[test]

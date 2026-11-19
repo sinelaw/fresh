@@ -6750,8 +6750,28 @@ pub enum EditRuleTrigger {
     Dedent,
 }
 
+/// A plain string enum, which the Settings UI offers as a choice (a derived
+/// schema describes each variant in a `oneOf`, which it can't).
+impl schemars::JsonSchema for EditRuleTrigger {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("EditRuleTrigger")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "The key a rule answers: Enter (`newline`), Tab (`indent`) or Shift+Tab (`dedent`).",
+            "type": "string",
+            "enum": ["newline", "indent", "dedent"]
+        })
+    }
+}
+
 /// One rule: when its key is pressed and the cursor's line matches, the
 /// line is rewritten from templates instead of the key's normal edit.
+///
+/// The same format serves a language's `edit_rules` setting
+/// (`languages.<id>.edit_rules` in config.json), a language pack's
+/// `editRules`, and `registerEditRules`.
 ///
 /// The line is split at the cursor into the text **before** it (from the
 /// line start) and the text **after** it (to the line end, without the line
@@ -6787,30 +6807,31 @@ pub enum EditRuleTrigger {
 /// When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
 /// number, a value not in the list, less than a level of indentation), the
 /// rule does not apply and the next one is tried.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(extend("x-display-field" = "/before"))]
 #[ts(export, rename_all = "camelCase")]
 pub struct EditRule {
     /// The key this rule answers.
     pub on: EditRuleTrigger,
     /// Pattern searched in the line's text before the cursor.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub before: Option<String>,
     /// Pattern searched in the line's text after the cursor.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after: Option<String>,
     /// Template inserted at the cursor; the cursor ends up after it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub insert: Option<String>,
     /// Template that replaces the line's text before the cursor.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub replace_before: Option<String>,
     /// Template that replaces the line's text after the cursor.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub replace_after: Option<String>,
 }
@@ -6871,6 +6892,13 @@ pub struct LanguagePackConfig {
     /// Formatter configuration
     #[serde(default)]
     pub formatter: Option<FormatterPackConfig>,
+
+    /// Edit rules for Enter / Tab / Shift+Tab in this language: the
+    /// language's `edit_rules` setting (see [`EditRule`]). A rule that does
+    /// not compile is refused with an error naming it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub edit_rules: Option<Vec<EditRule>>,
 }
 
 /// Formatter configuration for language packs
@@ -8209,6 +8237,17 @@ mod fromjs_impls {
             assert_eq!(got.comment_prefix.as_deref(), Some("//"));
             assert_eq!(got.tab_size, Some(7));
             assert_eq!(got.use_tabs, Some(true));
+            assert_eq!(got.edit_rules, None);
+        }
+
+        #[test]
+        fn language_pack_config_decodes_edit_rules() {
+            let got: LanguagePackConfig =
+                eval_as("({editRules: [{on: 'newline', before: '^;', insert: '\\n; '}]})");
+            let rules = got.edit_rules.expect("editRules");
+            assert_eq!(rules[0].on, EditRuleTrigger::Newline);
+            assert_eq!(rules[0].before.as_deref(), Some("^;"));
+            assert_eq!(rules[0].insert.as_deref(), Some("\n; "));
         }
 
         #[test]

@@ -1,16 +1,24 @@
 //! Declarative edit rules: what Enter, Tab and Shift+Tab do to a line, given
-//! as data by a plugin and applied by the editor synchronously, inside the
-//! key's own edit.
+//! as data and applied by the editor synchronously, inside the key's own
+//! edit.
 //!
-//! A plugin registers an [`EditRuleSet`] for some language ids. When one of
-//! the keys is pressed in a buffer of such a language, the editor splits the
-//! cursor's line at the cursor and asks [`EditRuleRegistry::apply`] for a
-//! rewrite; the first rule that applies wins, and when none does the key does
-//! what it always does. Nothing here knows about any particular language:
-//! the rules are regular expressions and templates (see [`EditRule`] for the
-//! format).
+//! Rules come from two places:
 //!
-//! The rules run in the editor rather than in the plugin because a plugin
+//! - a language's `edit_rules` setting (`languages.<id>.edit_rules`: the
+//!   built-in defaults, the user's and project's config.json, a language
+//!   pack), held per buffer as [`ConfiguredEditRule`]s; and
+//! - plugins, which register an [`EditRuleSet`] for some language ids at run
+//!   time (`registerEditRules`), kept in the [`EditRuleRegistry`].
+//!
+//! When one of the keys is pressed, the editor splits the cursor's line at
+//! the cursor and asks [`BufferEditRules::apply`] for a rewrite: the
+//! buffer's configured rules are tried first, in order, then the
+//! plugin-registered sets for its language, in registration order. The
+//! first rule that applies wins, and when none does the key does what it
+//! always does. Nothing here knows about any particular language: the rules
+//! are regular expressions and templates (see [`EditRule`] for the format).
+//!
+//! The rules run in the editor rather than in a plugin because a plugin
 //! handler runs asynchronously: keys typed after Enter were inserted before
 //! the handler's edit landed (#3813), and a mode that claimed the keys fought
 //! with vi's (#3814).
@@ -331,6 +339,70 @@ impl CompiledEditRule {
     }
 }
 
+/// One rule of a language's `edit_rules` setting: the rule as written and
+/// its compiled form.
+///
+/// Deserializing compiles the rule, so a rule with a bad pattern or template
+/// fails right there, where config loading can drop just that element (with
+/// a warning naming it), rather than at the first key press. It serializes
+/// as the [`EditRule`] it was written as.
+#[derive(Debug, Clone)]
+pub struct ConfiguredEditRule {
+    rule: EditRule,
+    compiled: CompiledEditRule,
+}
+
+impl ConfiguredEditRule {
+    /// Compile `rule`, or say what is wrong with it.
+    pub fn new(rule: EditRule) -> Result<Self, String> {
+        let compiled = CompiledEditRule::compile(&rule)?;
+        Ok(Self { rule, compiled })
+    }
+
+    /// The rule as written.
+    pub fn rule(&self) -> &EditRule {
+        &self.rule
+    }
+
+    /// The rule, compiled.
+    pub fn compiled(&self) -> &CompiledEditRule {
+        &self.compiled
+    }
+}
+
+impl PartialEq for ConfiguredEditRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.rule == other.rule
+    }
+}
+
+impl serde::Serialize for ConfiguredEditRule {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.rule.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConfiguredEditRule {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let rule = EditRule::deserialize(deserializer)?;
+        Self::new(rule).map_err(serde::de::Error::custom)
+    }
+}
+
+impl schemars::JsonSchema for ConfiguredEditRule {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        EditRule::schema_name()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        EditRule::schema_id()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        EditRule::json_schema(generator)
+    }
+}
+
 /// An [`EditRuleSet`], compiled.
 #[derive(Debug, Clone)]
 pub struct CompiledEditRuleSet {
@@ -422,6 +494,43 @@ impl EditRuleRegistry {
     }
 }
 
+/// The edit rules that apply in one buffer: its language's configured
+/// rules, then the plugin-registered sets for the language. The first rule
+/// that applies wins, so a configured rule shadows a plugin's rule for the
+/// same line, and `"edit_rules": []` leaves only the plugins' rules.
+#[derive(Clone, Copy)]
+pub struct BufferEditRules<'a> {
+    /// The buffer's language id.
+    pub language: &'a str,
+    /// The language's `edit_rules` setting, compiled.
+    pub configured: &'a [CompiledEditRule],
+    /// The plugin-registered sets, when the caller has them.
+    pub registry: Option<&'a EditRuleRegistry>,
+}
+
+impl BufferEditRules<'_> {
+    /// Whether any rule answers `trigger` here: when not, the key needs no
+    /// look at the line.
+    pub fn has_rules(&self, trigger: EditRuleTrigger) -> bool {
+        self.configured.iter().any(|r| r.on == trigger)
+            || self
+                .registry
+                .is_some_and(|r| r.has_rules(self.language, trigger))
+    }
+
+    /// The first rule for `trigger` that applies at `ctx`, and its rewrite.
+    pub fn apply(&self, trigger: EditRuleTrigger, ctx: &LineContext<'_>) -> Option<LineEdit> {
+        self.configured
+            .iter()
+            .filter(|r| r.on == trigger)
+            .find_map(|r| r.apply(ctx))
+            .or_else(|| {
+                self.registry
+                    .and_then(|r| r.apply(self.language, trigger, ctx))
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,8 +567,9 @@ mod tests {
         CompiledEditRule::compile(&r).unwrap()
     }
 
-    /// The rule set the bundled markdown_source plugin registers, written
-    /// here as the worked example of the format.
+    /// The built-in Markdown `edit_rules` (fresh-editor-core's default
+    /// `languages.markdown`), written here as the worked example of the
+    /// format.
     fn markdown_lists() -> EditRuleSet {
         let r = |on, before: &str, after: Option<&str>, f: fn(&mut EditRule)| {
             let mut rule = rule(on);
@@ -518,7 +628,7 @@ mod tests {
     fn markdown_registry() -> EditRuleRegistry {
         let mut reg = EditRuleRegistry::new();
         reg.register(
-            "markdown_source",
+            "markdown",
             "lists",
             CompiledEditRuleSet::compile(&markdown_lists()).unwrap(),
         );
@@ -778,5 +888,79 @@ mod tests {
         assert_eq!(reg.unregister_owner("b"), 2);
         assert_eq!(nl(&reg), None);
         assert!(!reg.has_rules("t", EditRuleTrigger::Newline));
+    }
+
+    #[test]
+    fn a_configured_rule_compiles_when_deserialized() {
+        let ok: Vec<ConfiguredEditRule> = serde_json::from_value(serde_json::json!([
+            { "on": "newline", "before": "^(#+ )", "insert": "\n$1" }
+        ]))
+        .unwrap();
+        assert_eq!(
+            ok[0].compiled().apply(&ctx("## x", "")),
+            edit("## x\n## ", "")
+        );
+        // Written back as written: no nulls for the fields left out.
+        assert_eq!(
+            serde_json::to_value(&ok[0]).unwrap(),
+            serde_json::json!({ "on": "newline", "before": "^(#+ )", "insert": "\n$1" })
+        );
+        // A bad pattern, template or field fails to deserialize, naming why.
+        let err = |v: serde_json::Value| {
+            serde_json::from_value::<ConfiguredEditRule>(v)
+                .unwrap_err()
+                .to_string()
+        };
+        let bad_regex = err(serde_json::json!({ "on": "newline", "before": "(", "insert": "" }));
+        assert!(bad_regex.starts_with("before:"), "{bad_regex}");
+        let bad_template = err(serde_json::json!({ "on": "indent", "insert": "${nope:1}" }));
+        assert!(bad_template.starts_with("insert:"), "{bad_template}");
+        let unknown = err(serde_json::json!({ "on": "dedent", "insert": "", "when": "x" }));
+        assert!(unknown.contains("when"), "{unknown}");
+    }
+
+    #[test]
+    fn configured_rules_are_tried_before_plugin_rules() {
+        let compiled = |insert: &str| {
+            CompiledEditRule::compile(&rule_with_insert(EditRuleTrigger::Newline, insert)).unwrap()
+        };
+        let mut reg = EditRuleRegistry::new();
+        reg.register(
+            "p",
+            "s",
+            CompiledEditRuleSet::compile(&EditRuleSet {
+                languages: vec!["t".into()],
+                rules: vec![rule_with_insert(EditRuleTrigger::Newline, "P")],
+            })
+            .unwrap(),
+        );
+        let configured = [compiled("C")];
+        let rules = |configured| BufferEditRules {
+            language: "t",
+            configured,
+            registry: Some(&reg),
+        };
+        let nl = |r: BufferEditRules<'_>| {
+            r.apply(EditRuleTrigger::Newline, &ctx("", ""))
+                .map(|e| e.before)
+        };
+        assert_eq!(nl(rules(&configured)).as_deref(), Some("C"));
+        // No configured rules (`"edit_rules": []`): the plugin's apply.
+        assert_eq!(nl(rules(&[])).as_deref(), Some("P"));
+        assert!(rules(&configured).has_rules(EditRuleTrigger::Newline));
+        assert!(!rules(&configured).has_rules(EditRuleTrigger::Indent));
+        let alone = BufferEditRules {
+            language: "other",
+            configured: &configured,
+            registry: None,
+        };
+        assert!(alone.has_rules(EditRuleTrigger::Newline));
+        assert_eq!(nl(alone).as_deref(), Some("C"));
+    }
+
+    fn rule_with_insert(on: EditRuleTrigger, insert: &str) -> EditRule {
+        let mut r = rule(on);
+        r.insert = Some(insert.into());
+        r
     }
 }

@@ -303,6 +303,11 @@ it lands before the next key is read, and it applies whatever keymap
 sent the key — vi's insert mode included. Tab with a selection always
 indents the selected lines. See `EditRule` for the rule format.
 
+Rules that never change belong in the language's config instead (its
+`edit_rules` setting, or `editRules` in a language pack). A buffer's
+configured rules are tried first, then the sets plugins registered,
+in registration order.
+
 Registering the same `id` again replaces that set. A plugin's rules
 are dropped when it is unloaded, reloaded or disabled. Throws when the
 set is malformed (a bad pattern, an unknown template function, a

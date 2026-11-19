@@ -404,8 +404,9 @@ as the input mode's value. Per-window `Window::editor_mode` remains for
 genuinely window-scoped plugin modes (flash). Changing the input mode fires
 `input_mode_changed`, so a window mode that should step aside while one is on
 can re-check. Smart editing that only changes what Enter / Tab / Shift+Tab
-do in some languages (markdown_source's list editing) is not a mode at all:
-it is edit rules (`registerEditRules`), which the editor applies inside its
+do in some languages (Markdown's list editing) is not a mode at all:
+it is edit rules (a language's `edit_rules` setting, or a plugin's
+`registerEditRules`), which the editor applies inside its
 own `insert_newline` / `insert_tab` / `dedent_selection`, under whatever
 keymap or mode sent the key.
 

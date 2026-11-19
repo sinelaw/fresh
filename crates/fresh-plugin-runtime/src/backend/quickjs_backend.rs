@@ -2421,6 +2421,11 @@ impl JsEditorApi {
     /// sent the key — vi's insert mode included. Tab with a selection always
     /// indents the selected lines. See `EditRule` for the rule format.
     ///
+    /// Rules that never change belong in the language's config instead (its
+    /// `edit_rules` setting, or `editRules` in a language pack). A buffer's
+    /// configured rules are tried first, then the sets plugins registered,
+    /// in registration order.
+    ///
     /// Registering the same `id` again replaces that set. A plugin's rules
     /// are dropped when it is unloaded, reloaded or disabled. Throws when the
     /// set is malformed (a bad pattern, an unknown template function, a
@@ -4328,6 +4333,14 @@ impl JsEditorApi {
         language: String,
         config: LanguagePackConfig,
     ) -> fresh_js::Result<bool> {
+        // Edit rules are compiled here once to report a mistake to the
+        // plugin, naming the rule, as `registerEditRules` does.
+        for (i, rule) in config.edit_rules.iter().flatten().enumerate() {
+            if let Err(e) = fresh_core::edit_rules::CompiledEditRule::compile(rule) {
+                let msg = format!("registerLanguageConfig(\"{language}\"): editRules[{i}].{e}");
+                return Err(ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value()));
+            }
+        }
         // First-writer-wins
         {
             let langs = self.registered_language_configs.borrow();

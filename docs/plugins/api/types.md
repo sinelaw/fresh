@@ -1093,6 +1093,10 @@ type DirEntry = {
 One rule: when its key is pressed and the cursor's line matches, the
 line is rewritten from templates instead of the key's normal edit.
 
+The same format serves a language's `edit_rules` setting
+(`languages.<id>.edit_rules` in config.json), a language pack's
+`editRules`, and `registerEditRules`.
+
 The line is split at the cursor into the text **before** it (from the
 line start) and the text **after** it (to the line end, without the line
 break). `before` and `after` are regular expressions searched in those
@@ -2163,6 +2167,87 @@ interface EditorConfig {
   }
 ```
 
+### `FreshConfig.EditRule`
+
+One rule: when its key is pressed and the cursor's line matches, the
+line is rewritten from templates instead of the key's normal edit.
+
+The same format serves a language's `edit_rules` setting
+(`languages.<id>.edit_rules` in config.json), a language pack's
+`editRules`, and `registerEditRules`.
+
+The line is split at the cursor into the text **before** it (from the
+line start) and the text **after** it (to the line end, without the line
+break). `before` and `after` are regular expressions searched in those
+two parts (Rust `regex` syntax: no look-around or back-references; use
+`^` and `$` to anchor). Both must match for the rule to apply; one left
+out matches anything. The result is
+
+```text
+(replaceBefore ?? before) + (insert ?? "") + CURSOR + (replaceAfter ?? after)
+```
+
+so `insert` adds text at the cursor and the `replace*` templates rewrite
+either part. At least one of the three must be given.
+
+Templates are literal text with these substitutions:
+
+- `$0`…`$9`, `${12}`: a capture group of `before` (`$0` is its whole
+  match); `${name}`: a named group of `before` or else of `after`. A
+  group that did not take part in the match is empty.
+- `${inc:REF}`: the capture (a `REF` as above, e.g. `${inc:2}`) as a
+  decimal number plus one, keeping zero-padding (`09` → `10`, `007` → `008`).
+- `${cycle:REF:a|b|c}`: the value after the capture's value in the
+  list, wrapping around (`b` → `c`, `c` → `a`). List the values in the
+  reverse order to step backwards.
+- `${indent}`: one indentation level of the buffer — a tab, or
+  `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
+- `${dedent:REF}`: the capture with one indentation level taken off its
+  start: a leading tab, or `tab_size` leading spaces.
+- `$$`: a literal `$`. A line break in a template is written as the
+  buffer's line ending (`\n` or `\r\n`).
+
+When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
+number, a value not in the list, less than a level of indentation), the
+rule does not apply and the next one is tried.
+
+```typescript
+type EditRule = {
+    /**
+    * The key this rule answers.
+    */
+    on?: EditRuleTrigger;
+    /**
+    * Pattern searched in the line's text before the cursor.
+    */
+    before?: string | null;
+    /**
+    * Pattern searched in the line's text after the cursor.
+    */
+    after?: string | null;
+    /**
+    * Template inserted at the cursor; the cursor ends up after it.
+    */
+    insert?: string | null;
+    /**
+    * Template that replaces the line's text before the cursor.
+    */
+    replaceBefore?: string | null;
+    /**
+    * Template that replaces the line's text after the cursor.
+    */
+    replaceAfter?: string | null;
+  };
+```
+
+### `FreshConfig.EditRuleTrigger`
+
+The key a rule answers: Enter (`newline`), Tab (`indent`) or Shift+Tab (`dedent`).
+
+```typescript
+type EditRuleTrigger = "newline" | "indent" | "dedent";
+```
+
 ### `FreshConfig.EnvConfig`
 
 Which marker files identify a project environment and how to activate it.
@@ -2598,6 +2683,18 @@ interface LanguageConfig {
     * except plain text, where guides are off unless set to `true`.
     */
     indentation_guide?: boolean | null;
+    /**
+    * What Enter, Tab and Shift+Tab do on lines that match. Rules are tried in
+    * order; the first that applies replaces the key's normal edit. `[]` turns
+    * a language's rules off (Markdown's list editing is its default). Each
+    * rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
+    * `before` / `after` (the line's text before / after the cursor), and
+    * templates `insert`, `replaceBefore`, `replaceAfter` using `$1`,
+    * `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A
+    * rule that doesn't compile is skipped with a warning. Rules that plugins
+    * register are tried after these.
+    */
+    edit_rules?: EditRule[];
   }
 ```
 
@@ -3367,6 +3464,12 @@ type LanguagePackConfig = {
   * Formatter configuration
   */
   formatter: FormatterPackConfig | null;
+  /**
+  * Edit rules for Enter / Tab / Shift+Tab in this language: the
+  * language's `edit_rules` setting (see [`EditRule`]). A rule that does
+  * not compile is refused with an error naming it.
+  */
+  editRules?: Array<EditRule>;
 };
 ```
 

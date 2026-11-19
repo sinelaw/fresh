@@ -279,6 +279,7 @@ pub mod markdown_compose_scrollbar_markers;
 pub mod markdown_compose_table_border;
 pub mod markdown_compose_table_structure;
 pub mod markdown_fenced_code_highlighting;
+pub mod markdown_list_editing;
 #[cfg(feature = "plugins")]
 pub mod markdown_toc;
 #[cfg(feature = "plugins")]

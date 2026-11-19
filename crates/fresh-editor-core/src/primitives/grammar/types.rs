@@ -2688,6 +2688,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         registry.apply_language_config(&languages);
@@ -2734,6 +2735,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
         registry.apply_language_config(&languages);
@@ -2783,6 +2785,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -2811,6 +2814,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -3303,6 +3307,7 @@ mod tests {
             word_characters: None,
             indentation_guide: None,
             indent: None,
+            edit_rules: Vec::new(),
         }
     }
 

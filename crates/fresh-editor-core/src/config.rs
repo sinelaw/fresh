@@ -1,5 +1,6 @@
 use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
 
+use fresh_core::edit_rules::{CompiledEditRule, ConfiguredEditRule};
 use fresh_i18n::t;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -2664,6 +2665,18 @@ pub struct LanguageConfig {
     /// except plain text, where guides are off unless set to `true`.
     #[serde(default)]
     pub indentation_guide: Option<bool>,
+
+    /// What Enter, Tab and Shift+Tab do on lines that match. Rules are tried in
+    /// order; the first that applies replaces the key's normal edit. `[]` turns
+    /// a language's rules off (Markdown's list editing is its default). Each
+    /// rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
+    /// `before` / `after` (the line's text before / after the cursor), and
+    /// templates `insert`, `replaceBefore`, `replaceAfter` using `$1`,
+    /// `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A
+    /// rule that doesn't compile is skipped with a warning. Rules that plugins
+    /// register are tried after these.
+    #[serde(default)]
+    pub edit_rules: Vec<ConfiguredEditRule>,
 }
 
 /// Auto-indent rules used when you press Enter. Each is an optional regex (no
@@ -2707,6 +2720,82 @@ impl IndentRulesConfig {
             && self.dedent_next_line_pattern.is_none()
             && self.self_close_pattern.is_none()
     }
+}
+
+/// Markdown's built-in `edit_rules`: list editing.
+///
+/// - Enter continues a list item (the same bullet, the next number, an
+///   unchecked checkbox) with its indentation; on an item with nothing but
+///   its marker it removes the marker instead; on any other indented line it
+///   keeps the indentation.
+/// - Tab on a blank bullet or checkbox item indents it one level (the
+///   buffer's `tab_size` / `use_tabs`) and cycles the bullet (`*` → `-` →
+///   `+` → `*`); Shift+Tab takes a level off and cycles back.
+///
+/// Everywhere else the keys do what they always do. Written in the format a
+/// user writes in config.json, as the worked example of it.
+pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
+    // A blank list item's text before the cursor: indentation (group 1), a
+    // bullet (2) and an optional checkbox (3), then only whitespace.
+    const BLANK_BULLET_ITEM: &str = r"^([ \t]*)([-*+]) (\[[ xX]\] )?\s*$";
+    // Nothing but whitespace after the cursor.
+    const BLANK: &str = r"^\s*$";
+    serde_json::from_value(serde_json::json!([
+        // Enter on an empty item (marker only): remove the marker.
+        {
+            "on": "newline",
+            "before": r"^[ \t]*(?:[-*+] \[[ xX]\] |\d+\. |[-*+] )\s*$",
+            "after": BLANK,
+            "replaceBefore": "",
+            "replaceAfter": ""
+        },
+        // Enter on a checkbox item: a new unchecked one.
+        { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": "\n$1$2 [ ] " },
+        // Enter on an ordered item: the next number.
+        { "on": "newline", "before": r"^([ \t]*)(\d+)\. ", "insert": "\n$1${inc:2}. " },
+        // Enter on a bullet item: the same bullet.
+        { "on": "newline", "before": r"^([ \t]*)([-*+]) ", "insert": "\n$1$2 " },
+        // Enter on any other indented line: keep the indentation.
+        { "on": "newline", "before": r"^([ \t]+)", "insert": "\n$1" },
+        // Tab on a blank bullet item: one level deeper, next bullet.
+        {
+            "on": "indent",
+            "before": BLANK_BULLET_ITEM,
+            "after": BLANK,
+            "replaceBefore": "$1${indent}${cycle:2:*|-|+} $3",
+            "replaceAfter": ""
+        },
+        // Shift+Tab on a blank bullet item: one level out, previous bullet.
+        // `${dedent}` leaves the rule unapplied when there is no level to take.
+        {
+            "on": "dedent",
+            "before": BLANK_BULLET_ITEM,
+            "after": BLANK,
+            "replaceBefore": "${dedent:1}${cycle:2:+|-|*} $3",
+            "replaceAfter": ""
+        }
+    ]))
+    .expect("the built-in Markdown edit rules compile")
+}
+
+/// A language pack's `editRules`, compiled: a rule that doesn't compile is
+/// dropped with a warning naming the language and its index, like an invalid
+/// rule in config.json, and the rest still apply.
+pub fn configured_edit_rules(
+    language: &str,
+    rules: Vec<fresh_core::api::EditRule>,
+) -> Vec<ConfiguredEditRule> {
+    rules
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, rule)| match ConfiguredEditRule::new(rule) {
+            Ok(rule) => Some(rule),
+            Err(e) => {
+                tracing::warn!("language {language:?}: ignoring edit_rules[{i}]: {e}");
+                None
+            }
+        })
+        .collect()
 }
 
 /// Re-register all `[languages.<id>.indent]` overrides into the indentation
@@ -2796,6 +2885,10 @@ pub struct BufferConfig {
     /// guides are a source-code aid, and undetected/plain-text files rarely
     /// have meaningful indentation nesting.
     pub indentation_guide: bool,
+
+    /// The language's `edit_rules`, compiled: tried by Enter / Tab /
+    /// Shift+Tab before the rules plugins register.
+    pub edit_rules: std::sync::Arc<[CompiledEditRule]>,
 }
 
 impl BufferConfig {
@@ -2829,6 +2922,7 @@ impl BufferConfig {
             textmate_grammar: None,
             word_characters: String::new(),
             indentation_guide: language_id.is_none_or(|id| id != "text"),
+            edit_rules: std::sync::Arc::from([]),
         };
 
         // Apply language-specific overrides if available.
@@ -2911,6 +3005,13 @@ impl BufferConfig {
             if let Some(ref wc) = lang_config.word_characters {
                 config.word_characters = wc.clone();
             }
+
+            // Edit rules: from language config
+            config.edit_rules = lang_config
+                .edit_rules
+                .iter()
+                .map(|r| r.compiled().clone())
+                .collect();
         }
 
         config
@@ -4107,6 +4208,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4139,6 +4241,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4171,6 +4274,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4207,6 +4311,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4234,6 +4339,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4266,6 +4372,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4305,6 +4412,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4332,6 +4440,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4374,6 +4483,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4401,6 +4511,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4432,6 +4543,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4459,6 +4571,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4491,6 +4604,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4551,6 +4665,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4578,6 +4693,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4610,6 +4726,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4618,6 +4735,8 @@ impl Config {
         // auto-close nor auto-surround is on by default here. Set
         // `languages.markdown.auto_close` / `.auto_surround` to `true` to get
         // the global behaviour back; they are independent of each other.
+        // Its `edit_rules` are the list editing (see
+        // `markdown_list_edit_rules`); `"edit_rules": []` turns them off.
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
@@ -4642,6 +4761,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: markdown_list_edit_rules(),
             },
         );
 
@@ -4675,6 +4795,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4702,6 +4823,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4734,6 +4856,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4761,6 +4884,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4788,6 +4912,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4831,6 +4956,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4863,6 +4989,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4890,6 +5017,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4917,6 +5045,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4944,6 +5073,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -4971,6 +5101,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5007,6 +5138,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5034,6 +5166,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5061,6 +5194,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5088,6 +5222,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5125,6 +5260,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5175,6 +5311,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5202,6 +5339,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5229,6 +5367,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5256,6 +5395,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5283,6 +5423,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5310,6 +5451,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5337,6 +5479,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5364,6 +5507,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5392,6 +5536,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5424,6 +5569,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5456,6 +5602,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5483,6 +5630,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5510,6 +5658,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5537,6 +5686,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5568,6 +5718,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5595,6 +5746,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5622,6 +5774,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5649,6 +5802,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5676,6 +5830,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5703,6 +5858,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5730,6 +5886,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5757,6 +5914,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5789,6 +5947,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5816,6 +5975,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5843,6 +6003,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5870,6 +6031,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5897,6 +6059,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5924,6 +6087,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5956,6 +6120,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -5983,6 +6148,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6010,6 +6176,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6037,6 +6204,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6064,6 +6232,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6091,6 +6260,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6123,6 +6293,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6150,6 +6321,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6180,6 +6352,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6209,6 +6382,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6240,6 +6414,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6267,6 +6442,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6294,6 +6470,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6321,6 +6498,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6348,6 +6526,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6375,6 +6554,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6402,6 +6582,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6429,6 +6610,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6456,6 +6638,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6483,6 +6666,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6510,6 +6694,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6537,6 +6722,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6564,6 +6750,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6591,6 +6778,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6618,6 +6806,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6645,6 +6834,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6672,6 +6862,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6699,6 +6890,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6726,6 +6918,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6753,6 +6946,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6782,6 +6976,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6809,6 +7004,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6836,6 +7032,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6863,6 +7060,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6897,6 +7095,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6928,6 +7127,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6955,6 +7155,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -6982,6 +7183,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -7009,6 +7211,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -7036,6 +7239,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -7063,6 +7267,7 @@ impl Config {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -9181,6 +9386,7 @@ mod tests {
                 word_characters: None,
                 indentation_guide: None,
                 indent: None,
+                edit_rules: Vec::new(),
             },
         );
 
@@ -9356,6 +9562,43 @@ mod tests {
         let rust = BufferConfig::resolve(&config, Some("rust"));
         assert!(rust.auto_close);
         assert!(rust.auto_surround);
+    }
+
+    /// Markdown's list editing is its built-in `edit_rules`; no other
+    /// built-in language has any, and a buffer gets its language's rules.
+    #[test]
+    fn test_markdown_list_editing_is_a_builtin_edit_rules_default() {
+        use fresh_core::api::EditRuleTrigger;
+        use fresh_core::edit_rules::LineContext;
+
+        let config = Config::default();
+        for (id, lang) in &config.languages {
+            assert_eq!(
+                lang.edit_rules.is_empty(),
+                id != "markdown",
+                "only Markdown has built-in edit rules ({id})"
+            );
+        }
+
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md.edit_rules.len(), markdown_list_edit_rules().len());
+        let ctx = LineContext {
+            before: "  9. nine",
+            after: "",
+            indent_unit: "    ",
+            tab_width: 4,
+            line_ending: "\n",
+        };
+        let edit = md
+            .edit_rules
+            .iter()
+            .filter(|r| r.trigger() == EditRuleTrigger::Newline)
+            .find_map(|r| r.apply(&ctx))
+            .unwrap();
+        assert_eq!(edit.before, "  9. nine\n  10. ");
+        assert!(BufferConfig::resolve(&config, Some("rust"))
+            .edit_rules
+            .is_empty());
     }
 
     #[test]

@@ -3184,7 +3184,8 @@ fn handle_duplicate_line(
 /// * `Some(Vec<Event>)` - Events to apply for this action
 /// * `None` - If the action doesn't generate events (like Quit, Save, etc.)
 ///
-/// Applies no edit rules; see [`action_to_events_with_edit_rules`].
+/// Applies the buffer's configured edit rules (its language's `edit_rules`)
+/// but none that plugins registered; see [`action_to_events_with_edit_rules`].
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events(
     state: &mut EditorState,
@@ -3211,8 +3212,9 @@ pub fn action_to_events(
     )
 }
 
-/// [`action_to_events`], with the plugin-registered edit rules that Enter,
-/// Tab and Shift+Tab offer each cursor to first (see
+/// [`action_to_events`], with the plugin-registered edit rules too: Enter,
+/// Tab and Shift+Tab offer each cursor to the buffer's configured rules,
+/// then to these, before their normal edit (see
 /// [`crate::input::edit_rules`]).
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events_with_edit_rules(
@@ -3266,13 +3268,18 @@ pub fn action_to_events_with_edit_rules(
             );
         }
 
-        // Enter, Shift+Tab and Tab first offer each cursor to the edit rules
-        // registered for the buffer's language; the cursors no rule handles
-        // get the key's normal edit, in the same event list (one undo step).
+        // Enter, Shift+Tab and Tab first offer each cursor to the buffer's
+        // edit rules (its language's config, then plugins'); the cursors no
+        // rule handles get the key's normal edit, in the same event list
+        // (one undo step).
         Action::InsertNewline => {
-            let ruled = edit_rules.and_then(|r| {
-                apply_edit_rules(state, cursors, &mut events, EditRuleTrigger::Newline, r)
-            });
+            let ruled = apply_edit_rules(
+                state,
+                cursors,
+                &mut events,
+                EditRuleTrigger::Newline,
+                edit_rules,
+            );
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
                 None => Some(&*cursors),
@@ -3295,9 +3302,13 @@ pub fn action_to_events_with_edit_rules(
         }
 
         Action::DedentSelection => {
-            let ruled = edit_rules.and_then(|r| {
-                apply_edit_rules(state, cursors, &mut events, EditRuleTrigger::Dedent, r)
-            });
+            let ruled = apply_edit_rules(
+                state,
+                cursors,
+                &mut events,
+                EditRuleTrigger::Dedent,
+                edit_rules,
+            );
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
                 None => Some(&*cursors),
@@ -3315,9 +3326,17 @@ pub fn action_to_events_with_edit_rules(
             // A selection anywhere makes Tab indent the selected lines
             // (#3666); rules only stand in for Tab's plain insert.
             let any_selection = cursors.iter().any(|(_, c)| c.selection_range().is_some());
-            let ruled = edit_rules.filter(|_| !any_selection).and_then(|r| {
-                apply_edit_rules(state, cursors, &mut events, EditRuleTrigger::Indent, r)
-            });
+            let ruled = if any_selection {
+                None
+            } else {
+                apply_edit_rules(
+                    state,
+                    cursors,
+                    &mut events,
+                    EditRuleTrigger::Indent,
+                    edit_rules,
+                )
+            };
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
                 None => Some(&*cursors),
