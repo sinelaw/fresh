@@ -72,8 +72,10 @@ v3.5.1 release notes for this font):
 | Power Symbols IEC      | https://github.com/jloughry/Unicode                   | Feb 2015        | MIT                             |
 | Weather Icons          | https://github.com/erikflowers/weather-icons          | 2.0.10 (1.100)  | OFL 1.1                         |
 
-- CC BY 4.0: the full text is in `LICENSE-CC-BY-4.0.txt`. Attribution:
-  Codicons © Microsoft Corporation; Font Awesome Free © Fonticons, Inc.
+- CC BY 4.0 (<https://creativecommons.org/licenses/by/4.0/legalcode>; the
+  license allows giving its URI in place of a copy). Attribution: Codicons
+  © Microsoft Corporation; Font Awesome Free © Fonticons, Inc. The glyphs are
+  redistributed unmodified, converted to WOFF2 only.
 - OFL 1.1: the license terms are in `LICENSE-OFL.txt` (that file's header
   names JetBrains Mono, the other font in this directory; the terms are the
   same). For the icon sets in this font under it:
