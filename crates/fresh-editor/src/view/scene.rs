@@ -1082,10 +1082,10 @@ impl Editor {
         }
         use crate::view::shell::sidebar::{close_key, refresh_key};
         Some(FileExplorerView {
-            close_key: crate::view::native::key_json(&close_key(0)),
+            close_key: key_json(&close_key(0)),
             refresh_key: self
                 .panel_rect(&refresh_key(0))
-                .map(|_| crate::view::native::key_json(&refresh_key(0))),
+                .map(|_| key_json(&refresh_key(0))),
             rect: RectView::from(rect),
             grip_rect: self
                 .panel_rect(&crate::view::shell::sidebar::grip_key())
@@ -2494,6 +2494,35 @@ pub struct SettingsView {
     pub dialog: Option<SettingsDialogView>,
 }
 
+/// A tree key in the wire form the web sends back in `node` messages:
+/// a string for `Key::Str`, `{"ns", "i"}` for `Key::Pair`, a number for
+/// `Key::Int`.
+pub fn key_json(k: &fresh_ui::Key) -> serde_json::Value {
+    match k {
+        fresh_ui::Key::Str(s) => serde_json::json!(&**s),
+        fresh_ui::Key::Int(i) => serde_json::json!(i),
+        fresh_ui::Key::Pair(ns, i) => serde_json::json!({ "ns": &**ns, "i": i }),
+    }
+}
+
+/// A dialog button: the confirmation card's and the settings' dialogs'.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmButtonView {
+    /// The label split around its accelerator: `[before, letter, after]`, or
+    /// the whole label in `before` when it has none in its text.
+    pub label: [String; 3],
+    pub destructive: bool,
+    /// Holds the keyboard: what Enter takes.
+    pub selected: bool,
+    /// Under the pointer.
+    pub hovered: bool,
+    /// What Esc resolves to.
+    pub escape: bool,
+    /// The tree key of the button (`shell::confirm::button_key`).
+    pub key: serde_json::Value,
+}
+
 /// A settings dialog (`shell::settings::Dialog`) as the web draws it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2506,7 +2535,7 @@ pub struct SettingsDialogView {
     pub changes: Vec<String>,
     /// The shortcuts help's lines (empty for the other kinds).
     pub lines: Vec<SettingsHelpLineView>,
-    pub buttons: Vec<crate::view::native::ConfirmButtonView>,
+    pub buttons: Vec<ConfirmButtonView>,
     /// The keyboard hint the terminal shows under the buttons.
     pub help: String,
 }
@@ -2528,13 +2557,13 @@ impl SettingsDialogView {
                       hovered: Option<usize>,
                       destructive: Option<usize>,
                       cancel: usize| {
-            crate::view::native::ConfirmButtonView {
+            ConfirmButtonView {
                 label: [label.to_string(), String::new(), String::new()],
                 destructive: destructive == Some(i),
                 selected: i == selected,
                 hovered: hovered == Some(i),
                 escape: i == cancel,
-                key: crate::view::native::key_json(&st::button_key(i)),
+                key: key_json(&st::button_key(i)),
             }
         };
         let choice = |kind: &'static str, c: st::Choice| SettingsDialogView {
