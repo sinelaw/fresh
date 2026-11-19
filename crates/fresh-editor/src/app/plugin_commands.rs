@@ -2760,6 +2760,18 @@ impl Editor {
         self.config_mut()
             .languages
             .insert(language.clone(), lang_config);
+        // Window reads (file open, new buffers) resolve settings from each
+        // window's copy of the config, so propagate the change there, and
+        // re-resolve buffers already open in this language.
+        self.sync_windows_config();
+        let config = self.config.clone();
+        for window in self.windows.values_mut() {
+            for state in window.buffers.as_map_mut().values_mut() {
+                if state.language == language {
+                    state.apply_buffer_config(&config);
+                }
+            }
+        }
         tracing::info!("Language config registered for '{}'", language);
     }
 

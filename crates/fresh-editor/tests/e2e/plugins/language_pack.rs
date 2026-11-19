@@ -420,12 +420,17 @@ const editor = getEditor();
     fs::write(&pack_file, "# one\n").unwrap();
     fs::write(&reg_file, "# one\n").unwrap();
 
-    let mut harness = EditorTestHarness::with_shared_dir_context(
+    // The full grammar registry, so the installed pack's grammar is loaded
+    // from the config directory as it is at startup (the default test
+    // registry is empty).
+    let mut harness = EditorTestHarness::create(
         100,
         24,
-        Default::default(),
-        project_root.clone(),
-        dir_context,
+        crate::common::harness::HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
     )
     .unwrap();
     harness
