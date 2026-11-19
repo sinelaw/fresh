@@ -2114,6 +2114,11 @@ impl SettingsState {
             return;
         };
 
+        if dialog.is_array_item {
+            self.delete_array_item(&dialog, is_nested);
+            return;
+        }
+
         let path = format!("{}/{}", dialog.map_path, dialog.entry_key);
 
         // Remove from the map control
@@ -2149,6 +2154,52 @@ impl SettingsState {
         // `save_changes_to_layer`'s `remove_json_pointer` step).
         self.pending_changes.remove(&path);
         self.pending_deletions.insert(path);
+    }
+
+    /// Remove an ObjectArray item whose dialog was just popped, the way
+    /// `save_array_item_dialog_inner` writes one: in the array control (the
+    /// parent dialog's, or the page's), then the whole array as a pending
+    /// change. An array has no key to delete; its index is the entry key, and
+    /// a new item that was never added has nothing to remove.
+    fn delete_array_item(&mut self, dialog: &EntryDialogState, is_nested: bool) {
+        if dialog.is_new {
+            return;
+        }
+        let Ok(index) = dialog.entry_key.parse::<usize>() else {
+            return;
+        };
+        let array_path = dialog.map_path.clone();
+        let remove = |items: &mut Vec<serde_json::Value>| -> Option<serde_json::Value> {
+            (index < items.len()).then(|| {
+                items.remove(index);
+                serde_json::Value::Array(items.clone())
+            })
+        };
+        let array_value = if is_nested {
+            let item_path = self
+                .entry_dialog_stack
+                .last()
+                .map(|p| Self::parent_item_path(p, &array_path))
+                .unwrap_or_default();
+            self.entry_dialog_stack.last_mut().and_then(|parent| {
+                let item = parent.items.iter_mut().find(|i| i.path == item_path)?;
+                let SettingControl::ObjectArray { items, .. } = &mut item.control else {
+                    return None;
+                };
+                let value = remove(items)?;
+                parent.user_edited = true;
+                Some(value)
+            })
+        } else {
+            self.current_item_mut()
+                .and_then(|item| match &mut item.control {
+                    SettingControl::ObjectArray { items, .. } => remove(items),
+                    _ => None,
+                })
+        };
+        if let Some(array_value) = array_value {
+            self.set_pending_change(&array_path, array_value);
+        }
     }
 
     /// After the body scroll position changes, snap the tree cursor to
@@ -3513,32 +3564,10 @@ mod tests {
         assert!(!state.has_changes());
     }
 
-    /// Regression test for the quicklsp settings-save bug.
-    ///
-    /// When editing an existing map entry whose value schema is itself an
-    /// array (the `is_single_value` case — e.g. `universal_lsp.quicklsp`
-    /// where the value schema is `LspLanguageConfig` = array of
-    /// `LspServerConfig`), opening a nested ArrayItem dialog used to
-    /// compute its `map_path` from `parent.map_path + item.path` only —
-    /// dropping the entry key segment whenever `item.path` was `""`.
-    /// The nested dialog's save would then record a pending change at
-    /// `/universal_lsp/`, which downstream wrote an empty-string key
-    /// under `universal_lsp` in the saved config file.
-    ///
-    /// This test exercises the real `open_nested_entry_dialog` + save
-    /// path using a schema shaped like `LspLanguageConfig` and asserts:
-    /// 1. The nested dialog's `map_path` is the full entry path.
-    /// 2. The recorded pending-change path is the full entry path, not
-    ///    `/universal_lsp/` and not any `/universal_lsp/*` path with a
-    ///    trailing slash.
-    #[test]
-    fn nested_array_save_records_full_entry_path() {
-        // EntryDialogState is already re-exported via `use super::*;`.
-        // Pull in SettingType from the sibling schema module explicitly.
+    /// The value schema of a `universal_lsp` entry: an array of servers,
+    /// each a single `enabled` boolean (the shape of `LspLanguageConfig`).
+    fn server_array_schema() -> SettingSchema {
         use crate::view::settings::schema::SettingType;
-
-        let config = test_config();
-        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
 
         // LspServerConfig-ish: a single "enabled" boolean field.
         let item_schema = SettingSchema {
@@ -3575,7 +3604,7 @@ mod tests {
         // Note: path is "" just like the real schema parser produces for
         // `parse_setting("value", "", ...)` — this is what drives the
         // `is_single_value` code path in EntryDialogState::from_schema.
-        let value_schema = SettingSchema {
+        SettingSchema {
             path: String::new(),
             name: "value".to_string(),
             description: None,
@@ -3591,7 +3620,33 @@ mod tests {
             enum_from: None,
             dual_list_sibling: None,
             dynamically_extendable_status_bar_elements: false,
-        };
+        }
+    }
+
+    /// Regression test for the quicklsp settings-save bug.
+    ///
+    /// When editing an existing map entry whose value schema is itself an
+    /// array (the `is_single_value` case — e.g. `universal_lsp.quicklsp`
+    /// where the value schema is `LspLanguageConfig` = array of
+    /// `LspServerConfig`), opening a nested ArrayItem dialog used to
+    /// compute its `map_path` from `parent.map_path + item.path` only —
+    /// dropping the entry key segment whenever `item.path` was `""`.
+    /// The nested dialog's save would then record a pending change at
+    /// `/universal_lsp/`, which downstream wrote an empty-string key
+    /// under `universal_lsp` in the saved config file.
+    ///
+    /// This test exercises the real `open_nested_entry_dialog` + save
+    /// path using a schema shaped like `LspLanguageConfig` and asserts:
+    /// 1. The nested dialog's `map_path` is the full entry path.
+    /// 2. The recorded pending-change path is the full entry path, not
+    ///    `/universal_lsp/` and not any `/universal_lsp/*` path with a
+    ///    trailing slash.
+    #[test]
+    fn nested_array_save_records_full_entry_path() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        let value_schema = server_array_schema();
 
         // Parent dialog: user is editing the existing "quicklsp" entry
         // under /universal_lsp. This is the MapEntry dialog the real UI
@@ -3668,6 +3723,50 @@ mod tests {
                 .contains_key("/universal_lsp/quicklsp"),
             "expected pending change at /universal_lsp/quicklsp, got {:?}",
             state.pending_changes.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Deleting an array item from its nested dialog removes it from the
+    /// parent dialog's array and records the shortened array, as saving an
+    /// item records the edited one. It used to look for a map entry, find
+    /// none, and leave the item in place with a stray deletion pending.
+    #[test]
+    fn nested_array_item_delete_removes_the_item() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        let parent = EntryDialogState::from_schema(
+            "quicklsp".to_string(),
+            &serde_json::json!([{ "enabled": true }, { "enabled": false }]),
+            &server_array_schema(),
+            "/universal_lsp",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        state.entry_dialog_stack.push(parent);
+        // The dialog opens with its cursor on the first server.
+        state.open_nested_entry_dialog();
+        assert_eq!(state.entry_dialog_stack.len(), 2);
+
+        state.delete_entry_dialog();
+
+        assert_eq!(state.entry_dialog_stack.len(), 1);
+        let parent = state.entry_dialog_stack.last().unwrap();
+        assert!(parent.user_edited);
+        let Some(SettingControl::ObjectArray { items, .. }) =
+            parent.items.first().map(|i| &i.control)
+        else {
+            panic!("the parent's array control");
+        };
+        assert_eq!(items, &vec![serde_json::json!({ "enabled": false })]);
+        assert_eq!(
+            state.pending_changes.get("/universal_lsp/quicklsp"),
+            Some(&serde_json::json!([{ "enabled": false }]))
+        );
+        assert!(
+            state.pending_deletions.is_empty(),
+            "{:?}",
+            state.pending_deletions
         );
     }
 
