@@ -5314,6 +5314,7 @@ pub mod tests {
             label_width: 0,
             open: false,
             scroll_offset: 0,
+            placeholder: String::new(),
             options: options.iter().map(|s| s.to_string()).collect(),
             selected_index: selected,
             label: String::new(),

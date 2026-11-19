@@ -605,7 +605,7 @@
         labelWidth: Number, key?: String }
     | { kind: "dropdown", options: String[], selectedIndex: Number, label?: String,
         focused: Boolean, labelWidth: Number, open: Boolean, scrollOffset: Number,
-        key?: String }
+        placeholder?: String, key?: String }
     | { kind: "radio", options: String[], selectedIndex: Number, label?: String,
         focused: Boolean, labelWidth: Number, key?: String }
     | { kind: "dualList", options: DualListOption[], included: String[],

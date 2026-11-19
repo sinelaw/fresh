@@ -286,7 +286,12 @@ export function number(
  * spec `selectedIndex` is a seed). Push a new selection with
  * `WidgetPanel.setDropdown(key, index)`.
  *
- * `labelWidth` pads the label so a column of controls aligns. */
+ * `labelWidth` pads the label so a column of controls aligns.
+ *
+ * `placeholder` is what the closed dropdown shows while nothing is chosen
+ * (`selectedIndex: -1`), e.g. `Choose an agent…`. It is not an option: the
+ * open list shows only `options`, and once a value is chosen the dropdown
+ * cannot step back to it. */
 export function dropdown(
   options: string[],
   options_?: {
@@ -294,6 +299,7 @@ export function dropdown(
     label?: string;
     focused?: boolean;
     labelWidth?: number;
+    placeholder?: string;
     key?: string;
   },
 ): WidgetSpec {
@@ -306,6 +312,9 @@ export function dropdown(
     labelWidth: options_?.labelWidth ?? 0,
     open: false,
     scrollOffset: 0,
+    // Sent only when set: the host reads an absent placeholder as none, and
+    // an `undefined` would arrive as `null`, which is not a string.
+    ...(options_?.placeholder ? { placeholder: options_.placeholder } : {}),
     key: options_?.key,
   };
 }

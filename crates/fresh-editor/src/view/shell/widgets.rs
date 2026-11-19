@@ -3345,6 +3345,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             label_width,
             open,
             scroll_offset,
+            placeholder,
             key,
         } => {
             use crate::widgets::kinds::dropdown as dd;
@@ -3355,10 +3356,32 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 true => cx.is_focused(key),
                 false => *focused,
             };
-            let st = dd::resolve(options, *selected_index, *open, key, cx.states, is_focused);
-            let rendered = crate::widgets::render_dropdown(
+            let st = dd::resolve(
                 options,
-                st.selected,
+                *selected_index,
+                *open,
+                key,
+                cx.states,
+                is_focused,
+                !placeholder.is_empty(),
+            );
+            // **The placeholder is the trigger's, never the list's.** The
+            // closed button reads it while nothing is chosen; it is measured
+            // with the options either way, so choosing does not resize the
+            // button. The list below is built from `options` alone.
+            let with_placeholder: Vec<String>;
+            let (shown, shown_index) = match placeholder.is_empty() {
+                true => (options.as_slice(), st.selected),
+                false => {
+                    with_placeholder = std::iter::once(placeholder.clone())
+                        .chain(options.iter().cloned())
+                        .collect();
+                    (with_placeholder.as_slice(), st.selected + 1)
+                }
+            };
+            let rendered = crate::widgets::render_dropdown(
+                shown,
+                shown_index,
                 label,
                 is_focused,
                 *label_width,
@@ -6812,6 +6835,7 @@ pub(crate) mod tests {
             label_width: 0,
             open,
             scroll_offset: scroll,
+            placeholder: String::new(),
             key: Some("mode".into()),
         }
     }

@@ -5282,6 +5282,14 @@ type WidgetSpec = {
   * taller than its window. Defaults to `0`.
   */
   scrollOffset: number;
+  /**
+  * What the closed dropdown shows while nothing is chosen
+  * (`selected_index` `-1`), e.g. `Choose an agent…`. It is not an
+  * option: the open list shows only `options`, and once a value is
+  * chosen the dropdown cannot step back to it. Empty = no
+  * placeholder; `selected_index` is then clamped into `options`.
+  */
+  placeholder?: string;
   key?: string | null;
 } | {
   "kind": "radio";

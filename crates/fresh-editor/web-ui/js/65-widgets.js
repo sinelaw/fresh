@@ -602,7 +602,10 @@ function widgetNodeOf(spec, ctx){
     // full-size ▲ (U+25B2) is ~2× the width of the small ▾ in a proportional
     // font (e.g. the macOS skin's -apple-system), so pairing it with ▾ made the
     // pill jump ~6px wider on open; the small ▴ keeps the width stable.
-    pill.textContent=((spec.options||[])[selIdx]??"—")+(open?" ▴":" ▾");
+    // Nothing chosen yet (-1) reads as the spec's placeholder, which is never
+    // one of the options the list shows.
+    const ph=spec.placeholder;
+    pill.textContent=((selIdx<0&&ph)?ph:((spec.options||[])[Math.max(0,selIdx)]??"—"))+(open?" ▴":" ▾");
     pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"dropdown_toggle",{}); };
     el.appendChild(pill);
     if(open){

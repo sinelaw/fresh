@@ -2442,6 +2442,7 @@ mod tests {
                 label_width: 24,
                 open: true,
                 scroll_offset: 0,
+                placeholder: String::new(),
                 key: Some("/editor/default_line_ending".into()),
             };
         }

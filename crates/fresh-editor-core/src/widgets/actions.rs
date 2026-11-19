@@ -387,6 +387,7 @@ mod tests {
             label_width: 0,
             open: false,
             scroll_offset: 0,
+            placeholder: String::new(),
             key: Some("agent_dropdown".into()),
         };
         let spec = WidgetSpec::Row {
