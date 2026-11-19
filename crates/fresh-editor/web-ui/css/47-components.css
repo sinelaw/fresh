@@ -11,6 +11,8 @@
 
        .ui-check   a checkbox; `.on` while checked       --check-*
        .ui-switch  an on/off switch; `.on` while on      --switch-*
+       .ui-select  a dropdown's button                    --select-*
+       .ui-radio   a radio button's dot; `.on` when chosen --radio-*
        .ui-key     a key hint chip                        --key-*
        .ui-chip    a small button (`..`, `⟳`, `+`)        --chip-*
        .ui-field   a text field                           --field-*
@@ -39,9 +41,11 @@
     --chip-hover-fg:var(--fg);--chip-hover-bg:var(--hover,rgba(255,255,255,.08));
     --field-bg:var(--bg);--field-fg:var(--fg);--field-border:var(--hairline-strong,var(--border));
     --field-radius:var(--r-sm,4px);--field-shadow:none;--field-glow:none;
-    /* A checkbox the terminal draws (`[v] Label`, a tree row's box): text
-       cells, so a skin can only colour them. */
-    --check-cell-fg:inherit;--check-cell-on-fg:var(--ui-accent,var(--accent));--check-cell-on-glow:none}
+    --select-fg:var(--fg);--select-bg:var(--surface,var(--bg2));--select-border:var(--hairline-strong,var(--border));
+    --select-radius:var(--r-sm,4px);--select-shadow:none;--select-hover-bg:var(--hover,rgba(255,255,255,.08));
+    --select-focus-ring:0 0 0 2px color-mix(in srgb,var(--ui-accent,var(--accent)) 45%,transparent);
+    --radio-size:.85em;--radio-border:var(--muted);--radio-bg:transparent;--radio-shadow:none;
+    --radio-on-border:var(--ui-accent,var(--accent));--radio-on-dot:var(--ui-accent,var(--accent));--radio-on-glow:none}
 
   /* ---- checkbox ---- */
   .ui-check.ui-check{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
@@ -54,13 +58,6 @@
   .ui-check.ui-check.on{background:var(--check-on-bg);border-color:var(--check-on-border);
     color:var(--check-on-fg);box-shadow:var(--check-on-shadow);text-shadow:var(--check-on-glow)}
   .w-tree-check.ui-check{margin-right:.45em}
-  .tree-item.k-lines[data-class~="check"]{--ink-fg:var(--check-cell-fg)}
-  .tree-item.k-lines[data-class~="check.on"]{--ink-fg:var(--check-cell-on-fg);text-shadow:var(--check-cell-on-glow)}
-  /* A text field the terminal draws (`field`): its ground and ink, for a skin
-     that sets them; unset, the cells keep the terminal's colours. */
-  .tree-item.k-fill[data-class~="field"]{--ink-bg:var(--field-cell-bg,var(--fold-bg,transparent))}
-  .tree-item.k-lines[data-class~="field"]{--ink-fg:var(--field-cell-fg,var(--fold-fg,inherit));
-    text-shadow:var(--field-cell-glow,none)}
 
   /* ---- switch ---- */
   .ui-switch.ui-switch{position:relative;display:inline-block;flex:0 0 auto;box-sizing:border-box;
@@ -88,3 +85,17 @@
   .ui-field.ui-field.ui-field:not(.native-panel *){background:var(--field-bg);color:var(--field-fg);
     border:1px solid var(--field-border);border-radius:var(--field-radius);box-shadow:var(--field-shadow);
     text-shadow:var(--field-glow)}
+
+  /* ---- dropdown button ----
+     A dropdown is a button that opens a list: drawn as the skin draws a
+     button, not as a field. */
+  .ui-select.ui-select.ui-select{display:inline-flex;align-items:center;gap:.3em;cursor:default;
+    color:var(--select-fg);background:var(--select-bg);border:1px solid var(--select-border);
+    border-radius:var(--select-radius);box-shadow:var(--select-shadow);padding:1px 9px;outline:none}
+  .ui-select.ui-select.ui-select:hover{background:var(--select-hover-bg)}
+  .w-dropdown.focus .ui-select.ui-select.ui-select{box-shadow:var(--select-shadow),var(--select-focus-ring)}
+  /* ---- radio ---- */
+  .ui-radio.ui-radio{width:var(--radio-size);height:var(--radio-size);flex:0 0 auto;box-sizing:border-box;
+    border-radius:50%;border:1.5px solid var(--radio-border);background:var(--radio-bg);box-shadow:var(--radio-shadow)}
+  .ui-radio.ui-radio.on{border-color:var(--radio-on-border);box-shadow:var(--radio-shadow),var(--radio-on-glow);
+    background:radial-gradient(circle,var(--radio-on-dot) 0 38%,transparent 42%),var(--radio-bg)}

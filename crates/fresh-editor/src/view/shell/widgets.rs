@@ -4501,22 +4501,6 @@ fn hit_node(
             }) as fresh_ui::Handler<UiMsg>
         }
     });
-    // **A checkbox says it is one.** A toggle's press carries the value it
-    // would set, so the piece it lands on is a checkbox in the state opposite
-    // to that: `check`, plus `check.on` while checked. The terminal's rule
-    // table has no rule for either; a backend's stylesheet draws them.
-    let n = match (
-        hit.event_type,
-        hit.payload.get("checked").and_then(|v| v.as_bool()),
-    ) {
-        ("toggle", Some(sets)) => n.classes(match sets {
-            true => "check",
-            false => "check check.on",
-        }),
-        // A text field's editing region: a press focuses it.
-        ("focus", _) if hit.widget_kind == "text" => n.classes("field"),
-        _ => n,
-    };
     let n = fresh_ui::gesture(n).on(
         fresh_ui::GestureKind::Press,
         std::rc::Rc::new(move |e: &fresh_ui::Event| match e.button {

@@ -158,174 +158,6 @@
      are dropped, matching the reference's single solid bevelled frame. ---- */
   body.theme-winamp #device .wa-edge{display:none}
 
-  /* ==================== ORCHESTRATOR — the playlist window ===============
-     The dock is folded from the display list (72-tree.js): items at cell
-     rects carrying the fold's colours as `--fold-*`, each naming the theme key
-     it read (`data-fg` / `data-bg`). The skin re-maps those keys — a web theme
-     is a chrome look over the editor's palette, so a Winamp dock is a playlist
-     whatever the editor's colours say. The window: a sunken LCD well with a
-     bevelled amber caption bar, green phosphor entries and a blue selection. */
-  body.theme-winamp:not(.mobile) .tree-surface.dock{
-    background:var(--wa-sunken);border-radius:3px;
-    box-shadow:var(--wa-well),var(--wa-seam)}
-  /* The well is the panel's ground: the body, the untagged rows a list pads
-     itself with, and the grip strip all give way to it.
-
-     **Not what a LAYER paints.** A pop-over the dock raises — the New Task
-     menu, a right-click menu — names `ui.suggestion_bg` for its own card, the
-     same key the dock's body uses; without `:not([data-layer])` the menu's
-     ground went transparent and the playlist showed straight through its
-     text. A theme's ground rules are a claim about the surface's own flow. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer]):not([data-bg]),
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.suggestion_bg"],
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="editor.bg"]{
-    --ink-bg:transparent}
-  /* Entries are green phosphor; the caption bar is bevelled metal in amber. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.suggestion_fg"]{
-    --ink-fg:#8fe8ab}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.menu_bg"]{
-    --ink-bg:#3f2e25}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_fg"]{
-    --ink-fg:var(--wa-amber)}
-  /* The rule under the toolbar, the entry disc and the hint bar are one key
-     between them (`ui.menu_disabled_fg`), so they take one colour: the faint
-     amber the old skin gave its divider and hint bar, which reads as khaki on
-     the well. The skin used to spell those three separately — the disc a dim
-     phosphor green — and the display list does not carry the distinction. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_disabled_fg"]{
-    --ink-fg:rgba(255,208,150,.38)}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.help_key_fg"]{
-    --ink-fg:var(--wa-amber)}
-  /* Selection: the skin's blue bar, white lettering, and INSET — the old
-     playlist put its rows inside a padded well, so the bar never reached the
-     panel's edges. One bar, not one per run: the row's full-width `fill`
-     carries it and the runs riding on it go transparent, or their ends would
-     square off the clip. Square corners, as the skin had them. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
-    --ink-bg:transparent;--ink-fg:#ffffff}
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
-    background:var(--sel);clip-path:inset(0 4px 0 3px)}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"][data-fg="ui.menu_disabled_fg"]{
-    --ink-fg:#c3ccf5}
-  /* The search field is a recessed slot in the well. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="editor.current_line_bg"]{
-    --ink-bg:#141210}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.whitespace_indicator_fg"]{
-    --ink-fg:rgba(78,240,127,.4)}
-  /* A card's outline in card view. The SELECTED card is the only thing wearing
-     `ui.popup_border_fg` here, so it can take the old skin's blue plate colour
-     — its unselected neighbours share `ui.suggestion_fg` with the entry text
-     itself and cannot be told apart from it by key. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.popup_border_fg"]{
-    --ink-fg:rgba(126,146,236,.85)}
-  /* The wall down the last column is the well's own bevel here. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.cursor"]{
-    --ink-fg:rgba(255,208,150,.16)}
-
-  /* ---- the caption bar, as the skin drew it ------------------------------
-     The dock's title row is one `fill` naming `ui.menu_bg`, so the old
-     `.w-raw:first-child` caption comes back on it: brushed metal, a raised
-     bevel, and the thin green reflection along its top edge. What cannot come
-     back is the lettering's `text-transform`, `letter-spacing` and centring —
-     the row is grid text now, and N characters must occupy N cells — so the
-     caption keeps its amber and its glow and loses the tracking. */
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.menu_bg"]{
-    background:var(--wa-brush),linear-gradient(180deg,#4c3928 0%,#3a2a1e 55%,#2a1e15 100%);
-    box-shadow:var(--wa-vbevel),var(--wa-lit)}
-  /* **The bar is made of several items, so its bevel may only be horizontal.**
-     A row is one fill per run region, not one fill; `--wa-out` rings each of
-     them and the caption came out as three plates with seams between them.
-     `--wa-vbevel` draws the top and bottom edges only, and those join across
-     the segments into one continuous bar. For the same reason the runs riding
-     on it give up their own ground — an opaque `--ink-bg` behind the lettering
-     would be a darker box in the middle of the metal. */
-  body.theme-winamp:not(.mobile) .tree-item:not(.k-fill)[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.menu_bg"]{
-    --ink-bg:transparent}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface-kind="dock"]:not([data-layer])[data-fg="ui.menu_fg"]{
-    text-shadow:0 1px 0 rgba(0,0,0,.9),0 0 9px rgba(247,201,120,.3)}
-  /* The caption's close affordance is a window button, so it answers the
-     pointer the way the tab strip's `×` does — the skin's blue plate — rather
-     than sitting inert in the bar. It draws no box otherwise: `button.bare`
-     never wears `button`, and a glyph already has a control's shape. */
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
-    background:var(--sel);border-radius:2px}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
-    --ink-fg:#ffffff}
-
-  /* ---- pop-overs the dock raises: the skin's menu window ------------------
-     A menu is a LAYER over the dock's own flow, and it arrives as items like
-     any other: a `fill` for its card, a `border` over the same rectangle, then
-     a fill + a run per row. `[data-layer]` is what tells them apart from the
-     playlist underneath — without it a menu wore the well's ground rules and
-     the list showed straight through its text.
-
-     The card is flat metal and the FRAME rides on the `border` item, whose
-     rectangle is exactly the card's: its box-drawing glyphs go transparent and
-     a seam, a bevel and a hard drop shadow stand in their place, which is how
-     the old `.w-overlay` skin drew the same menu before the dock was folded
-     from the display list. */
-  body.theme-winamp:not(.mobile) .tree-item[data-layer][data-bg="ui.suggestion_bg"]{
-    --ink-bg:var(--wa-face-flat)}
-  body.theme-winamp:not(.mobile) .tree-item.k-border[data-layer]{
-    --ink-fg:transparent;border-radius:3px;
-    box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5)}
-  /* Lettering on the card is cream on metal, not the well's phosphor green. */
-  body.theme-winamp:not(.mobile) .tree-item[data-layer][data-fg="ui.suggestion_fg"]{
-    --ink-fg:#e9d9c2}
-  body.theme-winamp:not(.mobile) .tree-item[data-layer][data-fg="ui.menu_disabled_fg"]{
-    --ink-fg:rgba(233,217,194,.42)}
-  /* The row under the cursor is the theme's lit olive plate — the same
-     highlight `.mitem.hi` and the old menu's hovered row wore, not the
-     playlist's blue bar. */
-  body.theme-winamp:not(.mobile) .tree-item[data-layer][data-bg="ui.popup_selection_bg"]{
-    --ink-bg:transparent;--ink-fg:#f6f2df}
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-layer][data-bg="ui.popup_selection_bg"]{
-    clip-path:none;background:
-      radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.35),transparent 62%),
-      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%)}
-
-  /* ---- controls in the well: the skin's hardware switches ----------------
-     A button reaches the web as TWO items wearing one class: a `fill` over its
-     own rectangle — the control's box, where the terminal draws `[` and `]` —
-     and a `lines` run for its naked label. Match kind AND class, never the
-     class alone, or the plate is painted twice with the lettering buried in
-     the middle of it.
-
-     `[data-surface]` is in every selector for weight, not for matching — every
-     tree item carries it. A focused button names `ui.popup_selection_bg`, so
-     without it the playlist's selection rule (which counts one attribute more)
-     painted the blue bar straight over the switch, square-clipped ends and
-     all. With it these tie, and being written after the key re-maps they win:
-     a switch's lettering is cream on metal, and its plate is its own. */
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button"]{
-    background:var(--wa-gloss),var(--wa-plate);
-    border-radius:2px;transform:scaleY(.86);clip-path:none;
-    box-shadow:var(--wa-ctl)}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button"]{
-    --ink-fg:#f0dcc2;text-shadow:0 1px 0 rgba(0,0,0,.55)}
-  /* The affirmative action is the lit olive plate `.w-button.primary` wears. */
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.primary"]{
-    background:
-      radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.4),transparent 62%),
-      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%);
-    box-shadow:var(--wa-ring),var(--wa-vbevel),
-      inset 0 1px 0 rgba(255,255,255,.32),0 2px 4px rgba(0,0,0,.45)}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.primary"]{
-    --ink-fg:#f7f8e6}
-  /* Hover lifts the plate; focus presses the switch in. Both keep whatever
-     plate the intent above chose — they state a bevel, or a face, and nothing
-     else, exactly as the terminal's rules for the same two classes do. */
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.hover"]{
-    background:var(--wa-gloss),linear-gradient(180deg,#67503b,#4d392a)}
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.focused"]{
-    box-shadow:var(--wa-ctl-press)}
-  /* Inert: flat metal, cut in, no lift. */
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.disabled"]{
-    background:var(--wa-face-flat);box-shadow:var(--wa-ring)}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.disabled"]{
-    --ink-fg:rgba(240,220,194,.34);text-shadow:none}
-
-
   /* ===================== chrome inside the code well ==================== */
   /* Cell-aligned rows: colour + inset bevels only, never box metrics. */
   body.theme-winamp .menubar{background:var(--wa-metal);box-shadow:var(--wa-out);
@@ -484,7 +316,6 @@
   /* Destructive answers: red lettering on metal, as the confirmation's. */
   body.theme-winamp .trustdialog .td-btn.destructive,body.theme-winamp .settings-modal .btn.danger{color:#ff8a7a}
   body.theme-winamp .ctxmenu .ctxitem.destructive:not(.sel){color:#ff8a7a}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.danger"]{color:#ff8a7a}
   /* A changed setting's name in phosphor, like a live readout. */
   body.theme-winamp .settings-modal .set-item.modified:not(.sel) .set-name{color:var(--wa-green)}
   /* Where a dragged tab would land: a lit phosphor frame over the code. */
@@ -541,9 +372,14 @@
     /* Text field: an LCD slot. */
     --field-bg:var(--wa-lcd);--field-fg:var(--wa-green);--field-border:#000;--field-radius:0;
     --field-shadow:var(--wa-in);--field-glow:var(--wa-glow);
-    /* A checkbox the terminal draws: dim phosphor off, lit on. */
-    --check-cell-fg:var(--wa-lcd-dim);--check-cell-on-fg:var(--wa-green);--check-cell-on-glow:var(--wa-glow);
-    --field-cell-bg:var(--wa-lcd);--field-cell-fg:var(--wa-green);--field-cell-glow:var(--wa-glow)}
+    /* Dropdown button: a raised metal switch, as every button on the skin. */
+    --select-fg:#f0dcc2;--select-bg:var(--wa-gloss),var(--wa-plate);--select-border:transparent;
+    --select-radius:2px;--select-shadow:var(--wa-ctl);
+    --select-hover-bg:var(--wa-gloss),linear-gradient(180deg,#67503b,#4d392a);
+    --select-focus-ring:0 0 0 1px var(--wa-green),0 0 8px rgba(78,240,127,.4);
+    /* Radio: a round LCD well; chosen, a phosphor dot. */
+    --radio-border:#120b06;--radio-bg:var(--wa-sunken);--radio-shadow:var(--wa-in);
+    --radio-on-border:#120b06;--radio-on-dot:var(--wa-green);--radio-on-glow:0 0 6px rgba(78,240,127,.6)}
 
   /* Content: the LCD. */
   body.theme-winamp .ui-well,body.theme-winamp .fileexplorer{background:var(--wa-lcd);color:var(--wa-lcd-fg);
@@ -570,80 +406,42 @@
   body.theme-winamp .ui-well::-webkit-scrollbar-thumb{background:var(--wa-green-dim);box-shadow:none}
   body.theme-winamp .ui-well::-webkit-scrollbar-thumb:hover{background:var(--wa-green)}
 
-  /* The Orchestrator's playlist (the dock, folded from the display list):
-     the same scanlined display, glowing entries, the same lit selection. */
-  body.theme-winamp:not(.mobile) .tree-surface.dock{background:var(--wa-lcd)}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.suggestion_fg"]{
-    --ink-fg:var(--wa-lcd-fg);text-shadow:var(--wa-glow)}
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
-    background:var(--wa-lcd-sel);box-shadow:inset 2px 0 0 var(--wa-green)}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
-    --ink-fg:#e4ffec;text-shadow:0 0 8px rgba(78,240,127,.75)}
-
   /* On the metal, secondary text is one muted tan. */
   body.theme-winamp :is(.w-text-label,.kb-cfg,.kb-count,.kb-footer,.td-path,.td-triggers,.fbfoot,
     .fbtoggle:not(.on),.psopt:not(.on),.nc-hint){color:var(--wa-muted)}
 
-  /* ==================== Dialogs drawn as cells (New Workspace &c.) ==========
-     A plugin's floating form is folded from the display list like the dock
-     (72-tree.js): items at cell rects naming the theme keys they were painted
-     with (`data-fg` / `data-bg`). Left alone those keys are the editor
-     theme's — the cursor colour as the window's outline, the popup border key
-     as a dark-blue title, help-key blue on the radios — on a flat brown. The
-     skin re-maps them so the form is a skin window: brushed metal, amber
-     caption and section heads, warm lettering, phosphor marks, LCD fields. */
-  /* The window is its frame's fill, not the surface: the dialog's dimming
-     scrim lies over the surface ground (the terminal dims everything before
-     painting the dialog), so metal painted there came out a flat dim brown. */
-  body.theme-winamp:not(.mobile) .tree-surface.floating{background:transparent}
-  /* On the window's BORDER item: the one item whose rectangle is exactly the
-     window (the close button's fill names the same key as the window's). */
-  body.theme-winamp:not(.mobile) .tree-item.k-border[data-surface-kind="floating"][data-fg="editor.cursor"]{
-    background:var(--wa-light),var(--wa-metal);border-radius:3px;
-    box-shadow:var(--wa-seam),var(--wa-frame),6px 8px 0 rgba(0,0,0,.5)}
-  /* The window's own ground and frame give way to the metal. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"]:not([data-bg]),
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-bg="ui.suggestion_bg"],
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-bg="editor.bg"]{
-    --ink-bg:transparent}
-  body.theme-winamp:not(.mobile) .tree-item.k-border[data-surface-kind="floating"]:is([data-fg="editor.cursor"],[data-fg="ui.popup_border_fg"]){
-    --ink-fg:transparent}
-  /* Lettering: warm on the metal; the caption and section heads amber. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-fg="ui.suggestion_fg"],
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-fg="ui.popup_text_fg"]{--ink-fg:#e9d9c2}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface-kind="floating"][data-fg="ui.popup_border_fg"]{
-    --ink-fg:var(--wa-amber);letter-spacing:.06em}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface-kind="floating"][data-fg="editor.cursor"]:not([data-class]){
-    --ink-fg:#c2ab90}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-fg="ui.menu_disabled_fg"]:not([data-class~="button"]){
-    --ink-fg:rgba(247,201,120,.62)}
-  /* Marks — a chosen radio, a dropdown's arrow — are phosphor. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-fg="ui.help_key_fg"]{
-    --ink-fg:var(--wa-green);text-shadow:var(--wa-glow)}
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-fg="diagnostic.warning_fg"]{
-    --ink-fg:#ffbf5e}
-  /* The control holding the keyboard: lit on the display, as a selected row. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-bg="ui.popup_selection_bg"]{
-    --ink-bg:rgba(78,240,127,.22);--ink-fg:#e4ffec;text-shadow:0 0 8px rgba(78,240,127,.6)}
-  /* Text fields: LCD slots. A field's runs drop their own ground so the
-     field's fill (the LCD) shows under them; the value glows, its label —
-     part of the same press target — stays lettering on the metal. */
-  /* A one-line field's press target is its whole row, label included, so
-     its fill is not the slot: the slot is the value's own ground
-     (`editor.current_line_bg`). A box's well is its rounded border, below. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-class~="field"]{--ink-bg:transparent}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface-kind="floating"][data-bg="editor.current_line_bg"]{
-    --ink-bg:var(--wa-lcd);--ink-fg:var(--wa-green)}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface-kind="floating"][data-class~="field"][data-fg="ui.suggestion_fg"]:not([data-bg="editor.current_line_bg"]){
-    --ink-fg:#e9d9c2;text-shadow:none}
-  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface-kind="floating"][data-fg="editor.whitespace_indicator_fg"]{
-    --ink-fg:var(--wa-lcd-dim);text-shadow:none}
-  /* A multi-line field's box: a sunken black well, not a bright outline. */
-  body.theme-winamp:not(.mobile) .tree-item.k-border.rounded[data-surface-kind="floating"]{
-    --ink-fg:#000;border-radius:0;background:var(--wa-lcd);box-shadow:var(--wa-in)}
-  /* A list the form drops down (`ui.popup_bg`) is a pop-over over the form:
-     an LCD list like the palette's, on a sunken black card. */
-  body.theme-winamp:not(.mobile) .tree-item[data-surface-kind="floating"][data-bg="ui.popup_bg"]{
-    --ink-bg:var(--wa-sunken);--ink-fg:var(--wa-lcd-fg);text-shadow:var(--wa-glow)}
-  body.theme-winamp:not(.mobile) .tree-item.k-fill[data-surface-kind="floating"][data-bg="ui.popup_bg"]{
-    background:var(--wa-lcd);box-shadow:var(--wa-seam),var(--wa-in),4px 6px 0 rgba(0,0,0,.5)}
+  /* ==================== Panels: the Orchestrator and plugin forms ==========
+     Drawn from their semantic specs (73-native.js, 65-widgets.js) as real
+     controls — the frames hardware, the lists and fields the LCD, the
+     controls the shared ones above. */
+  /* The dock: the playlist window, an LCD well behind its toolbar. */
+  body.theme-winamp .native-panel.np-dock{background:var(--wa-lcd);color:var(--wa-lcd-fg);
+    border-right:1px solid #1b1109;box-shadow:inset -3px 0 0 var(--wa-face-flat),var(--wa-in)}
+  /* A floating panel (New Workspace, Run Agent…): a skin window. */
+  body.theme-winamp .native-panel.card{background:var(--wa-light),var(--wa-metal);color:#e9d9c2;
+    border:none;border-radius:3px;box-shadow:var(--wa-seam),var(--wa-frame),6px 8px 0 rgba(0,0,0,.5)}
+  body.theme-winamp .native-panel.card .np-title{color:var(--wa-amber);letter-spacing:.12em;text-transform:uppercase}
+  body.theme-winamp .native-panel.card .np-close{color:#c2ab90;border-radius:0}
+  body.theme-winamp .native-panel.card .np-close:hover{color:var(--wa-amber);background:none;
+    text-shadow:0 0 6px rgba(247,201,120,.5)}
+  /* Section heads are amber engraving; form labels warm lettering. */
+  body.theme-winamp .native-panel .w-heading{color:var(--wa-amber);letter-spacing:.08em}
+  body.theme-winamp .native-panel .w-heading-rule{border-top-color:rgba(247,201,120,.32)}
+  body.theme-winamp .native-panel .w-flabel{color:#d9c3a6}
+  body.theme-winamp .native-panel .w-divider{border-top-color:rgba(0,0,0,.55)}
+  /* Lists in a panel are the display: phosphor rows, the lit selection. */
+  body.theme-winamp .native-panel :is(.w-tree-row,.w-list-row){color:var(--wa-lcd-fg);border-radius:0;
+    text-shadow:var(--wa-glow)}
+  body.theme-winamp .native-panel :is(.w-tree-row,.w-list-row).sel.sel{background:var(--wa-lcd-sel);color:#e4ffec;
+    box-shadow:inset 2px 0 0 var(--wa-green);text-shadow:0 0 8px rgba(78,240,127,.75)}
+  /* A field is an LCD slot. */
+  body.theme-winamp .native-panel .w-text .w-text-input{background:var(--wa-lcd);color:var(--wa-green);
+    border:1px solid #000;border-radius:0;box-shadow:var(--wa-in);text-shadow:var(--wa-glow)}
+  body.theme-winamp .native-panel .w-text.focus .w-text-input{border-color:var(--wa-green-dim);
+    box-shadow:var(--wa-in),0 0 8px rgba(78,240,127,.35)}
+  body.theme-winamp .native-panel .w-text .w-text-input::placeholder{color:var(--wa-lcd-dim)}
+  /* A dropdown's list is an LCD card. */
+  body.theme-winamp .w-dd{background:var(--wa-lcd);border:1px solid #000;border-radius:0;
+    box-shadow:var(--wa-seam),4px 6px 0 rgba(0,0,0,.5)}
+  body.theme-winamp .w-dd-row{color:var(--wa-lcd-fg);text-shadow:var(--wa-glow)}
+  body.theme-winamp .w-dd-row.sel{background:var(--wa-lcd-sel);color:#e4ffec;box-shadow:inset 2px 0 0 var(--wa-green)}

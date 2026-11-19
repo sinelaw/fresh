@@ -435,7 +435,8 @@ function widgetNodeOf(spec, ctx){
     if(mark){
       const mtxt=mark[1]??"", radio=mtxt[0]==="(", on=mtxt[1]!==" ";
       const m=document.createElement("span");
-      m.className=(radio?"w-mark-radio":"w-mark-check")+(on?" on":"");
+      // The shared radio and checkbox (47-components.css).
+      m.className=(radio?"w-mark-radio ui-radio":"w-mark-check ui-check")+(on?" on":"");
       el.appendChild(m); el.append(mark[2]??"");
     } else el.textContent=label;
     if(ctx.grid) el.classList.add("gridcell");
@@ -558,7 +559,7 @@ function widgetNodeOf(spec, ctx){
     else if(spec.labelWidth>0) el.style.paddingLeft=`${spec.labelWidth}ch`;
     (spec.options||[]).forEach((o,i)=>{
       const opt=aria(div("w-radio-opt"+(i===sel?" on":"")), "radio", {checked:i===sel, label:o});
-      opt.appendChild(div("w-radio-dot"));
+      opt.appendChild(div("w-radio-dot ui-radio"+(i===sel?" on":"")));
       const t=document.createElement("span"); t.textContent=o; opt.appendChild(t);
       opt.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"radio_select",{index:i}); };
       el.appendChild(opt);
@@ -596,7 +597,7 @@ function widgetNodeOf(spec, ctx){
       if(spec.labelWidth>0) el.appendChild(formLabel(spec.label, spec.labelWidth));
       else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     }
-    const pill=document.createElement("span"); pill.className="w-dd-pill";
+    const pill=document.createElement("span"); pill.className="w-dd-pill ui-select";
     aria(pill, "combobox", {haspopup:"listbox", expanded:open, label:spec.label||null});
     // Small up/down chevrons — a MATCHED-SIZE pair (▴ U+25B4 / ▾ U+25BE). The
     // full-size ▲ (U+25B2) is ~2× the width of the small ▾ in a proportional
@@ -860,7 +861,7 @@ function settingControlEl(c, idx, live){
     const disp=c.percent?`${Math.round(c.value*100)}%`:c.integer?String(Math.round(c.value)):String(Number(toFixed(c.value, 3)));
     el.appendChild(mk("−","set-step","controlDecrement")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=disp; el.appendChild(v); el.appendChild(mk("+","set-step","controlIncrement"));
   }
-  else if(c.kind==="dropdown"){ const p=document.createElement("span"); p.className="set-pill"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx,undefined); el.appendChild(p);
+  else if(c.kind==="dropdown"){ const p=document.createElement("span"); p.className="set-pill ui-select"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx,undefined); el.appendChild(p);
     const sel=c.selected;
     if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===sel?" sel":""));r.textContent=o;if(live)r.onmousedown=setHit("controlDropdownOption",idx,i);d.appendChild(r);});
       // Portal to the body-level host (same as the plugin Dropdown): the

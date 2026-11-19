@@ -167,14 +167,9 @@ const REGION_FILL={
   // The plugin panels, folded from the display list the tree produced for
   // them (`regions.tree`, see 72-tree.js).
   tree:(c,reg)=>{ for(const el of treeEls(reg.tree, reg.native)) c.appendChild(el); },
-  // The same surfaces laid out natively, by the themes that do
-  // (`regions.native`, see 73-native.js).
-  native:(c,reg)=>{
-    const b=document.body.classList;
-    // Panels under `native-panels`; the confirmation card under `native-dialogs`
-    // (which every native-panels theme has too).
-    if(b.contains("native-dialogs")) for(const el of nativeEls(reg.native, b.contains("native-panels"))) c.appendChild(el);
-  },
+  // The same surfaces as real controls, from their semantic specs
+  // (`regions.native`, see 73-native.js) — how every skin draws them.
+  native:(c,reg)=>{ for(const el of nativeEls(reg.native)) c.appendChild(el); },
   contextMenu:(c,reg)=>{ const cm=reg.contextMenu; if(cm) c.appendChild(contextMenuEl(cm)); },
   auxModal:(c,reg)=>{ const am=reg.auxModal; if(am) for(const el of auxModalEls(am)) c.appendChild(el); },
   keybindingEditor:(c,reg)=>{ const kb=reg.keybindingEditor; if(kb) for(const el of keybindingEditorEls(kb)) c.appendChild(el); },

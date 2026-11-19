@@ -1333,40 +1333,31 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 // Skin is read from localStorage at boot; single-client bridge → /reset first,
 // then set the skin and reload so the vibrancy modal is in play.
 await page.request.post(URL + '/reset', { data: {} });
-// Cell-drawn: these checks press the display list's cells where the tree
-// placed them (the native layout is checked by role further down).
-await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'macos'); localStorage.setItem('fresh.nativePanels', 'off'); } catch (_) {} });
+await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'macos'); } catch (_) {} });
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 await page.waitForTimeout(400);
 check('macOS skin active (vibrancy modal in play)',
   await page.evaluate(() => document.body.classList.contains('theme-macos')));
 
-// (a) Orchestrator "Run Agent" dropdown, inside a floating panel: the pop-over
-// is a layer the tree raises under the trigger, and it arrives as items in the
-// same display list, placed exactly where the tree placed them.
+// (a) Orchestrator "Run Agent" dropdown, inside a floating panel: a real
+// dropdown button, whose option list opens directly under it.
 await page.request.post(URL + '/action', { data: { action: 'orchestrator_run_agent' } });
-await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
-await page.waitForTimeout(300);
+await page.waitForSelector('.native-panel.card .w-dd-pill', { timeout: 8000 }).catch(() => {});
 {
-  const t0 = await treeOf();
-  // The trigger is drawn in pieces — `[value ` then `▼]` — so the arrow
-  // piece finds the row and the leftmost `[` piece on it is the trigger.
-  const arrow = treeLines(t0, 'floating').find(i => /[▾▼]/.test(i.text));
-  const pill = arrow && (treeLines(t0, 'floating').filter(i => i.y === arrow.y && i.x <= arrow.x && /^\[/.test(i.text)).sort((a, b) => a.x - b.x)[0] || arrow);
-  check('Run-Agent panel shows a dropdown trigger', !!pill, surfaceText(t0, 'floating').slice(0, 200));
-  if (pill) {
-    const before = treeLines(t0, 'floating').length;
-    await clickLine(arrow);
-    await waitTree((t, lines, n) => lines('floating').length > n, before, 5000);
-    const t1 = await treeOf();
-    // The pop-over's rows: new items under the pill, at the pill's column.
-    const was = new Set(treeLines(t0, 'floating').map(o => `${o.x},${o.y},${o.text}`));
-    const rows = treeLines(t1, 'floating').filter(i => i.y > pill.y && i.x >= pill.x - 1 && i.x <= pill.x + 2 && !was.has(`${i.x},${i.y},${i.text}`));
-    const first = rows.sort((p, q) => p.y - q.y)[0];
-    check('the dropdown opens directly under its trigger (the tree placed it)',
-      !!first && first.y - pill.y >= 1 && first.y - pill.y <= 2 && Math.abs(first.x - pill.x) <= 4,
-      JSON.stringify({ pill: { x: pill.x, y: pill.y }, first: first && { x: first.x, y: first.y, text: first.text } }));
+  const pill = page.locator('.native-panel.card .w-dd-pill').first();
+  check('Run-Agent panel shows a dropdown button', (await pill.count()) === 1);
+  if (await pill.count()) {
+    await pill.click();
+    await page.waitForSelector('.w-dd', { timeout: 5000 }).catch(() => {});
+    const at = await page.evaluate(() => {
+      const p = document.querySelector('.native-panel.card .w-dd-pill'), d = document.querySelector('.w-dd');
+      if (!p || !d) return null;
+      const a = p.getBoundingClientRect(), b = d.getBoundingClientRect();
+      return { below: Math.round(b.top - a.bottom), dx: Math.round(b.left - a.left) };
+    });
+    check('the dropdown opens directly under its button',
+      !!at && at.below >= -1 && at.below <= 8 && Math.abs(at.dx) <= 12, JSON.stringify(at));
     await page.screenshot({ path: `${SHOTS}/34-macos-widget-dropdown.png` });
   }
 }
@@ -1414,7 +1405,7 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 // identity, so these checks drive the real editor through them.
 console.log('\n[native panels (Compact): laid out by the page, pressed by identity]');
 await page.request.post(URL + '/reset', { data: {} });
-await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'compact'); localStorage.removeItem('fresh.nativePanels'); } catch (_) {} });
+await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'compact'); } catch (_) {} });
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 const nerrs = []; page.on('pageerror', e => nerrs.push(String(e)));

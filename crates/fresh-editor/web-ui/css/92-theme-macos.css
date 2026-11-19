@@ -218,7 +218,10 @@
   body.macfam{--switch-track:color-mix(in srgb,var(--fg) 19%,transparent);
     --switch-w:30px;--switch-h:18px;--switch-knob:15px;--switch-pad:1.5px;--switch-knob-bg:#fff;
     --switch-knob-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.04);
-    --field-bg:var(--surface);--check-radius:4px}
+    --field-bg:var(--surface);--check-radius:4px;
+    --select-bg:var(--mac-btn);--select-fg:var(--mac-btn-fg);--select-radius:6px;
+    --select-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 1px 1px rgba(0,0,0,.10);
+    --select-focus-ring:0 0 0 3px color-mix(in srgb,var(--ui-accent) 30%,transparent)}
 
   /* Buttons: a macOS push button (light or dark) + a filled-accent primary. */
   body.macfam .settings-modal .btn,body.macfam .trustdialog .td-btn,
