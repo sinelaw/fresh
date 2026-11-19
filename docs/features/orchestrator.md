@@ -12,16 +12,16 @@ The **dock** is the column on the left that lists your workspaces. Pick one to s
 
 Open or close it from **View → Orchestrator Dock**, with **Orchestrator: Toggle Dock**, or with the dock's `×`. `Alt+O` moves the keyboard into the dock and back out again, opening it if it is hidden. In the dock, `↑` and `↓` switch workspaces as you move.
 
-Each row shows the workspace's state, so you can tell at a glance where you are needed:
+Each row shows the workspace's state at its right edge, in one column down the dock, so you can tell at a glance where you are needed. A remote workspace's machine (`⇅` SSH, `⎈` Kubernetes, `⬢` dev container) is shown just to its left, with the git summary (`↑2 +14`) before both:
 
 | Mark | Meaning |
 | --- | --- |
 | **●** | The agent is waiting on you (a question or a permission prompt) |
 | **✓** | It finished work you haven't looked at yet |
 | **\*** | It is working |
-| **·** | Idle |
+| *(blank)* | Idle |
 | **!** | Creating it failed; the row says why and offers **Retry** |
-| **○** | A worktree on disk with no workspace open yet (shown with **All worktrees**) |
+| *(blank)* | A worktree on disk with no workspace open yet (shown with **All worktrees**) |
 
 When a background workspace needs you, the status bar says so. **Orchestrator: Jump to Attention** takes you to it, and **Orchestrator: Jump Back** returns you to where you were.
 

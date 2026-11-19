@@ -2173,21 +2173,20 @@ function liveStateEntry(s: LiveSession): Entry {
   return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
 }
 
-// Compact: the state and the title. Where it runs is in its menu (a tail
-// here would only be cut off at the dock's edge).
+// Compact: the title, and the state in the dock's indicator column. Where it
+// runs is in its menu (a tail here would only be cut off at the dock's edge).
 function liveNodeEntry(s: LiveSession): TextPropertyEntry {
-  const segs: Entry[] = [
-    liveStateEntry(s),
-    { text: s.title, style: { bold: true } },
-  ];
-  return withRowMenuOnHover(styledRow(segs as Parameters<typeof styledRow>[0]));
+  return withRowMenuOnHover(cardSplitRow(
+    [{ text: s.title, style: { bold: true } }],
+    indicatorColumn([], liveStateEntry(s)),
+  ));
 }
 
 // Card: the same two rows a workspace card has — name and agent, then where.
 function liveCardPrimary(s: LiveSession): TextPropertyEntry {
   return cardSplitRow(
-    [liveStateEntry(s), { text: s.title, style: { bold: true } }],
-    [{ text: s.agent, style: { fg: "ui.menu_disabled_fg" } }],
+    [{ text: s.title, style: { bold: true } }],
+    indicatorColumn([{ text: s.agent, style: { fg: "ui.menu_disabled_fg" } }], liveStateEntry(s)),
   );
 }
 
@@ -2716,13 +2715,8 @@ function remoteDetailSegs(s: AgentSession): Entry[] {
 function sessionNodeEntry(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const segs: Entry[] = [stateGlyphEntry(s)];
-  if (s.remote) {
-    segs.push({
-      text: REMOTE_GLYPH[s.remote.kind] + " ",
-      style: { fg: remoteStateFg(s.remote.state), bold: true },
-    });
-  }
+  // The state and location are on the right (see `indicatorColumn`).
+  const segs: Entry[] = [];
   // No "active" styling here, deliberately. The dock has exactly one
   // highlight — the tree's — and `buildDockSpec` keeps it on the active
   // session whenever the dock is blurred, so the highlight *is* the
@@ -2743,13 +2737,15 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
       text: "  " + s.pending.message,
       style: { fg: pendingMsgFg(s.pending), italic: true },
     });
-    return styledRow(segs as Parameters<typeof styledRow>[0]);
+    return cardSplitRow(segs, indicatorColumn([], stateGlyphEntry(s), s.remote));
   }
-  // The git summary (↑ahead ↓behind +added −deleted) flush right, the same
-  // right group a card's name row carries: the host reserves it before
-  // fitting the name, so it stands in one column down the dock and a long
-  // name is what gets cut. A row with nothing to report has no right group.
-  return withRowMenuOnHover(cardSplitRow(segs, gitLineParts(s).right));
+  // The git summary (↑ahead ↓behind +added −deleted) to the left of the
+  // indicator column: the host reserves the whole group before fitting the
+  // name, so it stands in one column down the dock and a long name is what
+  // gets cut.
+  return withRowMenuOnHover(
+    cardSplitRow(segs, indicatorColumn(gitLineParts(s).right, stateGlyphEntry(s), s.remote)),
+  );
 }
 
 // The row's menu, offered where its status is while the pointer is over it
@@ -2762,6 +2758,48 @@ function withRowMenuOnHover(row: TextPropertyEntry): TextPropertyEntry {
   return row;
 }
 
+// ── The indicator column ──────────────────────────────────────────────────
+//
+// A dock row's state and location stand at its right edge, in one constant
+// column down the dock: the state symbol is always the row's last cell, the
+// location (a remote backend's glyph, coloured by its connection) the one
+// two to its left. A workspace on this computer leaves the location cell
+// blank rather than giving it up, so the state column never shifts — and
+// the location column is only there at all while some workspace in the dock
+// is remote. Whatever else a row reports (the git summary, a retry hint)
+// stands to the left of the column, and the name gets what remains: the
+// host reserves the whole right group before fitting the name.
+
+function dockHasRemote(): boolean {
+  for (const s of orchestratorSessions.values()) if (s.remote) return true;
+  return false;
+}
+
+function indicatorColumn(
+  lead: Entry[],
+  state: Entry,
+  remote?: AgentSession["remote"],
+): Entry[] {
+  const out: Entry[] = [...lead];
+  if (out.length > 0) out.push({ text: " " });
+  if (dockHasRemote()) {
+    out.push(
+      remote
+        ? { text: REMOTE_GLYPH[remote.kind], style: { fg: remoteStateFg(remote.state), bold: true } }
+        : { text: " " },
+      { text: " " },
+    );
+  }
+  // Nothing to indicate — an idle workspace, or a worktree on disk with no
+  // workspace open yet — is a blank cell, not a `·` or a hollow `○`: the
+  // column keeps its width, so the rows that do say something (needs you,
+  // done, working, failed) still line up and are all the eye finds there.
+  const glyph = state.text.trimEnd();
+  const quiet = glyph === ON_DISK_GLYPH || glyph === STATE_SYMBOL.idle.glyph;
+  out.push(quiet ? { text: " " } : { ...state, text: glyph });
+  return out;
+}
+
 // The dock's "card" density renders each session leaf as a fixed
 // 2-content-row card inside the tree; with `cardBorders` the host wraps
 // those rows in a rounded `╭─…─╮` border (4 screen rows total). Two
@@ -2769,8 +2807,8 @@ function withRowMenuOnHover(row: TextPropertyEntry): TextPropertyEntry {
 // right, so the status columns line up down the dock:
 //
 //   ╭──────────────────────────────╮
-//   │ * fresh-27            ↑2 +14 │   name              git
-//   │ ▸ fix/wrapped-nav   PR #2784 │   branch / project  PR
+//   │fresh-27            ↑2 +14 ⇅ *│   name     git · location · state
+//   │▸ fix/wrapped-nav     PR #2784│   branch / project            PR
 //   ╰──────────────────────────────╯
 //
 // It was three rows: the third held the PR badge and stood empty on
@@ -2815,13 +2853,8 @@ function cardSplitRow(left: Entry[], right: Entry[]): TextPropertyEntry {
 function sessionCardPrimary(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const segs: Entry[] = [stateGlyphEntry(s)];
-  if (s.remote) {
-    segs.push({
-      text: REMOTE_GLYPH[s.remote.kind] + " ",
-      style: { fg: remoteStateFg(s.remote.state), bold: true },
-    });
-  }
+  // The state and location are on the right (see `indicatorColumn`).
+  const segs: Entry[] = [];
   // See `sessionNodeEntry`: the tree's highlight is the only one.
   segs.push({ text: s.label, style: { bold: true } });
   // A remote session surfaces its backend target (host / ns·pod) coloured
@@ -2834,15 +2867,19 @@ function sessionCardPrimary(id: number): TextPropertyEntry {
   if (s.pending) {
     return cardSplitRow(
       segs,
-      pendingActionable(s.pending)
-        ? [{
-          text: "↵ " + editor.t("dock.ctx_retry"),
-          style: { fg: "ui.menu_disabled_fg", italic: true },
-        }]
-        : [],
+      indicatorColumn(
+        pendingActionable(s.pending)
+          ? [{
+            text: "↵ " + editor.t("dock.ctx_retry"),
+            style: { fg: "ui.menu_disabled_fg", italic: true },
+          }]
+          : [],
+        stateGlyphEntry(s),
+        s.remote,
+      ),
     );
   }
-  return cardSplitRow(segs, gitLineParts(s).right);
+  return cardSplitRow(segs, indicatorColumn(gitLineParts(s).right, stateGlyphEntry(s), s.remote));
 }
 
 // Card line 2 (the continuation row): what this workspace *is* on the

@@ -3651,7 +3651,7 @@ fn dock_git_summary_survives_transient_probe_failure() {
 /// against the card's right border:
 ///
 ///   ╭──────────────────────────╮
-///   │ · beta                 +2│
+///   │beta                  +2  │
 ///   │ ▸ master                 │
 ///   ╰──────────────────────────╯
 ///
@@ -3712,12 +3712,14 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
     // along beside the name.
     let row1 = inner(name_row);
     assert!(
-        row1.trim_start().starts_with("· beta") || row1.trim_start().starts_with("* beta"),
+        row1.trim_start().starts_with("beta"),
         "the name leads the card's first row, got {row1:?}"
     );
+    // The state symbol is the row's last cell (the indicator column, blank
+    // while idle), the git summary just to its left.
     assert!(
-        row1.contains("+2") && !row1.ends_with(' '),
-        "the git summary sits flush against the card's right border, got {row1:?}"
+        row1.ends_with("+2  ") || row1.ends_with("+2 *"),
+        "the git summary and then the state sit flush against the card's right border, got {row1:?}"
     );
     assert!(
         !row1.contains('▣'),
