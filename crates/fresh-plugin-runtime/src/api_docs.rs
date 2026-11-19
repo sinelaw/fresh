@@ -72,6 +72,7 @@ const METHOD_PAGES: &[PageSpec] = &[
             "Buffer Queries",
             "Cursors & Viewport",
             "Text Editing",
+            "Edit Rules",
             "Opening, Saving & Closing",
             "Clipboard",
             "Search & Replace",

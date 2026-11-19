@@ -1,5 +1,6 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
+use crate::input::edit_rules::{apply_edit_rules, shift_default_moves};
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
@@ -17,6 +18,8 @@ use crate::primitives::word_navigation::{
     find_word_start_right,
 };
 use crate::state::EditorState;
+use fresh_core::api::EditRuleTrigger;
+use fresh_core::edit_rules::EditRuleRegistry;
 use std::ops::Range;
 
 /// Direction for block selection movement
@@ -3180,6 +3183,8 @@ fn handle_duplicate_line(
 /// # Returns
 /// * `Some(Vec<Event>)` - Events to apply for this action
 /// * `None` - If the action doesn't generate events (like Quit, Save, etc.)
+///
+/// Applies no edit rules; see [`action_to_events_with_edit_rules`].
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events(
     state: &mut EditorState,
@@ -3191,6 +3196,36 @@ pub fn action_to_events(
     auto_surround: bool,
     estimated_line_length: usize,
     viewport_height: u16,
+) -> Option<Vec<Event>> {
+    action_to_events_with_edit_rules(
+        state,
+        cursors,
+        action,
+        tab_size,
+        auto_indent,
+        auto_close,
+        auto_surround,
+        estimated_line_length,
+        viewport_height,
+        None,
+    )
+}
+
+/// [`action_to_events`], with the plugin-registered edit rules that Enter,
+/// Tab and Shift+Tab offer each cursor to first (see
+/// [`crate::input::edit_rules`]).
+#[allow(clippy::too_many_arguments)]
+pub fn action_to_events_with_edit_rules(
+    state: &mut EditorState,
+    cursors: &mut Cursors,
+    action: Action,
+    tab_size: usize,
+    auto_indent: bool,
+    auto_close: bool,
+    auto_surround: bool,
+    estimated_line_length: usize,
+    viewport_height: u16,
+    edit_rules: Option<&EditRuleRegistry>,
 ) -> Option<Vec<Event>> {
     // For virtual buffers with hidden cursors, ignore movement and editing actions
     if !state.show_cursors && action.is_movement_or_editing() {
@@ -3231,24 +3266,65 @@ pub fn action_to_events(
             );
         }
 
+        // Enter, Shift+Tab and Tab first offer each cursor to the edit rules
+        // registered for the buffer's language; the cursors no rule handles
+        // get the key's normal edit, in the same event list (one undo step).
         Action::InsertNewline => {
-            handle_insert_newline(
-                state,
-                cursors,
-                &mut events,
-                tab_size,
-                auto_indent,
-                auto_close,
-                estimated_line_length,
-            );
+            let ruled = edit_rules.and_then(|r| {
+                apply_edit_rules(state, cursors, &mut events, EditRuleTrigger::Newline, r)
+            });
+            let rest = match &ruled {
+                Some(r) => r.rest.as_ref(),
+                None => Some(&*cursors),
+            };
+            if let Some(rest) = rest {
+                let from = events.len();
+                handle_insert_newline(
+                    state,
+                    rest,
+                    &mut events,
+                    tab_size,
+                    auto_indent,
+                    auto_close,
+                    estimated_line_length,
+                );
+                if let Some(r) = &ruled {
+                    shift_default_moves(&mut events[from..], &r.edits);
+                }
+            }
         }
 
         Action::DedentSelection => {
-            handle_dedent_selection(state, cursors, &mut events, tab_size, estimated_line_length);
+            let ruled = edit_rules.and_then(|r| {
+                apply_edit_rules(state, cursors, &mut events, EditRuleTrigger::Dedent, r)
+            });
+            let rest = match &ruled {
+                Some(r) => r.rest.as_ref(),
+                None => Some(&*cursors),
+            };
+            if let Some(rest) = rest {
+                let from = events.len();
+                handle_dedent_selection(state, rest, &mut events, tab_size, estimated_line_length);
+                if let Some(r) = &ruled {
+                    shift_default_moves(&mut events[from..], &r.edits);
+                }
+            }
         }
 
         Action::InsertTab => {
-            handle_insert_tab(state, cursors, &mut events, tab_size, estimated_line_length);
+            // A selection anywhere makes Tab indent the selected lines
+            // (#3666); rules only stand in for Tab's plain insert.
+            let any_selection = cursors.iter().any(|(_, c)| c.selection_range().is_some());
+            let ruled = edit_rules.filter(|_| !any_selection).and_then(|r| {
+                apply_edit_rules(state, cursors, &mut events, EditRuleTrigger::Indent, r)
+            });
+            let rest = match &ruled {
+                Some(r) => r.rest.as_ref(),
+                None => Some(&*cursors),
+            };
+            if let Some(rest) = rest {
+                handle_insert_tab(state, rest, &mut events, tab_size, estimated_line_length);
+            }
         }
 
         // Basic movement - move each cursor

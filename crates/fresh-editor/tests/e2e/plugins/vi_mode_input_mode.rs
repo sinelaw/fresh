@@ -27,8 +27,6 @@ struct Setup {
     window_a: WindowId,
     other_root: PathBuf,
     b_file: PathBuf,
-    /// Reports `tim_report_mode` has made so far (see `wait_for_editor_mode`).
-    mode_reports: usize,
     _temp: tempfile::TempDir,
 }
 
@@ -102,7 +100,6 @@ fn setup_with(extra_plugins: &[&str], auto_start: bool) -> Setup {
         window_a,
         other_root,
         b_file,
-        mode_reports: 0,
         _temp: temp,
     }
 }
@@ -139,24 +136,6 @@ fn press_j(h: &mut EditorTestHarness, line: usize) -> String {
     })
     .unwrap();
     h.screen_to_string()
-}
-
-/// Wait until the status bar shows the active window's editor mode to be
-/// `mode` ("none" for none), as reported by `tim_report_mode`. Each report
-/// is numbered, so a stale one is never taken for the answer; the mode is
-/// set by another plugin's hook, so ask again until it has taken effect.
-fn wait_for_editor_mode(s: &mut Setup, mode: &str) {
-    loop {
-        s.mode_reports += 1;
-        let prefix = format!("MODE{}=", s.mode_reports);
-        s.h.editor_mut()
-            .dispatch_action_for_tests(PluginAction("tim_report_mode".to_string()));
-        s.h.wait_until(|h| h.get_status_bar().contains(&prefix))
-            .unwrap();
-        if s.h.get_status_bar().contains(&format!("{prefix}{mode};")) {
-            return;
-        }
-    }
 }
 
 fn assert_vi_j_moves_to(h: &mut EditorTestHarness, line: usize, where_: &str) {
@@ -268,9 +247,18 @@ fn disabling_vi_takes_effect_in_every_window() {
     let _ = window_b;
 }
 
-/// markdown-source is a window-scoped mode, which outranks the input mode, so
-/// it has to step aside for vi: turning vi on while a markdown file is open
-/// must give vi the keys there, not leave markdown-source shadowing it.
+/// Whether the markdown_source plugin's edit rules are registered.
+fn markdown_rules_registered(h: &EditorTestHarness) -> bool {
+    h.editor()
+        .edit_rules()
+        .read()
+        .unwrap()
+        .has_rules("markdown", fresh_core::api::EditRuleTrigger::Newline)
+}
+
+/// Turning vi on while a markdown file is open gives vi the keys there.
+/// markdown_source claims no keys — its list editing is edit rules the
+/// editor applies inside its own Enter / Tab — so nothing shadows vi.
 #[test]
 fn turning_vi_on_in_a_markdown_file_gives_vi_the_keys() {
     let mut s = setup_with(&["markdown_source"], false);
@@ -279,15 +267,70 @@ fn turning_vi_on_in_a_markdown_file_gives_vi_the_keys() {
     s.h.open_file(&md).unwrap();
     s.h.wait_until(|h| h.screen_to_string().contains("notes.md"))
         .unwrap();
-    // Synchronisation only: markdown-source has claimed the window.
-    wait_for_editor_mode(&mut s, "markdown-source");
+    s.h.wait_until(markdown_rules_registered).unwrap();
 
     s.h.editor_mut()
         .dispatch_action_for_tests(PluginAction("vi_mode_toggle".to_string()));
     s.h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
         .unwrap();
-    // Synchronisation only: markdown-source hears `input_mode_changed`
-    // through the plugin queue, after vi's status line is already up.
-    wait_for_editor_mode(&mut s, "none");
     assert_vi_j_moves_to(&mut s.h, 2, "a markdown file, vi turned on there");
+}
+
+/// #3814: with vi `auto_start`, a Markdown file opened at startup — before
+/// either plugin has finished loading, as `fresh notes.md` does — gets vi's
+/// keys: `jjx` moves down twice and deletes a character instead of typing.
+/// And Enter in vi's insert mode on a list item continues the list.
+#[test]
+fn vi_autostart_with_a_markdown_file_opened_at_startup() {
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin(&plugins_dir, "markdown_source");
+    copy_plugin_lib(&plugins_dir);
+    let md = project_root.join("notes.md");
+    fs::write(&md, "- one\n- two\n- three\n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "auto_start": true }),
+        },
+    );
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, project_root).unwrap();
+    // Opened straight away, while the plugins are still starting.
+    h.open_file(&md).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
+        .unwrap();
+    h.wait_until(markdown_rules_registered).unwrap();
+
+    assert_vi_j_moves_to(&mut h, 2, "a markdown file opened at startup");
+    assert_vi_j_moves_to(&mut h, 3, "a markdown file opened at startup");
+    h.send_key(KeyCode::Char('x'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        h.get_buffer_content()
+            .is_some_and(|c| c == "- one\n- two\n three\n")
+    })
+    .unwrap();
+
+    // Line 2, append at its end, Enter: the list continues in vi insert.
+    h.send_key(KeyCode::Char('k'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Ln 2, Col 1"))
+        .unwrap();
+    h.send_key(KeyCode::Char('A'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("INSERT"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.type_text("new").unwrap();
+    h.wait_until(|h| {
+        h.get_buffer_content()
+            .is_some_and(|c| c == "- one\n- two\n- new\n three\n")
+    })
+    .unwrap();
 }

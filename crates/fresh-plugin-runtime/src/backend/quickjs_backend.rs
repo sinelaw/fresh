@@ -88,10 +88,11 @@
 
 use anyhow::{anyhow, Result};
 use fresh_core::api::{
-    ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
-    GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
-    PluginCommand, PluginMarker, PluginResponse, ScrollbarMarker, SearchHandleRegistry,
-    SearchHandleState, SearchTakeResult, SplitWindowOptions, SyntaxRegion,
+    ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditRuleSet,
+    EditorStateSnapshot, GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig,
+    LspServerPackConfig, OverlayOptions, PluginCommand, PluginMarker, PluginResponse,
+    ScrollbarMarker, SearchHandleRegistry, SearchHandleState, SearchTakeResult, SplitWindowOptions,
+    SyntaxRegion,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -730,6 +731,9 @@ pub struct PluginTrackedState {
     pub timer_ids: Vec<u64>,
     /// Machine handles from `editor.openMachine`, each holding a connection. Closed on unload.
     pub machine_ids: Vec<u64>,
+    /// Ids of the edit rule sets from `editor.registerEditRules`. Dropped on
+    /// unload, so a disabled or reloaded plugin's rules stop applying.
+    pub edit_rule_ids: Vec<String>,
 }
 
 /// Forget a background process id (it exited or a kill was requested), so
@@ -2402,6 +2406,86 @@ impl JsEditorApi {
         };
         fresh_js::serde::to_value(ctx, &diff)
             .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    #[plugin_api(section = "Edit Rules")]
+    /// Register edit rules: what Enter, Tab and Shift+Tab do to the cursor's
+    /// line in buffers of some languages, given as data that the editor
+    /// applies itself, synchronously, as part of the key's own edit.
+    ///
+    /// Each key first offers every cursor (without a selection, alone on its
+    /// line) to the rules for the buffer's language; the first rule that
+    /// applies rewrites the line, and a cursor no rule takes gets the key's
+    /// normal behaviour. The edit is one undo step with the rest of the key,
+    /// it lands before the next key is read, and it applies whatever keymap
+    /// sent the key — vi's insert mode included. Tab with a selection always
+    /// indents the selected lines. See `EditRule` for the rule format.
+    ///
+    /// Registering the same `id` again replaces that set. A plugin's rules
+    /// are dropped when it is unloaded, reloaded or disabled. Throws when the
+    /// set is malformed (a bad pattern, an unknown template function, a
+    /// capture the patterns do not have), naming the rule.
+    ///
+    /// @param id - This plugin's name for the set
+    /// @param rules - The languages and the rules
+    ///
+    /// @example
+    /// // Continue `#` comments on Enter in shell scripts and Python.
+    /// editor.registerEditRules("comments", {
+    ///   languages: ["bash", "python"],
+    ///   rules: [{ on: "newline", before: "^([ \\t]*# ?)\\S", insert: "\n$1" }],
+    /// });
+    pub fn register_edit_rules<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        id: String,
+        rules: EditRuleSet,
+    ) -> fresh_js::Result<bool> {
+        if let Err(e) = fresh_core::edit_rules::CompiledEditRuleSet::compile(&rules) {
+            let msg = format!("registerEditRules(\"{id}\"): {e}");
+            return Err(ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value()));
+        }
+        {
+            let mut tracked = self.plugin_tracked_state.borrow_mut();
+            let ids = &mut tracked
+                .entry(self.plugin_name.clone())
+                .or_default()
+                .edit_rule_ids;
+            if !ids.contains(&id) {
+                ids.push(id.clone());
+            }
+        }
+        Ok(self
+            .command_sender
+            .send(PluginCommand::RegisterEditRules {
+                plugin_name: self.plugin_name.clone(),
+                id,
+                rules,
+            })
+            .is_ok())
+    }
+
+    /// Drop this plugin's edit rule set `id` (see `registerEditRules`).
+    /// Returns whether the plugin had registered one under that id.
+    pub fn unregister_edit_rules(&self, id: String) -> bool {
+        let had = self
+            .plugin_tracked_state
+            .borrow_mut()
+            .get_mut(&self.plugin_name)
+            .is_some_and(|t| {
+                let before = t.edit_rule_ids.len();
+                t.edit_rule_ids.retain(|i| *i != id);
+                t.edit_rule_ids.len() != before
+            });
+        if had {
+            let _ = self
+                .command_sender
+                .send(PluginCommand::UnregisterEditRules {
+                    plugin_name: self.plugin_name.clone(),
+                    id: Some(id),
+                });
+        }
+        had
     }
 
     #[plugin_api(section = "Text Editing")]
@@ -6520,7 +6604,7 @@ impl JsEditorApi {
     }
 
     /// Set the active window's editor mode — a plugin mode scoped to that
-    /// window, such as `markdown-source`. It outranks the editor-wide input
+    /// window, such as flash's label mode. It outranks the editor-wide input
     /// mode in that window and is invisible in every other. `null` clears
     /// it. A modal-editing personality that should apply everywhere (vi)
     /// belongs in `setInputMode` instead.
@@ -11496,6 +11580,16 @@ impl QuickJsBackend {
                 let _ = self.command_sender.send(PluginCommand::ClearPluginTimer {
                     timer_id: *timer_id,
                 });
+            }
+
+            // Drop the plugin's edit rules (all of its sets at once).
+            if !tracked.edit_rule_ids.is_empty() {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::UnregisterEditRules {
+                        plugin_name: plugin_name.to_string(),
+                        id: None,
+                    });
             }
 
             // Close the machines this plugin opened. No callback: the promise is

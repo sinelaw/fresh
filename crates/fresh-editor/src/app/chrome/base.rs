@@ -66,7 +66,7 @@ impl Editor {
 
         // Only check buffer mode keybindings when the editor buffer has focus.
         // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
-        // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
+        // (e.g. a plugin mode's Enter binding should not fire while the explorer is focused).
         //
         // CompositeBuffer is included so a composite buffer's plugin-defined
         // mode (e.g. the review-diff `diff-view` mode) can bind keys the core

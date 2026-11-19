@@ -5,6 +5,9 @@ use std::fs;
 use std::path::Path;
 
 /// The Markdown plugins the outline needs, into `<project>/plugins`.
+/// `markdown_source` is among them on purpose: its edit rules change what
+/// Enter does in the buffer, and a focused section's Enter must still reach
+/// the row.
 pub fn install_markdown_plugins(project: &Path) {
     let plugins_dir = project.join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();

@@ -12,10 +12,13 @@ Fresh edits Markdown as source, and can also show it as a rendered page — with
 
 Smart editing for Markdown files (provided by the built-in `markdown_source` plugin, enabled by default):
 
-- Enter continues list items (bullets, ordered lists, checkboxes)
+- Enter continues list items: the same bullet, the next number (`9.` → `10.`), or a new unchecked checkbox, at the same indentation
 - Enter on an empty list marker removes it
-- Tab on an empty list item indents it and cycles the bullet style (Shift+Tab reverses); elsewhere Tab works as usual
+- Enter on any other indented line keeps its indentation
+- Tab on an empty bullet or checkbox item indents it one level (your `tab_size` / `use_tabs`) and cycles the bullet `*` → `-` → `+`; Shift+Tab takes the level back off and cycles the other way. Elsewhere Tab and Shift+Tab work as usual, and Tab with a selection indents the selected lines
 - Single-quote auto-close is disabled so apostrophes don't interfere
+
+It applies at every cursor, keeps up with typing however fast (or a paste of keystrokes), and each Enter or Tab is one undo step. It works the same in vi mode's insert mode and in compose mode. It applies to buffers whose language is Markdown (`.md`, `.markdown`, `README`); an `.mdx` file is plain text unless you add `mdx` to `languages.markdown.extensions` (or define an `mdx` language). To turn it off, disable the `markdown_source` plugin.
 
 ## Compose Mode
 

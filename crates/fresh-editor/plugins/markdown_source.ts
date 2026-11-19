@@ -1,401 +1,71 @@
 /// <reference path="./lib/fresh.d.ts" />
-// Markdown Source Mode Plugin
-// Provides smart editing features for Markdown files in source (non-compose) mode:
-// - Enter: auto-continue list items (bullets, ordered, checkboxes) with matching
-//   indentation; on an empty list item, removes the marker instead
-// - Tab: on a blank list item, indents and cycles the bullet (* -> - -> + -> *);
-//   otherwise inserts one indentation level (the buffer's tab_size / use_tabs)
-// - Shift+Tab: on a blank list item, de-indents and cycles the bullet in reverse
-//   (+ -> - -> * -> +); otherwise falls through to built-in dedent_selection
+// Markdown Source Plugin
+// List editing for Markdown files:
+// - Enter: continues a list item (same bullet, the next number, an unchecked
+//   checkbox) with matching indentation; on an empty item, removes the
+//   marker instead; on any other indented line, keeps the indentation
+// - Tab: on a blank bullet or checkbox item, indents one level (the buffer's
+//   tab_size / use_tabs) and cycles the bullet (* -> - -> + -> *)
+// - Shift+Tab: on a blank bullet or checkbox item with a level of
+//   indentation, removes that level and cycles the bullet back
+//   (+ -> - -> * -> +)
+// Everywhere else the keys do what they always do.
 //
-// This plugin defines a "markdown-source" mode that auto-activates when a
-// markdown file is opened in source view, or when the buffer language is set
-// to markdown. It uses readOnly=false so that normal character insertion is
-// unaffected.
+// The plugin only registers these rules (`editor.registerEditRules`); the
+// editor applies them itself, as part of the key's own edit, so they keep
+// up with fast typing and apply in vi's insert mode too. Disabling the
+// plugin turns them off.
 
 const editor = getEditor();
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
+// Language ids the rules apply to. `.md` / `.markdown` files are
+// "markdown"; the others are ids a language pack or user config may give
+// Markdown dialects.
+const LANGUAGES = ["markdown", "multimarkdown", "mdx"];
 
-// Indentation follows the buffer's own settings — `editor.tab_size` /
-// `editor.use_tabs`, overridden by `languages.markdown.*`, `.editorconfig`
-// or a per-buffer "Set Tab Size" — rather than a fixed width (#3713).
-const DEFAULT_TAB_SIZE = 4;
+// A blank list item's text before the cursor: indentation (group 1), a
+// bullet (2) and an optional checkbox (3), then only whitespace.
+const BLANK_BULLET_ITEM = "^([ \\t]*)([-*+]) (\\[[ xX]\\] )?\\s*$";
+// Nothing but whitespace after the cursor.
+const BLANK = "^\\s*$";
 
-interface Indent {
-  /** Text one indentation level inserts: a tab, or `width` spaces. */
-  unit: string;
-  /** Columns one level spans. */
-  width: number;
-}
-
-function indentFor(bufferId: number | null | undefined): Indent {
-  const info = bufferId ? editor.getBufferInfo(bufferId) : null;
-  const width = info && info.tab_size > 0 ? info.tab_size : DEFAULT_TAB_SIZE;
-  return { unit: info?.use_tabs ? "\t" : " ".repeat(width), width };
-}
-
-/** `indent` with one indentation level removed from its start, or null when
- *  it holds less than a level. A leading tab is a level on its own; spaces
- *  count as one level per `width` of them. */
-function dedentOnce(indent: string, ind: Indent): string | null {
-  if (indent.startsWith("\t")) return indent.substring(1);
-  if (indent.length >= ind.width && /^ +$/.test(indent.substring(0, ind.width))) {
-    return indent.substring(ind.width);
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function isMarkdownFile(path: string): boolean {
-  return path.endsWith(".md") || path.endsWith(".markdown") || path.endsWith(".mdx");
-}
-
-function isMarkdownLanguage(language: string): boolean {
-  return language === "markdown" || language === "multimarkdown";
-}
-
-// Check whether a buffer should use markdown-source mode based on its
-// file path OR its language setting.
-function isMarkdownBuffer(info: BufferInfo): boolean {
-  return isMarkdownFile(info.path) || isMarkdownLanguage(info.language);
-}
-
-// ---------------------------------------------------------------------------
-// List marker parsing
-// ---------------------------------------------------------------------------
-
-interface ListMarkerInfo {
-  type: "unordered" | "ordered" | "checkbox";
-  indent: string;       // leading whitespace
-  bullet?: string;      // -, *, + for unordered/checkbox
-  number?: string;      // "1", "10" etc. for ordered
-  checked?: boolean;    // for checkbox
-  content: string;      // text after marker (may be empty)
-}
-
-// Parse the text of a line (from line start up to cursor) for a list marker.
-// Returns null if the line doesn't start with a recognised list pattern.
-function parseListMarker(lineText: string): ListMarkerInfo | null {
-  let indent = "";
-  let i = 0;
-  while (i < lineText.length && (lineText[i] === " " || lineText[i] === "\t")) {
-    indent += lineText[i];
-    i++;
-  }
-  const rest = lineText.substring(i);
-
-  // Checkbox: "- [ ] content" / "* [x] content" / "+ [X] "
-  const cbMatch = rest.match(/^([-*+]) \[([ xX])\] (.*)$/);
-  if (cbMatch) {
-    return {
-      type: "checkbox",
-      indent,
-      bullet: cbMatch[1],
-      checked: cbMatch[2] !== " ",
-      content: cbMatch[3],
-    };
-  }
-
-  // Ordered list: "1. content" / "10. "
-  const olMatch = rest.match(/^(\d+)\. (.*)$/);
-  if (olMatch) {
-    return {
-      type: "ordered",
-      indent,
-      number: olMatch[1],
-      content: olMatch[2],
-    };
-  }
-
-  // Unordered list: "- content" / "* content" / "+ content"
-  const ulMatch = rest.match(/^([-*+]) (.*)$/);
-  if (ulMatch) {
-    return {
-      type: "unordered",
-      indent,
-      bullet: ulMatch[1],
-      content: ulMatch[2],
-    };
-  }
-
-  return null;
-}
-
-// Build the marker text for the *next* list item (used by Enter handler).
-function nextMarkerText(info: ListMarkerInfo): string {
-  if (info.type === "ordered") {
-    const num = parseInt(info.number!, 10) + 1;
-    return info.indent + num + ". ";
-  }
-  if (info.type === "checkbox") {
-    // New checkbox is always unchecked
-    return info.indent + info.bullet + " [ ] ";
-  }
-  // unordered — same bullet
-  return info.indent + info.bullet + " ";
-}
-
-// Cycle bullet character forward: * -> - -> + -> *
-function cycleBullet(bullet: string): string {
-  switch (bullet) {
-    case "*": return "-";
-    case "-": return "+";
-    case "+": return "*";
-    default: return "-";
-  }
-}
-
-// Cycle bullet character in reverse: * -> + -> - -> *
-function reverseCycleBullet(bullet: string): string {
-  switch (bullet) {
-    case "*": return "+";
-    case "+": return "-";
-    case "-": return "*";
-    default: return "-";
-  }
-}
-
-// Read the text on the current line after the cursor (up to the next newline).
-async function readRestOfLine(bufferId: number, cursorPos: number): Promise<string> {
-  const bufLen = editor.getBufferLength(bufferId);
-  const afterLen = Math.min(1024, bufLen - cursorPos);
-  if (afterLen <= 0) return "";
-  const textAfter = await editor.getBufferText(bufferId, cursorPos, cursorPos + afterLen);
-  const nextNl = textAfter.indexOf("\n");
-  return nextNl >= 0 ? textAfter.substring(0, nextNl) : textAfter;
-}
-
-// ---------------------------------------------------------------------------
-// Enter handler: auto-continue list items or match indentation
-// ---------------------------------------------------------------------------
-
-async function md_src_enter() : Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (!bufferId) {
-    editor.executeAction("insert_newline");
-    return;
-  }
-
-  // When multiple cursors are active, fall back to the built-in insert_newline
-  // action which correctly handles all cursors atomically. The markdown-specific
-  // list continuation logic below only operates on the primary cursor.
-  const allCursors = editor.getAllCursors();
-  if (allCursors.length > 1) {
-    editor.executeAction("insert_newline");
-    return;
-  }
-
-  const cursorPos = editor.getCursorPosition();
-
-  // Read a window of text before the cursor to find the current line.
-  const windowStart = Math.max(0, cursorPos - 1024);
-  const textWindow = await editor.getBufferText(bufferId, windowStart, cursorPos);
-
-  const lastNl = textWindow.lastIndexOf("\n");
-  const lineText = lastNl >= 0 ? textWindow.substring(lastNl + 1) : textWindow;
-
-  // Try to parse as a list item
-  const listMatch = parseListMarker(lineText);
-
-  if (listMatch) {
-    const restOfLine = await readRestOfLine(bufferId, cursorPos);
-
-    if (listMatch.content.trim() === "" && restOfLine.trim() === "") {
-      // Empty list item (just marker, no content) — remove the marker
-      const lineStartByte = cursorPos - editor.utf8ByteLength(lineText);
-      const lineEndByte = cursorPos + editor.utf8ByteLength(restOfLine);
-      editor.deleteRange(bufferId, lineStartByte, lineEndByte);
-      return;
-    }
-
-    // Non-empty list item — insert newline + next marker
-    editor.insertAtCursor("\n" + nextMarkerText(listMatch));
-    return;
-  }
-
-  // No list marker — just copy leading whitespace
-  let indent = "";
-  for (let i = 0; i < lineText.length; i++) {
-    const ch = lineText[i];
-    if (ch === " " || ch === "\t") {
-      indent += ch;
-    } else {
-      break;
-    }
-  }
-  editor.insertAtCursor("\n" + indent);
-}
-registerHandler("md_src_enter", md_src_enter);
-
-// ---------------------------------------------------------------------------
-// Tab handler: indent + cycle bullet on blank list items, else insert spaces
-// ---------------------------------------------------------------------------
-
-async function md_src_tab() : Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  const ind = indentFor(bufferId);
-  if (!bufferId) {
-    editor.insertAtCursor(ind.unit);
-    return;
-  }
-
-  // A selection or several cursors: indent them the way plain Tab does.
-  // The list handling below only knows the primary cursor, and its fallback
-  // would replace the selection with spaces (#3666).
-  const cursors = editor.getAllCursors();
-  if (cursors.length > 1 || cursors.some((c) => c.selection && c.selection.start !== c.selection.end)) {
-    editor.executeAction("insert_tab");
-    return;
-  }
-
-  const cursorPos = editor.getCursorPosition();
-  const windowStart = Math.max(0, cursorPos - 1024);
-  const textBefore = await editor.getBufferText(bufferId, windowStart, cursorPos);
-
-  const lastNl = textBefore.lastIndexOf("\n");
-  const lineText = lastNl >= 0 ? textBefore.substring(lastNl + 1) : textBefore;
-
-  const listMatch = parseListMarker(lineText);
-
-  if (listMatch && (listMatch.type === "unordered" || listMatch.type === "checkbox")) {
-    const restOfLine = await readRestOfLine(bufferId, cursorPos);
-
-    if (listMatch.content.trim() === "" && restOfLine.trim() === "") {
-      // Blank list item — indent + cycle bullet
-      const lineStartByte = cursorPos - editor.utf8ByteLength(lineText);
-      const lineEndByte = cursorPos + editor.utf8ByteLength(restOfLine);
-      const newBullet = cycleBullet(listMatch.bullet!);
-      let newLine: string;
-      if (listMatch.type === "checkbox") {
-        const check = listMatch.checked ? "x" : " ";
-        newLine = listMatch.indent + ind.unit + newBullet + " [" + check + "] ";
-      } else {
-        newLine = listMatch.indent + ind.unit + newBullet + " ";
-      }
-      editor.deleteRange(bufferId, lineStartByte, lineEndByte);
-      editor.insertText(bufferId, lineStartByte, newLine);
-      editor.setBufferCursor(bufferId, lineStartByte + editor.utf8ByteLength(newLine));
-      return;
-    }
-  }
-
-  // Default: insert one indentation level
-  editor.insertAtCursor(ind.unit);
-}
-registerHandler("md_src_tab", md_src_tab);
-
-// ---------------------------------------------------------------------------
-// Shift+Tab handler: de-indent + reverse-cycle bullet on blank list items
-// ---------------------------------------------------------------------------
-
-async function md_src_shift_tab() : Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (!bufferId) {
-    editor.executeAction("dedent_selection");
-    return;
-  }
-
-  const cursorPos = editor.getCursorPosition();
-  const windowStart = Math.max(0, cursorPos - 1024);
-  const textBefore = await editor.getBufferText(bufferId, windowStart, cursorPos);
-
-  const lastNl = textBefore.lastIndexOf("\n");
-  const lineText = lastNl >= 0 ? textBefore.substring(lastNl + 1) : textBefore;
-
-  const listMatch = parseListMarker(lineText);
-
-  if (listMatch && (listMatch.type === "unordered" || listMatch.type === "checkbox")) {
-    const restOfLine = await readRestOfLine(bufferId, cursorPos);
-
-    if (listMatch.content.trim() === "" && restOfLine.trim() === "") {
-      // Blank list item — de-indent + reverse cycle bullet
-      // Only de-indent if there is a whole level to remove
-      const newIndent = dedentOnce(listMatch.indent, indentFor(bufferId));
-      if (newIndent !== null) {
-        const lineStartByte = cursorPos - editor.utf8ByteLength(lineText);
-        const lineEndByte = cursorPos + editor.utf8ByteLength(restOfLine);
-        const newBullet = reverseCycleBullet(listMatch.bullet!);
-        let newLine: string;
-        if (listMatch.type === "checkbox") {
-          const check = listMatch.checked ? "x" : " ";
-          newLine = newIndent + newBullet + " [" + check + "] ";
-        } else {
-          newLine = newIndent + newBullet + " ";
-        }
-        editor.deleteRange(bufferId, lineStartByte, lineEndByte);
-        editor.insertText(bufferId, lineStartByte, newLine);
-        editor.setBufferCursor(bufferId, lineStartByte + editor.utf8ByteLength(newLine));
-        return;
-      }
-    }
-  }
-
-  // Default: fall through to built-in dedent
-  editor.executeAction("dedent_selection");
-}
-registerHandler("md_src_shift_tab", md_src_shift_tab);
-
-// ---------------------------------------------------------------------------
-// Mode definition
-// ---------------------------------------------------------------------------
-
-// Define a non-read-only mode so unmapped keys insert normally.
-// Enter, Tab, and Shift+Tab are intercepted for smart list handling.
-editor.defineMode("markdown-source", [
-  ["Enter", "md_src_enter"],
-  ["Tab", "md_src_tab"],
-  ["BackTab", "md_src_shift_tab"],
-], false);
-
-// ---------------------------------------------------------------------------
-// Auto-activation: switch mode when a markdown file is focused or language changes
-// ---------------------------------------------------------------------------
-
-function updateMarkdownMode(): void {
-  const bufferId = editor.getActiveBufferId();
-  if (!bufferId) return;
-
-  const info = editor.getBufferInfo(bufferId);
-  if (!info) return;
-
-  const currentMode = editor.getEditorMode();
-  // A modal-editing input mode (vi) owns the keys while it is on. The
-  // window's editor mode outranks it, so markdown-source steps aside rather
-  // than shadow vi in markdown files.
-  const inputModeOn = editor.getInputMode() != null;
-
-  if (isMarkdownBuffer(info) && info.view_mode === "source" && !inputModeOn) {
-    // Only activate if no other window mode is already set
-    if (currentMode == null) {
-      editor.setEditorMode("markdown-source");
-    }
-  } else {
-    // Leaving a markdown file, switching to compose mode, or an input mode
-    // turned on: deactivate
-    if (currentMode === "markdown-source") {
-      editor.setEditorMode(null);
-    }
-  }
-}
-
-
-
-
-
-editor.on("buffer_activated", () => {
-  updateMarkdownMode();
-});
-editor.on("language_changed", () => {
-  updateMarkdownMode();
-});
-editor.on("input_mode_changed", () => {
-  updateMarkdownMode();
+editor.registerEditRules("lists", {
+  languages: LANGUAGES,
+  rules: [
+    // Enter on an empty item (marker only): remove the marker.
+    {
+      on: "newline",
+      before: "^[ \\t]*(?:[-*+] \\[[ xX]\\] |\\d+\\. |[-*+] )\\s*$",
+      after: BLANK,
+      replaceBefore: "",
+      replaceAfter: "",
+    },
+    // Enter on a checkbox item: a new unchecked one.
+    { on: "newline", before: "^([ \\t]*)([-*+]) \\[[ xX]\\] ", insert: "\n$1$2 [ ] " },
+    // Enter on an ordered item: the next number.
+    { on: "newline", before: "^([ \\t]*)(\\d+)\\. ", insert: "\n$1${inc:2}. " },
+    // Enter on a bullet item: the same bullet.
+    { on: "newline", before: "^([ \\t]*)([-*+]) ", insert: "\n$1$2 " },
+    // Enter on any other indented line: keep the indentation.
+    { on: "newline", before: "^([ \\t]+)", insert: "\n$1" },
+    // Tab on a blank bullet item: one level deeper, next bullet.
+    {
+      on: "indent",
+      before: BLANK_BULLET_ITEM,
+      after: BLANK,
+      replaceBefore: "$1${indent}${cycle:2:*|-|+} $3",
+      replaceAfter: "",
+    },
+    // Shift+Tab on a blank bullet item: one level out, previous bullet.
+    // `${dedent}` leaves the rule unapplied when there is no level to take.
+    {
+      on: "dedent",
+      before: BLANK_BULLET_ITEM,
+      after: BLANK,
+      replaceBefore: "${dedent:1}${cycle:2:+|-|*} $3",
+      replaceAfter: "",
+    },
+  ],
 });
 
 editor.debug("markdown_source plugin loaded");

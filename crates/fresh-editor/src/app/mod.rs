@@ -1029,6 +1029,10 @@ pub struct Editor {
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
 
+    /// Edit rules plugins register for Enter / Tab / Shift+Tab per language;
+    /// windows share it through `WindowResources::edit_rules`.
+    edit_rules: Arc<RwLock<fresh_core::edit_rules::EditRuleRegistry>>,
+
     /// Quick Open registry for unified prompt providers
     quick_open_registry: QuickOpenRegistry,
 

@@ -1,21 +1,23 @@
 //! End-to-end tests for the markdown_source plugin
 //!
-//! Tests the markdown-source mode that auto-activates for .md files:
-//! - Auto-activation when opening a markdown file in source mode
-//! - Enter key auto-continues list items (bullets, ordered, checkboxes)
-//! - Enter on empty list item removes the marker
-//! - Tab key inserts spaces (non-list context) or indents + cycles bullet
-//! - Mode deactivates when switching to a non-markdown buffer
+//! The plugin registers edit rules (`editor.registerEditRules`) for Markdown
+//! buffers, which the editor applies inside Enter / Tab / Shift+Tab:
+//! - Enter continues list items (bullets, ordered, checkboxes)
+//! - Enter on an empty list item removes the marker
+//! - Tab on a blank list item indents and cycles the bullet; elsewhere Tab
+//!   is the normal Tab
+//! - The rules apply to Markdown buffers only, also in vi's insert mode,
+//!   and keep up with keys sent faster than the plugin runtime (#3813)
 
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh_core::api::EditRuleTrigger;
 use std::fs;
-use std::time::Duration;
 
 /// Create a harness with the markdown_source plugin loaded.
-/// Waits for the plugin to fully initialise (mode defined + event handler registered).
+/// Waits for the plugin to have registered its edit rules.
 fn markdown_source_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
     markdown_source_harness_with_config(width, height, Default::default())
 }
@@ -26,6 +28,16 @@ fn markdown_source_harness_with_config(
     height: u16,
     config: fresh::config::Config,
 ) -> (EditorTestHarness, tempfile::TempDir) {
+    markdown_source_harness_with_plugins(width, height, config, &[])
+}
+
+/// [`markdown_source_harness_with_config`], with more bundled plugins.
+fn markdown_source_harness_with_plugins(
+    width: u16,
+    height: u16,
+    config: fresh::config::Config,
+    extra_plugins: &[&str],
+) -> (EditorTestHarness, tempfile::TempDir) {
     init_tracing_from_env();
 
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -35,31 +47,36 @@ fn markdown_source_harness_with_config(
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "markdown_source");
+    for plugin in extra_plugins {
+        copy_plugin(&plugins_dir, plugin);
+    }
     copy_plugin_lib(&plugins_dir);
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(width, height, config, project_root)
             .unwrap();
 
-    // Wait for the plugin to be fully loaded.
-    // The plugin registers the "markdown-source" mode at load time via defineMode.
-    // process_async_and_render picks up the DefineMode command from the plugin thread.
-    harness
-        .wait_until(|h| h.editor().mode_registry().has_mode("markdown-source"))
-        .unwrap();
+    // The plugin registers its rules from its top-level body; the command
+    // reaches the editor through the plugin queue.
+    harness.wait_until(markdown_rules_registered).unwrap();
 
     (harness, temp_dir)
 }
 
-/// Helper: open a markdown file and wait for the markdown-source mode to auto-activate.
-fn open_md_and_wait_for_mode(harness: &mut EditorTestHarness, path: &std::path::Path) {
+/// Whether the markdown_source plugin's rules are registered.
+fn markdown_rules_registered(h: &EditorTestHarness) -> bool {
+    h.editor()
+        .edit_rules()
+        .read()
+        .unwrap()
+        .has_rules("markdown", EditRuleTrigger::Newline)
+}
+
+/// Helper: open a markdown file. The rules need no activation: they apply
+/// from the first key.
+fn open_md(harness: &mut EditorTestHarness, path: &std::path::Path) {
     harness.open_file(path).unwrap();
     harness.render().unwrap();
-
-    // Wait for the plugin's buffer_activated handler to set the mode
-    harness
-        .wait_until(|h| h.editor().editor_mode() == Some("markdown-source".to_string()))
-        .unwrap();
 }
 
 /// Helper: get buffer content, panicking if unavailable.
@@ -69,45 +86,45 @@ fn buf(harness: &EditorTestHarness) -> String {
         .expect("buffer content should be available")
 }
 
+/// Open `name` holding `content`, press End then Enter, and return the text.
+fn enter_at_end_of_first_line(
+    harness: &mut EditorTestHarness,
+    name: &str,
+    content: &str,
+) -> String {
+    let fixture = TestFixture::new(name, content).unwrap();
+    open_md(harness, &fixture.path);
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    buf(harness)
+}
+
 // ---------------------------------------------------------------------------
-// Auto-activation
+// Where the rules apply
 // ---------------------------------------------------------------------------
 
-/// Opening a .md file in source mode should auto-activate the markdown-source mode.
+/// In a .md file Enter continues a list item, with no activation step.
 #[test]
-fn test_markdown_source_mode_auto_activates() {
+fn test_rules_apply_in_md_file() {
     let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
 
-    let fixture = TestFixture::new("readme.md", "# Hello\n\nWorld\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
-
-    assert_eq!(
-        harness.editor().editor_mode(),
-        Some("markdown-source".to_string()),
-        "markdown-source mode should auto-activate for .md files"
-    );
+    let content = enter_at_end_of_first_line(&mut harness, "readme.md", "- item\n");
+    assert_eq!(content, "- item\n- \n");
     harness.assert_no_plugin_errors();
 }
 
-/// Opening a non-markdown file should NOT activate the markdown-source mode.
+/// In a non-markdown file Enter is the plain newline: no list continuation.
 #[test]
-fn test_markdown_source_mode_not_active_for_non_md() {
+fn test_rules_do_not_apply_in_non_md_file() {
     let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
 
-    let fixture = TestFixture::new("main.rs", "fn main() {}\n").unwrap();
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Give plugins time to react
-    for _ in 0..5 {
-        harness.process_async_and_render().unwrap();
-        harness.sleep(Duration::from_millis(50));
-    }
-
+    let content = enter_at_end_of_first_line(&mut harness, "main.rs", "- item\n");
     assert_eq!(
-        harness.editor().editor_mode(),
-        None,
-        "markdown-source mode should NOT activate for non-markdown files"
+        content, "- item\n\n",
+        "a Rust file must not continue Markdown list markers"
     );
     harness.assert_no_plugin_errors();
 }
@@ -124,7 +141,7 @@ fn test_enter_continues_unordered_list() {
 
     let content = "- top\n  - nested\n";
     let fixture = TestFixture::new("list.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Move to line 2 ("  - nested"), then End to go to end of line
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -152,7 +169,7 @@ fn test_enter_continues_ordered_list() {
 
     let content = "1. first\n2. second\n";
     let fixture = TestFixture::new("ordered.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Move to line 2 ("2. second"), End
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -180,7 +197,7 @@ fn test_enter_continues_checkbox() {
 
     let content = "- [x] done task\n";
     let fixture = TestFixture::new("checkbox.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -206,7 +223,7 @@ fn test_enter_clears_empty_bullet() {
 
     let content = "- item\n- \n";
     let fixture = TestFixture::new("empty.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Move to line 2 ("- "), End
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -238,7 +255,7 @@ fn test_enter_no_indent_on_unindented_line() {
 
     let content = "Hello world\n";
     let fixture = TestFixture::new("plain.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Cursor starts at line 1 col 1; move to end
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -280,7 +297,7 @@ fn test_enter_deep_indent() {
 
     let content = "        deep indent text\n";
     let fixture = TestFixture::new("deep.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Go to end of the line
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -311,7 +328,7 @@ fn test_tab_inserts_spaces() {
 
     let content = "text\n";
     let fixture = TestFixture::new("tab.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Cursor is at the beginning of "text"; press Home to be sure
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -339,7 +356,7 @@ fn test_tab_follows_editor_tab_size() {
     let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
 
     let fixture = TestFixture::new("tab2.md", "text\n- \n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -381,7 +398,7 @@ fn test_tab_follows_markdown_language_settings() {
     let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config.clone());
 
     let fixture = TestFixture::new("tab3.md", "text\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness
@@ -392,7 +409,7 @@ fn test_tab_follows_markdown_language_settings() {
     config.languages.get_mut("markdown").unwrap().use_tabs = Some(true);
     let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
     let fixture = TestFixture::new("tabs.md", "text\n- \n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness
@@ -429,7 +446,7 @@ fn test_new_markdown_file_uses_markdown_language_settings() {
     let (mut harness, temp_dir) = markdown_source_harness_with_config(80, 24, config);
 
     let path = temp_dir.path().join("not_yet_saved.md");
-    open_md_and_wait_for_mode(&mut harness, &path);
+    open_md(&mut harness, &path);
     harness.type_text("text").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -447,7 +464,7 @@ fn test_tab_indents_a_multi_line_selection() {
 
     let content = "https://a.example/one\nhttps://b.example/two\nhttps://c.example/three\n";
     let fixture = TestFixture::new("urls.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
@@ -478,7 +495,7 @@ fn test_tab_with_multiple_cursors_indents_each_line() {
 
     let content = "one\ntwo\nthree\n";
     let fixture = TestFixture::new("multi.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
@@ -505,7 +522,7 @@ fn test_multiple_tabs() {
 
     let content = "x\n";
     let fixture = TestFixture::new("tabs.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -535,7 +552,7 @@ fn test_tab_cycles_bullet_on_blank_item() {
     // Start with "* " (asterisk bullet, no content)
     let content = "* \n";
     let fixture = TestFixture::new("cycle.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -571,7 +588,7 @@ fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
     // Start with "    - " — as if Tab was already pressed once on "* "
     let content = "    - \n";
     let fixture = TestFixture::new("reverse_cycle.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -599,7 +616,7 @@ fn test_tab_shift_tab_full_round_trip() {
     // Start with "* " (asterisk bullet, no content)
     let content = "* \n";
     let fixture = TestFixture::new("roundtrip.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -695,7 +712,7 @@ fn test_normal_typing_works() {
 
     let content = "\n";
     let fixture = TestFixture::new("type.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -714,32 +731,37 @@ fn test_normal_typing_works() {
 }
 
 // ---------------------------------------------------------------------------
-// Mode deactivation when switching buffers
+// Switching buffers
 // ---------------------------------------------------------------------------
 
-/// Switching from a .md buffer to a non-.md buffer should deactivate the mode.
+/// The rules follow the buffer the key lands in: after switching from a .md
+/// buffer to a plain-text one, Enter there is the plain newline, and back in
+/// the .md buffer it continues lists again.
 #[test]
-fn test_mode_deactivates_on_buffer_switch() {
+fn test_rules_follow_the_active_buffer() {
     let (mut harness, temp_dir) = markdown_source_harness(80, 24);
 
-    // Open markdown file first — mode activates
-    let md_fixture = TestFixture::new("doc.md", "# Doc\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &md_fixture.path);
-    assert_eq!(
-        harness.editor().editor_mode(),
-        Some("markdown-source".to_string()),
-    );
+    let md_fixture = TestFixture::new("doc.md", "- a\n").unwrap();
+    open_md(&mut harness, &md_fixture.path);
 
-    // Create and open a plain text file
     let txt_path = temp_dir.path().join("project_root").join("notes.txt");
-    fs::write(&txt_path, "plain text\n").unwrap();
+    fs::write(&txt_path, "- plain\n").unwrap();
     harness.open_file(&txt_path).unwrap();
-    harness.render().unwrap();
-
-    // Wait for mode to deactivate
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode().is_none())
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    assert_eq!(buf(&harness), "- plain\n\n");
+
+    open_md(&mut harness, &md_fixture.path);
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(buf(&harness), "- a\n- \n");
     harness.assert_no_plugin_errors();
 }
 
@@ -747,35 +769,34 @@ fn test_mode_deactivates_on_buffer_switch() {
 // .mdx and .markdown extensions
 // ---------------------------------------------------------------------------
 
-/// The plugin should also activate for .mdx files.
+/// `.mdx` files are plain text by default (no built-in language claims the
+/// extension), so they get no list editing. Configured as a language with
+/// the id `mdx` — or added to `markdown`'s extensions — they do.
 #[test]
-fn test_activates_for_mdx() {
+fn test_rules_apply_for_mdx_when_configured() {
     let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let content = enter_at_end_of_first_line(&mut harness, "plain.mdx", "- item\n");
+    assert_eq!(harness.editor().active_state().language, "text");
+    assert_eq!(content, "- item\n\n");
 
-    let fixture = TestFixture::new("component.mdx", "# MDX file\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
-
-    assert_eq!(
-        harness.editor().editor_mode(),
-        Some("markdown-source".to_string()),
-        "Should activate for .mdx files"
-    );
+    let mut config = fresh::config::Config::default();
+    let mut mdx = config.languages["markdown"].clone();
+    mdx.extensions = vec!["mdx".to_string()];
+    config.languages.insert("mdx".to_string(), mdx);
+    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
+    let content = enter_at_end_of_first_line(&mut harness, "component.mdx", "- item\n");
+    assert_eq!(harness.editor().active_state().language, "mdx");
+    assert_eq!(content, "- item\n- \n");
     harness.assert_no_plugin_errors();
 }
 
-/// The plugin should also activate for .markdown files.
+/// The rules also apply to .markdown files.
 #[test]
-fn test_activates_for_markdown_extension() {
+fn test_rules_apply_for_markdown_extension() {
     let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
 
-    let fixture = TestFixture::new("readme.markdown", "# Readme\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
-
-    assert_eq!(
-        harness.editor().editor_mode(),
-        Some("markdown-source".to_string()),
-        "Should activate for .markdown files"
-    );
+    let content = enter_at_end_of_first_line(&mut harness, "readme.markdown", "1. one\n");
+    assert_eq!(content, "1. one\n2. \n");
     harness.assert_no_plugin_errors();
 }
 
@@ -791,7 +812,7 @@ fn test_enter_then_type_workflow() {
 
     let content = "- item\n";
     let fixture = TestFixture::new("workflow.md", content).unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Go to end of "- item"
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -833,7 +854,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
     let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
 
     let fixture = TestFixture::new("multi.md", "aaa\nbbb\nccc\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Go to beginning, then right once (after first char of line 1)
     harness
@@ -897,7 +918,7 @@ fn test_multi_cursor_enter_on_list_items() {
 
     let fixture =
         TestFixture::new("list_multi.md", "- item one\n- item two\n- item three\n").unwrap();
-    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    open_md(&mut harness, &fixture.path);
 
     // Go to end of line 1
     harness
@@ -949,4 +970,221 @@ fn test_multi_cursor_enter_on_list_items() {
         content,
     );
     harness.assert_no_plugin_errors();
+}
+
+// ---------------------------------------------------------------------------
+// Keys sent faster than the plugin runtime (#3813)
+// ---------------------------------------------------------------------------
+
+/// Hand keys to the editor back to back, as a fast typist or a paste-like
+/// burst does: no render, no wait, no draining of plugin work in between.
+fn burst(harness: &mut EditorTestHarness, keys: &[(KeyCode, KeyModifiers)]) {
+    for &(code, modifiers) in keys {
+        harness.editor_mut().handle_key(code, modifiers).unwrap();
+    }
+}
+
+fn chars(text: &str) -> Vec<(KeyCode, KeyModifiers)> {
+    text.chars()
+        .map(|c| (KeyCode::Char(c), KeyModifiers::NONE))
+        .collect()
+}
+
+/// #3813: `- one`, Enter, `two`, Enter, `three` in one burst comes out in
+/// the order typed. The list continuation used to come from an async plugin
+/// handler, so the characters after Enter landed before it did.
+#[test]
+fn test_burst_typing_around_enter_keeps_key_order() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let fixture = TestFixture::new("burst.md", "").unwrap();
+    open_md(&mut harness, &fixture.path);
+
+    let enter = (KeyCode::Enter, KeyModifiers::NONE);
+    let mut keys = chars("- one");
+    keys.push(enter);
+    keys.extend(chars("two"));
+    keys.push(enter);
+    keys.extend(chars("three"));
+    burst(&mut harness, &keys);
+    // The edits are already there, before any async work is looked at.
+    assert_eq!(buf(&harness), "- one\n- two\n- three");
+
+    // Tab / Shift+Tab on a blank item and Enter on an empty one, in a burst.
+    let tab = (KeyCode::Tab, KeyModifiers::NONE);
+    let back_tab = (KeyCode::BackTab, KeyModifiers::SHIFT);
+    let mut keys = vec![enter, tab];
+    keys.extend(chars("deep"));
+    keys.extend([enter, back_tab]);
+    keys.extend(chars("out"));
+    keys.extend([enter, enter]);
+    keys.extend(chars("para"));
+    burst(&mut harness, &keys);
+    harness.render().unwrap();
+    assert_eq!(
+        buf(&harness),
+        "- one\n- two\n- three\n    + deep\n- out\npara"
+    );
+    harness.assert_no_plugin_errors();
+}
+
+// ---------------------------------------------------------------------------
+// Multiple cursors, undo
+// ---------------------------------------------------------------------------
+
+/// Enter continues the marker at every cursor, each with its own kind.
+#[test]
+fn test_multi_cursor_enter_continues_each_marker() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let fixture = TestFixture::new("mc.md", "- one\n* two\n1. th\n").unwrap();
+    open_md(&mut harness, &fixture.path);
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    assert_eq!(buf(&harness), "- one\n- X\n* two\n* X\n1. th\n2. X\n");
+    harness.assert_no_plugin_errors();
+}
+
+/// With several cursors, one on a blank bullet and one on an indented
+/// plain line, Shift+Tab applies the rule at the first and the normal
+/// dedent at the second, and both cursors land where their line's text
+/// moved to.
+#[test]
+fn test_multi_cursor_shift_tab_mixes_rule_and_normal_dedent() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let fixture = TestFixture::new("mix.md", "    - \n    text\n").unwrap();
+    open_md(&mut harness, &fixture.path);
+
+    // Cursor at the end of line 1 and at column 6 of line 2.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    assert_eq!(buf(&harness), "* X\nteXxt\n");
+    harness.assert_no_plugin_errors();
+}
+
+/// A rule's edit is one undo step, like the key it stands in for.
+#[test]
+fn test_rule_edits_undo_in_one_step() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+    let fixture = TestFixture::new("undo.md", "- one\n").unwrap();
+    open_md(&mut harness, &fixture.path);
+    let undo = |h: &mut EditorTestHarness| {
+        h.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
+    };
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(buf(&harness), "- one\n- \n");
+    // Tab rewrites both sides of the cursor (a delete and an insert).
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    assert_eq!(buf(&harness), "- one\n    + \n");
+    undo(&mut harness);
+    assert_eq!(buf(&harness), "- one\n- \n");
+    // Enter on the empty item clears it; undo brings the marker back.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(buf(&harness), "- one\n\n");
+    undo(&mut harness);
+    assert_eq!(buf(&harness), "- one\n- \n");
+    undo(&mut harness);
+    assert_eq!(buf(&harness), "- one\n");
+    harness.assert_no_plugin_errors();
+}
+
+// ---------------------------------------------------------------------------
+// The mechanism is not Markdown's: another plugin, another language
+// ---------------------------------------------------------------------------
+
+/// A test plugin's rules for Python: continue `#` comments on Enter. A
+/// malformed set is refused with an error naming the rule; unloading the
+/// plugin drops its rules.
+#[test]
+fn test_edit_rules_from_another_plugin_for_another_language() {
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    fs::write(
+        plugins_dir.join("py_comments.ts"),
+        r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+try {
+  editor.registerEditRules("bad", {
+    languages: ["python"],
+    rules: [{ on: "newline", before: "(", insert: "" }],
+  });
+} catch (e) {
+  // The message names the rule and the field.
+  const named = String(e).includes('rules[0].before:');
+  editor.setStatus(named ? "REFUSED-NAMED" : "REFUSED-OTHER " + e);
+}
+editor.registerEditRules("comments", {
+  languages: ["python"],
+  rules: [{ on: "newline", before: "^([ \\t]*# ?)\\S", insert: "\n$1" }],
+});
+"#,
+    )
+    .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    let python_rules = |h: &EditorTestHarness| {
+        h.editor()
+            .edit_rules()
+            .read()
+            .unwrap()
+            .has_rules("python", EditRuleTrigger::Newline)
+    };
+    harness.wait_until(python_rules).unwrap();
+    harness
+        .wait_until(|h| h.get_status_bar().contains("REFUSED"))
+        .unwrap();
+    assert!(
+        harness.get_status_bar().contains("REFUSED-NAMED"),
+        "the error names the rule: {}",
+        harness.get_status_bar()
+    );
+
+    let py = project_root.join("t.py");
+    fs::write(&py, "    # note\n").unwrap();
+    harness.open_file(&py).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("more").unwrap();
+    assert_eq!(buf(&harness), "    # note\n    # more\n");
+
+    harness
+        .editor()
+        .plugin_manager()
+        .unload_plugin("py_comments")
+        .unwrap();
+    harness.wait_until(|h| !python_rules(h)).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert!(
+        !buf(&harness).ends_with("# more\n    # \n"),
+        "an unloaded plugin's rules no longer apply: {:?}",
+        buf(&harness)
+    );
 }

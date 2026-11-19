@@ -130,3 +130,27 @@ registerHandler("process_file", () => {
   }
 });
 ```
+
+### Smart Enter and Tab: Edit Rules
+
+To change what Enter, Tab or Shift+Tab do in some languages — continue a list or a comment, indent a blank item — register **edit rules** rather than binding the keys in a mode. Rules are data: the editor applies them itself, inside the key's own edit, so they keep up with fast typing, work under any keymap (vi's insert mode included), apply at every cursor, and undo with the key in one step. A key whose line no rule matches does what it always does.
+
+```typescript
+const editor = getEditor();
+
+editor.registerEditRules("lists", {
+  languages: ["markdown"],
+  rules: [
+    // Enter on an empty item: remove the marker.
+    { on: "newline", before: "^[ \\t]*[-*+] \\s*$", after: "^\\s*$",
+      replaceBefore: "", replaceAfter: "" },
+    // Enter on an ordered item: the next number.
+    { on: "newline", before: "^([ \\t]*)(\\d+)\\. ", insert: "\n$1${inc:2}. " },
+    // Tab on a blank bullet: one level deeper, next bullet.
+    { on: "indent", before: "^([ \\t]*)([-*+]) \\s*$", after: "^\\s*$",
+      replaceBefore: "$1${indent}${cycle:2:*|-|+} ", replaceAfter: "" },
+  ],
+});
+```
+
+Each rule names its key (`on`: `"newline"`, `"indent"` or `"dedent"`) and two optional regular expressions, searched in the cursor's line before and after the cursor. The first rule whose patterns both match rewrites the line as `(replaceBefore ?? before) + (insert ?? "") + cursor + (replaceAfter ?? after)`. Templates take `$1` / `${name}` captures, `${inc:N}` (a number plus one), `${cycle:N:a|b|c}` (the next value in a list), `${indent}` / `${dedent:N}` (one indentation level of the buffer, added or taken off), and a line break for the buffer's line ending. See [`registerEditRules`](../api/buffer.md) and `EditRule` in the [type reference](../api/types.md) for the details. A malformed rule throws when registered; a plugin's rules go away when it is unloaded or disabled. The bundled `markdown_source` plugin is a complete example.

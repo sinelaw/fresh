@@ -7,7 +7,7 @@
 //! which walks the cached layout to translate visual-row movement into
 //! the right buffer byte offset.
 
-use crate::input::actions::action_to_events as convert_action_to_events;
+use crate::input::actions::action_to_events_with_edit_rules as convert_action_to_events;
 use crate::input::actions::clear_block_selection_if_active;
 use crate::input::keybindings::Action;
 use crate::model::event::{Event, LeafId};
@@ -73,6 +73,8 @@ impl crate::app::window::Window {
         }
 
         let buffer_id = self.active_buffer();
+        let edit_rules = std::sync::Arc::clone(&self.resources.edit_rules);
+        let edit_rules = edit_rules.read().ok();
         self.buffers
             .with_buffer_and_split(buffer_id, active_split, |state, vs| {
                 let tab_size = state.buffer_settings.tab_size;
@@ -91,6 +93,7 @@ impl crate::app::window::Window {
                     auto_surround,
                     estimated_line_length,
                     viewport_height,
+                    edit_rules.as_deref(),
                 )
             })
             .expect("active window must have a populated split layout")

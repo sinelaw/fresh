@@ -1340,6 +1340,76 @@ type FormatterPackConfig = {
 	args: Array<string>;
 };
 /**
+* One rule: when its key is pressed and the cursor's line matches, the
+* line is rewritten from templates instead of the key's normal edit.
+*
+* The line is split at the cursor into the text **before** it (from the
+* line start) and the text **after** it (to the line end, without the line
+* break). `before` and `after` are regular expressions searched in those
+* two parts (Rust `regex` syntax: no look-around or back-references; use
+* `^` and `$` to anchor). Both must match for the rule to apply; one left
+* out matches anything. The result is
+*
+* ```text
+* (replaceBefore ?? before) + (insert ?? "") + CURSOR + (replaceAfter ?? after)
+* ```
+*
+* so `insert` adds text at the cursor and the `replace*` templates rewrite
+* either part. At least one of the three must be given.
+*
+* Templates are literal text with these substitutions:
+*
+* - `$0`…`$9`, `${12}`: a capture group of `before` (`$0` is its whole
+*   match); `${name}`: a named group of `before` or else of `after`. A
+*   group that did not take part in the match is empty.
+* - `${inc:REF}`: the capture (a `REF` as above, e.g. `${inc:2}`) as a
+*   decimal number plus one, keeping zero-padding (`09` → `10`, `007` → `008`).
+* - `${cycle:REF:a|b|c}`: the value after the capture's value in the
+*   list, wrapping around (`b` → `c`, `c` → `a`). List the values in the
+*   reverse order to step backwards.
+* - `${indent}`: one indentation level of the buffer — a tab, or
+*   `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
+* - `${dedent:REF}`: the capture with one indentation level taken off its
+*   start: a leading tab, or `tab_size` leading spaces.
+* - `$$`: a literal `$`. A line break in a template is written as the
+*   buffer's line ending (`\n` or `\r\n`).
+*
+* When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
+* number, a value not in the list, less than a level of indentation), the
+* rule does not apply and the next one is tried.
+*/
+type EditRule = {
+	/**
+	* The key this rule answers.
+	*/
+	on: EditRuleTrigger;
+	/**
+	* Pattern searched in the line's text before the cursor.
+	*/
+	before?: string;
+	/**
+	* Pattern searched in the line's text after the cursor.
+	*/
+	after?: string;
+	/**
+	* Template inserted at the cursor; the cursor ends up after it.
+	*/
+	insert?: string;
+	/**
+	* Template that replaces the line's text before the cursor.
+	*/
+	replaceBefore?: string;
+	/**
+	* Template that replaces the line's text after the cursor.
+	*/
+	replaceAfter?: string;
+};
+/**
+* The key an [`EditRule`] answers: `"newline"` (Enter), `"indent"` (Tab) or
+* `"dedent"` (Shift+Tab).
+*/
+type EditRuleTrigger = "newline" | "indent" | "dedent";
+/**
 * Process resource limits for LSP servers
 */
 type ProcessLimitsPackConfig = {
@@ -3450,6 +3520,20 @@ type DiffBaselineResult = {
 	* sides are equal (when `fidelity` is "exact").
 	*/
 	hunks: Array<LineDiffHunk>;
+};
+/**
+* A plugin's edit rules for some languages; see `registerEditRules`.
+*/
+type EditRuleSet = {
+	/**
+	* Language ids the rules apply to, as `BufferInfo.language` reports
+	* them (e.g. `"markdown"`).
+	*/
+	languages: Array<string>;
+	/**
+	* The rules, tried in order; the first that applies wins.
+	*/
+	rules: Array<EditRule>;
 };
 /**
 * A single match from project-wide grep
@@ -5684,6 +5768,40 @@ interface EditorAPI {
 	*/
 	getBufferSavedDiff(bufferId: number): BufferSavedDiff | null;
 	/**
+	* Register edit rules: what Enter, Tab and Shift+Tab do to the cursor's
+	* line in buffers of some languages, given as data that the editor
+	* applies itself, synchronously, as part of the key's own edit.
+	* 
+	* Each key first offers every cursor (without a selection, alone on its
+	* line) to the rules for the buffer's language; the first rule that
+	* applies rewrites the line, and a cursor no rule takes gets the key's
+	* normal behaviour. The edit is one undo step with the rest of the key,
+	* it lands before the next key is read, and it applies whatever keymap
+	* sent the key — vi's insert mode included. Tab with a selection always
+	* indents the selected lines. See `EditRule` for the rule format.
+	* 
+	* Registering the same `id` again replaces that set. A plugin's rules
+	* are dropped when it is unloaded, reloaded or disabled. Throws when the
+	* set is malformed (a bad pattern, an unknown template function, a
+	* capture the patterns do not have), naming the rule.
+	* 
+	* @param id - This plugin's name for the set
+	* @param rules - The languages and the rules
+	* 
+	* @example
+	* // Continue `#` comments on Enter in shell scripts and Python.
+	* editor.registerEditRules("comments", {
+	*   languages: ["bash", "python"],
+	*   rules: [{ on: "newline", before: "^([ \\t]*# ?)\\S", insert: "\n$1" }],
+	* });
+	*/
+	registerEditRules(id: string, rules: EditRuleSet): boolean;
+	/**
+	* Drop this plugin's edit rule set `id` (see `registerEditRules`).
+	* Returns whether the plugin had registered one under that id.
+	*/
+	unregisterEditRules(id: string): boolean;
+	/**
 	* Insert text at a byte position in a buffer.
 	* 
 	* The text is inserted before the byte at `position`, and all text after it
@@ -7310,7 +7428,7 @@ interface EditorAPI {
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean, holdKeys?: boolean): boolean;
 	/**
 	* Set the active window's editor mode — a plugin mode scoped to that
-	* window, such as `markdown-source`. It outranks the editor-wide input
+	* window, such as flash's label mode. It outranks the editor-wide input
 	* mode in that window and is invisible in every other. `null` clears
 	* it. A modal-editing personality that should apply everywhere (vi)
 	* belongs in `setInputMode` instead.

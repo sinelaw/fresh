@@ -958,8 +958,8 @@ pub struct Window {
     /// per-window — different windows can prompt independently.
     pub user_dismissed_lsp_languages: std::collections::HashSet<String>,
 
-    /// This window's plugin editor mode (`setEditorMode`, e.g.
-    /// "markdown-source", flash's label mode). Per-window because such
+    /// This window's plugin editor mode (`setEditorMode`, e.g. flash's
+    /// label mode). Per-window because such
     /// modes drive affordances that belong to one window's flow. A modal
     /// editing personality that should hold in every window (vi) is the
     /// editor-wide input mode instead (`Editor::input_mode`), which this

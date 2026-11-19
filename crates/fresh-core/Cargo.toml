@@ -24,6 +24,8 @@ lsp-types.workspace = true
 ts-rs = { workspace = true, optional = true }
 fresh-plugin-api-macros.workspace = true
 unicode-width = "0.2"
+# Patterns of plugin-registered edit rules (`edit_rules`).
+regex = { version = "1.12" }
 # The JS engine, behind Fresh's engine boundary (only with `plugins`).
 fresh-js = { workspace = true, optional = true }
 

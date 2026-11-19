@@ -2688,6 +2688,43 @@ impl Editor {
         );
     }
 
+    /// Handle RegisterEditRules: compile a plugin's edit rule set and add it
+    /// (replacing one under the same plugin and id). The plugin API compiled
+    /// it once already to report mistakes to the plugin, so a failure here
+    /// is only logged.
+    pub(super) fn handle_register_edit_rules(
+        &mut self,
+        plugin_name: String,
+        id: String,
+        rules: fresh_core::api::EditRuleSet,
+    ) {
+        match fresh_core::edit_rules::CompiledEditRuleSet::compile(&rules) {
+            Ok(compiled) => {
+                if let Ok(mut registry) = self.edit_rules.write() {
+                    registry.register(&plugin_name, &id, compiled);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("registerEditRules({plugin_name}/{id}): {e}");
+            }
+        }
+    }
+
+    /// Handle UnregisterEditRules: drop a plugin's edit rule set `id`, or
+    /// every set it registered (`None`, sent when the plugin unloads).
+    pub(super) fn handle_unregister_edit_rules(&mut self, plugin_name: String, id: Option<String>) {
+        if let Ok(mut registry) = self.edit_rules.write() {
+            match id {
+                Some(id) => {
+                    registry.unregister(&plugin_name, &id);
+                }
+                None => {
+                    registry.unregister_owner(&plugin_name);
+                }
+            }
+        }
+    }
+
     /// Handle RegisterLanguageConfig command
     /// Applies language configuration immediately to runtime config
     pub(super) fn handle_register_language_config(

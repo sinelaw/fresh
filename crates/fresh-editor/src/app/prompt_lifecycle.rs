@@ -1206,7 +1206,7 @@ impl Editor {
         }
     }
 
-    /// The active window's editor mode (e.g. "markdown-source"), if any.
+    /// The active window's editor mode (e.g. flash's label mode), if any.
     pub fn editor_mode(&self) -> Option<String> {
         self.active_window().editor_mode.clone()
     }
@@ -1219,6 +1219,12 @@ impl Editor {
     /// Get access to the command registry
     pub fn command_registry(&self) -> &Arc<RwLock<CommandRegistry>> {
         &self.command_registry
+    }
+
+    /// The edit rules plugins registered for Enter / Tab / Shift+Tab
+    /// (`registerEditRules`).
+    pub fn edit_rules(&self) -> &Arc<RwLock<fresh_core::edit_rules::EditRuleRegistry>> {
+        &self.edit_rules
     }
 
     /// Get access to the plugin manager (read lock).

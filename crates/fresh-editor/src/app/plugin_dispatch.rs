@@ -1877,6 +1877,16 @@ impl Editor {
             PluginCommand::SetInputMode { mode } => {
                 self.handle_set_input_mode(mode);
             }
+            PluginCommand::RegisterEditRules {
+                plugin_name,
+                id,
+                rules,
+            } => {
+                self.handle_register_edit_rules(plugin_name, id, rules);
+            }
+            PluginCommand::UnregisterEditRules { plugin_name, id } => {
+                self.handle_unregister_edit_rules(plugin_name, id);
+            }
 
             // ==================== LSP Helper Commands ====================
             PluginCommand::ShowActionPopup {

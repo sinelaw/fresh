@@ -444,6 +444,7 @@ pub(super) struct EditorParts {
 
     // Registries / managers
     pub(super) command_registry: Arc<RwLock<CommandRegistry>>,
+    pub(super) edit_rules: Arc<RwLock<fresh_core::edit_rules::EditRuleRegistry>>,
     pub(super) quick_open_registry: QuickOpenRegistry,
     pub(super) plugin_manager: std::rc::Rc<RwLock<PluginManager>>,
     pub(super) recovery_service: Arc<std::sync::Mutex<RecoveryService>>,
@@ -701,6 +702,7 @@ impl Editor {
             next_window_id: parts.next_window_id,
             window_cycle_order: None,
             command_registry: parts.command_registry,
+            edit_rules: parts.edit_rules,
             quick_open_registry: parts.quick_open_registry,
             lsp_uri_schemes: std::collections::HashSet::new(),
             plugin_manager: parts.plugin_manager,
@@ -1314,6 +1316,9 @@ impl Editor {
 
         // Initialize command registry (always available, used by both plugins and core)
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
+        // Plugin-registered edit rules (Enter / Tab / Shift+Tab), shared by
+        // every window.
+        let edit_rules = Arc::new(RwLock::new(fresh_core::edit_rules::EditRuleRegistry::new()));
 
         // The authority is the *real* one this editor runs under, handed in
         // by the caller — not a local placeholder swapped out later. Every
@@ -1498,6 +1503,7 @@ impl Editor {
             theme_cache: Arc::clone(&theme_cache),
             keybindings: Arc::clone(&keybindings),
             command_registry: Arc::clone(&command_registry),
+            edit_rules: Arc::clone(&edit_rules),
             fs_manager: Arc::clone(&fs_manager),
             local_filesystem: Arc::clone(&local_filesystem),
             buffer_id_alloc: buffer_id_alloc.clone(),
@@ -1679,6 +1685,7 @@ impl Editor {
             active_window: active_window_id,
             next_window_id,
             command_registry,
+            edit_rules,
             quick_open_registry,
             plugin_manager,
             recovery_service,

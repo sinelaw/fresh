@@ -1876,7 +1876,7 @@ pub struct EditorStateSnapshot {
     #[ts(skip)]
     pub last_grammar_gen: u64,
     /// The active window's editor mode — a window-scoped plugin mode
-    /// (e.g. "markdown-source"). When set, its keybindings take precedence
+    /// (e.g. flash's label mode). When set, its keybindings take precedence
     /// over the input mode and normal key handling in that window.
     pub editor_mode: Option<String>,
     /// The editor-wide input mode — a modal-editing personality such as vi
@@ -5811,8 +5811,26 @@ pub enum PluginCommand {
     /// one window. When set, the mode's keybindings take precedence over the
     /// editor-wide input mode and normal editing, in that window only.
     SetEditorMode {
-        /// Mode name (e.g., "markdown-source") or None to clear
+        /// Mode name (e.g., flash's "flash") or None to clear
         mode: Option<String>,
+    },
+
+    /// Register (or replace) a plugin's edit rules under `id`. See
+    /// [`EditRuleSet`].
+    RegisterEditRules {
+        /// Plugin that owns the rules; its rules go when it unloads.
+        plugin_name: String,
+        /// The plugin's name for this set; registering the same id again
+        /// replaces it in place.
+        id: String,
+        rules: EditRuleSet,
+    },
+
+    /// Drop a plugin's edit rules: the set named `id`, or every set the
+    /// plugin registered when `id` is `None` (sent when it unloads).
+    UnregisterEditRules {
+        plugin_name: String,
+        id: Option<String>,
     },
 
     /// Set the editor-wide input mode: a modal-editing personality such as
@@ -6712,6 +6730,101 @@ pub enum PluginCommand {
         op: String,
         arg: f64,
     },
+}
+
+// =============================================================================
+// Edit Rules
+// =============================================================================
+
+/// The key an [`EditRule`] answers: `"newline"` (Enter), `"indent"` (Tab) or
+/// `"dedent"` (Shift+Tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, rename_all = "lowercase")]
+pub enum EditRuleTrigger {
+    /// Enter: the editor's `insert_newline`, also in vi insert mode.
+    Newline,
+    /// Tab: the editor's `insert_tab`, when no cursor has a selection.
+    Indent,
+    /// Shift+Tab: the editor's `dedent_selection`.
+    Dedent,
+}
+
+/// One rule: when its key is pressed and the cursor's line matches, the
+/// line is rewritten from templates instead of the key's normal edit.
+///
+/// The line is split at the cursor into the text **before** it (from the
+/// line start) and the text **after** it (to the line end, without the line
+/// break). `before` and `after` are regular expressions searched in those
+/// two parts (Rust `regex` syntax: no look-around or back-references; use
+/// `^` and `$` to anchor). Both must match for the rule to apply; one left
+/// out matches anything. The result is
+///
+/// ```text
+/// (replaceBefore ?? before) + (insert ?? "") + CURSOR + (replaceAfter ?? after)
+/// ```
+///
+/// so `insert` adds text at the cursor and the `replace*` templates rewrite
+/// either part. At least one of the three must be given.
+///
+/// Templates are literal text with these substitutions:
+///
+/// - `$0`…`$9`, `${12}`: a capture group of `before` (`$0` is its whole
+///   match); `${name}`: a named group of `before` or else of `after`. A
+///   group that did not take part in the match is empty.
+/// - `${inc:REF}`: the capture (a `REF` as above, e.g. `${inc:2}`) as a
+///   decimal number plus one, keeping zero-padding (`09` → `10`, `007` → `008`).
+/// - `${cycle:REF:a|b|c}`: the value after the capture's value in the
+///   list, wrapping around (`b` → `c`, `c` → `a`). List the values in the
+///   reverse order to step backwards.
+/// - `${indent}`: one indentation level of the buffer — a tab, or
+///   `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
+/// - `${dedent:REF}`: the capture with one indentation level taken off its
+///   start: a leading tab, or `tab_size` leading spaces.
+/// - `$$`: a literal `$`. A line break in a template is written as the
+///   buffer's line ending (`\n` or `\r\n`).
+///
+/// When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
+/// number, a value not in the list, less than a level of indentation), the
+/// rule does not apply and the next one is tried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, rename_all = "camelCase")]
+pub struct EditRule {
+    /// The key this rule answers.
+    pub on: EditRuleTrigger,
+    /// Pattern searched in the line's text before the cursor.
+    #[serde(default)]
+    #[ts(optional)]
+    pub before: Option<String>,
+    /// Pattern searched in the line's text after the cursor.
+    #[serde(default)]
+    #[ts(optional)]
+    pub after: Option<String>,
+    /// Template inserted at the cursor; the cursor ends up after it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub insert: Option<String>,
+    /// Template that replaces the line's text before the cursor.
+    #[serde(default)]
+    #[ts(optional)]
+    pub replace_before: Option<String>,
+    /// Template that replaces the line's text after the cursor.
+    #[serde(default)]
+    #[ts(optional)]
+    pub replace_after: Option<String>,
+}
+
+/// A plugin's edit rules for some languages; see `registerEditRules`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, rename_all = "camelCase")]
+pub struct EditRuleSet {
+    /// Language ids the rules apply to, as `BufferInfo.language` reports
+    /// them (e.g. `"markdown"`).
+    pub languages: Vec<String>,
+    /// The rules, tried in order; the first that applies wins.
+    pub rules: Vec<EditRule>,
 }
 
 // =============================================================================
@@ -7863,6 +7976,7 @@ mod fromjs_impls {
         LanguagePackConfig,
         LspServerPackConfig,
         ProcessLimitsPackConfig,
+        EditRuleSet,
         CreateTerminalOptions,
         CreateWindowWithTerminalOptions,
         CreatePreparingWindowOptions,

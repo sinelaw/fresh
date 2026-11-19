@@ -401,9 +401,13 @@ same in every window — including windows created after it was set — and not
 clearable by anything window-scoped. It sits beside the editor-wide
 `active_keybinding_map`. vi keeps its sub-mode (`vi-normal`, `vi-insert`, …)
 as the input mode's value. Per-window `Window::editor_mode` remains for
-genuinely window-scoped plugin modes (`markdown-source`, flash). Changing the
-input mode fires `input_mode_changed`, so a window mode that should step
-aside while one is on (markdown-source) can re-check.
+genuinely window-scoped plugin modes (flash). Changing the input mode fires
+`input_mode_changed`, so a window mode that should step aside while one is on
+can re-check. Smart editing that only changes what Enter / Tab / Shift+Tab
+do in some languages (markdown_source's list editing) is not a mode at all:
+it is edit rules (`registerEditRules`), which the editor applies inside its
+own `insert_newline` / `insert_tab` / `dedent_selection`, under whatever
+keymap or mode sent the key.
 
 The read-only block below consults the mode beneath the buffer's (window
 editor mode, else input mode). Mode handling in `handle_key`:

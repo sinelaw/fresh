@@ -748,12 +748,14 @@ fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
 /// Every blank row of a fenced block keeps its rails as lines are inserted into
 /// it — the invariant a per-line decoration cannot state for itself.
 ///
-/// Enter in a markdown buffer is `markdown_source`'s handler, which edits
-/// through `insertAtCursor` and so bypassed both paths that maintain the plugin
-/// line-offer set. The new line inherited an already-offered byte range and was
-/// never offered again; the lines below it only shifted, staying "seen", so
-/// their decorations were evicted by id collision with nothing to re-add them.
-/// Both draw as sideless rows, and they accumulate with every Enter.
+/// Enter in a markdown buffer used to be `markdown_source`'s handler, which
+/// edited through `insertAtCursor` and so bypassed both paths that maintain the
+/// plugin line-offer set. The new line inherited an already-offered byte range
+/// and was never offered again; the lines below it only shifted, staying
+/// "seen", so their decorations were evicted by id collision with nothing to
+/// re-add them. Both draw as sideless rows, and they accumulate with every
+/// Enter. Enter is now the editor's own `insert_newline` (with the plugin's
+/// edit rules), and the rails must hold through it all the same.
 #[cfg(feature = "plugins")]
 #[test]
 fn blank_rows_inserted_into_a_block_keep_their_rails() {
@@ -767,8 +769,7 @@ fn blank_rows_inserted_into_a_block_keep_their_rails() {
     let plugins_dir = project_root.join("plugins");
     std::fs::create_dir(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "markdown_compose");
-    // The plugin that owns Enter in a markdown buffer, and whose edit path is
-    // the one under test.
+    // The plugin whose edit rules shape Enter in a markdown buffer.
     copy_plugin(&plugins_dir, "markdown_source");
     copy_plugin_lib(&plugins_dir);
 

@@ -54,8 +54,8 @@ const HEIGHT: u16 = 40;
 /// stranded in it swallows every printable key.
 const NEW_SESSION_MODE: &str = "orchestrator-new-form";
 
-/// Window A's own mode: a stand-in for a persistent per-window mode (vi's,
-/// markdown-source's). Not read-only, so text still reaches the buffer.
+/// Window A's own mode: a stand-in for a persistent per-window mode. Not
+/// read-only, so text still reaches the buffer.
 const WINDOW_MODE: &str = "test-window-mode";
 
 const BASELINE_MARKER: &str = "QQBASELINEQQ";

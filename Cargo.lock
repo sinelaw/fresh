@@ -1382,6 +1382,7 @@ dependencies = [
  "fresh-plugin-api-macros",
  "lsp-types",
  "proptest",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

@@ -43,6 +43,7 @@ impl crate::app::Editor {
             theme_cache: std::sync::Arc::clone(&self.theme_cache),
             keybindings: std::sync::Arc::clone(&self.keybindings),
             command_registry: std::sync::Arc::clone(&self.command_registry),
+            edit_rules: std::sync::Arc::clone(&self.edit_rules),
             // Derive the window's fs_manager from the *same* authority we hand
             // it below, so directory listings (the file explorer) ride the
             // window's filesystem — local or remote — instead of a stale,
