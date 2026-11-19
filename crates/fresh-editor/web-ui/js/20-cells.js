@@ -255,6 +255,11 @@ function applyTheme(t){
   // so its text is the editor's ink, not the chrome skin's — macOS Light's
   // dark chrome text on a dark editor theme's buffer was unreadable.
   set("--ed-fg",t.fg); set("--ed-muted",legibleMuted(t.muted,t.fg,[t.bg]));
+  // The theme's cursor colour (`editor.cursor`, sent as `accent`), for the
+  // buffer caret. A skin re-points `--accent`, never this.
+  set("--ed-caret",t.accent);
+  // The pane scrollbar's thumb, as the terminal draws it.
+  set("--ed-thumb",t.scrollbarThumb); set("--ed-thumb-hover",t.scrollbarThumbHover);
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
   set("--on-accent", onColor(t.accent));
   // Same question for a row filled SOLID with the menu-highlight: a theme

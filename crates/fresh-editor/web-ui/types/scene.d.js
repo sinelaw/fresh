@@ -68,7 +68,9 @@
     border: String | Null,
     statusBg: String | Null,
     statusFg: String | Null,
-    tabActiveBg: String | Null
+    tabActiveBg: String | Null,
+    scrollbarThumb: String | Null,
+    scrollbarThumbHover: String | Null
 } */
 
 // src/webui/mod.rs `scene_json` (`regions`). The menu fields are

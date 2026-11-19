@@ -2238,6 +2238,8 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             "statusBg": color_css(t.status_bar_bg),
             "statusFg": color_css(t.status_bar_fg),
             "tabActiveBg": color_css(t.tab_active_bg),
+            "scrollbarThumb": color_css(t.scrollbar_thumb_fg),
+            "scrollbarThumbHover": color_css(t.scrollbar_thumb_hover_fg),
         })
     };
 

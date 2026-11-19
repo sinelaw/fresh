@@ -165,8 +165,8 @@
     border:3px solid transparent;background-clip:padding-box}
   *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--fg) 38%,transparent);background-clip:padding-box}
   *::-webkit-scrollbar-track{background:transparent}
-  .scrollbar .thumb{background:var(--hairline-strong);border-radius:8px}
-  .scrollbar .thumb:hover{background:color-mix(in srgb,var(--fg) 38%,transparent)}
+  .scrollbar .thumb{background:var(--ed-thumb,var(--hairline-strong));border-radius:8px}
+  .scrollbar .thumb:hover{background:var(--ed-thumb-hover,color-mix(in srgb,var(--fg) 38%,transparent))}
 
   /* Focus as a soft ring rather than a hard 1px outline. */
   .w-toggle.focus,.w-button.focus,.kbedit .kb-search.focus,.w-text.focus{outline:none;
