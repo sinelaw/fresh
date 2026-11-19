@@ -4528,7 +4528,7 @@ impl Config {
                 ],
                 grammar: "Makefile".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -4739,6 +4739,13 @@ impl Config {
         // the global behaviour back; they are independent of each other.
         // Its `edit_rules` are the list editing (see
         // `markdown_list_edit_rules`); `"edit_rules": []` turns them off.
+        //
+        // `auto_indent` is off: the editor's generic indenter (Markdown has
+        // no indent rules of its own) indents a line after one ending in
+        // `:`, `(`, `[` or `{` — "Steps:" + Enter would start an indented
+        // code block — and carries indentation across blank lines. Keeping
+        // an indented line's indentation is one of the edit rules instead,
+        // so `"edit_rules": []` turns that off too.
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
@@ -5436,7 +5443,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Gettext PO".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5521,7 +5528,7 @@ impl Config {
                 filenames: vec!["git-rebase-todo".to_string()],
                 grammar: "Git Rebase Todo".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5554,7 +5561,7 @@ impl Config {
                 ],
                 grammar: "Git Commit Message".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5587,7 +5594,7 @@ impl Config {
                 ],
                 grammar: "Gitignore".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -5643,7 +5650,7 @@ impl Config {
                 filenames: vec![".gitattributes".to_string()],
                 grammar: "Git Attributes".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6679,7 +6686,7 @@ impl Config {
                 filenames: vec!["CMakeCache.txt".to_string(), "cmakecache.txt".to_string()],
                 grammar: "CMake Cache".to_string(),
                 comment_prefix: Some("//".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6707,7 +6714,7 @@ impl Config {
                 filenames: vec!["*.pc.in".to_string()],
                 grammar: "pkg-config".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6735,7 +6742,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Wavefront OBJ".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6763,7 +6770,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "Doxygen".to_string(),
                 comment_prefix: Some("///".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -6791,7 +6798,7 @@ impl Config {
                 filenames: vec!["Doxyfile".to_string(), "Doxyfile.in".to_string()],
                 grammar: "Doxygen Config".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -7224,7 +7231,7 @@ impl Config {
                 filenames: vec![],
                 grammar: "INI".to_string(),
                 comment_prefix: Some(";".to_string()),
-                auto_indent: Some(false),
+                auto_indent: None,
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
@@ -9421,8 +9428,21 @@ mod tests {
         config.languages.get_mut("rust").unwrap().auto_indent = Some(true);
         assert!(BufferConfig::resolve(&config, Some("rust")).auto_indent);
 
-        // The built-in Makefile config turns it off.
+        // Of the built-ins only Markdown turns it off (its edit rules keep
+        // an indented line's indent); the rest follow the global, so a
+        // Makefile recipe line keeps its tab on Enter.
         config.editor.auto_indent = true;
+        assert!(!BufferConfig::resolve(&config, Some("markdown")).auto_indent);
+        let off: Vec<String> = Config::default()
+            .languages
+            .into_iter()
+            .filter(|(_, l)| l.auto_indent.is_some())
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(off, vec!["markdown"], "built-ins that set auto_indent");
+        assert!(BufferConfig::resolve(&config, Some("makefile")).auto_indent);
+        assert!(BufferConfig::resolve(&config, Some("ini")).auto_indent);
+        config.editor.auto_indent = false;
         assert!(!BufferConfig::resolve(&config, Some("makefile")).auto_indent);
     }
 

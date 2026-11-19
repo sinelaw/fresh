@@ -158,8 +158,11 @@ pub struct BufferSettings {
 
     /// Whether Enter indents the new line (and a typed closer re-indents
     /// its line). Set based on global + language config: a language's
-    /// `auto_indent` wins, otherwise `editor.auto_indent`.
-    pub auto_indent: bool,
+    /// `auto_indent` wins, otherwise `editor.auto_indent`. `None` for a
+    /// buffer never given its language's settings (a plugin's virtual
+    /// buffer, a log opened directly): it follows `editor.auto_indent`
+    /// when the key is pressed (see [`Self::auto_indent`]).
+    pub auto_indent: Option<bool>,
 
     /// Whether to auto-close brackets, parentheses, and quotes.
     /// Set based on global + language config.
@@ -220,7 +223,7 @@ impl Default for BufferSettings {
             whitespace_override: None,
             tab_indicators_override: None,
             tab_size: 4,
-            auto_indent: true,
+            auto_indent: None,
             auto_close: true,
             auto_surround: true,
             virtual_space: crate::config::VirtualSpaceMode::default(),
@@ -255,7 +258,7 @@ impl BufferSettings {
             .use_tabs_override
             .or(self.editorconfig.use_tabs)
             .unwrap_or(resolved.use_tabs);
-        self.auto_indent = resolved.auto_indent;
+        self.auto_indent = Some(resolved.auto_indent);
         self.auto_close = resolved.auto_close;
         self.auto_surround = resolved.auto_surround;
         self.virtual_space = self
@@ -266,6 +269,12 @@ impl BufferSettings {
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
         self.edit_rules = std::sync::Arc::clone(&resolved.edit_rules);
+    }
+
+    /// Whether Enter auto-indents in this buffer: its resolved setting, or
+    /// `editor.auto_indent` (`global`) when it has none.
+    pub fn auto_indent(&self, global: bool) -> bool {
+        self.auto_indent.unwrap_or(global)
     }
 
     /// Drop every explicit per-buffer override, so the buffer goes back to
@@ -2057,6 +2066,17 @@ mod tests {
     }
     use super::*;
     use crate::model::event::CursorId;
+
+    /// Buffer settings that never got a language's resolved settings follow
+    /// `editor.auto_indent`; resolved ones carry their own value.
+    #[test]
+    fn auto_indent_follows_the_global_setting_until_resolved() {
+        let mut settings = BufferSettings::default();
+        assert!(!settings.auto_indent(false));
+        assert!(settings.auto_indent(true));
+        settings.auto_indent = Some(false);
+        assert!(!settings.auto_indent(true));
+    }
 
     /// A restored session (or any later `apply_config`) has to land on the
     /// same visibility the master toggle produced when the user switched it

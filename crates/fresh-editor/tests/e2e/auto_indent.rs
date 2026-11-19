@@ -2361,16 +2361,36 @@ fn test_language_auto_indent_false_gives_plain_newline() {
     );
 }
 
-/// #3815: the built-in Makefile config sets `auto_indent: false`, so Enter
-/// after a recipe line no longer copies its tab.
+/// #3815: the built-in Makefile, INI and git-commit configs follow
+/// `editor.auto_indent` (they used to set `auto_indent: false`, which never
+/// took effect until #3815 and then lost the indent): Enter after a recipe
+/// line keeps its tab, after an indented INI line its indent.
 #[test]
-fn test_makefile_builtin_auto_indent_false() {
+fn test_builtin_makefile_and_ini_follow_global_auto_indent() {
     let mut config = Config::default();
     config.editor.auto_indent = true;
+    assert_eq!(
+        enter_at_end_with(config.clone(), "Makefile", "all:\n\techo hi"),
+        "all:\n\techo hi\n\t"
+    );
+    assert_eq!(
+        enter_at_end_with(config.clone(), "t.ini", "[s]\n  key = 1"),
+        "[s]\n  key = 1\n  "
+    );
+    config.editor.auto_indent = false;
     assert_eq!(
         enter_at_end_with(config, "Makefile", "all:\n\techo hi"),
         "all:\n\techo hi\n"
     );
+}
+
+/// Markdown keeps `auto_indent: false` (the generic indenter would indent
+/// after a line ending in `:`), so Enter after "Steps:" starts at column 0.
+#[test]
+fn test_markdown_enter_after_colon_is_not_indented() {
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    assert_eq!(enter_at_end_with(config, "t.md", "Steps:"), "Steps:\n");
 }
 
 /// #3815: a language that doesn't set `auto_indent` follows the global
@@ -2401,4 +2421,57 @@ fn test_language_auto_indent_true_wins_over_global_false() {
         enter_at_end_with(config, "t.py", "def foo():\n    x = 1"),
         "def foo():\n    x = 1\n    "
     );
+}
+
+/// A buffer that never gets its language's settings — a plugin's virtual
+/// buffer — follows `editor.auto_indent`. Its buffer settings used to
+/// default to auto-indent on, so with the global setting off Enter still
+/// copied the line's indent there.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_virtual_buffer_follows_global_auto_indent() {
+    use crate::common::harness::copy_plugin_lib;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    std::fs::write(
+        plugins_dir.join("scratch_buffer.ts"),
+        r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+(async function() {
+  const res = await editor.createVirtualBuffer({ name: "*scratch*" });
+  editor.setVirtualBufferContent(res.bufferId, [{ text: "    x", properties: {} }]);
+  editor.setStatus("SCRATCH-READY");
+})();
+"#,
+    )
+    .unwrap();
+
+    for (global, expected) in [(false, "    x\n"), (true, "    x\n    ")] {
+        let mut config = Config::default();
+        config.editor.auto_indent = global;
+        let mut harness =
+            EditorTestHarness::with_config_and_working_dir(100, 24, config, project_root.clone())
+                .unwrap();
+        harness
+            .wait_until(|h| h.get_status_bar().contains("SCRATCH-READY"))
+            .unwrap();
+        harness
+            .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "    x"))
+            .unwrap();
+        harness
+            .send_key(KeyCode::End, KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        assert_eq!(
+            harness.get_buffer_content().unwrap(),
+            expected,
+            "editor.auto_indent = {global}"
+        );
+    }
 }
