@@ -365,7 +365,7 @@
             flex: 1; text-align: center; margin-right: 46px;
             font-size: 12.5px; color: var(--faint); letter-spacing: 0.02em;
         }
-        .window img, .window video { display: block; width: 100%; height: auto; }
+        .window picture, .window img, .window video { display: block; width: 100%; height: auto; }
 
         /* Every feature, drifting past: the end card of the film. */
         .ticker {
@@ -464,23 +464,23 @@
         .snippet .k { color: var(--sage); }
 
 
-        /* Themes: six stills stacked, each fading in over the one before.
-           6 slots x 3 s = 18 s; an image stays up until the next has covered
+        /* Themes: seven stills stacked, each fading in over the one before.
+           7 slots x 3 s = 21 s; an image stays up until the next has covered
            it, and the last fades out to reveal the first underneath. */
         .theme-cycle { position: relative; }
         .theme-cycle img + img {
             position: absolute; inset: 0;
             width: 100%; height: 100%;
             opacity: 0;
-            animation: theme-in 18s linear infinite both;
+            animation: theme-in 21s linear infinite both;
             animation-delay: calc(var(--i) * 3s);
         }
         .theme-cycle img:last-of-type { animation-name: theme-last; }
         @keyframes theme-in {
-            0% { opacity: 0; } 5% { opacity: 1; } 21.6% { opacity: 1; } 21.7% { opacity: 0; } 100% { opacity: 0; }
+            0% { opacity: 0; } 4.3% { opacity: 1; } 18.5% { opacity: 1; } 18.6% { opacity: 0; } 100% { opacity: 0; }
         }
         @keyframes theme-last {
-            0% { opacity: 0; } 5% { opacity: 1; } 16.7% { opacity: 1; } 21.7% { opacity: 0; } 100% { opacity: 0; }
+            0% { opacity: 0; } 4.3% { opacity: 1; } 14.3% { opacity: 1; } 18.6% { opacity: 0; } 100% { opacity: 0; }
         }
         .theme-names {
             position: absolute; right: 14px; bottom: 14px;
@@ -497,11 +497,11 @@
             border-radius: 999px;
             padding: 6px 13px;
             opacity: 0;
-            animation: theme-name 18s linear infinite both;
+            animation: theme-name 21s linear infinite both;
             animation-delay: calc(var(--i) * 3s);
         }
         @keyframes theme-name {
-            0% { opacity: 0; } 4% { opacity: 1; } 15.5% { opacity: 1; } 18% { opacity: 0; } 100% { opacity: 0; }
+            0% { opacity: 0; } 3.4% { opacity: 1; } 13.3% { opacity: 1; } 15.4% { opacity: 0; } 100% { opacity: 0; }
         }
         @media (prefers-reduced-motion: reduce) {
             .theme-cycle img + img { animation: none; opacity: 0; }
@@ -873,12 +873,15 @@
             <div class="orchestra-hero reveal">
                 <a href="public/assets/orchestrator.mp4" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">orchestrator</span></div>
-                    <video class="loop" poster="public/assets/shots/orchestrator.webp"
-                           width="1600" height="1056" muted loop playsinline preload="none"
-                           aria-label="The Orchestrator dock stepping through workspaces filed into Performance and Security folders: a Rust file, a git diff under review, an agent asking permission for an edit, an agent at work, the file explorer, and API docs in markdown compose mode">
-                        <source src="public/assets/orchestrator.webm" type="video/webm">
-                        <source src="public/assets/orchestrator.mp4" type="video/mp4">
-                    </video>
+                    <!-- A plain animated image, not a <video>: it needs no codec
+                         support, autoplay permission or script, so it shows in
+                         every browser (the VP9 video came up empty in Safari).
+                         With reduced motion the still is shown instead. -->
+                    <picture>
+                        <source srcset="public/assets/shots/orchestrator.webp" media="(prefers-reduced-motion: reduce)">
+                        <img src="public/assets/orchestrator.webp" width="1600" height="1106" loading="lazy" decoding="async"
+                             alt="The Orchestrator dock stepping through workspaces, some filed into Performance and Security folders: a Rust file beside the file explorer, API docs in markdown compose mode, agents at work, a git diff under review, and an agent asking permission for an edit">
+                    </picture>
                 </div></a>
             </div>
             <div class="beats">
@@ -915,7 +918,7 @@
             <div class="orchestra-review reveal" id="git-review">
                 <a href="public/assets/shots/review-diff.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">review diff</span></div>
-                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff showing two files' hunks, with added and removed lines" width="2000" height="1303" loading="lazy" decoding="async">
+                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff in a workspace beside the Orchestrator dock: the hunks of a change to src/cache.rs, with added and removed lines" width="2000" height="1383" loading="lazy" decoding="async">
                 </div></a>
                 <ul class="points">
                     <li>Hunk-level stage / unstage / discard</li>
@@ -942,7 +945,7 @@
             <div class="chapter-visual reveal">
                 <a href="public/assets/shots/multicursor.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">server.rs</span></div>
-                    <img src="public/assets/shots/multicursor.webp" alt="Renaming a variable everywhere at once with multiple cursors" width="2000" height="1401" loading="lazy" decoding="async">
+                    <img src="public/assets/shots/multicursor.webp" alt="Renaming a variable everywhere at once with multiple cursors" width="1681" height="1233" loading="lazy" decoding="async">
                 </div></a>
             </div>
         </div>
@@ -951,7 +954,7 @@
             <div class="chapter-text reveal">
                 <span class="eyebrow"><b>03</b>Themes</span>
                 <h2>Make it <em>yours.</em><a class="anchor-link" href="#themes" aria-label="Permalink to Themes, status bar &amp; i18n">#</a></h2>
-                <p>Browse the themes and the whole editor changes as you go. Tokyo Night, Gruvbox, Dracula, Nord and more are built in, and the theme editor works live.</p>
+                <p>Browse the themes and the whole editor changes as you go. Quiet, Tokyo Night, Gruvbox, Dracula, Nord and more are built in, and the theme editor works live.</p>
                 <ul class="points">
                     <li>A status bar you arrange yourself, clock included</li>
                     <li>Rulers, whitespace, rainbow brackets, per-language wrap</li>
@@ -959,17 +962,18 @@
                 </ul>
             </div>
             <div class="chapter-visual reveal">
-                <a href="public/assets/shots/theme-tokyo-night.webp" target="_blank"><div class="window">
+                <a href="public/assets/shots/theme-quiet.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">server.rs</span></div>
                     <!-- One still per built-in theme, crossfading on a loop (CSS only). -->
                     <div class="theme-cycle">
-                        <img src="public/assets/shots/theme-tokyo-night.webp" alt="The same code shown in the built-in themes, switching from Tokyo Night to Gruvbox, Nord, Light, Dracula and Solarized Dark" width="1600" height="1051" loading="lazy" decoding="async">
-                        <img src="public/assets/shots/theme-gruvbox.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:1">
-                        <img src="public/assets/shots/theme-nord.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:2">
-                        <img src="public/assets/shots/theme-light.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:3">
-                        <img src="public/assets/shots/theme-dracula.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:4">
-                        <img src="public/assets/shots/theme-solarized-dark.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:5">
-                        <div class="theme-names" aria-hidden="true"><span style="--i:0">Tokyo Night</span><span style="--i:1">Gruvbox</span><span style="--i:2">Nord</span><span style="--i:3">Light</span><span style="--i:4">Dracula</span><span style="--i:5">Solarized Dark</span></div>
+                        <img src="public/assets/shots/theme-quiet.webp" alt="The same code shown in the built-in themes, switching from Quiet to Tokyo Night, Gruvbox, Nord, Light, Dracula and Solarized Dark" width="1600" height="1100" loading="lazy" decoding="async">
+                        <img src="public/assets/shots/theme-tokyo-night.webp" alt="" aria-hidden="true" width="1600" height="1100" loading="lazy" decoding="async" style="--i:1">
+                        <img src="public/assets/shots/theme-gruvbox.webp" alt="" aria-hidden="true" width="1600" height="1100" loading="lazy" decoding="async" style="--i:2">
+                        <img src="public/assets/shots/theme-nord.webp" alt="" aria-hidden="true" width="1600" height="1100" loading="lazy" decoding="async" style="--i:3">
+                        <img src="public/assets/shots/theme-light.webp" alt="" aria-hidden="true" width="1600" height="1100" loading="lazy" decoding="async" style="--i:4">
+                        <img src="public/assets/shots/theme-dracula.webp" alt="" aria-hidden="true" width="1600" height="1100" loading="lazy" decoding="async" style="--i:5">
+                        <img src="public/assets/shots/theme-solarized-dark.webp" alt="" aria-hidden="true" width="1600" height="1100" loading="lazy" decoding="async" style="--i:6">
+                        <div class="theme-names" aria-hidden="true"><span style="--i:0">Quiet</span><span style="--i:1">Tokyo Night</span><span style="--i:2">Gruvbox</span><span style="--i:3">Nord</span><span style="--i:4">Light</span><span style="--i:5">Dracula</span><span style="--i:6">Solarized Dark</span></div>
                     </div>
                 </div></a>
             </div>
@@ -989,7 +993,7 @@
             <div class="chapter-visual reveal">
                 <a href="public/assets/shots/settings.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">settings</span></div>
-                    <img src="public/assets/shots/settings.webp" alt="The Settings editor: categories on the left, editor options with descriptions and defaults on the right" width="2000" height="1306" loading="lazy" decoding="async">
+                    <img src="public/assets/shots/settings.webp" alt="The Settings editor: categories on the left, editor options with descriptions and defaults on the right" width="2000" height="1400" loading="lazy" decoding="async">
                 </div></a>
             </div>
         </div>
@@ -1010,7 +1014,7 @@
             <div class="chapter-visual reveal">
                 <a href="public/assets/shots/huge-file.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">huge.log — 2.1 GB</span></div>
-                    <img src="public/assets/shots/huge-file.webp" alt="A 2 GB log file open at its last lines, with byte offsets in the gutter" width="1600" height="1050" loading="lazy" decoding="async">
+                    <img src="public/assets/shots/huge-file.webp" alt="A 2 GB log file open at its last lines, with byte offsets in the gutter" width="1600" height="1100" loading="lazy" decoding="async">
                 </div></a>
             </div>
         </div>
@@ -1029,7 +1033,7 @@
             <div class="chapter-visual reveal">
                 <a href="public/assets/shots/palette.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">command palette</span></div>
-                    <img src="public/assets/shots/palette.webp" alt="The command palette filtered to split commands" width="2000" height="714" loading="lazy" decoding="async">
+                    <img src="public/assets/shots/palette.webp" alt="The command palette filtered to split commands" width="2000" height="1320" loading="lazy" decoding="async">
                 </div></a>
             </div>
         </div>
@@ -1695,22 +1699,6 @@
                 });
             });
             document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-        })();
-    </script>
-
-    <!-- Looping screen captures play while on screen; with reduced motion
-         they keep to their poster. -->
-    <script>
-        (function () {
-            const loops = document.querySelectorAll('video.loop');
-            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
-            const io = new IntersectionObserver(entries => {
-                for (const e of entries) {
-                    if (e.isIntersecting) { e.target.preload = 'auto'; e.target.play().catch(() => {}); }
-                    else e.target.pause();
-                }
-            }, { threshold: 0.25 });
-            loops.forEach(v => io.observe(v));
         })();
     </script>
 
