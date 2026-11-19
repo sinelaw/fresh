@@ -93,9 +93,18 @@ fn next_logical_line(
 fn logical_line_start(buffer: &mut Buffer, pos: usize) -> usize {
     // A cap of the whole buffer cannot run out, so `None` is unreachable here
     // — the search returns 0 once its floor reaches the start of the buffer.
-    buffer
-        .prev_line_start_within(pos, buffer.len())
-        .unwrap_or(0)
+    let len = buffer.len();
+    logical_line_start_within(buffer, pos, len).unwrap_or(0)
+}
+
+/// [`logical_line_start`], looking no further back than `cap` bytes: `None`
+/// when the line starts further back than that.
+pub(crate) fn logical_line_start_within(
+    buffer: &mut Buffer,
+    pos: usize,
+    cap: usize,
+) -> Option<usize> {
+    buffer.prev_line_start_within(pos, cap)
 }
 
 /// The byte `End` rests on for the line containing `pos`: the first byte of the
@@ -107,12 +116,31 @@ fn logical_line_start(buffer: &mut Buffer, pos: usize) -> usize {
 /// of anything — `End` on a file that is one long line landed on byte 100,000,
 /// which is the cap's value and no part of the document's structure.
 fn logical_line_end(buffer: &mut Buffer, pos: usize) -> usize {
+    // A cap of the whole buffer always reaches its end, so `None` is
+    // unreachable here.
     let len = buffer.len();
-    let Some(next_line) = buffer.next_line_start_within(pos, len) else {
-        // No line break between here and the end of the buffer, so the line
-        // ends where the buffer does. Unambiguous only because the cap was the
-        // whole buffer: a smaller one could not tell this from "didn't reach".
-        return len;
+    logical_line_end_within(buffer, pos, len).map_or(len, |(end, _)| end)
+}
+
+/// [`logical_line_end`], looking no further ahead than `cap` bytes, with where
+/// the next line starts: `(end, next)`, `next` being one past the line's
+/// terminator, or the end of the buffer on a line that has none. `None` when
+/// the line runs further than `cap` bytes past `pos`.
+///
+/// A `pos` between the `\r` and `\n` of a CRLF pair is inside the terminator,
+/// not on the line's text: the line still ends on the `\r`, so `end` is then
+/// `pos - 1`, before `pos`.
+pub(crate) fn logical_line_end_within(
+    buffer: &mut Buffer,
+    pos: usize,
+    cap: usize,
+) -> Option<(usize, usize)> {
+    let len = buffer.len();
+    let Some(next_line) = buffer.next_line_start_within(pos, cap) else {
+        // No line break within reach. When the reach got to the end of the
+        // buffer the line ends where the buffer does; otherwise the search
+        // can't tell that from "didn't reach".
+        return (len.saturating_sub(pos) <= cap).then_some((len, len));
     };
     // `next_line` is one past the terminator. Step back over it — over both
     // bytes of a CRLF pair — so the caret rests on the terminator's first byte.
@@ -124,7 +152,7 @@ fn logical_line_end(buffer: &mut Buffer, pos: usize) -> usize {
     {
         end -= 1;
     }
-    end
+    Some((end, next_line))
 }
 
 /// What lies above the cursor's line, for a vertical motion.
@@ -7409,6 +7437,27 @@ mod tests {
         let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nelse");
         type_char(&mut state, &mut cursors, ':');
         assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
+    }
+
+    /// The capped line searches answer as the uncapped ones do when the line
+    /// is within reach, `None` when it is not, and put a CRLF line's end on
+    /// its `\r` — also for a position between the `\r` and the `\n`.
+    #[test]
+    fn logical_line_within_cap() {
+        let mut buffer = Buffer::from_bytes(b"ab\r\ncdef\r\ngh".to_vec(), test_fs());
+        // "cdef" spans 4..8, its CRLF 8..10; "gh" (no terminator) 10..12.
+        assert_eq!(logical_line_start_within(&mut buffer, 6, 8), Some(4));
+        assert_eq!(logical_line_end_within(&mut buffer, 6, 8), Some((8, 10)));
+        assert_eq!(logical_line_start_within(&mut buffer, 6, 1), None);
+        assert_eq!(logical_line_end_within(&mut buffer, 6, 1), None);
+        // The last line: reaching the buffer's end is an answer.
+        assert_eq!(logical_line_end_within(&mut buffer, 11, 1), Some((12, 12)));
+        assert_eq!(logical_line_end_within(&mut buffer, 12, 0), Some((12, 12)));
+        // Between `\r` and `\n`: the line still ends on the `\r`.
+        assert_eq!(logical_line_end_within(&mut buffer, 9, 8), Some((8, 10)));
+        assert_eq!(logical_line_end(&mut buffer, 9), 8);
+        assert_eq!(logical_line_end(&mut buffer, 0), 2);
+        assert_eq!(logical_line_start(&mut buffer, 11), 10);
     }
 
     /// `rebase_moves_onto_edits` shifts a move (target and anchor) by the

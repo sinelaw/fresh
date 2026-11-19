@@ -16,6 +16,7 @@
 //! ([`cursor_languages`]).
 
 use crate::config::{BufferConfig, Config};
+use crate::input::actions::{logical_line_end_within, logical_line_start_within};
 use crate::model::cursor::Cursors;
 use crate::model::event::{CursorId, Event};
 use crate::model::virtual_space::virtual_gap_text;
@@ -196,30 +197,21 @@ pub(crate) struct RuleEdits {
 struct LineSpan {
     /// The line's first byte.
     start: usize,
-    /// The end of its text, before the line break.
+    /// The end of its text, before the line break; before the cursor when
+    /// it sits between the `\r` and `\n` of a CRLF break.
     end: usize,
     /// The start of the next line, past the line break; the buffer's end on
     /// the last line.
     next: usize,
 }
 
-/// The line holding `pos`, located with the buffer's line-start primitives
-/// (which walk the piece tree's line-feed counts rather than copy the
-/// line). `None` when either end lies further than [`LINE_CAP`] away.
+/// The line holding `pos`, located with the logical-line searches the
+/// `Home` / `End` motions use (which walk the piece tree's line-feed counts
+/// rather than copy the line). `None` when either end lies further than
+/// [`LINE_CAP`] away.
 fn line_span(state: &mut EditorState, pos: usize) -> Option<LineSpan> {
-    let start = state.buffer.prev_line_start_within(pos, LINE_CAP)?;
-    let len = state.buffer.len();
-    let (end, next) = match state.buffer.next_line_start_within(pos, LINE_CAP) {
-        Some(next) => {
-            let mut end = next - 1;
-            if end > pos && state.buffer.slice_bytes(end - 1..end).first() == Some(&b'\r') {
-                end -= 1;
-            }
-            (end, next)
-        }
-        None if len - pos <= LINE_CAP => (len, len),
-        None => return None,
-    };
+    let start = logical_line_start_within(&mut state.buffer, pos, LINE_CAP)?;
+    let (end, next) = logical_line_end_within(&mut state.buffer, pos, LINE_CAP)?;
     Some(LineSpan { start, end, next })
 }
 
@@ -327,6 +319,11 @@ pub(crate) fn apply_edit_rules(
         else {
             continue;
         };
+        // A cursor between the `\r` and `\n` of a CRLF line break is not on
+        // the line's text (which ends before it): the key's normal behaviour.
+        if line_end < pos {
+            continue;
+        }
         // Alone on its line: no earlier span reaches the line start, and the
         // next span starts past the line end.
         let crowded_before = earlier_end.is_some_and(|e| e >= line_start);
