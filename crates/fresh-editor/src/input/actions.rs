@@ -2833,6 +2833,33 @@ fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &m
     }
 }
 
+/// The cursor moves that start `Action::InsertLineBelow`: each cursor to the
+/// end of its logical line (not a wrapped row's end), dropping any selection.
+/// The newline that follows is a separate step, as Enter, so its edits are
+/// computed from the cursors where they then are.
+pub(crate) fn line_end_moves(state: &mut EditorState, cursors: &Cursors) -> Vec<Event> {
+    if !state.show_cursors {
+        return Vec::new();
+    }
+    let mut events = Vec::new();
+    for (cursor_id, cursor) in cursors.iter() {
+        let end = logical_line_end(&mut state.buffer, cursor.position);
+        if end == cursor.position && cursor.anchor.is_none() {
+            continue;
+        }
+        add_move_cursor_event(
+            &mut events,
+            cursor_id,
+            cursor.position,
+            end,
+            cursor.anchor,
+            None,
+            cursor.sticky_column,
+        );
+    }
+    events
+}
+
 /// `Action::OpenLine` — insert a newline at each cursor without advancing it
 /// (Emacs C-o: "open a blank line after the cursor"). The follow-up
 /// `MoveCursor` cancels the advance `apply_insert` would otherwise make,
@@ -3279,7 +3306,7 @@ pub fn action_to_events(
 /// then to these, before their normal edit (see
 /// [`crate::input::edit_rules`]). `rule_reach` says which of the rules'
 /// rewrites the key takes: all for the user's key, only those adding text at
-/// the cursor for a key a plugin's command issues (vi's `o`).
+/// the cursor for the Enter of `insert_line_below` (vi's `o`).
 ///
 /// With a `language_lookup`, a cursor on a content line of an embedded
 /// region the buffer's highlighter knows (a fenced code block) uses that
@@ -4233,6 +4260,10 @@ pub fn action_to_events_with_edit_rules(
         | Action::WorkspaceTrustRestrict
         | Action::WorkspaceTrustBlock
         | Action::WorkspaceTrustPrompt => return None,
+
+        // Two steps, each applied before the next is computed: the Editor
+        // runs it (`Editor::insert_line_below`), with [`line_end_moves`].
+        Action::InsertLineBelow => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

@@ -219,6 +219,7 @@
   "action.open": "Ouvrir un fichier",
   "action.recent_files": "Fichiers récents",
   "action.open_line": "Ouvrir une ligne en dessous",
+  "action.insert_line_below": "Insérer une ligne en dessous",
   "action.open_settings": "Ouvrir les paramètres",
   "action.open_terminal": "Ouvrir le terminal",
   "action.open_terminal_below": "Ouvrir le terminal en bas",

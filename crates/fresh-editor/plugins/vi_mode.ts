@@ -2377,8 +2377,9 @@ async function vi_insert_line_end() : Promise<void> {
 registerHandler("vi_insert_line_end", vi_insert_line_end);
 
 async function vi_open_below() : Promise<void> {
-  editor.executeAction("move_line_end");
-  editor.executeAction("insert_newline");
+  // Line end, then Enter taking only the edit rules that add text: on an
+  // empty list item `o` opens a new item, where Enter would clear it.
+  editor.executeAction("insert_line_below");
   await enterInsertRepositioned("o");
 }
 registerHandler("vi_open_below", vi_open_below);
@@ -2921,8 +2922,7 @@ async function replayChange(change: LastChange, count: number, explicitCount: nu
           editor.executeAction("move_line_end");
           break;
         case "o":
-          editor.executeAction("move_line_end");
-          editor.executeAction("insert_newline");
+          editor.executeAction("insert_line_below");
           break;
         case "O":
           if (!(await openLineAbove())) {

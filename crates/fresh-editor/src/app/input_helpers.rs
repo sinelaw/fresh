@@ -274,43 +274,73 @@ impl Editor {
         let action_description = format!("{:?}", action);
 
         if let Some(events) = self.active_window_mut().action_to_events(action) {
-            // Refuse the action if it would mutate a read-only buffer.
-            // Checking at the event level (rather than maintaining a hand-
-            // written allowlist of "editing" actions) catches every action
-            // that produces Insert/Delete, including SortLines, OpenLine,
-            // case transforms, and anything added in the future.
-            let has_buffer_mods = events
-                .iter()
-                .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
-            if has_buffer_mods && self.active_window().is_editing_disabled() {
-                self.set_status_message(t!("buffer.editing_disabled").to_string());
-                return Ok(());
-            }
-
-            if events.len() > 1 {
-                // Multi-cursor buffer edit: use optimized bulk edit (O(n)
-                // instead of O(n²)). A cursor-only list becomes one Batch for
-                // atomic undo inside the same call.
-                if let Some(applied) =
-                    self.apply_events_as_bulk_edit(events.clone(), action_description)
-                {
-                    self.active_event_log_mut().append(applied);
-                }
-
-                // Track position history for all events
-                for event in &events {
-                    self.track_cursor_movement(event);
-                }
-            } else {
-                // Single cursor - apply normally
-                for event in events {
-                    self.log_and_apply_event(&event);
-                    self.track_cursor_movement(&event);
-                }
-            }
+            self.apply_action_events(events, action_description);
         }
 
         Ok(())
+    }
+
+    /// `Action::InsertLineBelow` (vi's `o`): each cursor to its line's end,
+    /// then Enter there, taking only the edit-rule rewrites that add text at
+    /// the cursor ([`RuleReach::InsertOnly`]). On an empty list item it
+    /// continues the list, where the user's Enter clears the item: the
+    /// command opens a line, it doesn't answer the item.
+    ///
+    /// [`RuleReach::InsertOnly`]: fresh_core::edit_rules::RuleReach::InsertOnly
+    pub(super) fn insert_line_below(&mut self) -> AnyhowResult<()> {
+        use fresh_core::edit_rules::RuleReach;
+        if self.active_window().is_editing_disabled() {
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
+            return Ok(());
+        }
+        let moves = self.active_window_mut().line_end_moves();
+        self.apply_action_events(moves, format!("{:?}", Action::InsertLineBelow));
+        let prev = std::mem::replace(
+            &mut self.active_window_mut().edit_rule_reach,
+            RuleReach::InsertOnly,
+        );
+        let result = self.apply_action_as_events(Action::InsertNewline);
+        self.active_window_mut().edit_rule_reach = prev;
+        result
+    }
+
+    /// Apply the events an action converted to (see
+    /// [`Self::apply_action_as_events`]).
+    fn apply_action_events(&mut self, events: Vec<Event>, action_description: String) {
+        // Refuse the action if it would mutate a read-only buffer.
+        // Checking at the event level (rather than maintaining a hand-
+        // written allowlist of "editing" actions) catches every action
+        // that produces Insert/Delete, including SortLines, OpenLine,
+        // case transforms, and anything added in the future.
+        let has_buffer_mods = events
+            .iter()
+            .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
+        if has_buffer_mods && self.active_window().is_editing_disabled() {
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
+            return;
+        }
+
+        if events.len() > 1 {
+            // Multi-cursor buffer edit: use optimized bulk edit (O(n)
+            // instead of O(n²)). A cursor-only list becomes one Batch for
+            // atomic undo inside the same call.
+            if let Some(applied) =
+                self.apply_events_as_bulk_edit(events.clone(), action_description)
+            {
+                self.active_event_log_mut().append(applied);
+            }
+
+            // Track position history for all events
+            for event in &events {
+                self.track_cursor_movement(event);
+            }
+        } else {
+            // Single cursor - apply normally
+            for event in events {
+                self.log_and_apply_event(&event);
+                self.track_cursor_movement(&event);
+            }
+        }
     }
 
     /// Track cursor movement in position history if applicable.

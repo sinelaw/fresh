@@ -1388,11 +1388,11 @@ type FormatterPackConfig = {
 * number, a value not in the list, less than a level of indentation), the
 * rule does not apply and the next one is tried.
 *
-* Rules answer the keys as the user presses them. When a plugin's command
-* runs one of these actions as a step of its own edit (vi's `o` is line
-* end + Enter), only a rule that adds text at the cursor applies there; a
-* rule that would rewrite the line (clear an empty list item, cycle a
-* bullet) is passed over for the next one.
+* Rules answer Enter, Tab and Shift+Tab, also when a plugin runs them
+* with `executeAction`. The `insert_line_below` action (vi's `o`: line
+* end, then Enter) takes only a rule that adds text at the cursor; a rule
+* that would rewrite the line (clear an empty list item, cycle a bullet)
+* is passed over for the next one.
 */
 type EditRule = {
 	/**
@@ -4121,11 +4121,11 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	* number, a value not in the list, less than a level of indentation), the
 	* rule does not apply and the next one is tried.
 	*
-	* Rules answer the keys as the user presses them. When a plugin's command
-	* runs one of these actions as a step of its own edit (vi's `o` is line
-	* end + Enter), only a rule that adds text at the cursor applies there; a
-	* rule that would rewrite the line (clear an empty list item, cycle a
-	* bullet) is passed over for the next one.
+	* Rules answer Enter, Tab and Shift+Tab, also when a plugin runs them
+	* with `executeAction`. The `insert_line_below` action (vi's `o`: line
+	* end, then Enter) takes only a rule that adds text at the cursor; a rule
+	* that would rewrite the line (clear an empty list item, cycle a bullet)
+	* is passed over for the next one.
 	*/
 type EditRule = {
 		/**

@@ -219,6 +219,7 @@
   "action.open": "Datei öffnen",
   "action.recent_files": "Letzte Dateien",
   "action.open_line": "Zeile darunter öffnen",
+  "action.insert_line_below": "Zeile darunter einfügen",
   "action.open_settings": "Einstellungen öffnen",
   "action.open_terminal": "Terminal öffnen",
   "action.open_terminal_below": "Terminal unten öffnen",

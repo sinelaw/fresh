@@ -219,6 +219,7 @@
   "action.open": "Mở tệp",
   "action.recent_files": "Tệp gần đây",
   "action.open_line": "Mở dòng bên dưới",
+  "action.insert_line_below": "Chèn dòng bên dưới",
   "action.open_settings": "Mở cài đặt",
   "action.open_terminal": "Mở terminal",
   "action.open_terminal_below": "Mở terminal bên dưới",

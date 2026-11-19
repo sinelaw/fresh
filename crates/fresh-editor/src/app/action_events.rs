@@ -13,6 +13,18 @@ use crate::input::keybindings::Action;
 use crate::model::event::{Event, LeafId};
 
 impl crate::app::window::Window {
+    /// The first step of `Action::InsertLineBelow`: the moves taking each
+    /// cursor of the active buffer to the end of its line.
+    pub fn line_end_moves(&mut self) -> Vec<Event> {
+        let active_split = self.effective_active_split();
+        let buffer_id = self.active_buffer();
+        self.buffers
+            .with_buffer_and_split(buffer_id, active_split, |state, vs| {
+                crate::input::actions::line_end_moves(state, &vs.cursors)
+            })
+            .unwrap_or_default()
+    }
+
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {

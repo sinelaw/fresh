@@ -446,10 +446,10 @@ and `"edit_rules": []` turns a language's rules off. A rule that doesn't compile
 (a bad pattern, an unknown template, a misspelled field) is skipped with a
 warning naming the language and the rule's index; the others still apply.
 Rules that plugins register (`registerEditRules`) are tried after the
-configured ones. Rules answer the keys you press; when a command uses one of
-these keys as a step of its own (vi's `o` opens a line with line end + Enter),
-only rules that add text at the cursor apply, so `o` on an empty list item
-continues the list rather than clearing the item. See `EditRule` in the
+configured ones. Rules answer the keys you press (and a plugin's
+`executeAction` of them); the `insert_line_below` action (vi's `o`: line end,
+then Enter) takes only rules that add text at the cursor, so `o` on an empty
+list item continues the list rather than clearing the item. See `EditRule` in the
 [plugin type reference](../plugins/api/types.md) for the full format.
 
 Rules follow the language at the cursor, not just the file's. Inside a code

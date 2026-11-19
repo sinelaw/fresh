@@ -208,6 +208,7 @@
   "action.open": "Open file",
   "action.recent_files": "Recent files",
   "action.open_line": "Open line below",
+  "action.insert_line_below": "Insert line below",
   "action.open_settings": "Open settings",
   "action.open_terminal": "Open terminal",
   "action.open_terminal_below": "Open terminal below",

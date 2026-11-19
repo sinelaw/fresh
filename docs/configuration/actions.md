@@ -142,6 +142,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `init_edit` | Edit init.ts |
 | `init_reload` | Reload init.ts |
 | `insert_char` | Insert character 'x' (args: `{ char: "x" }`) |
+| `insert_line_below` | Insert line below |
 | `insert_newline` | Insert newline |
 | `insert_tab` | Insert tab |
 | `inspect_theme_at_cursor` | Inspect theme at cursor |

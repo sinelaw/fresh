@@ -219,6 +219,7 @@
   "action.open": "Otevřít soubor",
   "action.recent_files": "Nedávné soubory",
   "action.open_line": "Otevřít řádek níže",
+  "action.insert_line_below": "Vložit řádek níže",
   "action.open_settings": "Otevřít nastavení",
   "action.open_terminal": "Otevřít terminál",
   "action.open_terminal_below": "Otevřít terminál dole",

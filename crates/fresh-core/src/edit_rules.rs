@@ -265,9 +265,9 @@ pub enum RuleReach {
     Line,
     /// Only those that add text at the cursor ([`LineEdit::only_inserts`]);
     /// a rule that would rewrite the line is passed over for the next one.
-    /// For a key a command issues as one step of its own edit, such as vi's
-    /// `o` (line end, then Enter): the command opens a line, so clearing or
-    /// rewriting the line it opens from is not its to do.
+    /// For the Enter of `insert_line_below` (vi's `o`: line end, then
+    /// Enter): the command opens a line, so clearing or rewriting the line
+    /// it opens from is not its to do.
     InsertOnly,
 }
 

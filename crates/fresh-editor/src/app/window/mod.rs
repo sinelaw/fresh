@@ -967,10 +967,10 @@ pub struct Window {
     pub editor_mode: Option<String>,
 
     /// Which edit-rule rewrites Enter / Tab / Shift+Tab take: all of them for
-    /// the user's keys, only those adding text at the cursor while a plugin's
-    /// `executeAction` runs one of them as a step of its own command (vi's
-    /// `o` is line end + Enter, and must open a line, not clear an empty
-    /// list item). Set around that call only.
+    /// the user's keys (and a plugin's `executeAction`, which acts as the
+    /// key), only those adding text at the cursor while `insert_line_below`
+    /// (vi's `o`) runs its Enter — it opens a line, and must not clear an
+    /// empty list item. Set around that step only.
     pub edit_rule_reach: fresh_core::edit_rules::RuleReach,
 
     /// Per-window prompt histories (one ring per `PromptType`). Each

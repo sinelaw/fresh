@@ -323,9 +323,10 @@ fn vi_autostart_with_a_markdown_file_opened_at_startup() {
 
 /// vi's `o` opens a new line below, also on an empty list item (`- `,
 /// `1. `, `- [ ] `), and `.` repeats it the same way. The item continues on
-/// the new line; the line `o` was pressed on keeps its marker. `o` is line
-/// end + Enter, and Enter on an empty item clears it, so `o` used to clear
-/// the item and open no line.
+/// the new line; the line `o` was pressed on keeps its marker. `o` is the
+/// `insert_line_below` action (line end, then Enter taking only the rules
+/// that add text): Enter on an empty item clears it, so `o` as plain line
+/// end + Enter used to clear the item and open no line.
 #[test]
 fn vi_o_on_an_empty_list_item_opens_a_line() {
     init_tracing_from_env();

@@ -219,6 +219,7 @@
   "action.open": "ファイルを開く",
   "action.recent_files": "最近のファイル",
   "action.open_line": "下に行を開く",
+  "action.insert_line_below": "下に行を挿入",
   "action.open_settings": "設定を開く",
   "action.open_terminal": "ターミナルを開く",
   "action.open_terminal_below": "下にターミナルを開く",

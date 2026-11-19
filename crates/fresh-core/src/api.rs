@@ -6814,11 +6814,11 @@ impl schemars::JsonSchema for EditRuleTrigger {
 /// number, a value not in the list, less than a level of indentation), the
 /// rule does not apply and the next one is tried.
 ///
-/// Rules answer the keys as the user presses them. When a plugin's command
-/// runs one of these actions as a step of its own edit (vi's `o` is line
-/// end + Enter), only a rule that adds text at the cursor applies there; a
-/// rule that would rewrite the line (clear an empty list item, cycle a
-/// bullet) is passed over for the next one.
+/// Rules answer Enter, Tab and Shift+Tab, also when a plugin runs them
+/// with `executeAction`. The `insert_line_below` action (vi's `o`: line
+/// end, then Enter) takes only a rule that adds text at the cursor; a rule
+/// that would rewrite the line (clear an empty list item, cycle a bullet)
+/// is passed over for the next one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, TS)]
 // Keys are snake_case like the rest of config.json; the camelCase spellings
 // plugins use (`replaceBefore`, `replaceAfter`) are accepted as aliases.

@@ -219,6 +219,7 @@
   "action.open": "Abrir archivo",
   "action.recent_files": "Archivos recientes",
   "action.open_line": "Abrir línea debajo",
+  "action.insert_line_below": "Insertar línea debajo",
   "action.open_settings": "Abrir configuración",
   "action.open_terminal": "Abrir terminal",
   "action.open_terminal_below": "Abrir terminal abajo",

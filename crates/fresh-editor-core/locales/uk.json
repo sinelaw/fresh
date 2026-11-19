@@ -219,6 +219,7 @@
   "action.open": "Відкрити файл",
   "action.recent_files": "Нещодавні файли",
   "action.open_line": "Відкрити рядок нижче",
+  "action.insert_line_below": "Вставити рядок нижче",
   "action.open_settings": "Відкрити налаштування",
   "action.open_terminal": "Відкрити термінал",
   "action.open_terminal_below": "Відкрити термінал знизу",

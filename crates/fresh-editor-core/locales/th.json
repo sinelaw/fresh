@@ -219,6 +219,7 @@
   "action.open": "เปิดไฟล์",
   "action.recent_files": "ไฟล์ล่าสุด",
   "action.open_line": "เปิดบรรทัดด้านล่าง",
+  "action.insert_line_below": "แทรกบรรทัดด้านล่าง",
   "action.open_settings": "เปิดการตั้งค่า",
   "action.open_terminal": "เปิดเทอร์มินัล",
   "action.open_terminal_below": "เปิดเทอร์มินัลด้านล่าง",

@@ -1786,9 +1786,7 @@ impl Editor {
             // Actions a plugin issues are its handler's doing, and replaying
             // the handler issues them again, so they stay out of a recording.
             PluginCommand::ExecuteAction { action_name } => {
-                self.without_macro_recording(|editor| {
-                    editor.as_command_step(|editor| editor.handle_execute_action(action_name))
-                });
+                self.without_macro_recording(|editor| editor.handle_execute_action(action_name));
             }
             PluginCommand::CompleteCommand {
                 request_id,
@@ -1803,9 +1801,7 @@ impl Editor {
                 crate::server::command_access::complete(request_id, ok, output, error);
             }
             PluginCommand::ExecuteActions { actions } => {
-                self.without_macro_recording(|editor| {
-                    editor.as_command_step(|editor| editor.handle_execute_actions(actions))
-                });
+                self.without_macro_recording(|editor| editor.handle_execute_actions(actions));
             }
             PluginCommand::DefineMacro { register, steps } => {
                 self.handle_define_macro(register, steps);
@@ -3311,25 +3307,6 @@ impl Editor {
     }
 
     /// Execute an editor action by name (for vi mode plugin)
-    /// Run `f`, the actions a plugin executes, as steps of the plugin's own
-    /// command: Enter / Tab / Shift+Tab among them take only the edit-rule
-    /// rewrites that add text at the cursor. vi's `o` is line end + Enter;
-    /// it continues a list marker like the key, but must open a line, not
-    /// clear the empty item it opens from (the rule that answers the key).
-    fn as_command_step<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        use fresh_core::edit_rules::RuleReach;
-        let window = self.active_window;
-        let prev = self
-            .windows
-            .get_mut(&window)
-            .map(|w| std::mem::replace(&mut w.edit_rule_reach, RuleReach::InsertOnly));
-        let result = f(self);
-        if let (Some(prev), Some(w)) = (prev, self.windows.get_mut(&window)) {
-            w.edit_rule_reach = prev;
-        }
-        result
-    }
-
     fn handle_execute_action(&mut self, action_name: String) {
         use crate::input::keybindings::Action;
         use std::collections::HashMap;

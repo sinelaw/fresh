@@ -1412,6 +1412,96 @@ fn test_settings_save_of_another_markdown_field_keeps_the_rules() {
 }
 
 // ---------------------------------------------------------------------------
+// `insert_line_below` (vi's `o`) vs Enter
+// ---------------------------------------------------------------------------
+
+/// `insert_line_below` opens a line below the cursor's line from anywhere on
+/// it, continuing the list; on an empty item it opens a new item instead of
+/// clearing the one it opens from (Enter's rule there).
+#[test]
+fn test_insert_line_below_continues_an_empty_item() {
+    use fresh::input::keybindings::Action;
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+
+    let fixture = TestFixture::new("below.md", "- \n1. one\n").unwrap();
+    open_md(&mut harness, &fixture.path);
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::InsertLineBelow);
+    harness.type_text("a").unwrap();
+    assert_eq!(buf(&harness), "- \n- a\n1. one\n");
+
+    // From the start of a numbered item: the next number, below it.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::InsertLineBelow);
+    harness.type_text("b").unwrap();
+    assert_eq!(buf(&harness), "- \n- a\n1. one\n2. b\n");
+}
+
+/// A plugin's `executeAction("insert_newline")` is the user's Enter: on an
+/// empty list item it clears the item. Only `insert_line_below` passes over
+/// the rule that rewrites the line.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_plugin_insert_newline_on_an_empty_item_is_enter() {
+    use crate::common::harness::copy_plugin_lib;
+    use fresh::input::keybindings::Action;
+
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    fs::write(
+        plugins_dir.join("newline_actions.ts"),
+        r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+registerHandler("t_enter", () => { editor.executeAction("insert_newline"); });
+registerHandler("t_below", () => { editor.executeAction("insert_line_below"); });
+editor.setStatus("NEWLINE-ACTIONS-READY");
+"#,
+    )
+    .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness
+        .wait_until(|h| h.get_status_bar().contains("NEWLINE-ACTIONS-READY"))
+        .unwrap();
+
+    let md = project_root.join("items.md");
+    fs::write(&md, "- \n").unwrap();
+    open_md(&mut harness, &md);
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::PluginAction("t_enter".to_string()));
+    harness
+        .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "\n"))
+        .unwrap();
+
+    let md = project_root.join("items2.md");
+    fs::write(&md, "- \n").unwrap();
+    open_md(&mut harness, &md);
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::PluginAction("t_below".to_string()));
+    harness
+        .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "- \n- \n"))
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
+// ---------------------------------------------------------------------------
 // The mechanism is not Markdown's: a plugin's rules for another language
 // ---------------------------------------------------------------------------
 

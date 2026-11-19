@@ -219,6 +219,7 @@
   "action.open": "打开文件",
   "action.recent_files": "最近的文件",
   "action.open_line": "在下方打开新行",
+  "action.insert_line_below": "在下方插入行",
   "action.open_settings": "打开设置",
   "action.open_terminal": "打开终端",
   "action.open_terminal_below": "在下方打开终端",

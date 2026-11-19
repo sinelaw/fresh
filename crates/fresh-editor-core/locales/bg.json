@@ -149,6 +149,7 @@
   "action.open": "Отваряне на файл",
   "action.recent_files": "Последни файлове",
   "action.open_line": "Отваряне на нов ред отдолу",
+  "action.insert_line_below": "Вмъкване на ред отдолу",
   "action.open_live_grep": "Търсене във файлове в реално време (Live Grep)",
   "action.open_settings": "Отваряне на настройките",
   "action.open_terminal": "Отваряне на терминал",
