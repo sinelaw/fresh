@@ -2557,7 +2557,7 @@ mod tests {
                 {"on": "newline", "before": "(", "insert": ""},
                 {"on": "indent", "insert": "${nope}"},
                 {"on": "newline", "befor": "x", "insert": ""},
-                {"on": "dedent", "before": "^x", "replaceBefore": ""}
+                {"on": "dedent", "before": "^x", "replace_before": ""}
             ]
         }}}"#;
         let mut value: Value = serde_json::from_str(user).unwrap();

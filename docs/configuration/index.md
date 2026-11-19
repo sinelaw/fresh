@@ -414,7 +414,7 @@ match — continue a comment or a list, indent a blank item. Markdown's
 `edit_rules`; other languages have none until you add them. Each rule names its
 key (`on`: `"newline"`, `"indent"` or `"dedent"`), optional regular expressions
 for the line's text `before` and `after` the cursor, and templates: `insert`
-(text at the cursor), `replaceBefore` / `replaceAfter` (rewrite either side).
+(text at the cursor), `replace_before` / `replace_after` (rewrite either side).
 Templates take `$1` / `${name}` captures, `${inc:1}` (a number plus one),
 `${cycle:1:a|b|c}` (the next value in a list), `${indent}` / `${dedent:1}` (one
 indentation level added or taken off) and `$$` for a `$`. Rules are tried in

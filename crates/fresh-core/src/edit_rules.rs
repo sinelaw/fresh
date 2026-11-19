@@ -261,14 +261,14 @@ impl CompiledEditRule {
             before: regex("before", &rule.before)?,
             after: regex("after", &rule.after)?,
             insert: template("insert", &rule.insert)?,
-            replace_before: template("replaceBefore", &rule.replace_before)?,
-            replace_after: template("replaceAfter", &rule.replace_after)?,
+            replace_before: template("replace_before", &rule.replace_before)?,
+            replace_after: template("replace_after", &rule.replace_after)?,
         };
         if compiled.insert.is_none()
             && compiled.replace_before.is_none()
             && compiled.replace_after.is_none()
         {
-            return Err("a rule needs `insert`, `replaceBefore` or `replaceAfter`".to_string());
+            return Err("a rule needs `insert`, `replace_before` or `replace_after`".to_string());
         }
         compiled.check_capture_refs()?;
         Ok(compiled)
@@ -285,8 +285,8 @@ impl CompiledEditRule {
         };
         for (field, t) in [
             ("insert", &self.insert),
-            ("replaceBefore", &self.replace_before),
-            ("replaceAfter", &self.replace_after),
+            ("replace_before", &self.replace_before),
+            ("replace_after", &self.replace_after),
         ] {
             for r in t.iter().flat_map(Template::capture_refs) {
                 match r {
@@ -843,17 +843,20 @@ mod tests {
     fn the_rule_format_rejects_unknown_fields() {
         let err = serde_json::from_value::<EditRuleSet>(serde_json::json!({
             "languages": ["x"],
-            "rules": [{ "on": "newline", "insert": "", "replace_before": "" }]
+            "rules": [{ "on": "newline", "insert": "", "replace_befor": "" }]
         }))
         .unwrap_err();
-        assert!(err.to_string().contains("replace_before"), "{err}");
-        let ok: EditRuleSet = serde_json::from_value(serde_json::json!({
-            "languages": ["x"],
-            "rules": [{ "on": "dedent", "before": "^a", "replaceBefore": "" }]
-        }))
-        .unwrap();
-        assert_eq!(ok.rules[0].on, EditRuleTrigger::Dedent);
-        assert_eq!(ok.rules[0].replace_before.as_deref(), Some(""));
+        assert!(err.to_string().contains("replace_befor"), "{err}");
+        // snake_case (config.json) and camelCase (plugins) both work.
+        for key in ["replace_before", "replaceBefore"] {
+            let ok: EditRuleSet = serde_json::from_value(serde_json::json!({
+                "languages": ["x"],
+                "rules": [{ "on": "dedent", "before": "^a", key: "" }]
+            }))
+            .unwrap();
+            assert_eq!(ok.rules[0].on, EditRuleTrigger::Dedent);
+            assert_eq!(ok.rules[0].replace_before.as_deref(), Some(""));
+        }
     }
 
     #[test]

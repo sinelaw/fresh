@@ -1779,7 +1779,7 @@
           "default": null
         },
         "edit_rules": {
-          "description": "What Enter, Tab and Shift+Tab do on lines that match. Rules are tried in\norder; the first that applies replaces the key's normal edit. `[]` turns\na language's rules off (Markdown's list editing is its default). Each\nrule has `on` (`\"newline\"`, `\"indent\"` or `\"dedent\"`), optional regexes\n`before` / `after` (the line's text before / after the cursor), and\ntemplates `insert`, `replaceBefore`, `replaceAfter` using `$1`,\n`${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A\nrule that doesn't compile is skipped with a warning. Rules that plugins\nregister are tried after these.",
+          "description": "What Enter, Tab and Shift+Tab do on lines that match. Rules are tried in\norder; the first that applies replaces the key's normal edit. `[]` turns\na language's rules off (Markdown's list editing is its default). Each\nrule has `on` (`\"newline\"`, `\"indent\"` or `\"dedent\"`), optional regexes\n`before` / `after` (the line's text before / after the cursor), and\ntemplates `insert`, `replace_before`, `replace_after` using `$1`,\n`${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A\nrule that doesn't compile is skipped with a warning. Rules that plugins\nregister are tried after these.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/EditRule"
@@ -1945,14 +1945,14 @@
             "null"
           ]
         },
-        "replaceBefore": {
+        "replace_before": {
           "description": "Template that replaces the line's text before the cursor.",
           "type": [
             "string",
             "null"
           ]
         },
-        "replaceAfter": {
+        "replace_after": {
           "description": "Template that replaces the line's text after the cursor.",
           "type": [
             "string",

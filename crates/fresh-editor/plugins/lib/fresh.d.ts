@@ -4123,11 +4123,11 @@ type EditRule = {
 		/**
 		* Template that replaces the line's text before the cursor.
 		*/
-		replaceBefore?: string | null;
+		replace_before?: string | null;
 		/**
 		* Template that replaces the line's text after the cursor.
 		*/
-		replaceAfter?: string | null;
+		replace_after?: string | null;
 	};
 	/**
 	* The key a rule answers: Enter (`newline`), Tab (`indent`) or Shift+Tab (`dedent`).
@@ -5137,7 +5137,7 @@ interface LanguageConfig {
 		* a language's rules off (Markdown's list editing is its default). Each
 		* rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
 		* `before` / `after` (the line's text before / after the cursor), and
-		* templates `insert`, `replaceBefore`, `replaceAfter` using `$1`,
+		* templates `insert`, `replace_before`, `replace_after` using `$1`,
 		* `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A
 		* rule that doesn't compile is skipped with a warning. Rules that plugins
 		* register are tried after these.

@@ -2671,7 +2671,7 @@ pub struct LanguageConfig {
     /// a language's rules off (Markdown's list editing is its default). Each
     /// rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
     /// `before` / `after` (the line's text before / after the cursor), and
-    /// templates `insert`, `replaceBefore`, `replaceAfter` using `$1`,
+    /// templates `insert`, `replace_before`, `replace_after` using `$1`,
     /// `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A
     /// rule that doesn't compile is skipped with a warning. Rules that plugins
     /// register are tried after these.
@@ -2746,8 +2746,8 @@ pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
             "on": "newline",
             "before": r"^[ \t]*(?:[-*+] \[[ xX]\] |\d+\. |[-*+] )\s*$",
             "after": BLANK,
-            "replaceBefore": "",
-            "replaceAfter": ""
+            "replace_before": "",
+            "replace_after": ""
         },
         // Enter on a checkbox item: a new unchecked one.
         { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": "\n$1$2 [ ] " },
@@ -2762,8 +2762,8 @@ pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
             "on": "indent",
             "before": BLANK_BULLET_ITEM,
             "after": BLANK,
-            "replaceBefore": "$1${indent}${cycle:2:*|-|+} $3",
-            "replaceAfter": ""
+            "replace_before": "$1${indent}${cycle:2:*|-|+} $3",
+            "replace_after": ""
         },
         // Shift+Tab on a blank bullet item: one level out, previous bullet.
         // `${dedent}` leaves the rule unapplied when there is no level to take.
@@ -2771,8 +2771,8 @@ pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
             "on": "dedent",
             "before": BLANK_BULLET_ITEM,
             "after": BLANK,
-            "replaceBefore": "${dedent:1}${cycle:2:+|-|*} $3",
-            "replaceAfter": ""
+            "replace_before": "${dedent:1}${cycle:2:+|-|*} $3",
+            "replace_after": ""
         }
     ]))
     .expect("the built-in Markdown edit rules compile")

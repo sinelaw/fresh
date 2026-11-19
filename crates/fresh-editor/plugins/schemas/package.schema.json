@@ -417,14 +417,14 @@
             "null"
           ]
         },
-        "replaceBefore": {
+        "replace_before": {
           "description": "Template that replaces the line's text before the cursor.",
           "type": [
             "string",
             "null"
           ]
         },
-        "replaceAfter": {
+        "replace_after": {
           "description": "Template that replaces the line's text after the cursor.",
           "type": [
             "string",

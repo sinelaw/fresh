@@ -6808,7 +6808,9 @@ impl schemars::JsonSchema for EditRuleTrigger {
 /// number, a value not in the list, less than a level of indentation), the
 /// rule does not apply and the next one is tried.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+// Keys are snake_case like the rest of config.json; the camelCase spellings
+// plugins use (`replaceBefore`, `replaceAfter`) are accepted as aliases.
+#[serde(deny_unknown_fields)]
 #[schemars(extend("x-display-field" = "/before"))]
 #[ts(export, rename_all = "camelCase")]
 pub struct EditRule {
@@ -6827,12 +6829,20 @@ pub struct EditRule {
     #[ts(optional)]
     pub insert: Option<String>,
     /// Template that replaces the line's text before the cursor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
+    #[serde(
+        default,
+        alias = "replaceBefore",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, rename = "replaceBefore")]
     pub replace_before: Option<String>,
     /// Template that replaces the line's text after the cursor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
+    #[serde(
+        default,
+        alias = "replaceAfter",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, rename = "replaceAfter")]
     pub replace_after: Option<String>,
 }
 
