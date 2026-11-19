@@ -157,6 +157,7 @@
         "file_status_conflicted_fg": null,
         "file_explorer_pinned_bg": null,
         "file_explorer_directory_fg": null,
+        "dock_heading_fg": null,
         "file_explorer_bg": null,
         "file_explorer_fg": null,
         "file_explorer_border_fg": null,
@@ -1942,6 +1943,19 @@
           ],
           "default": null,
           "x-fallback": "syntax.keyword"
+        },
+        "dock_heading_fg": {
+          "description": "Heading text in the Orchestrator dock: Pinned, the By date headings\nand folder names. Falls back to `editor.line_number_fg`, so headings\nsit back as the gutter does and leave the workspace names to carry\nthe eye.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "x-fallback": "editor.line_number_fg"
         },
         "file_explorer_bg": {
           "description": "Background of the file explorer panel: its rows, title row and\nborder. Falls back to `editor.bg`.",

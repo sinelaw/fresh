@@ -2651,8 +2651,12 @@ function folderNodeEntry(
   count: number,
   rollup: { blocked: number; done: number } = { blocked: 0, done: 0 },
 ): TextPropertyEntry {
+  // Headings in a subdued colour of their own (`ui.dock_heading_fg`, which
+  // falls back to the gutter's grey): they organise the list rather than
+  // being entries in it, and leave the workspace names and the state column
+  // to carry the eye.
   const segs: Entry[] = [
-    { text: f.name, style: { bold: true } },
+    { text: f.name, style: { bold: true, fg: "ui.dock_heading_fg" } },
   ];
   if (count > 0) {
     segs.push({ text: `  (${count})`, style: { fg: "ui.menu_disabled_fg" } });
