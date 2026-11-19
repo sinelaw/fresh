@@ -365,7 +365,7 @@
             flex: 1; text-align: center; margin-right: 46px;
             font-size: 12.5px; color: var(--faint); letter-spacing: 0.02em;
         }
-        .window img, .window video { display: block; width: 100%; height: auto; }
+        .window picture, .window img, .window video { display: block; width: 100%; height: auto; }
 
         /* Every feature, drifting past: the end card of the film. */
         .ticker {
@@ -873,12 +873,15 @@
             <div class="orchestra-hero reveal">
                 <a href="public/assets/orchestrator.mp4" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">orchestrator</span></div>
-                    <video class="loop" poster="public/assets/shots/orchestrator.webp"
-                           width="1600" height="1056" muted loop playsinline preload="none"
-                           aria-label="The Orchestrator dock stepping through workspaces filed into Performance and Security folders: a Rust file, a git diff under review, an agent asking permission for an edit, an agent at work, the file explorer, and API docs in markdown compose mode">
-                        <source src="public/assets/orchestrator.webm" type="video/webm">
-                        <source src="public/assets/orchestrator.mp4" type="video/mp4">
-                    </video>
+                    <!-- A plain animated image, not a <video>: it needs no codec
+                         support, autoplay permission or script, so it shows in
+                         every browser (the VP9 video came up empty in Safari).
+                         With reduced motion the still is shown instead. -->
+                    <picture>
+                        <source srcset="public/assets/shots/orchestrator.webp" media="(prefers-reduced-motion: reduce)">
+                        <img src="public/assets/orchestrator.webp" width="1600" height="1056" loading="lazy" decoding="async"
+                             alt="The Orchestrator dock stepping through workspaces filed into Performance and Security folders: a Rust file, a git diff under review, an agent asking permission for an edit, an agent at work, the file explorer, and API docs in markdown compose mode">
+                    </picture>
                 </div></a>
             </div>
             <div class="beats">
@@ -1695,22 +1698,6 @@
                 });
             });
             document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-        })();
-    </script>
-
-    <!-- Looping screen captures play while on screen; with reduced motion
-         they keep to their poster. -->
-    <script>
-        (function () {
-            const loops = document.querySelectorAll('video.loop');
-            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
-            const io = new IntersectionObserver(entries => {
-                for (const e of entries) {
-                    if (e.isIntersecting) { e.target.preload = 'auto'; e.target.play().catch(() => {}); }
-                    else e.target.pause();
-                }
-            }, { threshold: 0.25 });
-            loops.forEach(v => io.observe(v));
         })();
     </script>
 

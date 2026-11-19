@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Refresh the landing page's media from the ad recordings:
 #   homepage/public/assets/shots/*.webp   stills cropped from the clips (shots.js)
+#   homepage/public/assets/orchestrator.{mp4,webp} the Orchestrator loop
 #   homepage/public/assets/fresh-film.mp4 the calm cut, 720x1280, plus its poster
 # Run build.sh first (it records the clips and renders fresh-ad-calm.mp4).
 set -euo pipefail
@@ -39,7 +40,11 @@ PY
 
 # the Orchestrator loop: the dock walking through the workspaces (rec_dock.py)
 AD_PORT="$PORT" AD_PAGE=shots.html FFMPEG="$FFMPEG" node render.mjs clip "$OUT/orchestrator.mp4" orchestrator 0.05 8.05 30
-"$FFMPEG" -loglevel error -y -i "$OUT/orchestrator.mp4" -c:v libvpx-vp9 -b:v 0 -crf 36 -row-mt 1 -an "$OUT/orchestrator.webm"
+# On the page it is an animated WebP in a plain <img>: no codec negotiation,
+# autoplay policy or JS, so it plays wherever images load. (A VP9 <source>
+# rendered as an empty frame in Safari, #3822.) The mp4 stays as the link target.
+"$FFMPEG" -loglevel error -y -i "$OUT/orchestrator.mp4" -vf "fps=15,scale=1600:-2:flags=lanczos" \
+  -c:v libwebp_anim -lossless 0 -quality 75 -compression_level 6 -loop 0 -an "$OUT/orchestrator.webp"
 
 "$FFMPEG" -loglevel error -y -i fresh-ad-calm.mp4 -vf "scale=720:1280:flags=lanczos" \
   -c:v libx264 -preset slow -crf 25 -profile:v high -pix_fmt yuv420p -c:a aac -b:a 128k \
