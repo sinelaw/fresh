@@ -320,3 +320,76 @@ fn vi_autostart_with_a_markdown_file_opened_at_startup() {
     })
     .unwrap();
 }
+
+/// vi's `o` opens a new line below, also on an empty list item (`- `,
+/// `1. `, `- [ ] `), and `.` repeats it the same way. The item continues on
+/// the new line; the line `o` was pressed on keeps its marker. `o` is line
+/// end + Enter, and Enter on an empty item clears it, so `o` used to clear
+/// the item and open no line.
+#[test]
+fn vi_o_on_an_empty_list_item_opens_a_line() {
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin_lib(&plugins_dir);
+    let md = project_root.join("items.md");
+    fs::write(&md, "- \n1. \n- [ ] \n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "auto_start": true }),
+        },
+    );
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, project_root).unwrap();
+    h.open_file(&md).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Vi mode enabled"))
+        .unwrap();
+
+    let wait_for = |h: &mut EditorTestHarness, text: &str| {
+        h.wait_until(|h| h.get_buffer_content().is_some_and(|c| c == text))
+            .unwrap();
+    };
+    let open_and_type = |h: &mut EditorTestHarness, text: &str| {
+        h.send_key(KeyCode::Char('o'), KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.screen_to_string().contains("INSERT"))
+            .unwrap();
+        h.type_text(text).unwrap();
+        h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| !h.screen_to_string().contains("INSERT"))
+            .unwrap();
+    };
+
+    // `- `: a new bullet below, the empty one stays.
+    open_and_type(&mut h, "a");
+    wait_for(&mut h, "- \n- a\n1. \n- [ ] \n");
+
+    // `1. `: the next number below.
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Ln 3,"))
+        .unwrap();
+    open_and_type(&mut h, "b");
+    wait_for(&mut h, "- \n- a\n1. \n2. b\n- [ ] \n");
+
+    // `- [ ] ` with `.`: the repeat opens a line too.
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Ln 5,"))
+        .unwrap();
+    h.send_key(KeyCode::Char('.'), KeyModifiers::NONE).unwrap();
+    wait_for(&mut h, "- \n- a\n1. \n2. b\n- [ ] \n- [ ] b\n");
+
+    // Enter in insert mode is still the key: on an empty item it clears it.
+    h.send_key(KeyCode::Char('A'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("INSERT"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    wait_for(&mut h, "- \n- a\n1. \n2. b\n- [ ] \n- [ ] b\n\n");
+}

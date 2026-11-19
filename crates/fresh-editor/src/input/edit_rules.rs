@@ -13,7 +13,7 @@ use crate::model::event::{CursorId, Event};
 use crate::model::virtual_space::virtual_gap_text;
 use crate::state::EditorState;
 use fresh_core::api::EditRuleTrigger;
-use fresh_core::edit_rules::{BufferEditRules, EditRuleRegistry, LineContext};
+use fresh_core::edit_rules::{BufferEditRules, EditRuleRegistry, LineContext, RuleReach};
 
 /// How far a line may run either side of the cursor for rules to look at
 /// it. A longer line (minified text, a data dump) just gets the key's
@@ -49,6 +49,13 @@ fn line_bounds(state: &mut EditorState, pos: usize) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
+/// The buffer's bytes in `start..end` as text, or `None` when they are not
+/// UTF-8 (or can't be read).
+fn utf8_range(state: &mut EditorState, start: usize, end: usize) -> Option<String> {
+    let bytes = state.buffer.get_text_range_mut(start, end - start).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
 /// Byte length of the longest common prefix of `a` and `b`, on a character
 /// boundary of both.
 fn common_prefix_len(a: &str, b: &str) -> usize {
@@ -61,7 +68,8 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
 /// Apply the edit rules for the buffer and `trigger` at each cursor they can
 /// handle, pushing their events onto `events`: the buffer's configured rules
 /// (`buffer_settings.edit_rules`), then, when the caller passes the
-/// registry, the sets plugins registered for its language.
+/// registry, the sets plugins registered for its language. `reach` says
+/// which rewrites the key takes (all of them, for the user's own key).
 ///
 /// A cursor is handled when it has no selection, is not in virtual space,
 /// shares its line with no other cursor (or another cursor's selection), and
@@ -73,6 +81,7 @@ pub(crate) fn apply_edit_rules(
     events: &mut Vec<Event>,
     trigger: EditRuleTrigger,
     registry: Option<&EditRuleRegistry>,
+    reach: RuleReach,
 ) -> Option<RuleEdits> {
     // Held apart from `state`, which the loop below reads mutably.
     let configured = std::sync::Arc::clone(&state.buffer_settings.edit_rules);
@@ -138,8 +147,16 @@ pub(crate) fn apply_edit_rules(
         " ".repeat(state.buffer_settings.tab_size)
     };
     for (id, pos, line_start, line_end, sticky) in candidates.into_iter().rev() {
-        let before = state.get_text_range(line_start, pos);
-        let after = state.get_text_range(pos, line_end);
+        // The rules see text, but their edits are byte offsets into the
+        // buffer: a line that isn't UTF-8 either side of the cursor (or a
+        // cursor inside a character) gets the key's normal behaviour, rather
+        // than offsets taken from a lossy copy with a different length.
+        let (Some(before), Some(after)) = (
+            utf8_range(state, line_start, pos),
+            utf8_range(state, pos, line_end),
+        ) else {
+            continue;
+        };
         let ctx = LineContext {
             before: &before,
             after: &after,
@@ -147,7 +164,7 @@ pub(crate) fn apply_edit_rules(
             tab_width: state.buffer_settings.tab_size,
             line_ending,
         };
-        let Some(edit) = rules.apply(trigger, &ctx) else {
+        let Some(edit) = rules.apply_within(trigger, &ctx, reach) else {
             continue;
         };
         handled.push(id);
@@ -221,14 +238,24 @@ pub(crate) fn apply_edit_rules(
 }
 
 /// Shift the `MoveCursor` targets the key's normal handler computed for the
-/// cursors no rule handled (`default_events`), by the rules' `edits`.
+/// cursors no rule handled (`rest`, as they were before the key;
+/// `default_events`), by the rules' `edits`.
 ///
 /// A handler that moves cursors explicitly (Shift+Tab's dedent) computes
-/// their new positions from its own edits only; the bulk apply takes such a
-/// target as final unless the cursor's own insert sits at its position. The
-/// rules' edits are on other lines, so each one lies wholly before or after
-/// the cursor, and the shift is the net length of those before it.
-pub(crate) fn shift_default_moves(default_events: &mut [Event], edits: &[(usize, usize, usize)]) {
+/// their new positions from its own edits only. The bulk apply
+/// (`apply_events_as_bulk_edit`) takes such a target as final, unless the
+/// cursor also has an insert at its own position from before the key (Enter's
+/// bracket expansion, the auto-close shape): it then shifts the target for
+/// every edit below that position itself, so such a move is left alone here
+/// or it would be shifted twice. The test is the applier's own: an insert at
+/// the cursor's position before the key, whatever the move's `old_position`.
+/// The rules' edits are on other lines, so each one lies wholly before or
+/// after the cursor, and the shift is the net length of those before it.
+pub(crate) fn shift_default_moves(
+    default_events: &mut [Event],
+    rest: &Cursors,
+    edits: &[(usize, usize, usize)],
+) {
     if edits.is_empty() {
         return;
     }
@@ -259,10 +286,11 @@ pub(crate) fn shift_default_moves(default_events: &mut [Event], edits: &[(usize,
             ..
         } = event
         {
-            if inserts_at.contains(&(*cursor_id, *old_position)) {
+            let original = rest.get(*cursor_id).map(|c| c.position);
+            if original.is_some_and(|p| inserts_at.contains(&(*cursor_id, p))) {
                 continue;
             }
-            let shift = shift_at(*old_position);
+            let shift = shift_at(original.unwrap_or(*old_position));
             *new_position = new_position.saturating_add_signed(shift);
             *new_anchor = new_anchor.map(|a| a.saturating_add_signed(shift));
         }

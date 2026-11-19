@@ -1074,6 +1074,158 @@ fn test_rule_edits_undo_in_one_step() {
     harness.assert_no_plugin_errors();
 }
 
+/// A CRLF buffer continues its list with CRLF line breaks: the rule's line
+/// ends before the `\r`, and its template's line break is written as the
+/// buffer's line ending.
+#[test]
+fn test_enter_continues_list_in_crlf_buffer() {
+    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let fixture = TestFixture::new("crlf.md", "- one\r\n2. two\r\n").unwrap();
+    open_md(&mut harness, &fixture.path);
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    assert_eq!(buf(&harness), "- one\r\n- X\r\n2. two\r\n");
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("Y").unwrap();
+    assert_eq!(buf(&harness), "- one\r\n- X\r\n2. two\r\n3. Y\r\n");
+    harness.assert_no_plugin_errors();
+}
+
+/// A line that isn't UTF-8 gets the key's normal behaviour: the rules match
+/// text, and a lossy copy of the line (U+FFFD for each bad byte) has a
+/// different length than the bytes the edit would be made at. It used to
+/// compute the edit's offsets from that copy (and underflow in debug builds).
+#[test]
+fn test_enter_on_a_line_that_is_not_utf8_is_the_plain_newline() {
+    let (mut harness, temp_dir) = markdown_harness(100, 24);
+    let path = temp_dir.path().join("project_root").join("bytes.md");
+    fs::write(&path, b"- a\xffb\n").unwrap();
+    open_md(&mut harness, &path);
+    // Opened as UTF-8 regardless, so the buffer holds the 0xFF byte.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Reload with Encoding").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Reload with encoding:");
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("UTF-8").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("a<FF>b");
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"- a\xffb\nX\n");
+
+    // A UTF-8 line below it still continues its list.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("- ").unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("Y").unwrap();
+    assert!(buf(&harness).ends_with("- X\n- Y\n"), "{:?}", buf(&harness));
+}
+
+/// With one cursor on a line a rule handles and another between brackets
+/// (Enter's bracket expansion moves that cursor back up a line), both
+/// cursors land where they belong. The expansion's move was shifted for the
+/// rule's edit twice, once by the rules and once by the multi-cursor apply,
+/// which put the second cursor past the end of the buffer.
+#[test]
+fn test_multi_cursor_enter_mixes_rule_and_bracket_expansion() {
+    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "python": { "edit_rules": [
+            { "on": "newline", "before": r"^(\s*# ?)\S", "insert": "\n$1" }
+        ] } } }),
+    );
+    assert!(harness.config().editor.auto_indent);
+    assert!(harness.config().editor.auto_close);
+
+    let py = temp_dir.path().join("project_root").join("mix.py");
+    fs::write(&py, "# a\nff()").unwrap();
+    harness.open_file(&py).unwrap();
+    harness.render().unwrap();
+    // Cursors between `(` and `)`, and at the end of `# a` above it.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.editor_mut().add_cursor_above();
+    assert_eq!(harness.editor().active_cursors().count(), 2);
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let len = buf(&harness).len();
+    for (_, c) in harness.editor().active_cursors().iter() {
+        assert!(c.position <= len, "a cursor past the end: {}", c.position);
+    }
+    harness.type_text("X").unwrap();
+    let content = buf(&harness);
+    let lines: Vec<&str> = content.split('\n').collect();
+    assert_eq!(lines.len(), 5, "{content:?}");
+    assert_eq!(lines[0], "# a");
+    assert_eq!(lines[1], "# X", "{content:?}");
+    assert_eq!(lines[2], "ff(", "{content:?}");
+    assert_eq!(lines[3].trim_start(), "X", "{content:?}");
+    assert_eq!(lines[4], ")", "{content:?}");
+}
+
+/// A rule that rewrites only the text after the cursor leaves the cursor
+/// where it was (its insert would otherwise carry the cursor past it).
+#[test]
+fn test_rule_changing_only_the_text_after_the_cursor_keeps_the_cursor() {
+    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "python": { "edit_rules": [
+            { "on": "indent", "before": r"\($", "after": r"^\)$", "replace_after": "  )" }
+        ] } } }),
+    );
+    let py = temp_dir.path().join("project_root").join("after.py");
+    fs::write(&py, "f()\n").unwrap();
+    harness.open_file(&py).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    assert_eq!(buf(&harness), "f(  )\n");
+    harness.type_text("X").unwrap();
+    assert_eq!(buf(&harness), "f(X  )\n");
+}
+
 // ---------------------------------------------------------------------------
 // Edit rules are a language setting: config.json turns them off, adds them
 // for other languages, and a reload brings the current ones

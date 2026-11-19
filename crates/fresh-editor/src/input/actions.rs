@@ -19,7 +19,7 @@ use crate::primitives::word_navigation::{
 };
 use crate::state::EditorState;
 use fresh_core::api::EditRuleTrigger;
-use fresh_core::edit_rules::EditRuleRegistry;
+use fresh_core::edit_rules::{EditRuleRegistry, RuleReach};
 use std::ops::Range;
 
 /// Direction for block selection movement
@@ -3209,13 +3209,16 @@ pub fn action_to_events(
         estimated_line_length,
         viewport_height,
         None,
+        RuleReach::Line,
     )
 }
 
 /// [`action_to_events`], with the plugin-registered edit rules too: Enter,
 /// Tab and Shift+Tab offer each cursor to the buffer's configured rules,
 /// then to these, before their normal edit (see
-/// [`crate::input::edit_rules`]).
+/// [`crate::input::edit_rules`]). `rule_reach` says which of the rules'
+/// rewrites the key takes: all for the user's key, only those adding text at
+/// the cursor for a key a plugin's command issues (vi's `o`).
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events_with_edit_rules(
     state: &mut EditorState,
@@ -3228,6 +3231,7 @@ pub fn action_to_events_with_edit_rules(
     estimated_line_length: usize,
     viewport_height: u16,
     edit_rules: Option<&EditRuleRegistry>,
+    rule_reach: RuleReach,
 ) -> Option<Vec<Event>> {
     // For virtual buffers with hidden cursors, ignore movement and editing actions
     if !state.show_cursors && action.is_movement_or_editing() {
@@ -3279,6 +3283,7 @@ pub fn action_to_events_with_edit_rules(
                 &mut events,
                 EditRuleTrigger::Newline,
                 edit_rules,
+                rule_reach,
             );
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
@@ -3296,7 +3301,7 @@ pub fn action_to_events_with_edit_rules(
                     estimated_line_length,
                 );
                 if let Some(r) = &ruled {
-                    shift_default_moves(&mut events[from..], &r.edits);
+                    shift_default_moves(&mut events[from..], rest, &r.edits);
                 }
             }
         }
@@ -3308,6 +3313,7 @@ pub fn action_to_events_with_edit_rules(
                 &mut events,
                 EditRuleTrigger::Dedent,
                 edit_rules,
+                rule_reach,
             );
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
@@ -3317,7 +3323,7 @@ pub fn action_to_events_with_edit_rules(
                 let from = events.len();
                 handle_dedent_selection(state, rest, &mut events, tab_size, estimated_line_length);
                 if let Some(r) = &ruled {
-                    shift_default_moves(&mut events[from..], &r.edits);
+                    shift_default_moves(&mut events[from..], rest, &r.edits);
                 }
             }
         }
@@ -3335,6 +3341,7 @@ pub fn action_to_events_with_edit_rules(
                     &mut events,
                     EditRuleTrigger::Indent,
                     edit_rules,
+                    rule_reach,
                 )
             };
             let rest = match &ruled {

@@ -232,6 +232,38 @@ pub struct LineEdit {
     pub after: String,
 }
 
+impl LineEdit {
+    /// Whether this rewrite only adds text at the cursor, leaving the line's
+    /// existing text as it was (a list marker continued on a new line, but
+    /// not an empty item cleared or a bullet cycled).
+    pub fn only_inserts(&self, ctx: &LineContext<'_>) -> bool {
+        self.before.starts_with(ctx.before) && self.after == ctx.after
+    }
+}
+
+/// Which rewrites a key may take from the rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RuleReach {
+    /// Any: the user's own Enter / Tab / Shift+Tab.
+    #[default]
+    Line,
+    /// Only those that add text at the cursor ([`LineEdit::only_inserts`]);
+    /// a rule that would rewrite the line is passed over for the next one.
+    /// For a key a command issues as one step of its own edit, such as vi's
+    /// `o` (line end, then Enter): the command opens a line, so clearing or
+    /// rewriting the line it opens from is not its to do.
+    InsertOnly,
+}
+
+impl RuleReach {
+    fn accepts(self, edit: &LineEdit, ctx: &LineContext<'_>) -> bool {
+        match self {
+            RuleReach::Line => true,
+            RuleReach::InsertOnly => edit.only_inserts(ctx),
+        }
+    }
+}
+
 /// An [`EditRule`] with its patterns compiled and templates parsed.
 #[derive(Debug, Clone)]
 pub struct CompiledEditRule {
@@ -485,12 +517,24 @@ impl EditRuleRegistry {
         trigger: EditRuleTrigger,
         ctx: &LineContext<'_>,
     ) -> Option<LineEdit> {
+        self.apply_within(language, trigger, ctx, RuleReach::Line)
+    }
+
+    /// [`Self::apply`], taking only a rewrite `reach` allows.
+    pub fn apply_within(
+        &self,
+        language: &str,
+        trigger: EditRuleTrigger,
+        ctx: &LineContext<'_>,
+        reach: RuleReach,
+    ) -> Option<LineEdit> {
         self.sets
             .iter()
             .filter(|(_, _, s)| s.applies_to(language))
             .flat_map(|(_, _, s)| s.rules.iter())
             .filter(|r| r.on == trigger)
-            .find_map(|r| r.apply(ctx))
+            .filter_map(|r| r.apply(ctx))
+            .find(|e| reach.accepts(e, ctx))
     }
 }
 
@@ -520,13 +564,25 @@ impl BufferEditRules<'_> {
 
     /// The first rule for `trigger` that applies at `ctx`, and its rewrite.
     pub fn apply(&self, trigger: EditRuleTrigger, ctx: &LineContext<'_>) -> Option<LineEdit> {
+        self.apply_within(trigger, ctx, RuleReach::Line)
+    }
+
+    /// [`Self::apply`], taking only a rewrite `reach` allows: a rule whose
+    /// rewrite it doesn't is passed over for the next.
+    pub fn apply_within(
+        &self,
+        trigger: EditRuleTrigger,
+        ctx: &LineContext<'_>,
+        reach: RuleReach,
+    ) -> Option<LineEdit> {
         self.configured
             .iter()
             .filter(|r| r.on == trigger)
-            .find_map(|r| r.apply(ctx))
+            .filter_map(|r| r.apply(ctx))
+            .find(|e| reach.accepts(e, ctx))
             .or_else(|| {
                 self.registry
-                    .and_then(|r| r.apply(self.language, trigger, ctx))
+                    .and_then(|r| r.apply_within(self.language, trigger, ctx, reach))
             })
     }
 }
@@ -653,6 +709,40 @@ mod tests {
         assert_eq!(nl("    text", ""), edit("    text\n    ", ""));
         assert_eq!(nl("text", ""), None);
         assert_eq!(nl("-not a list", ""), None);
+    }
+
+    /// A command's Enter (vi's `o`) takes only rewrites that add text at the
+    /// cursor: on an empty item the clearing rule is passed over for the
+    /// one that continues the marker, so the line opened from keeps its text.
+    #[test]
+    fn insert_only_reach_passes_over_rules_that_rewrite_the_line() {
+        let reg = markdown_registry();
+        let configured: Vec<CompiledEditRule> = markdown_lists()
+            .rules
+            .iter()
+            .map(|r| compile(r.clone()))
+            .collect();
+        let only = BufferEditRules {
+            language: "markdown",
+            configured: &configured,
+            registry: None,
+        };
+        let open =
+            |b, a| only.apply_within(EditRuleTrigger::Newline, &ctx(b, a), RuleReach::InsertOnly);
+        assert_eq!(open("- ", ""), edit("- \n- ", ""));
+        assert_eq!(open("1. ", ""), edit("1. \n2. ", ""));
+        assert_eq!(open("- [ ] ", ""), edit("- [ ] \n- [ ] ", ""));
+        assert_eq!(open("- one", ""), edit("- one\n- ", ""));
+        // The key itself still clears the item.
+        assert_eq!(
+            only.apply(EditRuleTrigger::Newline, &ctx("- ", "")),
+            edit("", "")
+        );
+        // The registry honours it the same way.
+        let tab =
+            |reach| reg.apply_within("markdown", EditRuleTrigger::Indent, &ctx("* ", ""), reach);
+        assert_eq!(tab(RuleReach::Line), edit("    - ", ""));
+        assert_eq!(tab(RuleReach::InsertOnly), None);
     }
 
     #[test]

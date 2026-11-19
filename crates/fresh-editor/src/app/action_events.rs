@@ -75,6 +75,7 @@ impl crate::app::window::Window {
         let buffer_id = self.active_buffer();
         let edit_rules = std::sync::Arc::clone(&self.resources.edit_rules);
         let edit_rules = edit_rules.read().ok();
+        let rule_reach = self.edit_rule_reach;
         self.buffers
             .with_buffer_and_split(buffer_id, active_split, |state, vs| {
                 let tab_size = state.buffer_settings.tab_size;
@@ -94,6 +95,7 @@ impl crate::app::window::Window {
                     estimated_line_length,
                     viewport_height,
                     edit_rules.as_deref(),
+                    rule_reach,
                 )
             })
             .expect("active window must have a populated split layout")

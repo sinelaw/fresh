@@ -966,6 +966,13 @@ pub struct Window {
     /// outranks in this window.
     pub editor_mode: Option<String>,
 
+    /// Which edit-rule rewrites Enter / Tab / Shift+Tab take: all of them for
+    /// the user's keys, only those adding text at the cursor while a plugin's
+    /// `executeAction` runs one of them as a step of its own command (vi's
+    /// `o` is line end + Enter, and must open a line, not clear an empty
+    /// list item). Set around that call only.
+    pub edit_rule_reach: fresh_core::edit_rules::RuleReach,
+
     /// Per-window prompt histories (one ring per `PromptType`). Each
     /// window has its own minibuffer, so each maintains its own
     /// history.
@@ -2678,6 +2685,7 @@ impl Window {
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             editor_mode: None,
+            edit_rule_reach: Default::default(),
             prompt_histories: HashMap::new(),
             pending_close_buffer: None,
             completion_service: crate::services::completion::CompletionService::new(),
