@@ -2948,6 +2948,8 @@ impl TextMateEngine {
     /// parser ever sees, so its state is the state the parse ended the
     /// previous line in, which the cache recorded.
     pub fn line_language(&mut self, buffer: &Buffer, line_start: usize) -> Option<LineLanguage> {
+        /// Longest line the lookup reads to find the line's end.
+        const LINE_LOOKUP_CAP: usize = 64 * 1024;
         if self.embedding.is_empty() {
             return Some(LineLanguage::Host);
         }
@@ -2968,7 +2970,19 @@ impl TextMateEngine {
         if !covered {
             return None;
         }
-        let need_end = (line_start + 1).min(buffer_len);
+        // Bring the cache up to the end of the line, past its line break, so
+        // a repair after an edit re-parses the whole line and records the
+        // region state after it; repairing to just past `line_start` leaves
+        // the line itself unrecorded (and the edit unrepaired).
+        let need_end = {
+            let window_end = buffer_len.min(line_start.saturating_add(LINE_LOOKUP_CAP));
+            let bytes = buffer.slice_bytes(line_start..window_end);
+            match bytes.iter().position(|&b| b == b'\n') {
+                Some(i) => line_start + i + 1,
+                None if window_end == buffer_len => buffer_len,
+                None => return None,
+            }
+        };
         let _ = self.sync_cache(buffer, line_start, need_end, 0);
 
         let cache = self.cache.as_ref()?;

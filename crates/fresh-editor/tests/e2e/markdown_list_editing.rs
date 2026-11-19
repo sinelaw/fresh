@@ -1572,11 +1572,24 @@ fn grammar_harness() -> EditorTestHarness {
     .unwrap()
 }
 
-/// Open `name` holding `content` in the harness's project, and draw it.
+/// Open `name` holding `content` in the harness's project, and draw it once
+/// its grammar is in place. With the full grammar registry a file can open
+/// before the grammar it needs is ready (it is re-detected when the build
+/// lands); keys sent before that find no embedded-region data, and the
+/// cursor rightly falls back to the buffer's language.
 fn open_in_project(harness: &mut EditorTestHarness, name: &str, content: &str) {
     let path = harness.project_dir().unwrap().join(name);
     fs::write(&path, content).unwrap();
     harness.open_file(&path).unwrap();
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .active_state()
+                .highlighter
+                .syntax_name()
+                .is_some()
+        })
+        .unwrap();
     harness.render().unwrap();
 }
 
