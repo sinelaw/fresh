@@ -501,8 +501,9 @@ fn calculate_leading_whitespace_removal(
     }
 }
 
-/// Add a MoveCursor event to restore cursor position after indent/dedent
-fn add_move_cursor_event(
+/// Add a MoveCursor event that clears the goal column, as indent/dedent and
+/// the edit rules use to put a cursor back after their edits.
+pub(crate) fn add_move_cursor_event(
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     old_position: usize,
@@ -1027,6 +1028,16 @@ fn calculate_closing_delimiter_indent(
         tab_size,
     )
     .unwrap_or(0)
+}
+
+/// One level of indentation, as Tab inserts it: a tab character, or
+/// `tab_size` spaces.
+pub(crate) fn indent_unit(use_tabs: bool, tab_size: usize) -> String {
+    if use_tabs {
+        "\t".to_string()
+    } else {
+        " ".repeat(tab_size)
+    }
 }
 
 /// Convert a visual indent width to actual indent characters.
@@ -2093,11 +2104,7 @@ fn handle_insert_tab(
     estimated_line_length: usize,
 ) {
     // Insert a tab character or spaces based on language config
-    let tab_str = if state.buffer_settings.use_tabs {
-        "\t".to_string()
-    } else {
-        " ".repeat(tab_size)
-    };
+    let tab_str = indent_unit(state.buffer_settings.use_tabs, tab_size);
 
     // Check if any cursor has a selection
     let has_selection = cursors

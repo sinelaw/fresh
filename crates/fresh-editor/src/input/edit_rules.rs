@@ -16,7 +16,9 @@
 //! ([`cursor_languages`]).
 
 use crate::config::{BufferConfig, Config};
-use crate::input::actions::{logical_line_end_within, logical_line_start_within};
+use crate::input::actions::{
+    add_move_cursor_event, indent_unit, logical_line_end_within, logical_line_start_within,
+};
 use crate::model::cursor::Cursors;
 use crate::model::event::{CursorId, Event};
 use crate::model::virtual_space::virtual_gap_text;
@@ -336,11 +338,10 @@ pub(crate) fn apply_edit_rules(
         candidates.push((id, pos, line_start, line_end, cursor.sticky_column));
     }
 
-    let indent_unit = if state.buffer_settings.use_tabs {
-        "\t".to_string()
-    } else {
-        " ".repeat(state.buffer_settings.tab_size)
-    };
+    let indent_unit = indent_unit(
+        state.buffer_settings.use_tabs,
+        state.buffer_settings.tab_size,
+    );
     for (id, pos, line_start, line_end, sticky) in candidates.into_iter().rev() {
         // The rules see text, but their edits are byte offsets into the
         // buffer: a line that isn't UTF-8 either side of the cursor (or a
@@ -404,15 +405,7 @@ pub(crate) fn apply_edit_rules(
         if from == pos && inserted.is_empty() && after_inserted {
             // Only the text after the cursor changed: its insert would carry
             // the cursor past it, so put the cursor back.
-            events.push(Event::MoveCursor {
-                cursor_id: id,
-                old_position: pos,
-                new_position: pos,
-                old_anchor: None,
-                new_anchor: None,
-                old_sticky_column: sticky,
-                new_sticky_column: None,
-            });
+            add_move_cursor_event(events, id, pos, pos, None, None, sticky);
         }
     }
 
