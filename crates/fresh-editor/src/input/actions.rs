@@ -1,6 +1,8 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
-use crate::input::edit_rules::{apply_edit_rules, shift_default_moves};
+use crate::input::edit_rules::{
+    apply_edit_rules, cursor_languages, shift_default_moves, CursorLanguages, LanguageLookup,
+};
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
@@ -894,6 +896,54 @@ fn buffer_indent_rules(
     })
 }
 
+/// Indent for a new line split at `position` on a content line of an
+/// embedded region, by the region's language: its regex indentation rules
+/// (a `[languages.<id>.indent]` override, else the rules for its syntax),
+/// read off the buffer around the cursor with the highlighter's scopes —
+/// the region's own — masking comments and strings. A language with none
+/// gets the indentation of a buffer of that language with none, and a
+/// region with no language that of a buffer with no language.
+///
+/// The tree-sitter tier is not used here: it parses the whole buffer as one
+/// language, which a region's text is not part of. A language with a
+/// bundled grammar indents in a region by its regex rules, the tier that
+/// stands in for the grammar wherever it is missing.
+fn region_indent(
+    state: &EditorState,
+    position: usize,
+    tab_size: usize,
+    region: &crate::input::edit_rules::RegionLanguage,
+) -> usize {
+    let rules = region
+        .language
+        .as_deref()
+        .and_then(crate::primitives::indent_rules::user_rule_for_id)
+        .or_else(|| {
+            region
+                .syntax
+                .as_deref()
+                .and_then(crate::primitives::indent_rules::rules_for_syntax_name)
+        });
+    if let Some(rules) = rules {
+        return rules.calculate_indent(&state.buffer, position, tab_size, |b| {
+            byte_is_code(state, b)
+        });
+    }
+    if region.language.is_some() {
+        crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
+            &state.buffer,
+            position,
+            tab_size,
+        )
+    } else {
+        crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
+            &state.buffer,
+            position,
+            tab_size,
+        )
+    }
+}
+
 /// Try the per-language regex indentation rules for a buffer that has no
 /// tree-sitter grammar. Returns `None` when no rules exist for the language so
 /// the caller can fall back.
@@ -1661,6 +1711,7 @@ fn transform_case<F>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_insert_newline(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -1669,6 +1720,7 @@ fn handle_insert_newline(
     auto_indent: bool,
     auto_close: bool,
     _estimated_line_length: usize,
+    languages: &CursorLanguages,
 ) {
     // Sort cursors by position (reverse order) to avoid position shifts
     let mut cursor_vec: Vec<_> = cursors.iter().collect();
@@ -1756,6 +1808,11 @@ fn handle_insert_newline(
         // After bracket expansion, cursor should be at end of cursor line, not at end of closing bracket line
         let mut cursor_line_end_position: Option<usize> = None;
 
+        // On a content line of an embedded region (a fenced code block), the
+        // region's language decides whether and how the new line indents.
+        let region = languages.get(cursor_id);
+        let auto_indent = region.map_or(auto_indent, |r| r.auto_indent);
+
         if auto_indent {
             let use_tabs = state.buffer_settings.use_tabs;
             // Tiering: a language with a *bundled* tree-sitter grammar (Go,
@@ -1765,9 +1822,12 @@ fn handle_insert_newline(
             // tier (keyed by syntax name, with comment/string scope masking),
             // falling back to the language-agnostic heuristic for unknown
             // syntaxes (.txt, …). `IndentCalculator` itself also falls back to
-            // the rules tier when a language has no grammar.
-            let indent_width_opt = match state.highlighter.language() {
-                Some(language) if language.ts_language().is_some() => state
+            // the rules tier when a language has no grammar. A cursor in an
+            // embedded region indents by the region's language
+            // ([`region_indent`]).
+            let indent_width_opt = match (region, state.highlighter.language()) {
+                (Some(region), _) => Some(region_indent(state, indent_position, tab_size, region)),
+                (None, Some(language)) if language.ts_language().is_some() => state
                     .indent_calculator
                     .borrow_mut()
                     .calculate_indent(&state.buffer, indent_position, language, tab_size),
@@ -3210,6 +3270,7 @@ pub fn action_to_events(
         viewport_height,
         None,
         RuleReach::Line,
+        None,
     )
 }
 
@@ -3219,6 +3280,11 @@ pub fn action_to_events(
 /// [`crate::input::edit_rules`]). `rule_reach` says which of the rules'
 /// rewrites the key takes: all for the user's key, only those adding text at
 /// the cursor for a key a plugin's command issues (vi's `o`).
+///
+/// With a `language_lookup`, a cursor on a content line of an embedded
+/// region the buffer's highlighter knows (a fenced code block) uses that
+/// region's language — its edit rules, `auto_indent` and indentation rules —
+/// rather than the buffer's; see [`crate::input::edit_rules::cursor_languages`].
 #[allow(clippy::too_many_arguments)]
 pub fn action_to_events_with_edit_rules(
     state: &mut EditorState,
@@ -3232,6 +3298,7 @@ pub fn action_to_events_with_edit_rules(
     viewport_height: u16,
     edit_rules: Option<&EditRuleRegistry>,
     rule_reach: RuleReach,
+    language_lookup: Option<&LanguageLookup<'_>>,
 ) -> Option<Vec<Event>> {
     // For virtual buffers with hidden cursors, ignore movement and editing actions
     if !state.show_cursors && action.is_movement_or_editing() {
@@ -3277,6 +3344,7 @@ pub fn action_to_events_with_edit_rules(
         // rule handles get the key's normal edit, in the same event list
         // (one undo step).
         Action::InsertNewline => {
+            let languages = cursor_languages(state, cursors, language_lookup);
             let ruled = apply_edit_rules(
                 state,
                 cursors,
@@ -3284,6 +3352,7 @@ pub fn action_to_events_with_edit_rules(
                 EditRuleTrigger::Newline,
                 edit_rules,
                 rule_reach,
+                &languages,
             );
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
@@ -3299,6 +3368,7 @@ pub fn action_to_events_with_edit_rules(
                     auto_indent,
                     auto_close,
                     estimated_line_length,
+                    &languages,
                 );
                 if let Some(r) = &ruled {
                     shift_default_moves(&mut events[from..], rest, &r.edits);
@@ -3307,6 +3377,7 @@ pub fn action_to_events_with_edit_rules(
         }
 
         Action::DedentSelection => {
+            let languages = cursor_languages(state, cursors, language_lookup);
             let ruled = apply_edit_rules(
                 state,
                 cursors,
@@ -3314,6 +3385,7 @@ pub fn action_to_events_with_edit_rules(
                 EditRuleTrigger::Dedent,
                 edit_rules,
                 rule_reach,
+                &languages,
             );
             let rest = match &ruled {
                 Some(r) => r.rest.as_ref(),
@@ -3335,6 +3407,7 @@ pub fn action_to_events_with_edit_rules(
             let ruled = if any_selection {
                 None
             } else {
+                let languages = cursor_languages(state, cursors, language_lookup);
                 apply_edit_rules(
                     state,
                     cursors,
@@ -3342,6 +3415,7 @@ pub fn action_to_events_with_edit_rules(
                     EditRuleTrigger::Indent,
                     edit_rules,
                     rule_reach,
+                    &languages,
                 )
             };
             let rest = match &ruled {

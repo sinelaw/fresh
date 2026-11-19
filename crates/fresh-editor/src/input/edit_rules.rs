@@ -3,17 +3,167 @@
 //! The rules themselves — patterns, templates, the registry — live in
 //! [`fresh_core::edit_rules`] and know nothing about buffers. This module is
 //! the buffer side: for each cursor it reads the line around the cursor,
-//! asks the buffer's rules for a rewrite — its language's `edit_rules`
-//! setting first, then the sets plugins registered for the language — and
-//! turns the answer into the key's own events, so a rule's edit is part of
-//! the keystroke (one undo step, applied before the next key is read).
+//! asks the rules of the language at the cursor for a rewrite — that
+//! language's `edit_rules` setting first, then the sets plugins registered
+//! for it — and turns the answer into the key's own events, so a rule's edit
+//! is part of the keystroke (one undo step, applied before the next key is
+//! read).
+//!
+//! The language at a cursor is the buffer's, except on a content line of an
+//! embedded-language region the buffer's highlighter knows (a fenced code
+//! block in Markdown, a `<script>` in Vue): there it is the region's
+//! language, and that language's rules and `auto_indent` apply instead
+//! ([`cursor_languages`]).
 
+use crate::config::{BufferConfig, Config};
 use crate::model::cursor::Cursors;
 use crate::model::event::{CursorId, Event};
 use crate::model::virtual_space::virtual_gap_text;
+use crate::primitives::detected_language::language_id_for_syntax_name;
+use crate::primitives::grammar::GrammarRegistry;
+use crate::primitives::highlight_engine::LineLanguage;
 use crate::state::EditorState;
 use fresh_core::api::EditRuleTrigger;
-use fresh_core::edit_rules::{BufferEditRules, EditRuleRegistry, LineContext, RuleReach};
+use fresh_core::edit_rules::{
+    BufferEditRules, CompiledEditRule, EditRuleRegistry, LineContext, RuleReach,
+};
+use std::sync::Arc;
+
+/// What a key needs to resolve the language of an embedded region to its
+/// settings: the config, and the grammar catalog that maps a syntax to a
+/// language id.
+#[derive(Clone, Copy)]
+pub struct LanguageLookup<'a> {
+    pub config: &'a Config,
+    pub registry: &'a GrammarRegistry,
+}
+
+/// The settings Enter / Tab / Shift+Tab use on a cursor whose line is a
+/// content line of an embedded-language region, in place of the buffer's.
+#[derive(Debug, Clone)]
+pub(crate) struct RegionLanguage {
+    /// The region's language id; `None` when the region named no language
+    /// that resolves to one. Such a region is language-less: no edit rules
+    /// (neither configured nor plugin-registered) and the indentation of a
+    /// buffer with no language.
+    pub language: Option<String>,
+    /// The syntax the highlighter resolved the region's language to, whose
+    /// indentation rules Enter uses.
+    pub syntax: Option<String>,
+    /// The language's `edit_rules`, compiled (empty when language-less).
+    pub edit_rules: Arc<[CompiledEditRule]>,
+    /// The language's `auto_indent`, else `editor.auto_indent`.
+    pub auto_indent: bool,
+}
+
+impl RegionLanguage {
+    /// The edit rules that apply in the region: its language's configured
+    /// rules, then the sets plugins registered for it — none at all for a
+    /// language-less region.
+    fn rules<'a>(&'a self, registry: Option<&'a EditRuleRegistry>) -> BufferEditRules<'a> {
+        BufferEditRules {
+            language: self.language.as_deref().unwrap_or(""),
+            configured: &self.edit_rules,
+            registry: self.language.as_ref().and(registry),
+        }
+    }
+
+    /// The settings for a region whose language resolved to `syntax`
+    /// (`None`: it named none that resolved).
+    fn resolve(syntax: Option<&str>, lookup: &LanguageLookup<'_>) -> Self {
+        let language = syntax.and_then(|name| {
+            language_id_for_syntax_name(name, lookup.registry, &lookup.config.languages)
+        });
+        match &language {
+            Some(id) => {
+                let resolved = BufferConfig::resolve(lookup.config, Some(id));
+                Self {
+                    syntax: syntax.map(str::to_string),
+                    edit_rules: resolved.edit_rules,
+                    auto_indent: resolved.auto_indent,
+                    language,
+                }
+            }
+            None => Self {
+                language: None,
+                syntax: None,
+                edit_rules: Arc::from([]),
+                auto_indent: lookup.config.editor.auto_indent,
+            },
+        }
+    }
+}
+
+/// The cursors of one key press whose line is a content line of an
+/// embedded-language region, with that region's settings. Every other
+/// cursor uses the buffer's language. Empty — and free — for a buffer whose
+/// highlighter knows no embedded regions.
+#[derive(Debug, Default)]
+pub(crate) struct CursorLanguages {
+    by_cursor: Vec<(CursorId, Arc<RegionLanguage>)>,
+}
+
+impl CursorLanguages {
+    /// The region language at `cursor`, or `None` for the buffer's own.
+    pub fn get(&self, cursor: CursorId) -> Option<&RegionLanguage> {
+        self.by_cursor
+            .iter()
+            .find(|(id, _)| *id == cursor)
+            .map(|(_, lang)| &**lang)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &RegionLanguage> {
+        self.by_cursor.iter().map(|(_, lang)| &**lang)
+    }
+}
+
+/// Resolve the language at each cursor (at the start of its selection, if
+/// any), from the embedded regions the buffer's highlighter recorded while
+/// parsing: a cursor on a content line of a region gets the region's
+/// language's settings ([`RegionLanguage`]); one on a delimiter line,
+/// outside every region, or where the highlighter cannot say (its cache
+/// does not cover the line, or is not anchored) gets the buffer's.
+///
+/// Asks nothing of a buffer whose highlighter hosts no regions, or when
+/// the caller has no `lookup` (a key issued with no config at hand).
+pub(crate) fn cursor_languages(
+    state: &mut EditorState,
+    cursors: &Cursors,
+    lookup: Option<&LanguageLookup<'_>>,
+) -> CursorLanguages {
+    let mut out = CursorLanguages::default();
+    let Some(lookup) = lookup else {
+        return out;
+    };
+    if !state.highlighter.hosts_embedded_regions() {
+        return out;
+    }
+    // One resolution per region language, however many cursors share it.
+    let mut resolved: Vec<(Option<String>, Arc<RegionLanguage>)> = Vec::new();
+    for (id, cursor) in cursors.iter() {
+        let pos = cursor
+            .selection_range()
+            .map_or(cursor.position, |r| r.start);
+        let Some(line_start) = state.buffer.prev_line_start_within(pos, LINE_CAP) else {
+            continue;
+        };
+        let Some(LineLanguage::Embedded(syntax)) =
+            state.highlighter.line_language(&state.buffer, line_start)
+        else {
+            continue;
+        };
+        let lang = match resolved.iter().find(|(s, _)| *s == syntax) {
+            Some((_, lang)) => Arc::clone(lang),
+            None => {
+                let lang = Arc::new(RegionLanguage::resolve(syntax.as_deref(), lookup));
+                resolved.push((syntax, Arc::clone(&lang)));
+                lang
+            }
+        };
+        out.by_cursor.push((id, lang));
+    }
+    out
+}
 
 /// How far a line may run either side of the cursor for rules to look at
 /// it. A longer line (minified text, a data dump) just gets the key's
@@ -75,6 +225,7 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
 /// shares its line with no other cursor (or another cursor's selection), and
 /// a rule applies there. `None` when no cursor was handled: the key then
 /// does exactly what it does without rules.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_edit_rules(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -82,16 +233,29 @@ pub(crate) fn apply_edit_rules(
     trigger: EditRuleTrigger,
     registry: Option<&EditRuleRegistry>,
     reach: RuleReach,
+    languages: &CursorLanguages,
 ) -> Option<RuleEdits> {
     // Held apart from `state`, which the loop below reads mutably.
     let configured = std::sync::Arc::clone(&state.buffer_settings.edit_rules);
     let language = state.language.clone();
-    let rules = BufferEditRules {
+    let buffer_rules = BufferEditRules {
         language: &language,
         configured: &configured,
         registry,
     };
-    if !rules.has_rules(trigger) {
+    // The rules at a cursor: its region language's, when its line is a
+    // region's content (none at all for a language-less region), else the
+    // buffer's.
+    let rules_for = |id: CursorId| {
+        languages
+            .get(id)
+            .map_or(buffer_rules, |region| region.rules(registry))
+    };
+    if !buffer_rules.has_rules(trigger)
+        && !languages
+            .iter()
+            .any(|region| region.rules(registry).has_rules(trigger))
+    {
         return None;
     }
     let vs_mode = state.buffer_settings.virtual_space;
@@ -164,7 +328,7 @@ pub(crate) fn apply_edit_rules(
             tab_width: state.buffer_settings.tab_size,
             line_ending,
         };
-        let Some(edit) = rules.apply_within(trigger, &ctx, reach) else {
+        let Some(edit) = rules_for(id).apply_within(trigger, &ctx, reach) else {
             continue;
         };
         handled.push(id);

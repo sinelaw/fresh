@@ -9,6 +9,8 @@
 //!   is the normal Tab
 //! - The rules apply to Markdown buffers only, and keep up with keys sent
 //!   back to back (#3813)
+//! - They follow the language at the cursor: inside a fenced code block the
+//!   block's language's rules and indentation apply, not Markdown's
 //!
 //! Any language can have rules in config.json (`[]` turns them off), and
 //! plugins can register more (`registerEditRules`), tried after the config's.
@@ -1545,4 +1547,338 @@ fn test_mdx_added_to_markdown_extensions_gets_list_editing() {
     let content = enter_at_end_of_first_line(&mut harness, "other.mdx", "- item\n");
     assert_eq!(harness.editor().active_state().language, "markdown");
     assert_eq!(content, "- item\n- \n");
+}
+
+// ---------------------------------------------------------------------------
+// Code blocks: the rules of the language at the cursor
+// ---------------------------------------------------------------------------
+//
+// These need the highlighter's embedded regions, so they run with the full
+// grammar registry (the default test registry is empty, and a buffer with
+// no highlighter knows no regions).
+
+/// A harness with the full grammar registry, in a fresh project directory.
+fn grammar_harness() -> EditorTestHarness {
+    use crate::common::harness::HarnessOptions;
+    init_tracing_from_env();
+    EditorTestHarness::create(
+        100,
+        24,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap()
+}
+
+/// Open `name` holding `content` in the harness's project, and draw it.
+fn open_in_project(harness: &mut EditorTestHarness, name: &str, content: &str) {
+    let path = harness.project_dir().unwrap().join(name);
+    fs::write(&path, content).unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+}
+
+/// Put the cursor at the end of line `line` (0-based).
+fn end_of_line(harness: &mut EditorTestHarness, line: usize) {
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..line {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
+/// Inside a ```python block a `- x` line is Python, not a list item: Enter
+/// is the plain newline, with no `- ` continued.
+#[test]
+fn test_no_list_continuation_inside_a_python_fence() {
+    let mut harness = grammar_harness();
+    open_in_project(&mut harness, "fence.md", "```python\n- x\n```\n");
+    assert_eq!(harness.editor().active_state().language, "markdown");
+    end_of_line(&mut harness, 1);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("q").unwrap();
+    assert_eq!(buf(&harness), "```python\n- x\nq\n```\n");
+}
+
+/// Enter after `def f():` in a ```python block indents like Python, though
+/// Markdown's own `auto_indent` is off.
+#[test]
+fn test_enter_indents_like_python_inside_a_python_fence() {
+    let mut harness = grammar_harness();
+    open_in_project(&mut harness, "def.md", "```python\ndef f():\n```\n");
+    end_of_line(&mut harness, 1);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("pass").unwrap();
+    assert_eq!(buf(&harness), "```python\ndef f():\n    pass\n```\n");
+}
+
+/// A Python edit rule from the user's config applies on a line of a
+/// ```python block, and not on the same text outside it.
+#[test]
+fn test_python_config_rule_applies_inside_a_python_fence_only() {
+    let mut harness = grammar_harness();
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "python": { "edit_rules": [
+            { "on": "newline", "before": r"^([ \t]*# ?)\S", "insert": "\n$1" }
+        ] } } }),
+    );
+    open_in_project(
+        &mut harness,
+        "rule.md",
+        "```python\n# note\n```\n# heading\n",
+    );
+    end_of_line(&mut harness, 1);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("more").unwrap();
+    assert_eq!(buf(&harness), "```python\n# note\n# more\n```\n# heading\n");
+
+    end_of_line(&mut harness, 4);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("h2").unwrap();
+    assert_eq!(
+        buf(&harness),
+        "```python\n# note\n# more\n```\n# heading\nh2\n",
+        "a Markdown heading is not a Python comment"
+    );
+}
+
+/// The block's delimiter lines belong to Markdown, and right after the
+/// closing one list editing is back.
+#[test]
+fn test_list_continuation_right_after_a_closing_fence() {
+    let mut harness = grammar_harness();
+    open_in_project(&mut harness, "after.md", "```python\nx = 1\n```\n- after\n");
+    end_of_line(&mut harness, 3);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("next").unwrap();
+    assert_eq!(buf(&harness), "```python\nx = 1\n```\n- after\n- next\n");
+}
+
+/// A block that names no language — or one Fresh doesn't know — is code
+/// in no language: no list editing either.
+#[test]
+fn test_no_list_rules_in_an_unlabelled_or_unknown_fence() {
+    let mut harness = grammar_harness();
+    open_in_project(&mut harness, "bare.md", "```\n- y\n```\n");
+    end_of_line(&mut harness, 1);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("u").unwrap();
+    assert_eq!(buf(&harness), "```\n- y\nu\n```\n");
+
+    open_in_project(&mut harness, "unknown.md", "```nosuchlang\n1. one\n```\n");
+    end_of_line(&mut harness, 1);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("v").unwrap();
+    assert_eq!(buf(&harness), "```nosuchlang\n1. one\nv\n```\n");
+}
+
+/// Tab on a blank bullet inside a block is the plain Tab: no indent-and-
+/// cycle of the bullet.
+#[test]
+fn test_tab_inside_a_fence_does_not_cycle_bullets() {
+    let mut harness = grammar_harness();
+    open_in_project(&mut harness, "tab.md", "```python\n- \n```\n");
+    end_of_line(&mut harness, 1);
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    let content = buf(&harness);
+    let lines: Vec<&str> = content.split('\n').collect();
+    assert!(
+        lines[1].starts_with("- ") && lines[1].len() > 2,
+        "the line keeps its `- ` and gets the Tab's whitespace: {content:?}"
+    );
+}
+
+/// Each cursor gets the rules of its own line's language: one in a list
+/// continues it, one on a fence's opening line gets Markdown's plain
+/// newline, one inside the ```python block gets Python's.
+#[test]
+fn test_cursors_in_and_out_of_a_fence_each_get_their_own_rules() {
+    let mut harness = grammar_harness();
+    open_in_project(&mut harness, "mc.md", "- a\n```python\n- b\n```\n");
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    harness.editor_mut().add_cursors_to_line_ends();
+    assert_eq!(harness.editor().active_cursors().count(), 3);
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    assert_eq!(buf(&harness), "- a\n- X\n```python\nX\n- b\nX\n```\n");
+}
+
+/// The same holds for any host whose highlighter knows embedded regions,
+/// not just Markdown: a Vue `<script>` block is JavaScript, so
+/// JavaScript's rules and indentation apply there.
+#[test]
+fn test_vue_script_block_gets_javascript_rules() {
+    let mut harness = grammar_harness();
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "javascript": { "edit_rules": [
+            { "on": "newline", "before": r"^([ \t]*// ?)\S", "insert": "\n$1" }
+        ] } } }),
+    );
+    open_in_project(
+        &mut harness,
+        "App.vue",
+        "<template>\n  <div/>\n</template>\n<script>\n// note\nfunction f() {\n</script>\n",
+    );
+    end_of_line(&mut harness, 4);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("more").unwrap();
+    end_of_line(&mut harness, 6);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("x").unwrap();
+    assert_eq!(
+        buf(&harness),
+        "<template>\n  <div/>\n</template>\n<script>\n// note\n// more\nfunction f() {\n    x\n</script>\n"
+    );
+
+    // Outside the script block the JavaScript rule doesn't apply.
+    end_of_line(&mut harness, 1);
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("// c ").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let content = buf(&harness);
+    let lines: Vec<&str> = content.split('\n').collect();
+    assert!(lines[1].ends_with("// c "), "{content:?}");
+    assert_eq!(
+        lines[2].trim_start(),
+        "<div/>",
+        "the template is not JavaScript: no `// ` continued: {content:?}"
+    );
+}
+
+/// A file in a language with no embedded regions is unaffected: a Python
+/// file's rules and indentation are its own, wherever the cursor is.
+#[test]
+fn test_non_embedding_language_is_unaffected() {
+    let mut harness = grammar_harness();
+    write_user_config_and_reload(
+        &mut harness,
+        serde_json::json!({ "languages": { "python": { "edit_rules": [
+            { "on": "newline", "before": r"^([ \t]*# ?)\S", "insert": "\n$1" }
+        ] } } }),
+    );
+    open_in_project(&mut harness, "t.py", "# note\ndef f():\n- x\n");
+    assert!(!harness
+        .editor()
+        .active_state()
+        .highlighter
+        .hosts_embedded_regions());
+    end_of_line(&mut harness, 0);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("more").unwrap();
+    end_of_line(&mut harness, 2);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("pass").unwrap();
+    end_of_line(&mut harness, 4);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("y").unwrap();
+    assert_eq!(
+        buf(&harness),
+        "# note\n# more\ndef f():\n    pass\n- x\ny\n"
+    );
+}
+
+/// Rules a plugin registers for a language apply inside a block of that
+/// language in a Markdown file, and not on the file's own lines.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_plugin_rules_follow_the_language_of_a_fence() {
+    use crate::common::harness::{copy_plugin_lib, HarnessOptions};
+    use fresh_core::api::EditRuleTrigger;
+
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    fs::write(
+        plugins_dir.join("py_semis.ts"),
+        r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+editor.registerEditRules("semis", {
+  languages: ["python"],
+  rules: [{ on: "newline", before: ";$", insert: "\n;; " }],
+});
+"#,
+    )
+    .unwrap();
+    let mut harness = EditorTestHarness::create(
+        100,
+        24,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .edit_rules()
+                .read()
+                .unwrap()
+                .has_rules("python", EditRuleTrigger::Newline)
+        })
+        .unwrap();
+
+    let md = project_root.join("p.md");
+    fs::write(&md, "a;\n```python\nb;\n```\n").unwrap();
+    harness.open_file(&md).unwrap();
+    harness.render().unwrap();
+    end_of_line(&mut harness, 2);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("c").unwrap();
+    end_of_line(&mut harness, 0);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("d").unwrap();
+    assert_eq!(buf(&harness), "a;\nd\n```python\nb;\n;; c\n```\n");
 }

@@ -453,6 +453,14 @@ only rules that add text at the cursor apply, so `o` on an empty list item
 continues the list rather than clearing the item. See `EditRule` in the
 [plugin type reference](../plugins/api/types.md) for the full format.
 
+Rules follow the language at the cursor, not just the file's. Inside a code
+block written in another language — a fenced block in Markdown, a `<script>`
+or `<style>` block in Vue — the block's language applies: its `edit_rules`
+(and the rules plugins registered for it) and its `auto_indent`, so Python's
+rules work in a ` ```python ` block and Markdown's list rules don't. A block
+whose language Fresh doesn't know gets no rules at all. The opening and
+closing lines of a block belong to the file's language.
+
 ### Set a Default Language for Unrecognized Files
 
 When Fresh opens a file whose type it cannot detect (no matching extension, filename, or glob pattern), it shows it as "Plain Text" with no syntax highlighting. Set **Default Language** (under **Settings → Syntax & Languages**) to any entry in the Languages list and unrecognized files will use that language's full configuration — useful for `.conf`, `.rc`, `.rules`, and other config files that Fresh doesn't recognize.

@@ -77,6 +77,14 @@ impl crate::app::window::Window {
         let edit_rules = std::sync::Arc::clone(&self.resources.edit_rules);
         let edit_rules = edit_rules.read().ok();
         let rule_reach = self.edit_rule_reach;
+        // Enter / Tab / Shift+Tab on a content line of an embedded region (a
+        // fenced code block) follow the region's language; this resolves it.
+        let config = std::sync::Arc::clone(&self.resources.config);
+        let registry = std::sync::Arc::clone(&self.resources.grammar_registry);
+        let language_lookup = crate::input::edit_rules::LanguageLookup {
+            config: &config,
+            registry: &registry,
+        };
         self.buffers
             .with_buffer_and_split(buffer_id, active_split, |state, vs| {
                 let tab_size = state.buffer_settings.tab_size;
@@ -98,6 +106,7 @@ impl crate::app::window::Window {
                     viewport_height,
                     edit_rules.as_deref(),
                     rule_reach,
+                    Some(&language_lookup),
                 )
             })
             .expect("active window must have a populated split layout")
