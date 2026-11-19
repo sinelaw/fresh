@@ -1401,6 +1401,8 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
         .unwrap_or("plugin.ts");
 
     // Compiled when Fresh was built, with what would be derived from the source.
+    // An edited extracted `.js` misses and compiles as plain JS, so it loses
+    // its `fresh:plugin/` dependencies and its declarations.
     let precompiled = fresh_parser_js::precompiled::lookup(path, &source);
 
     // Extract dependencies before transpilation
