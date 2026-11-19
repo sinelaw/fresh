@@ -527,11 +527,22 @@ fn add_move_cursor_event(
 fn move_each_cursor(
     cursors: &Cursors,
     events: &mut Vec<Event>,
+    new_pos_fn: impl FnMut(&Cursor) -> usize,
+) {
+    move_cursors(cursors, events, false, new_pos_fn);
+}
+
+/// [`move_each_cursor`]; with `deselect`, every selection collapses,
+/// whatever the cursor's `deselect_on_move` says.
+fn move_cursors(
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    deselect: bool,
     mut new_pos_fn: impl FnMut(&Cursor) -> usize,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
         let new_pos = new_pos_fn(cursor);
-        let new_anchor = if cursor.deselect_on_move {
+        let new_anchor = if deselect || cursor.deselect_on_move {
             None
         } else {
             cursor.anchor
@@ -2881,22 +2892,16 @@ pub(crate) fn line_end_moves(state: &mut EditorState, cursors: &Cursors) -> Vec<
     if !state.show_cursors {
         return Vec::new();
     }
+    // `MoveLineEnd`'s logical-line move, dropping every selection.
     let mut events = Vec::new();
-    for (cursor_id, cursor) in cursors.iter() {
-        let end = logical_line_end(&mut state.buffer, cursor.position);
-        if end == cursor.position && cursor.anchor.is_none() {
-            continue;
-        }
-        add_move_cursor_event(
-            &mut events,
-            cursor_id,
-            cursor.position,
-            end,
-            cursor.anchor,
-            None,
-            cursor.sticky_column,
-        );
-    }
+    move_cursors(cursors, &mut events, true, |c| {
+        logical_line_end(&mut state.buffer, c.position)
+    });
+    // A cursor already at its line's end, with no selection, stays put.
+    events.retain(|e| {
+        !matches!(e, Event::MoveCursor { old_position, new_position, old_anchor: None, .. }
+            if old_position == new_position)
+    });
     events
 }
 
@@ -7523,6 +7528,56 @@ mod tests {
         let mut events = vec![ins(1, 2, "abc"), ins(1, 12, "zz"), mv(2, 30, 31, None)];
         rebase_moves_onto_edits(&mut events, 0..2, 2..3, |_, _| 10);
         assert_eq!(target(&events[2]), (34, None));
+    }
+
+    /// `line_end_moves` takes each cursor to its logical line's end and
+    /// drops its selection, even one kept by a mark (`deselect_on_move`
+    /// off); a cursor already there with no selection gets no move.
+    #[test]
+    fn line_end_moves_go_to_line_end_and_drop_selections() {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "one\r\ntwo\r\nthree".to_string().into(),
+                cursor_id: CursorId(0),
+            },
+        );
+        // "one" 0..3, "two" 5..8, "three" 10..15.
+        let mut marked = Cursor::with_selection(5, 6);
+        marked.deselect_on_move = false;
+        let mut cursors = Cursors::new();
+        cursors.primary_mut().position = 1;
+        let marked = cursors.add(marked);
+        let at_end = cursors.add(Cursor::new(15));
+
+        let events = line_end_moves(&mut state, &cursors);
+        let moves: Vec<_> = events
+            .iter()
+            .map(|e| match e {
+                Event::MoveCursor {
+                    cursor_id,
+                    new_position,
+                    new_anchor,
+                    ..
+                } => (*cursor_id, *new_position, *new_anchor),
+                other => panic!("not a move: {other:?}"),
+            })
+            .collect();
+        assert!(moves.contains(&(CursorId(0), 3, None)), "{moves:?}");
+        assert!(moves.contains(&(marked, 8, None)), "{moves:?}");
+        assert!(
+            moves.iter().all(|(id, _, _)| *id != at_end),
+            "no move for a cursor already at its line's end: {moves:?}"
+        );
+        assert_eq!(moves.len(), 2);
     }
 }
 
