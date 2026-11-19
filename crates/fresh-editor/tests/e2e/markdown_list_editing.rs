@@ -1559,17 +1559,34 @@ fn test_mdx_added_to_markdown_extensions_gets_list_editing() {
 
 /// A harness with the full grammar registry, in a fresh project directory.
 fn grammar_harness() -> EditorTestHarness {
+    grammar_harness_with(None)
+}
+
+/// [`grammar_harness`] with a given config. Without one the harness turns
+/// `editor.auto_indent` off for simpler tests, so a test about indentation
+/// passes a config that keeps it on.
+fn grammar_harness_with(config: Option<fresh::config::Config>) -> EditorTestHarness {
     use crate::common::harness::HarnessOptions;
     init_tracing_from_env();
-    EditorTestHarness::create(
-        100,
-        24,
-        HarnessOptions::new()
-            .with_project_root()
-            .with_empty_plugins_dir()
-            .with_full_grammar_registry(),
-    )
-    .unwrap()
+    let mut options = HarnessOptions::new()
+        .with_project_root()
+        .with_empty_plugins_dir()
+        .with_full_grammar_registry();
+    if let Some(config) = config {
+        options = options.with_config(config);
+    }
+    EditorTestHarness::create(100, 24, options).unwrap()
+}
+
+/// A config with auto-indent on (the user default) and the harness's other
+/// test simplifications.
+fn auto_indent_config() -> fresh::config::Config {
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = false;
+    config.editor.auto_surround = false;
+    config.editor.animations = false;
+    config
 }
 
 /// Open `name` holding `content` in the harness's project, and draw it once
@@ -1624,7 +1641,7 @@ fn test_no_list_continuation_inside_a_python_fence() {
 /// Markdown's own `auto_indent` is off.
 #[test]
 fn test_enter_indents_like_python_inside_a_python_fence() {
-    let mut harness = grammar_harness();
+    let mut harness = grammar_harness_with(Some(auto_indent_config()));
     open_in_project(&mut harness, "def.md", "```python\ndef f():\n```\n");
     end_of_line(&mut harness, 1);
     harness
