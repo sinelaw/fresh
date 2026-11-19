@@ -811,6 +811,18 @@ window_closed: {
 };
 ```
 
+#### `window_interaction`
+
+The user typed into a window's content: a key that reached one of its
+buffers or its terminal, not the chrome around them. Switching to a
+window does not fire it. At most once per window per half-minute.
+
+```typescript
+window_interaction: {
+  window_id: number;
+};
+```
+
 #### `active_window_changed`
 
 The active window changed, once the switch has finished.
