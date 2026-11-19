@@ -74,6 +74,22 @@ fn parse_template(src: &str) -> Result<Template, String> {
     let mut text = String::new();
     let mut chars = src.chars().peekable();
     while let Some(c) = chars.next() {
+        if c == '\\' {
+            // `\n`, `\t`, `\\`: a line break, a tab, a backslash, so a template
+            // can be written on one line (a Settings field is one line). A
+            // backslash before anything else is itself.
+            match chars.peek().copied() {
+                Some('n') => text.push('\n'),
+                Some('t') => text.push('\t'),
+                Some('\\') => text.push('\\'),
+                _ => {
+                    text.push('\\');
+                    continue;
+                }
+            }
+            chars.next();
+            continue;
+        }
         if c != '$' {
             text.push(c);
             continue;
@@ -386,7 +402,24 @@ pub struct ConfiguredEditRule {
 
 impl ConfiguredEditRule {
     /// Compile `rule`, or say what is wrong with it.
-    pub fn new(rule: EditRule) -> Result<Self, String> {
+    ///
+    /// A line break written as a real one in a template is kept as the
+    /// escape `\n` (see [`escape_line_breaks`]): it means the same, and the
+    /// rule as written is what the Settings UI shows and writes back, in a
+    /// one-line field.
+    pub fn new(mut rule: EditRule) -> Result<Self, String> {
+        for template in [
+            &mut rule.insert,
+            &mut rule.replace_before,
+            &mut rule.replace_after,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if template.contains('\n') {
+                *template = escape_line_breaks(template);
+            }
+        }
         let compiled = CompiledEditRule::compile(&rule)?;
         Ok(Self { rule, compiled })
     }
@@ -400,6 +433,32 @@ impl ConfiguredEditRule {
     pub fn compiled(&self) -> &CompiledEditRule {
         &self.compiled
     }
+}
+
+/// `template` with each real line break written as the escape `\n`, which
+/// the template means the same by. A lone backslash right before a line
+/// break stood for a backslash, so it is written `\\`: left alone, it would
+/// pair with the `\n` written for the break and read as `\\` + `n`.
+fn escape_line_breaks(template: &str) -> String {
+    let mut out = String::with_capacity(template.len() + 2);
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\\' => match chars.peek().copied() {
+                // Already an escape: keep it as it is.
+                Some(next @ ('n' | 't' | '\\')) => {
+                    out.push('\\');
+                    out.push(next);
+                    chars.next();
+                }
+                Some('\n') => out.push_str("\\\\"),
+                _ => out.push('\\'),
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 impl PartialEq for ConfiguredEditRule {
@@ -993,11 +1052,16 @@ mod tests {
             ok[0].compiled().apply(&ctx("## x", "")),
             edit("## x\n## ", "")
         );
-        // Written back as written: no nulls for the fields left out.
+        // Written back as written, but for the line break, which is kept as
+        // the escape `\n` (it means the same and fits a one-line field): no
+        // nulls for the fields left out.
         assert_eq!(
             serde_json::to_value(&ok[0]).unwrap(),
-            serde_json::json!({ "on": "newline", "before": "^(#+ )", "insert": "\n$1" })
+            serde_json::json!({ "on": "newline", "before": "^(#+ )", "insert": r"\n$1" })
         );
+        let again: ConfiguredEditRule =
+            serde_json::from_value(serde_json::to_value(&ok[0]).unwrap()).unwrap();
+        assert_eq!(again, ok[0], "the written form reads back the same");
         // A bad pattern, template or field fails to deserialize, naming why.
         let err = |v: serde_json::Value| {
             serde_json::from_value::<ConfiguredEditRule>(v)
@@ -1010,6 +1074,55 @@ mod tests {
         assert!(bad_template.starts_with("insert:"), "{bad_template}");
         let unknown = err(serde_json::json!({ "on": "dedent", "insert": "", "when": "x" }));
         assert!(unknown.contains("when"), "{unknown}");
+    }
+
+    /// `\n`, `\t` and `\\` in a template are a line break, a tab and a
+    /// backslash; a backslash before anything else is itself. A real line
+    /// break means the same as `\n`.
+    #[test]
+    fn templates_take_backslash_escapes() {
+        let apply = |insert: &str| {
+            compile(rule_with_insert(EditRuleTrigger::Newline, insert)).apply(&ctx("a", ""))
+        };
+        assert_eq!(apply(r"\n- "), edit("a\n- ", ""));
+        assert_eq!(apply(r"\t|"), edit("a\t|", ""));
+        assert_eq!(apply(r"\\n"), edit("a\\n", ""));
+        assert_eq!(apply(r"\x\"), edit("a\\x\\", ""));
+        assert_eq!(apply("\n- "), apply(r"\n- "));
+        // CRLF buffers get their line ending for the escape too.
+        let crlf = LineContext {
+            line_ending: "\r\n",
+            ..ctx("a", "")
+        };
+        assert_eq!(
+            compile(rule_with_insert(EditRuleTrigger::Newline, r"\n- ")).apply(&crlf),
+            edit("a\r\n- ", "")
+        );
+    }
+
+    /// A configured rule keeps a real line break in a template as `\n`, so
+    /// it reads (and is written back) on one line; what it does is the same.
+    #[test]
+    fn configured_rules_write_line_breaks_as_the_escape() {
+        let configured = |insert: &str| {
+            ConfiguredEditRule::new(rule_with_insert(EditRuleTrigger::Newline, insert)).unwrap()
+        };
+        for (written, kept) in [
+            ("\n$1", r"\n$1"),
+            (r"\n$1", r"\n$1"),
+            ("a\\\nb", r"a\\\nb"),
+            ("a\\\\\nb", r"a\\\nb"),
+            (r"\x", r"\x"),
+        ] {
+            let rule = configured(written);
+            assert_eq!(rule.rule().insert.as_deref(), Some(kept), "{written:?}");
+            let raw = compile(rule_with_insert(EditRuleTrigger::Newline, written));
+            assert_eq!(
+                rule.compiled().apply(&ctx("x", "")),
+                raw.apply(&ctx("x", "")),
+                "{written:?} means the same written either way"
+            );
+        }
     }
 
     #[test]

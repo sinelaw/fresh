@@ -1343,6 +1343,73 @@ fn test_config_reload_brings_changed_edit_rules() {
     assert_eq!(buf(&harness), "- item\n\n> quote\n> \n");
 }
 
+/// Saving an unrelated Markdown setting in the Settings UI (Auto Close)
+/// writes the whole Markdown entry, rules included, to config.json. The
+/// rules must come back exactly: the empty-item rule's `"replace_before":
+/// ""` was stripped on write, so it no longer loaded and Enter on an empty
+/// item stopped ending the list.
+#[test]
+fn test_settings_save_of_another_markdown_field_keeps_the_rules() {
+    let mut config = fresh::config::Config::default();
+    config.languages.retain(|name, _| name == "markdown");
+    let (mut harness, _temp_dir) = markdown_harness_with_config(120, 34, config);
+    harness.render().unwrap();
+
+    harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    for _ in 0..60 {
+        if harness.screen_to_string().contains("[Enter to edit]") {
+            break;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Auto Close");
+    // The rules list shows each rule's key and pattern.
+    harness.assert_screen_contains("newline: ^");
+    // The first field is Auto Close: toggle it, save the entry, then the
+    // settings.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let path = harness.editor().dir_context().config_path();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(
+        written.pointer("/languages/markdown/auto_close").is_some(),
+        "the save reached the file: {written:#}"
+    );
+
+    // Read back from disk, as at the next start.
+    harness.editor_mut().reload_config();
+    assert_eq!(
+        harness.config().languages["markdown"].edit_rules,
+        fresh::config::Config::default().languages["markdown"].edit_rules,
+        "the rules read back exactly: {written:#}"
+    );
+    let content = enter_at_end_of_first_line(&mut harness, "after_save.md", "- \n");
+    assert_eq!(content, "\n", "Enter on an empty item still ends the list");
+    let content = enter_at_end_of_first_line(&mut harness, "after_save2.md", "1. one\n");
+    assert_eq!(content, "1. one\n2. \n");
+}
+
 // ---------------------------------------------------------------------------
 // The mechanism is not Markdown's: a plugin's rules for another language
 // ---------------------------------------------------------------------------

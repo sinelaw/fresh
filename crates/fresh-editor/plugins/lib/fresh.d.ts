@@ -1375,8 +1375,12 @@ type FormatterPackConfig = {
 *   `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
 * - `${dedent:REF}`: the capture with one indentation level taken off its
 *   start: a leading tab, or `tab_size` leading spaces.
-* - `$$`: a literal `$`. A line break in a template is written as the
-*   buffer's line ending (`\n` or `\r\n`).
+* - `$$`: a literal `$`.
+* - `\n`: a line break (the two characters backslash and `n`; a real line
+*   break works too), `\t`: a tab, `\\`: a backslash. A backslash before
+*   anything else is itself. A line break is written as the buffer's line
+*   ending (`\n` or `\r\n`). In config.json the backslash is escaped
+*   (`"insert": "\\n$1"`); the Settings UI shows and takes `\n` as is.
 *
 * When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
 * number, a value not in the list, less than a level of indentation), the
@@ -4096,8 +4100,12 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	*   `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
 	* - `${dedent:REF}`: the capture with one indentation level taken off its
 	*   start: a leading tab, or `tab_size` leading spaces.
-	* - `$$`: a literal `$`. A line break in a template is written as the
-	*   buffer's line ending (`\n` or `\r\n`).
+	* - `$$`: a literal `$`.
+	* - `\n`: a line break (the two characters backslash and `n`; a real line
+	*   break works too), `\t`: a tab, `\\`: a backslash. A backslash before
+	*   anything else is itself. A line break is written as the buffer's line
+	*   ending (`\n` or `\r\n`). In config.json the backslash is escaped
+	*   (`"insert": "\\n$1"`); the Settings UI shows and takes `\n` as is.
 	*
 	* When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
 	* number, a value not in the list, less than a level of indentation), the
@@ -5138,9 +5146,9 @@ interface LanguageConfig {
 		* rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
 		* `before` / `after` (the line's text before / after the cursor), and
 		* templates `insert`, `replace_before`, `replace_after` using `$1`,
-		* `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A
-		* rule that doesn't compile is skipped with a warning. Rules that plugins
-		* register are tried after these.
+		* `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}`, `$$`, and
+		* `\n` for a line break. A rule that doesn't compile is skipped with a
+		* warning. Rules that plugins register are tried after these.
 		*/
 		edit_rules?: EditRule[];
 	}

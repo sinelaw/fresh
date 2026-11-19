@@ -72,6 +72,17 @@ fn strip_empty_defaults(value: Value, existing: Option<&Value>) -> Option<Value>
                     if k == "args" && matches!(&v, Value::Array(a) if a.is_empty()) {
                         return Some((k, v));
                     }
+                    // A language's `edit_rules` are kept exactly: `[]` turns
+                    // its rules off (Markdown has some by default), and an
+                    // empty template (`"replace_before": ""`) replaces text
+                    // with nothing, where leaving it out keeps the text — a
+                    // rule left with no template at all doesn't load. The
+                    // Settings UI writes a whole language entry when one of
+                    // its fields changes, so stripping here broke the
+                    // built-in rules on any unrelated language save.
+                    if k == "edit_rules" {
+                        return Some((k, v));
+                    }
                     strip_empty_defaults(v, sub_existing).map(|v| (k, v))
                 })
                 .collect();
@@ -2619,6 +2630,91 @@ mod tests {
         );
         let config = resolver.resolve().unwrap();
         assert_eq!(edit_rule_patterns(&config, "markdown"), vec!["^> "]);
+    }
+
+    /// Saving one field of the Markdown entry in the Settings UI writes the
+    /// whole entry (its rules included) to the user's file. The rules must
+    /// read back exactly: `"replace_before": ""` used to be stripped as an
+    /// empty default, which left the empty-item rule with no template, so it
+    /// was dropped on load and Enter no longer ended a list. A user's `[]`
+    /// (rules off) must survive a save the same way.
+    #[test]
+    fn settings_save_of_a_language_entry_keeps_its_edit_rules() {
+        use fresh_core::api::EditRuleTrigger;
+        use fresh_core::edit_rules::{LineContext, LineEdit};
+
+        let (_temp, resolver) = create_test_resolver();
+        let builtin = Config::default().languages["markdown"].edit_rules.clone();
+
+        // What the Settings dialog saves after toggling Auto Close.
+        let mut markdown = Config::default().languages["markdown"].clone();
+        markdown.auto_close = Some(false);
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "/languages/markdown".to_string(),
+            serde_json::to_value(&markdown).unwrap(),
+        );
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(resolver.user_config_path()).unwrap())
+                .unwrap();
+        assert_eq!(
+            written.pointer("/languages/markdown/edit_rules/0/replace_before"),
+            Some(&Value::String(String::new())),
+            "{written:#}"
+        );
+
+        let config = resolver.resolve().unwrap();
+        let markdown = &config.languages["markdown"];
+        assert_eq!(markdown.auto_close, Some(false));
+        assert_eq!(markdown.edit_rules, builtin, "the rules read back the same");
+        // Enter on an empty item still ends the list.
+        let ctx = LineContext {
+            before: "- ",
+            after: "",
+            indent_unit: "    ",
+            tab_width: 4,
+            line_ending: "\n",
+        };
+        let edit = markdown
+            .edit_rules
+            .iter()
+            .map(|r| r.compiled())
+            .filter(|r| r.trigger() == EditRuleTrigger::Newline)
+            .find_map(|r| r.apply(&ctx));
+        assert_eq!(
+            edit,
+            Some(LineEdit {
+                before: String::new(),
+                after: String::new()
+            })
+        );
+
+        // A second save over that file changes nothing in the rules.
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        assert_eq!(
+            resolver.resolve().unwrap().languages["markdown"].edit_rules,
+            builtin
+        );
+
+        // `[]` written by a save (rules off) is kept, not stripped as empty.
+        let mut off = Config::default().languages["markdown"].clone();
+        off.edit_rules.clear();
+        changes.insert(
+            "/languages/markdown".to_string(),
+            serde_json::to_value(&off).unwrap(),
+        );
+        std::fs::remove_file(resolver.user_config_path()).unwrap();
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        assert!(resolver.resolve().unwrap().languages["markdown"]
+            .edit_rules
+            .is_empty());
     }
 
     const KEYBINDINGS_WITH_ONE_BAD: &str = r#"{"keybindings": [

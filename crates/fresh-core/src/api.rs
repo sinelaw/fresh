@@ -6801,8 +6801,12 @@ impl schemars::JsonSchema for EditRuleTrigger {
 ///   `tab_size` spaces, per its `use_tabs` / `tab_size` settings.
 /// - `${dedent:REF}`: the capture with one indentation level taken off its
 ///   start: a leading tab, or `tab_size` leading spaces.
-/// - `$$`: a literal `$`. A line break in a template is written as the
-///   buffer's line ending (`\n` or `\r\n`).
+/// - `$$`: a literal `$`.
+/// - `\n`: a line break (the two characters backslash and `n`; a real line
+///   break works too), `\t`: a tab, `\\`: a backslash. A backslash before
+///   anything else is itself. A line break is written as the buffer's line
+///   ending (`\n` or `\r\n`). In config.json the backslash is escaped
+///   (`"insert": "\\n$1"`); the Settings UI shows and takes `\n` as is.
 ///
 /// When `${inc}`, `${cycle}` or `${dedent}` has nothing to work with (not a
 /// number, a value not in the list, less than a level of indentation), the
@@ -6811,7 +6815,7 @@ impl schemars::JsonSchema for EditRuleTrigger {
 // Keys are snake_case like the rest of config.json; the camelCase spellings
 // plugins use (`replaceBefore`, `replaceAfter`) are accepted as aliases.
 #[serde(deny_unknown_fields)]
-#[schemars(extend("x-display-field" = "/before"))]
+#[schemars(extend("x-display-field" = "/on,/before"))]
 #[ts(export, rename_all = "camelCase")]
 pub struct EditRule {
     /// The key this rule answers.

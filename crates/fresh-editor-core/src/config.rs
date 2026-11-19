@@ -2672,9 +2672,9 @@ pub struct LanguageConfig {
     /// rule has `on` (`"newline"`, `"indent"` or `"dedent"`), optional regexes
     /// `before` / `after` (the line's text before / after the cursor), and
     /// templates `insert`, `replace_before`, `replace_after` using `$1`,
-    /// `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}` and `$$`. A
-    /// rule that doesn't compile is skipped with a warning. Rules that plugins
-    /// register are tried after these.
+    /// `${inc:1}`, `${cycle:1:a|b|c}`, `${indent}`, `${dedent:1}`, `$$`, and
+    /// `\n` for a line break. A rule that doesn't compile is skipped with a
+    /// warning. Rules that plugins register are tried after these.
     #[serde(default)]
     pub edit_rules: Vec<ConfiguredEditRule>,
 }
@@ -2749,14 +2749,16 @@ pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
             "replace_before": "",
             "replace_after": ""
         },
-        // Enter on a checkbox item: a new unchecked one.
-        { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": "\n$1$2 [ ] " },
+        // Enter on a checkbox item: a new unchecked one. (`\n` in a
+        // template is a line break; written as the escape, the template
+        // reads on one line in the Settings UI.)
+        { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": r"\n$1$2 [ ] " },
         // Enter on an ordered item: the next number.
-        { "on": "newline", "before": r"^([ \t]*)(\d+)\. ", "insert": "\n$1${inc:2}. " },
+        { "on": "newline", "before": r"^([ \t]*)(\d+)\. ", "insert": r"\n$1${inc:2}. " },
         // Enter on a bullet item: the same bullet.
-        { "on": "newline", "before": r"^([ \t]*)([-*+]) ", "insert": "\n$1$2 " },
+        { "on": "newline", "before": r"^([ \t]*)([-*+]) ", "insert": r"\n$1$2 " },
         // Enter on any other indented line: keep the indentation.
-        { "on": "newline", "before": r"^([ \t]+)", "insert": "\n$1" },
+        { "on": "newline", "before": r"^([ \t]+)", "insert": r"\n$1" },
         // Tab on a blank bullet item: one level deeper, next bullet.
         {
             "on": "indent",

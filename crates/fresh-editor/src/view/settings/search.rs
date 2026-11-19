@@ -257,6 +257,32 @@ fn search_json_value(
         serde_json::Value::Object(obj) => {
             for (k, v) in obj {
                 let child_path = format!("{}/{}", path, k);
+                // A list an entry holds is found by its name, read as words
+                // (`edit rules` finds Markdown's `edit_rules`). Only a list
+                // with something in it: every language has the field, and
+                // only the ones that hold some are worth listing.
+                if let serde_json::Value::Array(items) = v {
+                    let words = k.replace('_', " ");
+                    if !items.is_empty() && (words.contains(query_lower) || k.contains(query_lower))
+                    {
+                        let (score, _) = fuzzy_match(&words, &query_lower.replace('_', " "));
+                        results.push(SearchResult {
+                            page_index,
+                            item_index,
+                            item: item.clone(),
+                            breadcrumb: format!("{} > {}", page_name, map_key),
+                            score: score.max(1),
+                            name_matches: Vec::new(),
+                            description_matches: Vec::new(),
+                            deep_match: Some(DeepMatch::MapValue {
+                                key: map_key.to_string(),
+                                entry_index,
+                                field_path: child_path.clone(),
+                                matched_text: format!("{}: {}", k, items.len()),
+                            }),
+                        });
+                    }
+                }
                 search_json_value(
                     results,
                     page_index,
@@ -713,5 +739,40 @@ mod tests {
             "Map key 'python' should rank above fuzzy noise, got: {:?}",
             results[0].deep_match
         );
+    }
+
+    /// A list inside a map entry is found by its name, as words: `edit
+    /// rules` finds the entry whose `edit_rules` holds some, not the ones
+    /// whose list is empty.
+    #[test]
+    fn test_search_finds_a_nested_list_by_its_name() {
+        let pages = vec![make_page(
+            "Languages",
+            vec![make_map_item(
+                "Languages",
+                "/languages",
+                vec![
+                    (
+                        "markdown".to_string(),
+                        serde_json::json!({"edit_rules": [{"on": "newline", "insert": "x"}]}),
+                    ),
+                    ("python".to_string(), serde_json::json!({"edit_rules": []})),
+                ],
+            )],
+        )];
+
+        for query in ["edit rules", "edit_rules", "Edit Rules"] {
+            let results = search_settings(&pages, query);
+            let found: Vec<_> = results
+                .iter()
+                .filter_map(|r| match &r.deep_match {
+                    Some(DeepMatch::MapValue {
+                        key, field_path, ..
+                    }) => Some((key.as_str(), field_path.as_str())),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(found, vec![("markdown", "/edit_rules")], "{query:?}");
+        }
     }
 }
