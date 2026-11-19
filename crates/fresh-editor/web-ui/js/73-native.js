@@ -96,7 +96,7 @@ function dialogButtons(card, buttons){
   const row=div("nc-buttons");
   for(const b of buttons){
     const el=nativeButton("nc-btn"+(b.selected?" selected":"")+(b.destructive?" destructive":"")
-      +(b.escape?" escape":""), b.key);
+      +(b.escape?" escape":"")+(b.hovered?" hovered":""), b.key);
     const [pre, acc, post]=b.label;
     el.append(pre);
     if(acc){ const u=document.createElement("span"); u.className="accel"; u.textContent=acc; el.appendChild(u); }

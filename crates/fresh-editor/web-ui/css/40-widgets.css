@@ -207,6 +207,11 @@
   .auxmodal .am-line.sel{background:var(--menuhi);color:#fff}
   .auxmodal .am-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted)}
   /* native right-click / new-tab context menu */
+  /* Semantic hooks (65-widgets.js, 70-panels.js): a changed setting, the
+     footer's Reset, the trust dialog's Quit. */
+  .settings-modal .set-item.modified .set-name{color:var(--ui-accent,var(--accent))}
+  .settings-modal .btn.danger:hover{color:var(--danger,#f47067)}
+  .trustdialog .td-btn.destructive:hover{color:var(--danger,#f47067);border-color:var(--danger,#f47067)}
   .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;min-width:160px}
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
   .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}

@@ -42,7 +42,7 @@ body.native-panels .tree-item.k-scrim[data-surface-kind="floating"]{visibility:h
   background:var(--surface,var(--bg3));border:1px solid var(--hairline-strong,var(--border));
   border-radius:var(--r-md,6px);padding:.32em 1em;min-width:5.5em;
   transition:background-color .08s,border-color .08s}
-.native-confirm .nc-btn:hover{background:var(--hover,rgba(255,255,255,.06));border-color:var(--muted)}
+.native-confirm .nc-btn.hovered,.native-confirm .nc-btn:hover{background:var(--hover,rgba(255,255,255,.06));border-color:var(--muted)}
 /* The button that holds the keyboard — what Enter takes — is the filled one. */
 .native-confirm .nc-btn.selected{background:var(--ui-accent,var(--accent));border-color:var(--ui-accent,var(--accent));
   color:var(--on-ui-accent,var(--on-accent))}

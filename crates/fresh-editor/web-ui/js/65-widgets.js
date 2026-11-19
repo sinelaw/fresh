@@ -949,7 +949,7 @@ function settingItemRows(items, container, live, entry){
     const sec=it.section;
     if(it.sectionStart && sec!=null && sec!==""){ const h=div("set-section"); h.textContent=sec; container.appendChild(h); }
     const isList=SET_LIST_KINDS.has(it.control.kind);
-    const row=aria(div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(isList?" set-item-block":"")),
+    const row=aria(div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(it.modified?" modified":"")+(isList?" set-item-block":"")),
       "group", {label:it.name, current:it.selected?"true":null, readonly:it.readOnly||null});
     const head=div("set-item-head");
     const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); head.appendChild(nm);
@@ -1000,7 +1000,10 @@ function settingsWindowEls(s){
   const ft=div("set-footer"); const fkinds=["layer","reset","save","cancel"];
   s.footerButtons.forEach((b,i)=>{
     const sel=i===s.footerSelected&&s.focus==="footer";
-    const bb=aria(div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")),"button",{}); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel",undefined,undefined); ft.appendChild(bb);
+    // `set-<kind>` names each footer button for a skin (Reset is the one that
+    // throws changes away).
+    const kind=fkinds[i]||"cancel";
+    const bb=aria(div("btn set-"+kind+(b==="Save"?" primary":"")+(kind==="reset"?" danger":"")+(sel?" sel":"")),"button",{}); bb.textContent=b; bb.onmousedown=setHit(kind,undefined,undefined); ft.appendChild(bb);
   }); el.appendChild(ft);
   // entry dialog (Map/ObjectArray add/edit): rows are clickable (select+edit),
   // controls keyboard-driven, buttons routed by name to the entry dispatch.
@@ -1138,7 +1141,7 @@ function auxModalEls(m){
 // editor's hit-test resolves to that item (`item_idx = row - y - 1`).
 /** function contextMenuEl(ContextMenu) => El */
 function contextMenuEl(cm){
-  const el=div("region ctxmenu");
+  const el=div("region ctxmenu ctx-"+cm.kind);
   el.style.left=`${px(cm.x,CW)}px`; el.style.top=`${px(cm.y,CH)}px`;
   cm.items.forEach((label,i)=>{
     const row=div("ctxitem"+(i===cm.highlighted?" sel":""));

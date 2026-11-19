@@ -28,7 +28,8 @@ function popupRun(run){
 
 /** function popupEl(Popup) => El */
 function popupEl(p){
-  const el=div("popup"); place(el,p.rect);
+  // `popup-<kind>` lets a skin tell completion, hover, actions and lists apart.
+  const el=div("popup popup-"+p.kind); place(el,p.rect);
   // The pointer on the card is news to the editor: a hover card stays while
   // the pointer is on it and comes down once it has left (#3733), and the
   // card is DOM here, so the document's cell-motion forwarding skips it

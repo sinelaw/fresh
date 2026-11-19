@@ -75,7 +75,9 @@ function spanCell(s){ return {col:s.x+Math.floor((s.w||1)/2), row:s.y}; }
 
 /** function fileBrowserEl(FileBrowser, Palette) => El */
 function fileBrowserEl(b,p){
-  const el=div("palette centered filebrowser");
+  // `fb-<section>`: which half holds the keyboard (shortcut chips or the list).
+  const el=div("palette centered filebrowser fb-"+b.activeSection);
+  el.dataset.prompt=p.promptType;
   // Title bar: the directory being browsed + the same close affordance the
   // command palette has.
   const tb=div("ptitlebar");
@@ -154,6 +156,14 @@ function fileBrowserEl(b,p){
     row.onmousedown=fbClick(b.listRect.x+1,r.row,true);
     list.appendChild(row);
   }
+  // The editor's scrollbar: the thumb's rows within the visible window, as a
+  // fraction of the list so it holds whatever height the skin gives a row.
+  if(b.total>b.visibleRows && b.visibleRows>0){
+    const th=div("fbthumb");
+    th.style.top=`${100*b.thumbStart/b.visibleRows}%`;
+    th.style.height=`${100*Math.max(1,b.thumbEnd-b.thumbStart)/b.visibleRows}%`;
+    list.appendChild(th);
+  }
   // Wheel scrolls through the editor's own scroll offset, like the palette list.
   listen(list,"wheel",e=>{ e.stopPropagation();
     sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:b.listRect.x+1,row:b.listRect.y,
@@ -185,6 +195,7 @@ function paletteInputOnlyEls(p){
 /** function paletteInputOnlyEl(Palette) => El */
 function paletteInputOnlyEl(p){
   const el=div("palette input-only");
+  el.dataset.prompt=p.promptType;
   // The prompt row replaces the status bar on the grid's last row, spanning
   // the chrome area right of the dock — never the dock columns or the
   // wallpaper outside the bezel.
@@ -236,6 +247,7 @@ function paletteCardEl(p, list){
   let outer = p.outerRect ?? list;
   if(hasPreview && pr){ outer = {x:list.x, y:list.y, w:(pr.x+pr.w)-list.x, h:list.h}; }
   const el=div("palette"+(hasPreview?" with-preview":"")+(centered?" centered":""));
+  el.dataset.prompt=p.promptType;
   // Position the card on the outer rect, with the input bar stacked above it so
   // it reads as one palette. (Clicks use the list cell rect below.)
   if(centered){
