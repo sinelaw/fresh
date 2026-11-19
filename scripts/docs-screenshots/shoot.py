@@ -169,12 +169,16 @@ class Kitty:
             run("xdotool", "key", "--clearmodifiers", k)
             time.sleep(0.08)
 
-    def click(self, col: int, row: int, button: int = 1):
-        """Click the middle of a cell (0-based column and row)."""
+    def move(self, col: int, row: int):
+        """Put the pointer on the middle of a cell (0-based column and row)."""
         geo = run("xdotool", "getwindowgeometry", self.wid)
         w, h = (int(n) for n in geo.split("Geometry:")[1].split()[0].split("x"))
         cw, ch = w // self.cols, h // self.rows
         run("xdotool", "mousemove", "--window", self.wid, str(col * cw + cw // 2), str(row * ch + ch // 2))
+
+    def click(self, col: int, row: int, button: int = 1):
+        """Click the middle of a cell (0-based column and row)."""
+        self.move(col, row)
         run("xdotool", "click", str(button))
 
     def text(self, s: str):
@@ -279,13 +283,18 @@ def do_steps(k: Kitty, steps, outdir: Path):
         op, *a = step
         if op == "key":
             k.key(*a)
-        elif op == "click_text":  # click the first (or nth) place this text is on screen
+        elif op in ("click_text", "rclick_text", "hover_text"):
+            # click (left or right) or point at the first (or nth) place this
+            # text is on screen
             needle, nth = a[0], (a[1] if len(a) > 1 else 0)
             hits = [(r, line.index(needle)) for r, line in enumerate(k.plain().splitlines()) if needle in line]
             if len(hits) <= nth:
-                raise RuntimeError(f"click_text: {needle!r} not on screen")
+                raise RuntimeError(f"{op}: {needle!r} not on screen")
             r, c = hits[nth]
-            k.click(c + len(needle) // 2, r)
+            if op == "hover_text":
+                k.move(c + len(needle) // 2, r)
+            else:
+                k.click(c + len(needle) // 2, r, 3 if op == "rclick_text" else 1)
         elif op == "click":
             k.click(*a)
         elif op == "text":

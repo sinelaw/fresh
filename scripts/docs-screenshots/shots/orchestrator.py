@@ -92,7 +92,31 @@ def sh(line):
 script_shell = [("key", "ctrl+p"), ("text", "Docs: Script Shell"), ("wait", "may script the editor"),
                 ("settle",), ("key", "Return"), ("wait", "fresh$"), ("settle",)]
 
+# The dock's layout, for the pull request that introduced it (written with
+# `--out docs/internal/screenshots/orchestrator-dock-ux`): each workspace's
+# state in the right-hand column, Pinned and By date, the card view, and the
+# ⋯ a hovered row shows. Cropped to the dock.
+DOCK = (0, 0, 40, 18)
+dock_menu = lambda pick: [("click_text", "Menu ▾"), ("wait", pick), ("click_text", pick),
+                          ("key", "Escape"), ("settle",)]
+
 SHOTS = [
+    {
+        "id": "dock-ux-by-date", **INV, **WIDE, "args": ["src/routes/items.js"],
+        "steps": [("wait", "itemsRouter")] + build + dock_menu("By date") + [
+            ("rclick_text", "low-stock-alerts"), ("wait", "Pin to top"), ("click_text", "Pin to top"),
+            ("wait", "Pinned"), ("settle",), ("crop", DOCK), ("shot", "dock-ux-by-date")],
+    },
+    {
+        "id": "dock-ux-cards", **INV, **WIDE, "args": ["src/routes/items.js"],
+        "steps": [("wait", "itemsRouter")] + build + dock_menu("Cards") + [
+            ("crop", (0, 0, 40, 34)), ("shot", "dock-ux-cards")],
+    },
+    {
+        "id": "dock-ux-hover", **INV, **WIDE, "args": ["src/routes/items.js"],
+        "steps": [("wait", "itemsRouter")] + build + [
+            ("hover_text", "query-perf"), ("wait", "⋯"), ("settle",), ("crop", DOCK), ("shot", "dock-ux-hover")],
+    },
     {
         "id": "orchestrator-dock", **INV, **WIDE, "args": ["src/routes/items.js"],
         "steps": [("wait", "itemsRouter")] + build + [("shot", "orchestrator-dock")],
