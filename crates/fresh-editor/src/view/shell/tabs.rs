@@ -753,6 +753,11 @@ pub fn rects(
                     0,
                     1,
                 ));
+            // The name is the node's LAST text item. With
+            // `editor.nerd_font_icons` on, `name_node` prepends the icon as
+            // two themed runs (a space, then the glyph), and themed runs are
+            // drawn one item per fragment — so the first item is that lone
+            // space, which trimmed to "" and blanked every tab in the web UI.
             let label = ui
                 .spec()
                 .index
@@ -761,6 +766,7 @@ pub fn rects(
                 .and_then(|(_, r)| {
                     ui.spec().items[r.clone()]
                         .iter()
+                        .rev()
                         .find_map(|i| match &i.draw {
                             fresh_ui::Draw::Lines(l) => l.first().map(|s| s.trim().to_string()),
                             _ => None,
@@ -1111,6 +1117,29 @@ mod tests {
         assert!(
             r.iter().any(|t| t.target == buf(7)),
             "with the last tab still on screen: {r:?}"
+        );
+    }
+
+    /// With `editor.nerd_font_icons` on, a file tab's name node starts with
+    /// the icon's runs (a space, then the glyph). The label `rects` reports —
+    /// what the web UI shows as the tab's name — is still the name, not that
+    /// leading space (which left every web tab blank).
+    #[test]
+    fn rects_label_is_the_name_when_tabs_carry_file_icons() {
+        let s = Strip {
+            file_icons: Some(Rc::new(TabIcons {
+                table: Default::default(),
+                one_color: None,
+            })),
+            ..strip_of(2)
+        };
+        let ui = laid_out(s, PaneControls::default(), 80);
+        let r = rects(&ui, size(80), pane(), &(0..2).map(buf).collect::<Vec<_>>());
+        let labels: Vec<&str> = r.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels.len(), 2, "both tabs are on screen: {r:?}");
+        assert!(
+            labels[0].contains("file_0.rs") && labels[1].contains("file_1.rs"),
+            "labels carry the names, not the icon's leading space: {labels:?}"
         );
     }
 
