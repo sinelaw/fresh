@@ -3,7 +3,7 @@
 // Builds the dock the loop walks through: six workspaces, four filed into two
 // folders, each showing something different — an agent at work, a Review Diff,
 // an agent waiting on a permission prompt, another agent at work, the main
-// checkout with the file explorer beside a Rust file, and API docs in
+// checkout with a Rust file and the file explorer on its right, and API docs in
 // markdown compose mode. The agents are setup.sh's fakes (staged output).
 // Writes $AD_SCENE_READY once every workspace is filled.
 
@@ -120,12 +120,15 @@ editor.on("plugins_loaded", async () => {
   await editor.runCommand("Markdown: Toggle Compose/Preview");
   await editor.delay(800);
 
-  // acme-api, the main checkout: a Rust file beside the file explorer
+  // acme-api, the main checkout: a Rust file, the file explorer on its right
   await orch.focusWorkspace(main.workspaceId);
   await editor.delay(800);
   editor.openFile(editor.getCwd() + "/src/server.rs");
   await editor.delay(500);
   await editor.runCommand("Toggle File Explorer");
+  await editor.delay(500);
+  // on the right, so the dock and the explorer don't stack up on the left
+  await editor.runCommand("Move File Explorer to Other Side");
   await editor.delay(1500);
   const marker = editor.getEnv("AD_SCENE_READY");
   if (marker) editor.writeFile(marker, "ready\n");
