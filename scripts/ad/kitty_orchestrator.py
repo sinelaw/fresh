@@ -13,6 +13,9 @@ Every stop is a screenshot; the frames become
   homepage/public/assets/orchestrator.webp        the loop, an animated WebP
   homepage/public/assets/orchestrator.mp4         the same, for the link
   homepage/public/assets/shots/orchestrator.webp  its first frame, the still
+  homepage/public/assets/shots/review-diff.webp   the db-pool-tuning stop
+
+Every frame is the whole kitty window, status bar included.
 
 Run setup.sh first.
 """
@@ -31,12 +34,13 @@ from kitty import Display, Kitty             # noqa: E402
 
 ASSETS = os.path.join(rec.REPO, "homepage", "public", "assets")
 FRAMES = os.path.join(rec.S, "korch")
-CROP = (0, 0, 140, 44)          # the dock and the top of the workspace
+COLS, ROWS = 140, 44            # the window, photographed whole
 FILL = float(os.environ.get("AD_FILL", "45"))   # seconds for the agents' panes to fill
 # dock rows from the top (0 = first row under the search box): acme-api,
 # api-docs, [Performance], rate-limiter, db-pool-tuning, [Security],
 # auth-bypass, token-expiry
 STOPS = [0, 1, 3, 4, 6, 7]
+REVIEW = 4                      # db-pool-tuning: its change open in Review Diff
 HOLD = 1.2                      # seconds on each workspace
 HOLD_SHOTS = 3                  # frames per hold, so working agents move
 HOP = 0.09                      # seconds per row passed over
@@ -57,12 +61,14 @@ def main():
     ready = os.path.join(tempfile.mkdtemp(), "ready")
     env = rec.env_for(cfg)
     # the agents fill the pane beside the 34-column dock; wider, their redraws smear
-    env.update({"LANG": env.get("LANG") or "C.UTF-8", "AD_SCENE_READY": ready, "AD_AGENT_COLUMNS": "100"})
+    env.update({"LANG": env.get("LANG") or "C.UTF-8", "AD_SCENE_READY": ready, "AD_AGENT_COLUMNS": "100",
+                "COLUMNS": str(COLS), "LINES": str(ROWS)})
 
     frames = []                 # (png, seconds on screen)
+    review = []                 # index of the first frame on db-pool-tuning
 
     with Display() as d:
-        k = Kitty(d, [rec.FRESH, "--no-upgrade-check"], cwd=rec.DEMO, env=env)
+        k = Kitty(d, [rec.FRESH, "--no-upgrade-check"], cwd=rec.DEMO, env=env, cols=COLS, rows=ROWS)
         try:
             for _ in range(240):
                 if os.path.exists(ready):
@@ -81,10 +87,12 @@ def main():
 
             def snap(secs):
                 p = os.path.join(FRAMES, f"{len(frames):04d}.png")
-                k.shot(p, CROP)
+                k.shot(p)
                 frames.append((p, secs))
 
             def hold():
+                if row == REVIEW:
+                    review.append(len(frames))
                 for _ in range(HOLD_SHOTS):
                     t0 = time.monotonic()
                     snap(HOLD / HOLD_SHOTS)
@@ -114,10 +122,17 @@ def main():
             os.system("pkill -9 -f 'target/debug/fresh' 2>/dev/null; pkill -9 -f coding_agent.py 2>/dev/null; "
                       "pkill -9 -f waiting_agent.py 2>/dev/null")
     print(f"{len(frames)} frames, {sum(s for _, s in frames):.1f}s")
-    encode(frames)
+    encode(frames, frames[review[0]][0])
 
 
-def encode(frames):
+def still(png, name):
+    from PIL import Image
+    im = Image.open(png).convert("RGB")
+    im = im.resize((2000, round(im.height * 2000 / im.width)), Image.LANCZOS)
+    im.save(os.path.join(ASSETS, "shots", name + ".webp"), "WEBP", quality=88, method=6)
+
+
+def encode(frames, review_png):
     from PIL import Image
     imgs = []
     for p, _ in frames:
@@ -128,10 +143,9 @@ def encode(frames):
     # autoplay questions (a VP9 <video> came up empty in Safari, #3822).
     imgs[0].save(os.path.join(ASSETS, "orchestrator.webp"), "WEBP", save_all=True,
                  append_images=imgs[1:], duration=durs, loop=0, quality=80, method=6)
-    # the still: the first frame, at the stills' 2000 px
-    first = Image.open(frames[0][0]).convert("RGB")
-    first = first.resize((2000, round(first.height * 2000 / first.width)), Image.LANCZOS)
-    first.save(os.path.join(ASSETS, "shots", "orchestrator.webp"), "WEBP", quality=88, method=6)
+    # the stills, at 2000 px: the loop's first frame, and Review Diff
+    still(frames[0][0], "orchestrator")
+    still(review_png, "review-diff")
     # an H.264 copy for the link (Safari and everything else play it)
     lst = os.path.join(FRAMES, "frames.txt")
     with open(lst, "w") as f:
@@ -143,7 +157,7 @@ def encode(frames):
                     "-vf", "scale=1600:-2:flags=lanczos,fps=30", "-c:v", "libx264", "-preset", "slow",
                     "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                     os.path.join(ASSETS, "orchestrator.mp4")], check=True)
-    for n in ("orchestrator.webp", "orchestrator.mp4", "shots/orchestrator.webp"):
+    for n in ("orchestrator.webp", "orchestrator.mp4", "shots/orchestrator.webp", "shots/review-diff.webp"):
         print(f"  -> {n} {os.path.getsize(os.path.join(ASSETS, n)) // 1024} KB")
 
 

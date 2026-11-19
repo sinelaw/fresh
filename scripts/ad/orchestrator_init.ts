@@ -127,7 +127,6 @@ editor.on("plugins_loaded", async () => {
   await editor.delay(500);
   await editor.runCommand("Toggle File Explorer");
   await editor.delay(1500);
-  editor.setStatus("scene ready");
   const marker = editor.getEnv("AD_SCENE_READY");
   if (marker) editor.writeFile(marker, "ready\n");
 });

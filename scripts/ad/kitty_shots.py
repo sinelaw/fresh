@@ -4,12 +4,13 @@
     python3 scripts/ad/kitty_shots.py              # every still
     python3 scripts/ad/kitty_shots.py palette ...  # just these
 
-Each still replays one of rec.py's scripted clips into kitty on a private
-Xvfb display (see kitty.py) and grabs the window at the given moment, so it is
-the current build drawing itself in kitty with JetBrainsMono Nerd Font: the
-Quiet theme (Settings in High Contrast) with Nerd Font icons on. The theme crossfade is one still per
-theme of the same file. The Orchestrator still and loop come from
-kitty_orchestrator.py.
+Each still replays one of rec.py's scripted clips into a kitty window of its
+own size on a private Xvfb display (see kitty.py) and photographs the whole
+window at the given moment, status bar and all: the current build drawing
+itself in kitty with JetBrainsMono Nerd Font, in the Quiet theme (Settings in
+High Contrast) with Nerd Font icons on. The theme crossfade is one still per
+theme of the same file. The Orchestrator loop and still, and the Review Diff
+still, come from kitty_orchestrator.py.
 
 Run setup.sh first (demo repo, agents, the 2 GB log). PNGs land in
 $AD_WORK/kshots; WebPs in homepage/public/assets/shots/.
@@ -29,18 +30,19 @@ OUT = os.path.join(REPO, "homepage", "public", "assets", "shots")
 PNG = os.path.join(S, "kshots")
 THEME = os.environ.get("AD_THEME", "quiet")
 
-# still: (clip, recording time, crop in cells [c0, r0, c1, r1][, theme]); clips
-# are 140x75. The Settings editor reads best in High Contrast.
+# still: (clip, recording time, terminal size in cells (cols, rows)[, theme]).
+# Each still is the whole kitty window at that size, nothing cropped, so the
+# menu, tab bar and status bar are all there. The Settings editor reads best
+# in High Contrast. (Review Diff comes from kitty_orchestrator.py's scene.)
 SHOTS = {
-    "review-diff": ("agents", 176.5, (0, 0, 100, 31)),
-    "settings":    ("settings", 16.6, (0, 1, 132, 42), "high-contrast"),
-    "multicursor": ("multicursor", 17.2, (0, 0, 84, 28)),
-    "huge-file":   ("huge", 10.4, (0, 0, 96, 30)),
-    "palette":     ("palette", 8.9, (0, 58, 100, 75)),
+    "settings":    ("settings", 16.6, (132, 42), "high-contrast"),
+    "multicursor": ("multicursor", 17.2, (84, 28)),
+    "huge-file":   ("huge", 10.4, (96, 30)),
+    "palette":     ("palette", 8.9, (100, 30)),
 }
 # one still per theme for the crossfade, Quiet first: server.rs, settled
 THEMES = ["quiet", "tokyo-night", "gruvbox", "nord", "light", "dracula", "solarized-dark"]
-THEME_CROP = (0, 0, 96, 30)
+THEME_SIZE = (96, 30)
 
 
 def kitty_config(base, name, theme):
@@ -69,8 +71,9 @@ def argv_for(argv):
     return ["bash", "--norc", "--noprofile", "-i"]
 
 
-def play(d, clip_fn, shots, theme=THEME):
-    """Run one clip in kitty and save `shots` = [(time, crop, png path)]."""
+def play(d, clip_fn, shots, size, theme=THEME):
+    """Run one clip in a kitty window of `size` cells and save
+    `shots` = [(time, png path)], each the whole window."""
     res = clip_fn()
     argv, tl = res[0], res[1]
     cfg = res[3] if len(res) > 3 else "config"
@@ -81,8 +84,9 @@ def play(d, clip_fn, shots, theme=THEME):
         with open(path, "w") as f:
             f.write(text)
     env = rec.env_for(kitty_config(cfg, f"{cfg}-kitty", theme))
-    env["LANG"] = env.get("LANG") or "C.UTF-8"
-    k = Kitty(d, argv_for(argv), cwd=DEMO, env=env, cols=rec.COLS, rows=rec.ROWS)
+    cols, rows = size
+    env.update({"LANG": env.get("LANG") or "C.UTF-8", "COLUMNS": str(cols), "LINES": str(rows)})
+    k = Kitty(d, argv_for(argv), cwd=DEMO, env=env, cols=cols, rows=rows)
     sched, t = [], 0.0
     for dt, kind, p in tl.ev:
         t += dt
@@ -98,8 +102,8 @@ def play(d, clip_fn, shots, theme=THEME):
                 k.send(sched[i][1])
                 i += 1
             if pending[0][0] <= el:
-                _, crop, path = pending.pop(0)
-                print(f"  {os.path.basename(path)} {k.shot(path, crop)}")
+                _, path = pending.pop(0)
+                print(f"  {os.path.basename(path)} {k.shot(path)}")
                 continue
             nxt = min(sched[i][0] if i < len(sched) else 1e9, pending[0][0])
             time.sleep(max(0.002, min(0.02, nxt - el)))
@@ -124,22 +128,19 @@ def main(names):
     os.makedirs(PNG, exist_ok=True)
     want = set(names) or set(SHOTS) | {"theme-" + t for t in THEMES}
     with Display() as d:
-        by_clip = {}
-        for name, (clip, t, crop, *theme) in SHOTS.items():
+        for name, (clip, t, size, *theme) in SHOTS.items():
             if name in want:
-                key = (clip, theme[0] if theme else THEME)
-                by_clip.setdefault(key, []).append((t, crop, os.path.join(PNG, name + ".png")))
-        for (clip, theme), shots in by_clip.items():
-            print(f"{clip} ({theme}):")
-            play(d, rec.CLIPS[clip], shots, theme=theme)
-            for _, _, p in shots:
-                to_webp(p, os.path.basename(p)[:-4])
+                theme = theme[0] if theme else THEME
+                print(f"{name}: {clip} at {size[0]}x{size[1]} ({theme})")
+                p = os.path.join(PNG, name + ".png")
+                play(d, rec.CLIPS[clip], [(t, p)], size, theme=theme)
+                to_webp(p, name)
         for theme in THEMES:
             name = "theme-" + theme
             if name in want:
                 print(f"{name}:")
                 p = os.path.join(PNG, name + ".png")
-                play(d, clip_still, [(4.0, THEME_CROP, p)], theme=theme)
+                play(d, clip_still, [(4.0, p)], THEME_SIZE, theme=theme)
                 to_webp(p, name)
 
 

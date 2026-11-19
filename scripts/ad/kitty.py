@@ -6,7 +6,7 @@ kitty, with a Nerd Font, rather than a re-rendering of a recording:
     with Display() as d:
         k = Kitty(d, ["fresh", "src/main.rs"], cwd=..., env=...)
         k.send(b"\\x1b[B")          # bytes go to the program as if typed
-        k.shot("out.png", crop=(0, 0, 100, 31))   # crop in terminal cells
+        k.shot("out.png")           # the whole window (or crop=(c0, r0, c1, r1) in cells)
         k.close()
 
 Needs `Xvfb`, ImageMagick's `import`, kitty (`KITTY`, default `kitty` on PATH,
@@ -24,7 +24,7 @@ import time
 
 FONT = os.environ.get("AD_FONT", "JetBrainsMono Nerd Font Mono")
 # 25 pt at Xvfb's 96 dpi gives JetBrains Mono a 20 px cell: the old
-# canvas stills were drawn at 2x a 10 px cell, so crops keep their sizes.
+# canvas stills were drawn at 2x a 10 px cell, so the page keeps its sizes.
 FONT_SIZE = float(os.environ.get("AD_FONT_SIZE", "25"))
 # The clips run with HOME pointed at a sandbox, which would hide fonts
 # installed per user; kitty gets a fontconfig file naming the real ones.
