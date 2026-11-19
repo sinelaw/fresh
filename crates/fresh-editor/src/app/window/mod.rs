@@ -5665,7 +5665,7 @@ fn wrap_scroll_geometry(
     let inputs = state.pipeline_inputs();
     let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
         &view_state.viewport,
-        &state.buffer,
+        state,
         view_state.viewport.line_wrap_enabled,
         &view_state.view_mode,
         crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),

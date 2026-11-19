@@ -59,8 +59,13 @@ struct MarkerEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerBasis {
     /// Exact wrapped-row counts from the visual-row index (small wrapped
-    /// buffers only — building that index is O(all lines)).
-    VisualRows { total: u64 },
+    /// buffers only — building that index is O(all lines)), under the key the
+    /// bar's pane builds it with: two panes on one buffer (a dual view) have
+    /// an index each, in different row spaces.
+    VisualRows {
+        total: u64,
+        geometry: crate::view::wrap_index::WrapIndexGeometry,
+    },
     /// Logical line numbers.
     LogicalLines { total: u64 },
     /// Raw byte offsets. The only basis available on a large file whose line
@@ -71,18 +76,9 @@ pub enum MarkerBasis {
 impl MarkerBasis {
     pub fn total(&self) -> u64 {
         match *self {
-            MarkerBasis::VisualRows { total }
+            MarkerBasis::VisualRows { total, .. }
             | MarkerBasis::LogicalLines { total }
             | MarkerBasis::Bytes { total } => total,
-        }
-    }
-
-    /// Discriminant used in the bucket cache key.
-    fn tag(&self) -> u8 {
-        match self {
-            MarkerBasis::VisualRows { .. } => 0,
-            MarkerBasis::LogicalLines { .. } => 1,
-            MarkerBasis::Bytes { .. } => 2,
         }
     }
 }
@@ -350,8 +346,9 @@ pub struct ProjectionKey {
     /// `content_version` because a save changes what they cover without
     /// changing the content.
     core_version: u64,
-    basis_tag: u8,
-    basis_total: u64,
+    /// The row space the rows were resolved in: its kind, extent and, for
+    /// visual rows, the pane's index key.
+    basis: MarkerBasis,
 }
 
 impl ProjectionKey {
@@ -365,8 +362,7 @@ impl ProjectionKey {
             marker_version: manager.version(),
             content_version,
             core_version,
-            basis_tag: basis.tag(),
-            basis_total: basis.total(),
+            basis,
         }
     }
 }

@@ -159,19 +159,22 @@ pub fn map_through_anchors(
     }
 }
 
-/// Where the last row-space sync of a same-buffer group left both panes.
+/// Where the last row-space sync of a same-buffer group left both panes, and
+/// which of them led.
 ///
-/// Kept so a sync never moves the partner against the direction the user
-/// scrolled, and so that focusing the other pane — which makes *it* the one
-/// that drives — does not re-derive a position nobody scrolled to.
+/// The pane that last moved leads until the other one moves: a frame where
+/// neither moved derives the partner from it again, which leaves the pair
+/// where it is when nothing changed and lines it up again when the layout
+/// under it did (a drawing arriving, an edit, a resize). Kept also so a sync
+/// never moves the partner against the direction the user scrolled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowSyncState {
-    /// The pane that drove the sync.
-    pub active: SplitId,
+    /// The pane the partner was derived from: the one that last moved.
+    pub driver: SplitId,
     /// Its top row then.
-    pub active_top: u32,
+    pub driver_top: u32,
     /// The partner's top row the sync gave it.
-    pub other_top: u32,
+    pub partner_top: u32,
 }
 
 /// The screen row at which a same-buffer pair is lined up, for a driving pane

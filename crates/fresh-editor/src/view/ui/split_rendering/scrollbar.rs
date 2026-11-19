@@ -71,13 +71,14 @@ pub(crate) fn scrollbar_line_counts(
         && total_lines <= MAX_WRAP_SCROLLBAR_LINES
         && buffer_len <= MAX_WRAP_SCROLLBAR_BYTES
     {
-        let (total_rows, top_row) =
+        let (total_rows, top_row, geometry) =
             scrollbar_visual_row_counts(state, viewport, view_mode, buffer_len, fold_ranges);
         return (
             total_rows,
             top_row,
             MarkerBasis::VisualRows {
                 total: total_rows as u64,
+                geometry,
             },
         );
     }
@@ -218,10 +219,12 @@ pub(crate) fn resolve_scrollbar_marks(
                 lines.get(&b).copied().unwrap_or(0)
             })
         }
-        MarkerBasis::VisualRows { .. } => {
-            // Marks are decoration on a bar, so an unbuilt index costs this
-            // frame's marks rather than the editor (fresh#3236).
-            let Some(index) = state.wrap_indices.most_recent() else {
+        MarkerBasis::VisualRows { geometry, .. } => {
+            // The bar's own index: in a dual view the other pane's is a
+            // different row space. Marks are decoration on a bar, so an
+            // unbuilt index costs this frame's marks rather than the editor
+            // (fresh#3236).
+            let Some(index) = state.wrap_indices.get(&geometry) else {
                 return std::rc::Rc::from(Vec::new());
             };
             let buffer = &state.buffer;
@@ -255,62 +258,29 @@ pub(super) fn scrollbar_visual_row_counts(
     view_mode: CacheViewMode,
     buffer_len: usize,
     fold_ranges: Vec<std::ops::Range<usize>>,
-) -> (usize, usize) {
-    use crate::primitives::line_wrapping::WrapConfig;
-    use crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH;
-    use crate::view::wrap_index::WrapIndexGeometry;
-    use crate::view::wrap_machine::WrapRule;
-
-    if buffer_len == 0 {
-        return (1, 0);
-    }
-
-    // Terminal-grid wrap (fresh#2649): count exact-column rows at the grid
-    // width — same row model as the renderer and the viewport scroll math.
-    let (effective_width, gutter_width, hanging_indent) = if viewport.grid_wrap {
-        (viewport.grid_cols(), 0usize, false)
-    } else {
-        let gutter_width = viewport.gutter_width(&state.buffer);
-        let wrap_config = WrapConfig::new(
-            viewport.wrap_area_width(viewport.width as usize, gutter_width),
-            gutter_width,
-            true,
-            viewport.wrap_indent,
-        );
-        let effective_width = wrap_config
-            .first_line_width
-            .saturating_add(gutter_width)
-            .max(2);
-        (effective_width, gutter_width, wrap_config.hanging_indent)
+) -> (usize, usize, crate::view::wrap_index::WrapIndexGeometry) {
+    // The key the renderer, the wheel and the reconcile build this pane's
+    // index under, so the bar counts the rows the pane draws.
+    let pane_mode = match view_mode {
+        CacheViewMode::Compose => crate::state::ViewMode::PageView,
+        CacheViewMode::Source => crate::state::ViewMode::Source,
     };
+    let geometry = super::orchestration::render_buffer::wrap_index_geometry_for(
+        viewport,
+        state,
+        viewport.line_wrap_enabled,
+        &pane_mode,
+        crate::view::wrap_index::fold_signature(&fold_ranges),
+    );
+    if buffer_len == 0 {
+        return (1, 0, geometry);
+    }
     let inputs = state.pipeline_inputs();
 
     // The wrap index answers both numbers directly: `total_rows` is O(1) off the
     // Fenwick tree and `row_of_byte` is a binary search. The path this replaced
     // re-wrapped every logical line on every keystroke, because its key folded in
     // the buffer version — 16.9% of a frame on a single-line file.
-    let geometry = WrapIndexGeometry {
-        rule: if viewport.grid_wrap {
-            WrapRule::Grid {
-                cols: effective_width,
-            }
-        } else if viewport.line_wrap_enabled {
-            WrapRule::Word {
-                content_width: effective_width,
-                gutter_width,
-                hanging_indent,
-            }
-        } else {
-            // Without soft wrap every logical line is one visual row until the
-            // safety chop, which no practical line reaches.
-            WrapRule::Chop {
-                chars: MAX_SAFE_LINE_WIDTH,
-            }
-        },
-        view_mode,
-        fold_signature: crate::view::wrap_index::fold_signature(&fold_ranges),
-    };
-
     let line_ending = state.buffer.line_ending();
     // Decorations — virtual-line anchors included — resolved into one owned
     // snapshot before `entry` takes `&mut state`.
@@ -329,7 +299,7 @@ pub(super) fn scrollbar_visual_row_counts(
         + viewport.top_view_line_offset();
     let top_visual_row = top_visual_row.min(total_visual_rows.saturating_sub(1));
 
-    (total_visual_rows, top_visual_row)
+    (total_visual_rows, top_visual_row, geometry)
 }
 
 /// Compute the maximum line length encountered so far (in display columns).
@@ -513,11 +483,9 @@ mod tests {
             len,
             Vec::new(),
         );
-        assert_eq!(
-            basis,
-            MarkerBasis::VisualRows {
-                total: total as u64
-            }
+        assert!(
+            matches!(basis, MarkerBasis::VisualRows { total: t, .. } if t == total as u64),
+            "{basis:?}"
         );
 
         // Logical lines (wrap off).
@@ -721,7 +689,19 @@ mod tests {
         state.buffer.insert(len / 2, "an unsaved edit");
         assert!(state.wrap_indices.is_empty());
 
-        let cells = project(&mut state, MarkerBasis::VisualRows { total: 40 }, 20);
+        let geometry = crate::view::wrap_index::WrapIndexGeometry {
+            rule: crate::view::wrap_machine::WrapRule::Chop { chars: 80 },
+            view_mode: CacheViewMode::Source,
+            fold_signature: 0,
+        };
+        let cells = project(
+            &mut state,
+            MarkerBasis::VisualRows {
+                total: 40,
+                geometry,
+            },
+            20,
+        );
         assert!(cells.iter().all(Option::is_none));
     }
 }

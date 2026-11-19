@@ -195,7 +195,7 @@ pub(crate) fn place_pane(
     let fold_ranges = state.fold_ranges(folds);
     let geometry = wrap_index_geometry_for(
         viewport,
-        &state.buffer,
+        state,
         line_wrap,
         view_mode,
         crate::view::wrap_index::fold_signature(&fold_ranges),
