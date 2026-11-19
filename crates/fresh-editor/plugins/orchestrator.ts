@@ -2050,6 +2050,8 @@ interface ExternalFeed {
   snapshot(): ExternalUpdate;
   claudeCloudEnabled(): boolean;
   setClaudeCloud(on: boolean): Promise<void>;
+  claudeLocalEnabled(): boolean;
+  setClaudeLocal(on: boolean): Promise<void>;
 }
 
 function externalFeed(): ExternalFeed | null {
@@ -6798,11 +6800,19 @@ function dockMainGroups(): DockMenuGroup[] {
         { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
         // The external sessions source that reads the Claude CLI's sign-in and a
         // private API, switchable here rather than only in Settings.
+        // The Claude sources, off until asked for: each runs the user's Claude
+        // CLI, and the cloud one reads its sign-in and a private API.
         ...(externalFeed()
-          ? [{
-            key: "main:claude-cloud",
-            label: check(externalFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
-          }]
+          ? [
+            {
+              key: "main:claude-local",
+              label: check(externalFeed()!.claudeLocalEnabled()) + editor.t("dock.claude_local"),
+            },
+            {
+              key: "main:claude-cloud",
+              label: check(externalFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
+            },
+          ]
           : []),
       ],
     },
@@ -6981,6 +6991,11 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:empty") {
     toggleHideTrivial();
     renderMainMenu();
+    return;
+  }
+  if (optKey === "main:claude-local") {
+    const feed = externalFeed();
+    if (feed) void feed.setClaudeLocal(!feed.claudeLocalEnabled()).then(renderMainMenu);
     return;
   }
   if (optKey === "main:claude-cloud") {

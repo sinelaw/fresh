@@ -79,7 +79,7 @@ If a project's folder was moved, renamed or deleted, the New Workspace dialog sa
 
 ## Agents started outside Fresh
 
-Claude Code and Codex sessions you started elsewhere (in another terminal, in Claude Desktop or an editor extension, or in the cloud) are listed in the dock under their own groups. From a session's right-click menu you can open it as a workspace, open it where it runs (in the browser or Claude Desktop), fork a cloud session into a workspace here, or file it into a folder.
+Claude Code and Codex sessions you started elsewhere (in another terminal, in Claude Desktop or an editor extension, or in the cloud) are listed in the dock under their own groups. The Claude ones are off until you ask for them: tick **Claude sessions on this machine** and **Claude cloud sessions** under **Menu ▾ → Show** (the choice is saved). From a session's right-click menu you can open it as a workspace, open it where it runs (in the browser or Claude Desktop), fork a cloud session into a workspace here, or file it into a folder.
 
 **Menu ▾ → Import sessions…** goes further back: pick a machine and choose **Scan** to find sessions other tools have run there, such as Claude Code and Codex transcripts and tmux panes, grouped by project. Choose one and **Import** opens the New Workspace dialog filled in to resume it.
 

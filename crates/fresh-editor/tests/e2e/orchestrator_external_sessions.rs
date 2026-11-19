@@ -96,6 +96,9 @@ esac
             settings: serde_json::json!({
                 "claude_command": claude.display().to_string(),
                 "codex_command": codex.display().to_string(),
+                // The Claude sources are off by default; this one is the
+                // fake `claude agents --json` above.
+                "claude_local": true,
                 "claude_cloud": false,
                 "codex_local": false,
                 // The fake task's date is fixed; keep it however old it gets.
