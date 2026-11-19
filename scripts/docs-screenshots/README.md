@@ -69,6 +69,7 @@ a `SHOTS` list, and `shots/_common.py` holds step helpers such as
 | `config` | merged into the base user `config.json` |
 | `config_files` | extra files to write into the project, e.g. `.fresh/config.json` |
 | `args` | arguments to `fresh` |
+| `prepare` | shell commands run in the project after its `setup.sh` and before Fresh starts, with `DOCSHOT_HOME` set (for state Fresh only reads at startup) |
 | `steps` | what to do, in order |
 
 Steps:

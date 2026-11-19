@@ -90,6 +90,12 @@ class Kitty:
         self.config_dir.mkdir(parents=True)
 
         make_project(shot.get("project", "default"), self.project, home, self.config_dir)
+        # A shot's own staging, after the project's and before Fresh starts:
+        # state that Fresh reads only at startup (a plugin's saved state) has
+        # to be in place by then.
+        for cmd in shot.get("prepare", []):
+            subprocess.run(["bash", "-c", cmd], cwd=self.project, check=True, capture_output=True,
+                           env=dict(os.environ, DOCSHOT_HOME=str(home)))
         config = {"version": 1, **BASE_CONFIG}
         deep_merge(config, shot.get("config", {}))
         (self.config_dir / "config.json").write_text(json.dumps(config, indent=2))

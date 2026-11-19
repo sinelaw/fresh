@@ -97,15 +97,43 @@ script_shell = [("key", "ctrl+p"), ("text", "Docs: Script Shell"), ("wait", "may
 # cropped to the dock. Not docs images: take them with `--out` pointed
 # somewhere outside the repository.
 DOCK = (0, 0, 40, 18)
+
+# Worktrees of the project last worked in before today, for the By date shot:
+# each is added beside the project and its root given a date in the
+# orchestrator's saved state (`orchestrator.dock.last_interaction`, ms).
+OLDER_WORK = r"""
+set -e
+state="$DOCSHOT_HOME/.local/share/fresh/orchestrator/state"
+mkdir -p "$state"
+day=86400000
+now=$(($(date +%s) * 1000))
+entries=""
+for spec in "feat/bulk-import:1" "fix/negative-stock:3" "perf/warehouse-index:8" \
+            "spike/graphql:35" "chore/node-20:330"; do
+  branch=${spec%%:*}; days=${spec##*:}
+  dir="$(cd .. && pwd)/inventory-api-$(echo "$branch" | tr / -)"
+  git worktree add -q "$dir" -b "$branch"
+  entries="$entries\"$dir\": $((now - days * day)),"
+done
+echo "{\"orchestrator.dock.last_interaction\": {${entries%,}}}" > "$state/orchestrator.json"
+"""
 dock_menu = lambda pick: [("click_text", "Menu ▾"), ("wait", pick), ("click_text", pick),
                           ("key", "Escape"), ("settle",)]
 
 SHOTS = [
     {
         "id": "dock-ux-by-date", **INV, **WIDE, "args": ["src/routes/items.js"],
-        "steps": [("wait", "itemsRouter")] + build + dock_menu("By date") + [
+        # Older work beside today's: worktrees last worked in yesterday, earlier
+        # this week, last week, last month and last year, dated through the
+        # orchestrator's saved state (read at startup) and listed by All
+        # worktrees.
+        "prepare": [OLDER_WORK],
+        "steps": [("wait", "itemsRouter")] + build + [
+            ("click_text", "Menu ▾"), ("wait", "By date"), ("click_text", "By date"),
+            ("click_text", "All worktrees"), ("key", "Escape"), ("settle",),
             ("rclick_text", "low-stock-alerts"), ("wait", "Pin to top"), ("click_text", "Pin to top"),
-            ("wait", "Pinned"), ("settle",), ("crop", DOCK), ("shot", "dock-ux-by-date")],
+            ("wait", "Pinned"), ("wait", "Last month"), ("settle",),
+            ("crop", (0, 0, 40, 24)), ("shot", "dock-ux-by-date")],
     },
     {
         "id": "dock-ux-cards", **INV, **WIDE, "args": ["src/routes/items.js"],
