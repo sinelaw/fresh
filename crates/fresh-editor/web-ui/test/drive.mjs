@@ -444,8 +444,12 @@ if (webDockPanels) {
   const search = findLine(await treeOf(), 'dock', /Search/i);
   check('the search field is in the dock', !!search);
   if (search) {
-    await press(nativeDock().locator('.w-text-input').first());
+    // `/ search` is a button that reveals the field and gives it the
+    // keyboard; the field is then a real input under it.
+    await press(nativeDock().locator('.w-button', { hasText: /search/i }).first());
     await page.waitForTimeout(300);
+    await press(nativeDock().locator('.w-text-input').first());
+    await page.waitForTimeout(200);
     await page.keyboard.type('zq');
     await waitTree((t, lines) => lines('dock').some(l => /zq/.test(l)), null, 5000);
     check('typed text reaches the field and comes back in the display list', !!findLine(await treeOf(), 'dock', /zq/));
