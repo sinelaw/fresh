@@ -388,7 +388,14 @@
 // ───────────────────────────── file explorer ─────────────────────────────
 
 // view/scene.rs `FileRow`.
-/** type FileRow = { name: String, depth: Number, isDir: Boolean, expanded: Boolean, icon: Icon | Null } */
+/** type FileRow = {
+    name: String, depth: Number, isDir: Boolean, expanded: Boolean, icon: Icon | Null,
+    chain: String[], hidden: Boolean, symlink: Boolean, multi: Boolean,
+    nameColor: String | Null, trailing: Slot | Null, error: Slot | Null
+} */
+
+// view/scene.rs `SlotView`.
+/** type Slot = { text: String, color: String | Null } */
 
 // view/scene.rs `DropZoneView`: where a dragged tab would land over a pane.
 /** type DropZone = { rect: Rect, bg: String | Null, border: String | Null } */
@@ -406,7 +413,9 @@
     viewportHeight: Number,
     selected: Number | Null,
     viewportRows: Number[],
-    rows: FileRow[]
+    rows: FileRow[],
+    closeKey: TreeKey,
+    refreshKey: TreeKey | Null
 } */
 
 // ───────────────────────────── trust dialog ─────────────────────────────

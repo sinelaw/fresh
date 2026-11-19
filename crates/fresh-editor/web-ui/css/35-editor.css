@@ -14,6 +14,22 @@
   .fileexplorer .fx-row.sel .fx-chev{color:#fff}
   .fileexplorer .fx-row .fx-name{overflow:hidden;text-overflow:ellipsis}
   .fileexplorer .fx-row .fx-name.dir{font-weight:600}
+  /* The header's ⟳ and × (70-panels.js), and what the terminal's rows say
+     beyond the name: the git / diagnostic slot at the right edge, the name's
+     own colour, a compact row's folded ancestors, the hidden / symlink /
+     multi-selected states. */
+  .fileexplorer .fx-title{display:flex;align-items:center;gap:2px}
+  .fileexplorer .fx-title-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .fileexplorer .fx-hbtn{font:inherit;background:none;border:0;padding:0 4px;color:var(--muted);cursor:default;
+    line-height:inherit;text-transform:none;letter-spacing:0;border-radius:var(--r-sm,3px)}
+  .fileexplorer .fx-hbtn:hover{color:var(--fg);background:var(--hover)}
+  .fileexplorer .fx-row .fx-slot{margin-left:auto;padding-left:6px;flex:0 0 auto;color:var(--slot-color,var(--muted));font-size:.92em}
+  .fileexplorer .fx-row .fx-err{color:var(--danger,#f47067);flex:0 0 auto}
+  .fileexplorer .fx-row:not(.sel) .fx-name.tinted{color:var(--name-color)}
+  .fileexplorer .fx-row .fx-chain{opacity:.7;font-weight:400}
+  .fileexplorer .fx-row.hidden .fx-name{opacity:.6}
+  .fileexplorer .fx-row.symlink .fx-name{font-style:italic}
+  .fileexplorer .fx-row.multi:not(.sel){background:var(--hover)}
   .pane-content{background:var(--bg)}
   /* Gutter (line numbers + separator) is its own element, kept out of the
      buffer-text flow and non-selectable, so a future native text selection of

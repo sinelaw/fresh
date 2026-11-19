@@ -51,7 +51,14 @@ function fileExplorerEl(fe){
   // themes keep everything else.
   const onGrid=e=>{ e.style.height=`${CH}px`; e.style.lineHeight=`${CH}px`; e.style.boxSizing="border-box";
                     e.style.marginTop=e.style.marginBottom="0"; e.style.paddingTop=e.style.paddingBottom="0"; };
-  const title=div("fx-title"); title.textContent=fe.title||"Explorer"; onGrid(title); el.appendChild(title);
+  const title=div("fx-title"); onGrid(title);
+  const tt=document.createElement("span"); tt.className="fx-title-text"; tt.textContent=fe.title||"Explorer"; title.appendChild(tt);
+  // The header's buttons, as the terminal's: ⟳ re-reads the tree, × hides the
+  // sidebar. Each presses the tree node it mirrors.
+  const rk=fe.refreshKey;
+  if(rk){ const b=nativeButton("fx-hbtn fx-refresh", rk); b.textContent="⟳"; b.title="Refresh"; title.appendChild(b); }
+  const cb=nativeButton("fx-hbtn fx-close", fe.closeKey); cb.textContent="×"; cb.title="Close"; title.appendChild(cb);
+  el.appendChild(title);
   const list=div("fx-list"); list.style.paddingTop=list.style.paddingBottom="0";
   const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
   // Newer cores provide the exact screen-row mapping, including sticky
@@ -60,7 +67,7 @@ function fileExplorerEl(fe){
   const viewportRows=fe.viewportRows||Array.from({length:n},(_,j)=>start+j);
   for(let j=0;j<n;j++){
     const idx=viewportRows[j], r=fe.rows[idx]; if(!r) break;
-    const row=div("fx-row"+(idx===fe.selected?" sel":""));
+    const row=div("fx-row"+(idx===fe.selected?" sel":"")+(r.multi?" multi":"")+(r.hidden?" hidden":"")+(r.symlink?" symlink":""));
     onGrid(row);
     row.style.paddingLeft=`${6 + r.depth*10}px`;
     const chev=document.createElement("span"); chev.className="fx-chev";
@@ -74,8 +81,20 @@ function fileExplorerEl(fe){
     if(icon){ ic.classList.add("nerd"); ic.textContent=icon.glyph; const color=icon.color; if(color) ic.style.setProperty("--icon-color",color); }
     else ic.innerHTML=fileIcon(r.name,{dir:r.isDir,expanded:r.expanded});
     row.appendChild(ic);
-    const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":""); name.textContent=r.name;
+    const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":"");
+    // A compact row's folded ancestors, `a/b/`, before its own name.
+    if(r.chain.length>0){ const ch=document.createElement("span"); ch.className="fx-chain"; ch.textContent=r.chain.join("/")+"/"; name.appendChild(ch); }
+    name.append(r.name);
+    // The colour the terminal gives the name (git status, cut, ignored).
+    const nc=r.nameColor; if(nc) name.style.setProperty("--name-color",nc);
+    if(nc) name.classList.add("tinted");
     row.appendChild(name);
+    const err=r.error;
+    if(err){ const e=document.createElement("span"); e.className="fx-err"; e.textContent=err.text; row.appendChild(e); }
+    // The status slot at the right edge: a git or diagnostic mark.
+    const tr=r.trailing;
+    if(tr){ const t=document.createElement("span"); t.className="fx-slot"; t.textContent=tr.text;
+      const c=tr.color; if(c) t.style.setProperty("--slot-color",c); row.appendChild(t); }
     const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row
     // Forward the real button so a right-click opens the explorer context menu.
     row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:btn(e),col:cell.col,row:cell.row}); };

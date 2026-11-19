@@ -922,6 +922,30 @@ pub struct FileRow {
     /// The row's file-type or folder icon, as the terminal's explorer draws
     /// it.
     pub icon: Option<IconView>,
+    /// The ancestors compact mode folded into the row, outermost first
+    /// (`a/b/` before the name).
+    pub chain: Vec<String>,
+    pub hidden: bool,
+    pub symlink: bool,
+    /// In the multi-selection.
+    pub multi: bool,
+    /// The rest of these are the terminal's description of the row, filled
+    /// for the rows on screen only. The name's colour when something gave it
+    /// one (a git status, a cut or ignored entry); `None` for the panel's
+    /// plain ink, which is the skin's to choose.
+    pub name_color: Option<String>,
+    /// The status slot at the row's right edge (a git or diagnostic mark).
+    pub trailing: Option<SlotView>,
+    /// `[Error]` for a folder that failed to load.
+    pub error: Option<SlotView>,
+}
+
+/// Text in a colour of its own: an explorer row's status slot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotView {
+    pub text: String,
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -943,6 +967,10 @@ pub struct FileExplorerView {
     /// Flattened-row indices in screen order, including sticky ancestors.
     pub viewport_rows: Vec<usize>,
     pub rows: Vec<FileRow>,
+    /// The header's `×` (hides the sidebar), as a tree key to press.
+    pub close_key: serde_json::Value,
+    /// The header's `⟳` (re-reads the tree), when the header has room for it.
+    pub refresh_key: Option<serde_json::Value>,
 }
 
 impl Editor {
@@ -970,7 +998,8 @@ impl Editor {
         let tree = view.tree();
         let projection = view.projection();
         let theme = self.theme.read().unwrap();
-        let rows = projection
+        let multi = view.multi_selection();
+        let mut rows: Vec<FileRow> = projection
             .rows
             .iter()
             .map(|r| FileRow {
@@ -984,6 +1013,13 @@ impl Editor {
                     r.is_dir().then(|| r.is_expanded()),
                 )
                 .map(IconView::of),
+                chain: r.chain.iter().map(|c| c.name.clone()).collect(),
+                hidden: r.entry.metadata.as_ref().is_some_and(|m| m.is_hidden),
+                symlink: r.entry.is_symlink(),
+                multi: multi.contains(&r.id),
+                name_color: None,
+                trailing: None,
+                error: None,
             })
             .collect();
         let title = tree
@@ -1008,7 +1044,38 @@ impl Editor {
                 (first, height, rows)
             })
             .unwrap_or_default();
+        // What the terminal's rows say beyond the name, for the rows on
+        // screen: the description the shell draws them from.
+        {
+            use crate::app::shell_host::shell_theme as st;
+            let fg = |name: &str| css_color(st::resolve(name, &theme).fg?);
+            for (i, d) in self.explorer_row_descriptions(&viewport_rows) {
+                let r = &mut rows[i];
+                let plain =
+                    crate::view::shell::file_explorer::neutral_key(r.hidden, r.symlink, r.is_dir);
+                r.name_color =
+                    d.name
+                        .first()
+                        .and_then(|(_, ink)| match st::names(ink).0.as_deref() {
+                            Some(k) if k == plain || k == "editor.fg" => None,
+                            _ => fg(ink),
+                        });
+                r.trailing = d.trailing.as_ref().map(|s| SlotView {
+                    text: s.text.trim().to_string(),
+                    color: fg(&s.theme),
+                });
+                r.error = d.error.as_ref().map(|(text, ink)| SlotView {
+                    text: text.trim().to_string(),
+                    color: fg(ink),
+                });
+            }
+        }
+        use crate::view::shell::sidebar::{close_key, refresh_key};
         Some(FileExplorerView {
+            close_key: crate::view::native::key_json(&close_key(0)),
+            refresh_key: self
+                .panel_rect(&refresh_key(0))
+                .map(|_| crate::view::native::key_json(&refresh_key(0))),
             rect: RectView::from(rect),
             grip_rect: self
                 .panel_rect(&crate::view::shell::sidebar::grip_key())

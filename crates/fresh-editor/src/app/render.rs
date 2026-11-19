@@ -3341,14 +3341,18 @@ impl Editor {
         }
     }
 
+    /// The explorer reads as focused only when it actually owns the keyboard
+    /// — not when a focused orchestrator dock has stolen it out from under
+    /// the (still-FileExplorer) window context.
+    pub(crate) fn explorer_focused(&self) -> bool {
+        self.active_window().key_context == KeyContext::FileExplorer
+            && !self.dock.as_ref().is_some_and(|d| d.focused)
+    }
+
     /// The explorer as a section: its chrome, and its rows.
     fn explorer_section(&self) -> ExplorerSection {
         use crate::view::shell::file_explorer as fe;
-        // The explorer reads as focused only when it actually owns the
-        // keyboard — not when a focused orchestrator dock has stolen it out
-        // from under the (still-FileExplorer) window context.
-        let focused = self.active_window().key_context == KeyContext::FileExplorer
-            && !self.dock.as_ref().is_some_and(|d| d.focused);
+        let focused = self.explorer_focused();
         let remote = self.connection_display_string();
         let disconnected = remote
             .as_deref()
@@ -3416,30 +3420,15 @@ impl Editor {
     /// and handles to what a row reads (see [`ExplorerRows`]).
     fn explorer_body(&self, focused: bool) -> crate::view::shell::file_explorer::Body {
         use crate::view::shell::file_explorer as fe;
-        let Some(view) = self.file_explorer() else {
+        let (Some(view), Some(rows)) = (self.file_explorer(), self.explorer_rows(focused)) else {
             return fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string());
         };
         let win = self.active_window();
-        let projection = view.projection();
-        let selected = view.get_selected_index();
-        let cut: Vec<std::path::PathBuf> = win
-            .file_explorer_clipboard
-            .as_ref()
-            .filter(|cb| cb.is_cut)
-            .map(|cb| cb.paths.clone())
-            .unwrap_or_default();
-        // A drop being previewed keeps its target lit until it is answered.
-        let drop_target = self
-            .explorer_drag
-            .as_ref()
-            .and_then(|d| d.target.clone())
-            .or_else(|| self.explorer_move_preview.as_ref().map(|p| p.dest.clone()));
-        let preview = self.explorer_move_preview.as_ref().map(|p| {
-            ExplorerPreviewRows::new(&projection, view.tree(), p, self.time_source().now())
-        });
+        let projection = rows.projection.clone();
+        let selected = rows.selected;
         // The window counts in spliced rows; everything the model says about
         // a row is in projection rows (see `ExplorerPreviewRows`).
-        let splice = std::rc::Rc::new(preview.as_ref().map(|p| p.layout.splice.clone()));
+        let splice = std::rc::Rc::new(rows.preview.as_ref().map(|p| p.layout.splice.clone()));
         let to_window = {
             let splice = splice.clone();
             move |i: usize| match splice.as_ref() {
@@ -3447,23 +3436,7 @@ impl Editor {
                 None => i,
             }
         };
-        let rows = std::rc::Rc::new(ExplorerRows {
-            preview,
-            projection: projection.clone(),
-            drop_target,
-            selected,
-            multi: view.multi_selection().clone(),
-            focused,
-            unsaved: self.explorer_unsaved_paths(),
-            cut,
-            search: view.search().cloned(),
-            decorations: win.file_explorer_decoration_cache.clone(),
-            slot_overrides: win.file_explorer_slot_override_cache.clone(),
-            slot_resolver: self.file_explorer_slot_resolver(),
-            theme: self.theme.clone(),
-            collapsed: self.explorer_indicator(true),
-            expanded: self.explorer_indicator(false),
-        });
+        let rows = std::rc::Rc::new(rows);
         use crate::view::move_preview::Spot;
         // What window row `j` is: a projection row, or the `k`th preview row.
         let spot = {
@@ -3518,6 +3491,64 @@ impl Editor {
             start: to_window(view.window_top()),
             owner: win.id.0,
             pager: Some(win.file_explorer_pager.clone()),
+        })
+    }
+
+    /// Projection rows `indices`, described as the terminal's explorer
+    /// describes them (unpinned), for the web's projection of the same rows.
+    pub(crate) fn explorer_row_descriptions(
+        &self,
+        indices: &[usize],
+    ) -> Vec<(usize, crate::view::shell::file_explorer::Row)> {
+        let Some(rows) = self.explorer_rows(self.explorer_focused()) else {
+            return Vec::new();
+        };
+        indices
+            .iter()
+            .filter(|&&i| i < rows.projection.rows.len())
+            .map(|&i| (i, rows.describe(i, false)))
+            .collect()
+    }
+
+    /// The explorer's rows as the shell describes them: the model's
+    /// projection and handles to everything a row reads. `None` while the
+    /// tree is still being built.
+    fn explorer_rows(&self, focused: bool) -> Option<ExplorerRows> {
+        let view = self.file_explorer()?;
+        let win = self.active_window();
+        let projection = view.projection();
+        let selected = view.get_selected_index();
+        let cut: Vec<std::path::PathBuf> = win
+            .file_explorer_clipboard
+            .as_ref()
+            .filter(|cb| cb.is_cut)
+            .map(|cb| cb.paths.clone())
+            .unwrap_or_default();
+        // A drop being previewed keeps its target lit until it is answered.
+        let drop_target = self
+            .explorer_drag
+            .as_ref()
+            .and_then(|d| d.target.clone())
+            .or_else(|| self.explorer_move_preview.as_ref().map(|p| p.dest.clone()));
+        let preview = self.explorer_move_preview.as_ref().map(|p| {
+            ExplorerPreviewRows::new(&projection, view.tree(), p, self.time_source().now())
+        });
+        Some(ExplorerRows {
+            preview,
+            projection: projection.clone(),
+            drop_target,
+            selected,
+            multi: view.multi_selection().clone(),
+            focused,
+            unsaved: self.explorer_unsaved_paths(),
+            cut,
+            search: view.search().cloned(),
+            decorations: win.file_explorer_decoration_cache.clone(),
+            slot_overrides: win.file_explorer_slot_override_cache.clone(),
+            slot_resolver: self.file_explorer_slot_resolver(),
+            theme: self.theme.clone(),
+            collapsed: self.explorer_indicator(true),
+            expanded: self.explorer_indicator(false),
         })
     }
 
