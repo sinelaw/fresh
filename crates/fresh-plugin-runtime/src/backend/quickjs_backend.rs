@@ -11258,7 +11258,7 @@ impl QuickJsBackend {
         // Compile to JS, unless this build compiled the plugin already
         // (fresh_parser_js::precompiled).
         let js_code = match fresh_parser_js::precompiled::lookup(&path_buf, &source) {
-            Some(js) => js.to_string(),
+            Some(_) => source,
             None => match fresh_parser_js::compile_plugin(&path_buf, &source) {
                 Ok(js) => js,
                 // An error, not a silent skip: "Load Plugin from Buffer" and

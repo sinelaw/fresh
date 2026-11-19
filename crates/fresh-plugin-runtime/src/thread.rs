@@ -1400,8 +1400,14 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
         .and_then(|s| s.to_str())
         .unwrap_or("plugin.ts");
 
+    // Compiled when Fresh was built, with what would be derived from the source.
+    let precompiled = fresh_parser_js::precompiled::lookup(path, &source);
+
     // Extract dependencies before transpilation
-    let dependencies = fresh_parser_js::extract_plugin_dependencies(&source);
+    let dependencies = match precompiled {
+        Some(plugin) => plugin.dependencies.iter().map(|d| d.to_string()).collect(),
+        None => fresh_parser_js::extract_plugin_dependencies(&source),
+    };
 
     // Emit `.d.ts` via oxc's isolated-declarations before the
     // transpile step consumes `source`. We want the raw TS (every
@@ -1411,7 +1417,9 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
     // non-fatal — the plugin still runs.
     // Only the oxc backend can emit declarations; without it (an esbuild
     // build) plugins simply export no types.
-    let declarations = if filename.ends_with(".ts") && fresh_parser_js::CAN_EMIT_DECLARATIONS {
+    let declarations = if let Some(plugin) = precompiled {
+        plugin.declarations.map(str::to_string)
+    } else if filename.ends_with(".ts") && fresh_parser_js::CAN_EMIT_DECLARATIONS {
         match fresh_parser_js::emit_isolated_declarations(&source, filename) {
             Ok(dts) => Some(dts),
             Err(e) => {
@@ -1428,9 +1436,9 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
     };
 
     // Compile to JS (as QuickJsBackend::load_module_with_source does), unless
-    // this build compiled the plugin already (fresh_parser_js::precompiled).
-    let js_code = match fresh_parser_js::precompiled::lookup(path, &source) {
-        Some(js) => js.to_string(),
+    // this build compiled the plugin already.
+    let js_code = match precompiled {
+        Some(_) => source,
         None => match fresh_parser_js::compile_plugin(path, &source) {
             Ok(js) => js,
             Err(e) if fresh_parser_js::has_es_imports(&source) => {

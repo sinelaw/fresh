@@ -4,18 +4,29 @@
 //! `precompiled-plugins` feature runs [`crate::compile_plugin`] from its build
 //! script) and register the results here, so loading those plugins needs no
 //! TypeScript compiler at run time. For a Debian build that means no `esbuild`
-//! unless the user writes TypeScript of their own.
+//! unless the user writes TypeScript of their own. Such a build embeds no
+//! TypeScript for these plugins: it extracts each one's JavaScript as
+//! [`Entry::file`] into the registered directory, and the loader finds it there.
 //!
 //! An entry applies to a plugin only when it is loaded from the registered
-//! directory under the same file name, and its source still hashes to what was
-//! compiled. Anything else, an edited file included, is compiled as usual.
+//! directory under the same file name, and its contents are still the entry's
+//! JavaScript. Anything else, an edited file included, is compiled as usual.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// One precompiled plugin: its file name, the [`source_hash`] of the source it
-/// was compiled from, and the JavaScript.
-pub type Entry = (&'static str, u64, &'static str);
+/// One precompiled plugin.
+#[derive(Debug)]
+pub struct Entry {
+    /// File name of the JavaScript in the registered directory (`name.js`).
+    pub file: &'static str,
+    pub js: &'static str,
+    /// What [`crate::extract_plugin_dependencies`] found in the source.
+    pub dependencies: &'static [&'static str],
+    /// The source's [`crate::emit_isolated_declarations`], when the build
+    /// could emit them.
+    pub declarations: Option<&'static str>,
+}
 
 struct Registry {
     dir: PathBuf,
@@ -24,17 +35,6 @@ struct Registry {
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
 
-/// 64-bit FNV-1a of `source`: stable across builds and platforms, so a build
-/// script and the runtime agree on it.
-pub fn source_hash(source: &str) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in source.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
 /// Register the precompiled plugins that live in `dir`. Only the first call
 /// takes effect.
 pub fn register(dir: PathBuf, entries: &'static [Entry]) {
@@ -42,9 +42,9 @@ pub fn register(dir: PathBuf, entries: &'static [Entry]) {
     let _ = REGISTRY.set(Registry { dir, entries });
 }
 
-/// The precompiled JavaScript for the plugin at `path` with contents `source`,
-/// if one was registered for it.
-pub fn lookup(path: &Path, source: &str) -> Option<&'static str> {
+/// The precompiled plugin at `path` with contents `source`, if one was
+/// registered for it.
+pub fn lookup(path: &Path, source: &str) -> Option<&'static Entry> {
     let registry = REGISTRY.get()?;
     let parent = path.parent()?;
     let parent = parent
@@ -54,12 +54,10 @@ pub fn lookup(path: &Path, source: &str) -> Option<&'static str> {
         return None;
     }
     let name = path.file_name()?.to_str()?;
-    let hash = source_hash(source);
     registry
         .entries
         .iter()
-        .find(|(file, h, _)| *file == name && *h == hash)
-        .map(|(_, _, js)| *js)
+        .find(|e| e.file == name && e.js == source)
 }
 
 #[cfg(test)]
@@ -67,9 +65,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_hash_is_fnv1a() {
-        // Reference values for 64-bit FNV-1a.
-        assert_eq!(source_hash(""), 0xcbf2_9ce4_8422_2325);
-        assert_eq!(source_hash("a"), 0xaf63_dc4c_8601_ec8c);
+    fn lookup_matches_dir_name_and_contents() {
+        static ENTRIES: &[Entry] = &[Entry {
+            file: "p.js",
+            js: "run();",
+            dependencies: &["dep"],
+            declarations: None,
+        }];
+        let dir = std::env::temp_dir().join(format!("fresh-precompiled-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        register(dir.clone(), ENTRIES);
+
+        let found = lookup(&dir.join("p.js"), "run();").expect("registered plugin");
+        assert_eq!(found.dependencies, ["dep"]);
+        // Edited, renamed, or elsewhere: compiled as usual.
+        assert!(lookup(&dir.join("p.js"), "run(); edited();").is_none());
+        assert!(lookup(&dir.join("q.js"), "run();").is_none());
+        assert!(lookup(&std::env::temp_dir().join("p.js"), "run();").is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
