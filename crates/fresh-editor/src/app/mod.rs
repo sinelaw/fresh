@@ -1076,6 +1076,11 @@ pub struct Editor {
     /// next save would silently undo them (#3791).
     pub(crate) runtime_settings: Vec<(String, serde_json::Value)>,
 
+    /// Languages that live in no config file, so a config re-resolved from
+    /// disk (a Settings save, `reloadConfig()`) gets them laid back on the
+    /// way startup put them there: see [`SessionLanguages`].
+    pub(crate) session_languages: SessionLanguages,
+
     // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`
     // which lives on `Window`, so the tracker follows the buffers.
 
@@ -4687,5 +4692,57 @@ mod tests {
             Some(keep),
             "and it is the tab the pane is on, so it is the tab revealed"
         );
+    }
+}
+
+/// Languages the session has that no config file holds: the installed
+/// language packs' (scanned at startup) and those plugins registered with
+/// `registerLanguageConfig` (a pack installed while the editor runs comes
+/// this way too). Without them a reload or a Settings save re-resolved the
+/// open buffers' settings without the language: its edit rules, tab size,
+/// comment prefix and the rest fell back to the global defaults.
+#[derive(Debug, Default)]
+pub(crate) struct SessionLanguages {
+    /// The scanned packs' languages and LSP servers, laid under the files'
+    /// own entries (a language or server the user configured wins), as at
+    /// startup.
+    pub packs: Vec<(String, crate::config::LanguageConfig)>,
+    pub pack_lsp: Vec<(String, crate::types::LspServerConfig)>,
+    /// `registerLanguageConfig` calls, by language, each replacing the
+    /// language's entry as the call did.
+    pub registered: HashMap<String, crate::config::LanguageConfig>,
+}
+
+impl SessionLanguages {
+    /// Lay these languages onto `config`, freshly resolved from disk.
+    /// `changed_pointers` are the JSON pointers just written to disk: a
+    /// registered language whose entry the user has just saved is the
+    /// user's from now on, and is forgotten here.
+    pub(crate) fn reapply(
+        &mut self,
+        config: &mut crate::config::Config,
+        changed_pointers: &[String],
+    ) {
+        self.registered.retain(|id, _| {
+            let pointer = format!("/languages/{id}");
+            !changed_pointers
+                .iter()
+                .any(|c| *c == pointer || c.starts_with(&format!("{pointer}/")))
+        });
+        for (id, language) in &self.packs {
+            config
+                .languages
+                .entry(id.clone())
+                .or_insert_with(|| language.clone());
+        }
+        for (id, server) in &self.pack_lsp {
+            config
+                .lsp
+                .entry(id.clone())
+                .or_insert_with(|| crate::types::LspLanguageConfig::Multi(vec![server.clone()]));
+        }
+        for (id, language) in &self.registered {
+            config.languages.insert(id.clone(), language.clone());
+        }
     }
 }

@@ -2752,6 +2752,11 @@ impl Editor {
             edit_rules,
             ..Default::default()
         };
+        // Kept for a reload or a Settings save, which re-resolve the config
+        // from files that don't hold it.
+        self.session_languages
+            .registered
+            .insert(language.clone(), lang_config.clone());
         self.config_mut()
             .languages
             .insert(language.clone(), lang_config);

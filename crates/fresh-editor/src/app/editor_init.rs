@@ -464,6 +464,7 @@ pub(super) struct EditorParts {
 
     /// Per-plugin config schemas discovered from `<plugin>.schema.json` sidecars.
     pub(super) plugin_schemas: HashMap<String, serde_json::Value>,
+    pub(super) session_languages: super::SessionLanguages,
 
     /// Editor-wide event broadcaster, shared with every WindowResources.
     pub(super) event_broadcaster: crate::model::control_event::EventBroadcaster,
@@ -748,6 +749,7 @@ impl Editor {
             status_bar_token_registry: Mutex::new(HashMap::new()),
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             runtime_settings: Vec::new(),
+            session_languages: parts.session_languages,
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
             file_launch: parts.file_launch,
@@ -1695,6 +1697,11 @@ impl Editor {
             time_source: time_source.clone(),
             plugin_global_state,
             plugin_schemas,
+            session_languages: super::SessionLanguages {
+                packs: scan_result.language_configs.clone(),
+                pack_lsp: scan_result.lsp_configs.clone(),
+                registered: HashMap::new(),
+            },
             event_broadcaster: event_broadcaster.clone(),
             orchestrator_mode,
             file_launch,
@@ -2203,8 +2210,10 @@ impl Editor {
 
     /// Lay the session's in-memory config state back onto a config freshly
     /// resolved from disk: the `setSetting` writes, then every plugin's
-    /// declared `defineConfigX` defaults for fields the config leaves unset.
-    /// Neither lives in any config file, so without this a Settings save or
+    /// declared `defineConfigX` defaults for fields the config leaves unset,
+    /// under both the languages of installed packs and of plugins'
+    /// `registerLanguageConfig` (see `SessionLanguages`). None of it lives
+    /// in any config file, so without this a Settings save or
     /// `reloadConfig()` drops them and `getPluginConfig()` returns only the
     /// user's overrides (#3791).
     ///
@@ -2216,6 +2225,9 @@ impl Editor {
         config: &mut crate::config::Config,
         changed_pointers: &[String],
     ) {
+        // Language packs' and plugin-registered languages first: a
+        // `setSetting` on one of them applies on top, as it did before.
+        self.session_languages.reapply(config, changed_pointers);
         let overlaps = |a: &str, b: &str| {
             a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
         };

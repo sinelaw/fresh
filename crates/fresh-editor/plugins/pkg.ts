@@ -181,6 +181,8 @@ interface BundleLanguage {
       command: string;
       args?: string[];
     };
+    /** Edit rules for Enter / Tab / Shift+Tab (the language's `edit_rules`) */
+    editRules?: EditRule[];
   };
   /** LSP server configuration */
   lsp?: {
@@ -250,6 +252,8 @@ interface PackageManifest {
         command: string;
         args?: string[];
       };
+      /** Edit rules for Enter / Tab / Shift+Tab (the language's `edit_rules`) */
+      editRules?: EditRule[];
     };
     lsp?: {
       command: string;
@@ -1660,6 +1664,9 @@ async function loadLanguagePack(packageDir: string, manifest: PackageManifest): 
         command: lang.formatter.command,
         args: lang.formatter.args ?? [],
       } : null,
+      // The registered config replaces the language's whole entry, so a
+      // field left out here is lost until the next start.
+      editRules: lang.editRules,
     });
   }
 
@@ -1714,6 +1721,7 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
             command: langConfig.formatter.command,
             args: langConfig.formatter.args ?? [],
           } : null,
+          editRules: langConfig.editRules,
         });
       }
 

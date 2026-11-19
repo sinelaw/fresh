@@ -2358,3 +2358,89 @@ for (const buffer of editor.listBuffers()) {
         .wait_until(|h| h.get_status_bar().contains("ProbeLang"))
         .unwrap();
 }
+
+/// A language pack installed while the editor runs brings its `editRules`
+/// along, as it does when it is loaded at startup. The package manager used
+/// to register the pack's language config field by field and leave the
+/// rules out, and the registered config replaces the language's entry.
+#[test]
+fn test_pkg_install_language_pack_keeps_its_edit_rules() {
+    let env = setup_pkg_ui_env("{}");
+
+    let source = tempfile::TempDir::new().unwrap();
+    let pack_dir = source.path().join("tedit");
+    fs::create_dir_all(pack_dir.join("grammars")).unwrap();
+    fs::write(
+        pack_dir.join("grammars").join("tedit.sublime-syntax"),
+        r#"%YAML 1.2
+---
+name: tedit
+scope: source.tedit
+file_extensions: [tedit]
+
+contexts:
+  main:
+    - match: '#.*$'
+      scope: comment.line.tedit
+"#,
+    )
+    .unwrap();
+    fs::write(
+        pack_dir.join("package.json"),
+        r##"{
+    "name": "tedit",
+    "version": "1.0.0",
+    "description": "Language pack with edit rules",
+    "type": "language",
+    "fresh": {
+        "grammar": { "file": "grammars/tedit.sublime-syntax", "extensions": ["tedit"] },
+        "language": {
+            "commentPrefix": "#",
+            "editRules": [
+                { "on": "newline", "before": "^(\\s*# ?)\\S", "insert": "\\n$1" }
+            ]
+        }
+    }
+}"##,
+    )
+    .unwrap();
+
+    let _guard = env.repo.change_to_repo_dir();
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        env.repo.path.clone(),
+        env.dir_context.clone(),
+    )
+    .unwrap();
+
+    install_from_url(&mut harness, &pack_dir.display().to_string());
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Installed language pack") || screen.contains("Failed")
+        })
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.config()
+                .languages
+                .get("tedit")
+                .is_some_and(|l| l.edit_rules.len() == 1)
+        })
+        .unwrap();
+
+    let file = env.repo.path.join("notes.tedit");
+    fs::write(&file, "# one\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness
+        .wait_until(|h| h.editor().active_state().language == "tedit")
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("two").unwrap();
+    assert_eq!(harness.get_buffer_content().unwrap(), "# one\n# two\n");
+}
