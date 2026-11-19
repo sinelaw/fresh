@@ -417,7 +417,8 @@ for the line's text `before` and `after` the cursor, and templates: `insert`
 Templates take `$1` / `${name}` captures, `${inc:1}` (a number plus one),
 `${cycle:1:a|b|c}` (the next value in a list), `${indent}` / `${dedent:1}` (one
 indentation level added or taken off), `$$` for a `$`, and `\n` for a line
-break (also `\t` for a tab and `\\` for a backslash). Rules are tried in
+break (also `\t`, `\r` and `\\`, the escapes search & replace takes; as there,
+`$12` is group 12, so write `${1}2` for group 1 then `2`). Rules are tried in
 order; the first that matches replaces the key's normal edit. The keys are
 snake_case, like the rest of config.json.
 

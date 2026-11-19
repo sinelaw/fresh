@@ -1365,9 +1365,11 @@ type FormatterPackConfig = {
 *
 * Templates are literal text with these substitutions:
 *
-* - `$0`…`$9`, `${12}`: a capture group of `before` (`$0` is its whole
-*   match); `${name}`: a named group of `before` or else of `after`. A
-*   group that did not take part in the match is empty.
+* - `$1`, `${1}`: a capture group of `before` by number (`$0` is its whole
+*   match); after `$` every digit counts, as in search & replace (`$12` is
+*   group 12; write `${1}2` for group 1 then `2`). `${name}`: a named
+*   group of `before` or else of `after`. A group that did not take part
+*   in the match is empty.
 * - `${inc:REF}`: the capture (a `REF` as above, e.g. `${inc:2}`) as a
 *   decimal number plus one, keeping zero-padding (`09` → `10`, `007` → `008`).
 * - `${cycle:REF:a|b|c}`: the value after the capture's value in the
@@ -1379,7 +1381,8 @@ type FormatterPackConfig = {
 *   start: a leading tab, or `tab_size` leading spaces.
 * - `$$`: a literal `$`.
 * - `\n`: a line break (the two characters backslash and `n`; a real line
-*   break works too), `\t`: a tab, `\\`: a backslash. A backslash before
+*   break works too), `\t`: a tab, `\r`: a carriage return, `\\`: a
+*   backslash — the escapes search & replace takes. A backslash before
 *   anything else is itself. A line break is written as the buffer's line
 *   ending (`\n` or `\r\n`). In config.json the backslash is escaped
 *   (`"insert": "\\n$1"`); the Settings UI shows and takes `\n` as is.
@@ -4098,9 +4101,11 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	*
 	* Templates are literal text with these substitutions:
 	*
-	* - `$0`…`$9`, `${12}`: a capture group of `before` (`$0` is its whole
-	*   match); `${name}`: a named group of `before` or else of `after`. A
-	*   group that did not take part in the match is empty.
+	* - `$1`, `${1}`: a capture group of `before` by number (`$0` is its whole
+	*   match); after `$` every digit counts, as in search & replace (`$12` is
+	*   group 12; write `${1}2` for group 1 then `2`). `${name}`: a named
+	*   group of `before` or else of `after`. A group that did not take part
+	*   in the match is empty.
 	* - `${inc:REF}`: the capture (a `REF` as above, e.g. `${inc:2}`) as a
 	*   decimal number plus one, keeping zero-padding (`09` → `10`, `007` → `008`).
 	* - `${cycle:REF:a|b|c}`: the value after the capture's value in the
@@ -4112,7 +4117,8 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	*   start: a leading tab, or `tab_size` leading spaces.
 	* - `$$`: a literal `$`.
 	* - `\n`: a line break (the two characters backslash and `n`; a real line
-	*   break works too), `\t`: a tab, `\\`: a backslash. A backslash before
+	*   break works too), `\t`: a tab, `\r`: a carriage return, `\\`: a
+	*   backslash — the escapes search & replace takes. A backslash before
 	*   anything else is itself. A line break is written as the buffer's line
 	*   ending (`\n` or `\r\n`). In config.json the backslash is escaped
 	*   (`"insert": "\\n$1"`); the Settings UI shows and takes `\n` as is.

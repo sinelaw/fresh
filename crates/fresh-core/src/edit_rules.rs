@@ -70,26 +70,15 @@ fn parse_capture_ref(s: &str) -> Result<CaptureRef, String> {
 }
 
 fn parse_template(src: &str) -> Result<Template, String> {
+    // `\n`, `\t`, `\r`, `\\`: a line break, a tab, a carriage return, a
+    // backslash, so a template can be written on one line (a Settings field
+    // is one line) — the escapes a search & replace template takes. A
+    // backslash before anything else is itself.
+    let src = crate::escapes::interpret_escapes(src);
     let mut pieces = Vec::new();
     let mut text = String::new();
     let mut chars = src.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\\' {
-            // `\n`, `\t`, `\\`: a line break, a tab, a backslash, so a template
-            // can be written on one line (a Settings field is one line). A
-            // backslash before anything else is itself.
-            match chars.peek().copied() {
-                Some('n') => text.push('\n'),
-                Some('t') => text.push('\t'),
-                Some('\\') => text.push('\\'),
-                _ => {
-                    text.push('\\');
-                    continue;
-                }
-            }
-            chars.next();
-            continue;
-        }
         if c != '$' {
             text.push(c);
             continue;
@@ -99,8 +88,14 @@ fn parse_template(src: &str) -> Result<Template, String> {
                 text.push('$');
                 continue;
             }
+            // All the digits, as search & replace reads `$12`.
             Some(d) if d.is_ascii_digit() => {
-                Piece::Capture(CaptureRef::Index(d as usize - '0' as usize))
+                let mut digits = String::from(d);
+                while let Some(&d) = chars.peek().filter(|c| c.is_ascii_digit()) {
+                    digits.push(d);
+                    chars.next();
+                }
+                Piece::Capture(parse_capture_ref(&digits)?)
             }
             Some('{') => {
                 let mut body = String::new();
@@ -447,7 +442,7 @@ fn escape_line_breaks(template: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\\' => match chars.peek().copied() {
                 // Already an escape: keep it as it is.
-                Some(next @ ('n' | 't' | '\\')) => {
+                Some(next @ ('n' | 't' | 'r' | '\\')) => {
                     out.push('\\');
                     out.push(next);
                     chars.next();
@@ -875,6 +870,19 @@ mod tests {
         assert_eq!(c.apply(&ctx("x", "")), None, "`before` must match");
     }
 
+    /// After `$` every digit counts, as in search & replace: `$12` is group
+    /// 12, and `${1}2` is group 1 then `2`.
+    #[test]
+    fn capture_numbers_take_every_digit() {
+        let mut r = rule(EditRuleTrigger::Newline);
+        r.before = Some("^(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)".into());
+        r.replace_before = Some("$12|${1}2|$1".into());
+        assert_eq!(
+            compile(r).apply(&ctx("abcdefghijkl", "")).unwrap().before,
+            "l|a2|a"
+        );
+    }
+
     #[test]
     fn increment_keeps_padding_and_rejects_non_numbers() {
         assert_eq!(increment("1").as_deref(), Some("2"));
@@ -1076,8 +1084,9 @@ mod tests {
         assert!(unknown.contains("when"), "{unknown}");
     }
 
-    /// `\n`, `\t` and `\\` in a template are a line break, a tab and a
-    /// backslash; a backslash before anything else is itself. A real line
+    /// `\n`, `\t`, `\r` and `\\` in a template are a line break, a tab, a
+    /// carriage return and a backslash; a backslash before anything else is
+    /// itself. A real line
     /// break means the same as `\n`.
     #[test]
     fn templates_take_backslash_escapes() {
@@ -1086,6 +1095,11 @@ mod tests {
         };
         assert_eq!(apply(r"\n- "), edit("a\n- ", ""));
         assert_eq!(apply(r"\t|"), edit("a\t|", ""));
+        assert_eq!(
+            apply(r"\r|"),
+            edit("a\r|", ""),
+            "as search & replace takes it"
+        );
         assert_eq!(apply(r"\\n"), edit("a\\n", ""));
         assert_eq!(apply(r"\x\"), edit("a\\x\\", ""));
         assert_eq!(apply("\n- "), apply(r"\n- "));
