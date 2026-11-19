@@ -132,7 +132,7 @@ SHOTS = [
             ("click_text", "Menu ▾"), ("wait", "By date"), ("click_text", "By date"),
             ("click_text", "All worktrees"), ("key", "Escape"), ("settle",),
             ("rclick_text", "low-stock-alerts"), ("wait", "Pin to top"), ("click_text", "Pin to top"),
-            ("wait", "Pinned"), ("wait", "Last month"), ("settle",),
+            ("wait", "Pinned"), ("wait", "Older"), ("settle",),
             ("crop", (0, 0, 40, 24)), ("shot", "dock-ux-by-date")],
     },
     {

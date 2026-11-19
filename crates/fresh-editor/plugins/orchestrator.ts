@@ -1978,21 +1978,10 @@ function setDockGroupBy(g: DockGroupBy): void {
   editor.setGlobalState(GROUP_BY_KEY, g as unknown as object);
 }
 
-// The date headings, nearest first, each covering a longer stretch than the
-// one before it. A workspace goes under the first whose start it is not
-// before; a heading whose stretch is empty this time round (Earlier this
-// week, on a Monday) simply has no rows and is not drawn.
-const DATE_BUCKETS = [
-  "today",
-  "yesterday",
-  "this_week",
-  "last_week",
-  "this_month",
-  "last_month",
-  "this_year",
-  "older",
-  "none",
-] as const;
+// The date headings, nearest first: Today, This week (since Monday, before
+// today) and Older. Few on purpose — the point is "what am I on now", not a
+// calendar. A heading with no rows (This week, on a Monday) is not drawn.
+const DATE_BUCKETS = ["today", "this_week", "older"] as const;
 type DateBucket = typeof DATE_BUCKETS[number];
 
 function dateViewId(b: DateBucket): string {
@@ -2001,23 +1990,16 @@ function dateViewId(b: DateBucket): string {
 for (const b of DATE_BUCKETS) VIEW_FOLDER_IDS.push(dateViewId(b));
 
 // Which heading `at` (ms) falls under, on the local calendar as of `now`.
-// Weeks start on Monday.
+// Weeks start on Monday. A workspace never worked in is Older (listed after
+// every dated one, see `buildDockTree`).
 function dateBucketOf(at: number | null, now: Date = new Date()): DateBucket {
-  if (at === null) return "none";
+  if (at === null) return "older";
   const y = now.getFullYear();
   const m = now.getMonth();
   const d = now.getDate();
   const sinceMonday = (now.getDay() + 6) % 7;
-  const starts: [DateBucket, number][] = [
-    ["today", new Date(y, m, d).getTime()],
-    ["yesterday", new Date(y, m, d - 1).getTime()],
-    ["this_week", new Date(y, m, d - sinceMonday).getTime()],
-    ["last_week", new Date(y, m, d - sinceMonday - 7).getTime()],
-    ["this_month", new Date(y, m, 1).getTime()],
-    ["last_month", new Date(y, m - 1, 1).getTime()],
-    ["this_year", new Date(y, 0, 1).getTime()],
-  ];
-  for (const [b, start] of starts) if (at >= start) return b;
+  if (at >= new Date(y, m, d).getTime()) return "today";
+  if (at >= new Date(y, m, d - sinceMonday).getTime()) return "this_week";
   return "older";
 }
 
@@ -2591,7 +2573,8 @@ function buildDockTreeRows(filtered: number[]): DockTree {
   }
   if (byDate) {
     // One heading per stretch of time, nearest first; under each, the most
-    // recently interacted-with first (never-used rows keep their order).
+    // recently interacted-with first, and never-used rows last, in their
+    // own order.
     const byBucket = new Map<DateBucket, { id: number; at: number | null }[]>();
     const now = new Date();
     for (const id of filtered) {

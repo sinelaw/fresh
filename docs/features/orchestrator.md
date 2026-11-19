@@ -28,7 +28,7 @@ When a background workspace needs you, the status bar says so. **Orchestrator: J
 The dock's **Menu ▾** holds the rest:
 
 - **View:** **Compact** (the default) shows one line per workspace; **Cards** shows a few lines each, with branch, changes and pull request status.
-- **Group:** **Folders** (the default) lists workspaces in your folders. **By date** lists them under **Today**, **Yesterday**, **Earlier this week**, **Last week**, **Earlier this month**, **Last month**, **Earlier this year** and **Older**, by when you last *worked in* each: typed into one of its files or its terminal, or created it. Switching to a workspace or reading in it doesn't count, and neither does an agent working there. Workspaces you have never typed in are under **Not used yet**. Pinned workspaces stay on top either way.
+- **Group:** **Folders** (the default) lists workspaces in your folders. **By date** lists them under **Today**, **This week** (since Monday) and **Older**, by when you last *worked in* each: typed into one of its files or its terminal, or created it. Switching to a workspace or reading in it doesn't count, and neither does an agent working there. Workspaces you have never typed in come last, under **Older**. Pinned workspaces stay on top either way.
 - **Show:** **Empty workspaces** and **All worktrees** (worktrees on disk that have no workspace open yet) can be shown or hidden.
 - **Project:** limit the dock to one project.
 - **Create** and **Manage:** new folders, Machines and Import sessions, described below.
