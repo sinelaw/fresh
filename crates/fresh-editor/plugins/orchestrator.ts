@@ -2180,7 +2180,7 @@ function liveNodeEntry(s: LiveSession): TextPropertyEntry {
     liveStateEntry(s),
     { text: s.title, style: { bold: true } },
   ];
-  return styledRow(segs as Parameters<typeof styledRow>[0]);
+  return withRowMenuOnHover(styledRow(segs as Parameters<typeof styledRow>[0]));
 }
 
 // Card: the same two rows a workspace card has — name and agent, then where.
@@ -2749,7 +2749,17 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
   // right group a card's name row carries: the host reserves it before
   // fitting the name, so it stands in one column down the dock and a long
   // name is what gets cut. A row with nothing to report has no right group.
-  return cardSplitRow(segs, gitLineParts(s).right);
+  return withRowMenuOnHover(cardSplitRow(segs, gitLineParts(s).right));
+}
+
+// The row's menu, offered where its status is while the pointer is over it
+// (the host draws `hoverAction` in place of the right-hand group). A click
+// fires the tree's `action` event, which opens the same menu as a
+// right-click or F2 — the mouse's way to it without knowing either.
+const ROW_MENU_GLYPH = "⋯";
+function withRowMenuOnHover(row: TextPropertyEntry): TextPropertyEntry {
+  row.properties = { ...(row.properties ?? {}), hoverAction: ROW_MENU_GLYPH };
+  return row;
 }
 
 // The dock's "card" density renders each session leaf as a fixed
@@ -6502,16 +6512,23 @@ function buildDockSpec(): WidgetSpec {
           { keys: "Enter", label: editor.t("dock.hint_select") },
           { keys: "Esc", label: editor.t("dock.hint_cancel") },
         ])]
-      : [
-        centered([
-          { keys: "↑↓", label: editor.t("dock.hint_switch") },
-          { keys: "→←", label: editor.t("dock.hint_fold") },
-        ]),
-        centered([
-          { keys: "Enter", label: editor.t("dock.hint_edit") },
-          { keys: "F2", label: editor.t("dock.hint_menu") },
-        ]),
-      ];
+      // One line, not two: the dock is the switcher, and the tree it
+      // leaves room for is worth more than spelling out every key. Folding
+      // is said by the ▼/▶ on each heading; the row menu is also the `⋯` a
+      // hovered row shows. `Enter` is dropped before `↑↓` when the dock is
+      // too narrow for all three.
+      : [centered(
+        dockCols >= 30
+          ? [
+            { keys: "↑↓", label: editor.t("dock.hint_switch") },
+            { keys: "Enter", label: editor.t("dock.hint_edit") },
+            { keys: "F2", label: editor.t("dock.hint_menu") },
+          ]
+          : [
+            { keys: "↑↓", label: editor.t("dock.hint_switch") },
+            { keys: "F2", label: editor.t("dock.hint_menu") },
+          ],
+      )];
   const bottomRows = bottom.length;
 
   // Size the tree to fill the dock. Top chrome is the action row, the
@@ -18972,6 +18989,17 @@ editor.on("widget_event", (e) => {
       if (toKey === undefined) return;
       committedDockDrops.delete(payload.key);
       dropOnDockRow(payload.key, toKey);
+      return;
+    }
+    // The `⋯` a hovered row shows (see `withRowMenuOnHover`) → that row's
+    // menu, anchored at the row the way the keyboard's is.
+    if (e.event_type === "action" && dockMode && e.widget_key === "sessions") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const key = typeof payload.key === "string" ? payload.key : null;
+      if (openDialog && key && openDialog.dockKeys.includes(key)) {
+        openDialog.dockSelKey = key;
+        openDockContextMenuFromKeyboard();
+      }
       return;
     }
     // Right-click on a tree node → open its context menu. Only the dock

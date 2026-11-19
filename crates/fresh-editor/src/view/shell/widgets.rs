@@ -1209,6 +1209,11 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                 let surface = row_surface(st, &surface);
                 let mut node = node.clone();
                 node.text.normalize_widths();
+                // The pointer is over this row: it shows what can be done
+                // with it (its `hoverAction`) where its status was.
+                if matches!(st, fresh_ui::widgets::RowState::Hover) {
+                    crate::widgets::render::with_hover_action(&mut node);
+                }
                 let item_key = keys[abs].clone();
                 let table = table.as_ref().filter(|_| !node.cells.is_empty());
                 let r = match table {

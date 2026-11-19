@@ -39,7 +39,7 @@ Click **/ search** (or press `/`) to filter the dock by name.
 
 Folders group workspaces however you like: by feature, by customer, by "done, to review". Create one from **Menu ▾ → New folder…**, then file workspaces into it by dragging them, with **Move to Folder…** from a row's menu (right-click it, or press `F2` on the highlighted row), or with the **Orchestrator: Move to Folder…** command. Folders can be nested, renamed and deleted from their own right-click menu. The arrangement is saved and survives restarts.
 
-The same row menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
+Hovering a row shows **⋯** where its status was; click it for the same menu. The same row menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
 
 **Pin to top** in a row's menu lists the workspace under a **Pinned** heading at the top of the dock, wherever it is filed; **Unpin** puts it back. Pins survive restarts.
 

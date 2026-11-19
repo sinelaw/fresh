@@ -2398,6 +2398,39 @@ pub fn window_row_body(
     }
 }
 
+/// The row property naming a button to show on the row **only while the
+/// pointer is over it** — a `⋯` for the row's menu, say. Drawn as the node's
+/// `action` (and firing the same `action` event), in place of the row's
+/// right-hand group, so a row at rest shows its status and a hovered one
+/// what can be done with it. Not drawn on a bordered card.
+pub const HOVER_ACTION_PROPERTY: &str = "hoverAction";
+
+/// `node` as it is drawn while hovered: its `hoverAction` as its action, and
+/// without the right-hand group that button takes the place of. Unchanged
+/// when it asks for no hover action or already has an action of its own.
+pub fn with_hover_action(node: &mut TreeNode) {
+    if node.action.is_some() {
+        return;
+    }
+    let Some(label) = node
+        .text
+        .properties
+        .get(HOVER_ACTION_PROPERTY)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    else {
+        return;
+    };
+    if let Some((mut left, _)) = split_between_entry(&node.text) {
+        left.properties = node.text.properties.clone();
+        left.properties.remove("align");
+        left.properties.remove("splitByte");
+        left.style = node.text.style.clone();
+        node.text = left;
+    }
+    node.action = Some(label);
+}
+
 /// The overlay property a faded cell carries: the percent of its ink it
 /// keeps. The shell's painter mixes the cell's foreground toward its own
 /// background by that much (`Paint::Mix`).
@@ -2536,7 +2569,7 @@ fn between_split(entry: &TextPropertyEntry) -> Option<usize> {
 
 /// A between-row cut into its left and right groups, each with the overlays
 /// that fall on it (rebased to its own text).
-fn split_between_entry(
+pub fn split_between_entry(
     entry: &TextPropertyEntry,
 ) -> Option<(TextPropertyEntry, TextPropertyEntry)> {
     let b = between_split(entry)?;

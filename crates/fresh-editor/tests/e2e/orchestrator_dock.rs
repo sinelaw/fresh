@@ -3040,16 +3040,16 @@ fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Both hint rows render, pinned to the dock's bottom edge (the dock
-    // column spans the full 32-row frame): "F2 menu" on the last row,
-    // "↑↓ switch →← fold" directly above it — not directly under the
-    // single session card near the top. Waiting on the final pinned
-    // state directly (rather than settling and asserting) rides out any
-    // interleaved async re-renders (git probes, discovery sweeps).
+    // The hint row renders pinned to the dock's bottom edge (the dock
+    // column spans the full 32-row frame): "↑↓ switch … F2 menu" on the
+    // last row, one line — not directly under the single session card near
+    // the top. Waiting on the final pinned state directly (rather than
+    // settling and asserting) rides out any interleaved async re-renders
+    // (git probes, discovery sweeps).
     h.wait_until(|h| {
         let s = h.screen_to_string();
         let row_with = |needle: &str| s.lines().position(|l| l.contains(needle));
-        row_with("F2 menu") == Some(31) && row_with("fold") == Some(30)
+        row_with("F2 menu") == Some(31) && row_with("switch") == Some(31)
     })
     .unwrap();
 }
