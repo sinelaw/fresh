@@ -2753,6 +2753,32 @@ pub fn configured_edit_rules(
         .collect()
 }
 
+impl LanguageConfig {
+    /// The settings a language pack gives the language `language` (named in
+    /// warnings about its edit rules): a plugin's `registerLanguageConfig`,
+    /// or a package manifest's `language` section (by way of
+    /// `LanguageManifestConfig::to_pack_config`). Its formatter reads from
+    /// stdin with a 10-second timeout; an edit rule that doesn't compile is
+    /// dropped with a warning ([`configured_edit_rules`]).
+    pub fn from_pack(language: &str, pack: fresh_core::api::LanguagePackConfig) -> Self {
+        Self {
+            comment_prefix: pack.comment_prefix,
+            auto_indent: pack.auto_indent,
+            show_whitespace_tabs: pack.show_whitespace_tabs.unwrap_or(true),
+            use_tabs: pack.use_tabs,
+            tab_size: pack.tab_size,
+            formatter: pack.formatter.map(|f| FormatterConfig {
+                command: f.command,
+                args: f.args,
+                stdin: true,
+                timeout_ms: 10000,
+            }),
+            edit_rules: configured_edit_rules(language, pack.edit_rules.unwrap_or_default()),
+            ..Default::default()
+        }
+    }
+}
+
 /// Re-register all `[languages.<id>.indent]` overrides into the indentation
 /// engine. Call after (re)loading config so config edits take effect and
 /// removed blocks stop applying.

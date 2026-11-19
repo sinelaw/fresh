@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::config::{FormatterConfig, LanguageConfig};
+use crate::config::LanguageConfig;
 use crate::primitives::grammar::GrammarSpec;
 use crate::types::{LspServerConfig, ProcessLimits};
 
@@ -292,24 +292,34 @@ pub enum ThemeVariant {
 // ── Conversion helpers ──────────────────────────────────────────────────
 
 impl LanguageManifestConfig {
-    /// Convert to the internal `LanguageConfig` used by the editor, for the
-    /// language `language` (named in warnings about its edit rules).
-    pub fn to_language_config(&self, language: &str) -> LanguageConfig {
-        LanguageConfig {
+    /// The same settings in the form a plugin registers them
+    /// (`registerLanguageConfig`).
+    pub fn to_pack_config(&self) -> fresh_core::api::LanguagePackConfig {
+        fresh_core::api::LanguagePackConfig {
             comment_prefix: self.comment_prefix.clone(),
-            auto_indent: self.auto_indent,
-            show_whitespace_tabs: self.show_whitespace_tabs.unwrap_or(true),
+            block_comment_start: self.block_comment_start.clone(),
+            block_comment_end: self.block_comment_end.clone(),
             use_tabs: self.use_tabs,
             tab_size: self.tab_size,
-            formatter: self.formatter.as_ref().map(|f| FormatterConfig {
-                command: f.command.clone(),
-                args: f.args.clone(),
-                stdin: true,
-                timeout_ms: 10000,
-            }),
-            edit_rules: crate::config::configured_edit_rules(language, self.edit_rules.clone()),
-            ..Default::default()
+            auto_indent: self.auto_indent,
+            show_whitespace_tabs: self.show_whitespace_tabs,
+            formatter: self
+                .formatter
+                .as_ref()
+                .map(|f| fresh_core::api::FormatterPackConfig {
+                    command: f.command.clone(),
+                    args: f.args.clone(),
+                }),
+            edit_rules: Some(self.edit_rules.clone()),
         }
+    }
+
+    /// Convert to the internal `LanguageConfig` used by the editor, for the
+    /// language `language` (named in warnings about its edit rules): the
+    /// conversion a plugin-registered config takes
+    /// ([`LanguageConfig::from_pack`]).
+    pub fn to_language_config(&self, language: &str) -> LanguageConfig {
+        LanguageConfig::from_pack(language, self.to_pack_config())
     }
 }
 
@@ -901,6 +911,38 @@ mod tests {
             config.edit_rules[0].rule().before.as_deref(),
             Some("^(\\s*;+ ?)\\S")
         );
+    }
+
+    /// A manifest's `language` section and a plugin's `registerLanguageConfig`
+    /// with the same fields make the same `LanguageConfig`: the manifest
+    /// maps onto the plugin's form field for field, and both convert through
+    /// `LanguageConfig::from_pack`.
+    #[test]
+    fn test_manifest_converts_like_a_registered_language_config() {
+        let json = serde_json::json!({
+            "commentPrefix": "#",
+            "blockCommentStart": "/*",
+            "blockCommentEnd": "*/",
+            "tabSize": 3,
+            "useTabs": true,
+            "autoIndent": false,
+            "showWhitespaceTabs": false,
+            "formatter": { "command": "fmt", "args": ["-"] },
+            "editRules": [{ "on": "newline", "before": "^#", "insert": "\n# " }]
+        });
+        let manifest: LanguageManifestConfig = serde_json::from_value(json.clone()).unwrap();
+        let pack: fresh_core::api::LanguagePackConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            serde_json::to_value(manifest.to_pack_config()).unwrap(),
+            serde_json::to_value(&pack).unwrap()
+        );
+        let from_manifest = manifest.to_language_config("x");
+        assert_eq!(
+            serde_json::to_value(&from_manifest).unwrap(),
+            serde_json::to_value(LanguageConfig::from_pack("x", pack)).unwrap()
+        );
+        assert_eq!(from_manifest.tab_size, Some(3));
+        assert_eq!(from_manifest.edit_rules.len(), 1);
     }
 
     #[test]

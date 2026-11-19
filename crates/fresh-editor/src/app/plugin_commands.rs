@@ -2732,26 +2732,9 @@ impl Editor {
         language: String,
         config: fresh_core::api::LanguagePackConfig,
     ) {
-        // Convert LanguagePackConfig to the internal LanguageConfig format.
         // The plugin API refused a rule that doesn't compile already; one
         // that gets here regardless is dropped with a warning.
-        let edit_rules =
-            crate::config::configured_edit_rules(&language, config.edit_rules.unwrap_or_default());
-        let lang_config = crate::config::LanguageConfig {
-            comment_prefix: config.comment_prefix,
-            auto_indent: config.auto_indent,
-            use_tabs: config.use_tabs,
-            tab_size: config.tab_size,
-            show_whitespace_tabs: config.show_whitespace_tabs.unwrap_or(true),
-            formatter: config.formatter.map(|f| crate::config::FormatterConfig {
-                command: f.command,
-                args: f.args,
-                stdin: true,       // Default: read from stdin
-                timeout_ms: 10000, // Default: 10 second timeout
-            }),
-            edit_rules,
-            ..Default::default()
-        };
+        let lang_config = crate::config::LanguageConfig::from_pack(&language, config);
         // Kept for a reload or a Settings save, which re-resolve the config
         // from files that don't hold it.
         self.session_languages
