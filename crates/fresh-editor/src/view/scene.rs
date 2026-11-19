@@ -276,14 +276,12 @@ impl Editor {
 
 // ─────────────────────────── tabs ───────────────────────────
 
-/// A file or folder's Nerd Font icon, as the terminal draws it beside the
-/// name (`file_icons::shown`): present only while `editor.nerd_font_icons`
-/// is on. The web draws the glyph with its bundled Nerd Font.
+/// A file or folder's Nerd Font icon (`file_icons::shown`); present only while
+/// `editor.nerd_font_icons` is on.
 #[derive(Debug, Clone, Serialize)]
 pub struct IconView {
     pub glyph: String,
-    /// CSS color; `None` for a color a browser has no value for (the
-    /// terminal's default foreground).
+    /// CSS color; `None` for the terminal's default foreground.
     pub color: Option<String>,
 }
 
@@ -307,8 +305,7 @@ pub struct TabView {
     pub icon: Option<IconView>,
     pub active: bool,
     pub modified: bool,
-    /// A preview tab (the next file opened replaces it); the terminal draws
-    /// its name in italics.
+    /// A preview tab (the next file opened replaces it).
     pub preview: bool,
     /// The buffer is binary (`[BIN]` in the label).
     pub binary: bool,
@@ -318,9 +315,7 @@ pub struct TabView {
     pub close_rect: RectView,
 }
 
-/// Where a dragged tab would land over a pane: the box the terminal washes
-/// over the content (`splits::drop_zone_node`), as layout placed it, in the
-/// theme's drop-zone colors.
+/// Where a dragged tab would land over a pane (`splits::drop_zone_node`).
 #[derive(Debug, Clone, Serialize)]
 pub struct DropZoneView {
     pub rect: RectView,
@@ -346,11 +341,11 @@ pub struct StatusSegment {
     /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
     /// "searchNext" | "searchPrevious" | "plugin" | "text".
     pub name: &'static str,
-    /// The role of its colours: "error" | "warning" | "ok" | "actionable" |
-    /// "info" | "palette" | "highlight", or "" for the bar's own.
+    /// Colour role, matched by the web's `data-tone` rules: "error" |
+    /// "diagnosticError" | "warning" | "ok" | "actionable" | "info" |
+    /// "palette" | "highlight", or "" for the bar's own.
     pub tone: &'static str,
-    /// The layout gave it fewer cells than its text: the terminal elides it,
-    /// and it is the element that gives way first.
+    /// The layout elided it; it gives way first.
     pub cut: bool,
     /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
@@ -489,9 +484,7 @@ impl Editor {
             .and_then(|ui| crate::view::shell::tabs::new_tab_rect(ui, size, leaf))
             .map(RectView::from);
         let rects = self.tab_rects(leaf);
-        // The strip's own tab model — names told apart, modified and preview
-        // marks, group titles — which is what the terminal's labels and file
-        // icons are made from.
+        // The strip's own tab model, which the terminal's labels come from.
         let model: HashMap<_, _> = self
             .active_window()
             .pane_tabs(leaf)
@@ -508,12 +501,8 @@ impl Editor {
                 .filter_map(|r| {
                     let tab = model.get(&r.target)?;
                     let bid = r.target.as_buffer();
-                    // The terminal's label, whole (the web elides with CSS)
-                    // and without the modified mark, which the web draws from
-                    // `modified`. A group's pieced title is the exception:
-                    // its marks belong to the pieces they follow (`a.rs* ↔
-                    // b.rs`, #3691) and the tab itself has no `modified`, so
-                    // they stay in its label.
+                    // Uncapped and without the modified mark (the web draws it),
+                    // except a group's pieced title keeps its marks (#3691).
                     let piece_mark = match tab.title.is_some() {
                         true => theme.chrome.glyphs().tab_modified.clone(),
                         false => String::new(),
@@ -526,7 +515,6 @@ impl Editor {
                     )
                     .trim()
                     .to_string();
-                    // A group's tab has no file type, so no icon.
                     let icon = bid
                         .and_then(|_| crate::view::file_icons::shown(&theme, &tab.name, None))
                         .map(IconView::of);
@@ -943,20 +931,16 @@ pub struct FileRow {
     pub depth: usize,
     pub is_dir: bool,
     pub expanded: bool,
-    /// The row's file-type or folder icon, as the terminal's explorer draws
-    /// it.
+    /// The row's file-type or folder icon.
     pub icon: Option<IconView>,
-    /// The ancestors compact mode folded into the row, outermost first
-    /// (`a/b/` before the name).
+    /// Ancestors compact mode folded into the row, outermost first.
     pub chain: Vec<String>,
     pub hidden: bool,
     pub symlink: bool,
     /// In the multi-selection.
     pub multi: bool,
-    /// The rest of these are the terminal's description of the row, filled
-    /// for the rows on screen only. The name's colour when something gave it
-    /// one (a git status, a cut or ignored entry); `None` for the panel's
-    /// plain ink, which is the skin's to choose.
+    /// Filled for on-screen rows only. The name's colour (git status, cut,
+    /// ignored); `None` for plain ink, which the skin chooses.
     pub name_color: Option<String>,
     /// The status slot at the row's right edge (a git or diagnostic mark).
     pub trailing: Option<SlotView>,
@@ -1068,8 +1052,7 @@ impl Editor {
                 (first, height, rows)
             })
             .unwrap_or_default();
-        // What the terminal's rows say beyond the name, for the rows on
-        // screen: the description the shell draws them from.
+        // The shell's row descriptions, for the rows on screen.
         {
             use crate::app::shell_host::shell_theme as st;
             let fg = |name: &str| css_color(st::resolve(name, &theme).fg?);
@@ -1077,9 +1060,7 @@ impl Editor {
                 let r = &mut rows[i];
                 let plain =
                     crate::view::shell::file_explorer::neutral_key(r.hidden, r.symlink, r.is_dir);
-                // The name's own ink, whatever runs a search highlight split
-                // the name into; none for the panel's plain ink, which is
-                // the skin's to choose.
+                // None for the panel's plain ink, which the skin chooses.
                 r.name_color = match d.name_fg.as_str() {
                     k if k == plain || k == "editor.fg" => None,
                     k => fg(&st::pair(k, "ui.file_explorer_bg")),
@@ -1988,8 +1969,7 @@ pub struct ContextMenuView {
     pub items: Vec<ContextMenuItemView>,
 }
 
-/// One context-menu item: its label, a stable `id` for styling, and whether
-/// it cannot be undone (Delete, Close Split).
+/// One context-menu item: label, stable `id`, and whether it is destructive.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextMenuItemView {
@@ -2500,17 +2480,12 @@ pub struct SettingsView {
     pub showing_help: bool,
     pub showing_confirm: bool,
     pub showing_reset: bool,
-    /// The dialog over the settings, as content: the unsaved-changes and
-    /// reset prompts, the entry delete/discard confirmations and the
-    /// shortcuts help. The terminal draws it from the same description
-    /// (`settings_dialog_description`); the web draws it as the skin's
-    /// dialog card. `None` while none is open.
+    /// The dialog over the settings (prompts, confirmations, shortcuts help),
+    /// from `settings_dialog_description`. `None` while none is open.
     pub dialog: Option<SettingsDialogView>,
 }
 
-/// A tree key in the wire form the web sends back in `node` messages:
-/// a string for `Key::Str`, `{"ns", "i"}` for `Key::Pair`, a number for
-/// `Key::Int`.
+/// A tree key in the wire form the web sends back in `node` messages.
 pub fn key_json(k: &fresh_ui::Key) -> serde_json::Value {
     match k {
         fresh_ui::Key::Str(s) => serde_json::json!(&**s),
@@ -2523,8 +2498,7 @@ pub fn key_json(k: &fresh_ui::Key) -> serde_json::Value {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmButtonView {
-    /// The label split around its accelerator: `[before, letter, after]`, or
-    /// the whole label in `before` when it has none in its text.
+    /// The label split around its accelerator: `[before, letter, after]`.
     pub label: [String; 3],
     pub destructive: bool,
     /// Holds the keyboard: what Enter takes.
@@ -2594,8 +2568,7 @@ impl SettingsDialogView {
                 .collect(),
             help: c.help,
         };
-        // The keep/cancel answer of a two-button destructive prompt is the
-        // one that is not destructive.
+        // Esc answers with the non-destructive button.
         let destructive = |kind: &'static str, k: st::Destructive| SettingsDialogView {
             kind,
             title: k.title,

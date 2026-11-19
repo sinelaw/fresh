@@ -161,8 +161,7 @@ impl TabContextMenuItem {
         }
     }
 
-    /// Whether the item does something that cannot be undone. Closing a tab
-    /// asks first when it has unsaved changes, so none of these is.
+    /// Whether the item cannot be undone: none, as closing an unsaved tab asks first.
     pub fn destructive(&self) -> bool {
         false
     }
@@ -306,8 +305,7 @@ impl CloseSplitMenuItem {
         }
     }
 
-    /// Whether the item does something that cannot be undone: closing the
-    /// split is why this menu asks at all.
+    /// Whether the item cannot be undone.
     pub fn destructive(&self) -> bool {
         matches!(self, Self::CloseSplit)
     }

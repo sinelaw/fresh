@@ -26,8 +26,7 @@
   .w-col{display:flex;flex-direction:column;gap:4px}
   .w-toggle{display:inline-flex;align-items:center;gap:6px;cursor:default;padding:1px 4px;border-radius:4px}
   .w-toggle.on{color:var(--accent)}
-  /* The switch is the shared one (.ui-switch, 47-components.css), as the
-     Settings toggles are. */
+  /* The switch is the shared .ui-switch (47-components.css). */
   .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
     .w-button{cursor:default;padding:1px 10px;border:1px solid var(--hairline-strong,var(--border));border-radius:4px;color:var(--fg)}
   .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}

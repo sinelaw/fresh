@@ -2393,9 +2393,8 @@ fn drop_zone_node(zone: crate::app::types::TabDropZone) -> Node<UiMsg> {
     }
 }
 
-/// The box a dragged tab's drop zone washes over pane `id`'s content
-/// (`drop_zone_node`), keyed so a frontend that draws its own chrome — the
-/// web UI — can show the same box where layout put it.
+/// Key of pane `id`'s tab drop-zone box (`drop_zone_node`), so the web UI can
+/// draw it where layout put it.
 pub fn drop_zone_key(id: LeafId) -> Key {
     Key::Pair("pane_drop_zone".into(), id.0 .0 as u64)
 }

@@ -34,15 +34,9 @@ pub struct MouseState {
     pub lsp_hover_state: Option<(usize, std::time::Instant, u16, u16, BufferId)>,
     /// Whether we've already sent a hover request for the current position
     pub lsp_hover_request_sent: bool,
-    /// When the hover card comes down because the pointer has left it.
-    ///
-    /// Armed when the pointer moves off the hovered symbol and off the card
-    /// onto ground with nothing to hover (the gutter, past a line's end, an
-    /// empty row); disarmed when it comes back to either before the deadline.
-    /// The grace is what keeps the card alive on the way to it — crossing the
-    /// gutter or a blank cell towards the card must not drop it (#692) — and
-    /// the deadline is what takes it down when the pointer stays away
-    /// (#3733: before this the card stayed up anywhere inside the editor).
+    /// When the hover card comes down after the pointer left it for nothing
+    /// hoverable (#3733). The grace lets the pointer cross the gutter to the
+    /// card (#692); returning to the card or symbol disarms it.
     pub hover_dismiss_at: Option<std::time::Instant>,
 }
 

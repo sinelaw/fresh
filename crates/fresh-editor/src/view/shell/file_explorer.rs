@@ -89,10 +89,8 @@ pub struct Row {
     pub chain: Vec<ChainPart>,
     /// The anchor's own name, and the cell that holds it off the status slot.
     pub name: Runs,
-    /// The fg of the name's own ink (a theme key, or a literal colour) —
-    /// a status colour, a cut or ignored entry's grey, or the plain one —
-    /// whatever runs `name` is split into (a quick-search match highlights
-    /// part of it). The web reads it.
+    /// The name's own fg (theme key or literal colour), regardless of how
+    /// `name` is split into runs. The web reads it.
     pub name_fg: String,
     /// The status slot pushed to the right edge, if the providers gave one.
     pub trailing: Option<Slot>,

@@ -15,8 +15,7 @@ use crossterm::event::KeyModifiers as KM;
 use fresh_i18n::t;
 
 impl Editor {
-    /// Run a plugin action that opens a prompt (Live Grep), holding the keys
-    /// typed after it for that prompt (`plugin_key_hold`).
+    /// Run a prompt-opening plugin action, holding typed keys for the prompt.
     fn open_prompt_via_plugin(&mut self, name: &str) -> AnyhowResult<()> {
         #[cfg(feature = "plugins")]
         {
@@ -593,8 +592,6 @@ impl Editor {
                 }
                 self.start_quick_open_with_prefix("");
             }
-            // The plugin opens Live Grep's prompt a round trip later; what is
-            // typed meanwhile waits for it (`plugin_key_hold`).
             Action::OpenLiveGrep => {
                 self.open_prompt_via_plugin("start_live_grep")?;
             }

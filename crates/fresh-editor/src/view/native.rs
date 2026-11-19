@@ -20,8 +20,7 @@ use crate::app::Editor;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-// The wire form of a tree key and a dialog button live with the scene, which
-// the settings' dialogs share whether or not the web is built.
+// Defined in the scene; the settings dialogs need them without the web too.
 pub use crate::view::scene::{key_json, ConfirmButtonView};
 
 /// Everything projected for native layout. Each field is `None`/empty when

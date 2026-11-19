@@ -59,12 +59,9 @@ pub(crate) struct HoverState {
     /// Overlay handle for the symbol highlight, so the caller can remove
     /// the previous highlight via `RemoveOverlay` before adding a new one.
     symbol_overlay: Option<OverlayHandle>,
-    /// The in-flight batch's screen cell `(col, row)`: where the pointer
-    /// that asked rests, for the card to sit at. `None` for a keyboard
-    /// request, whose card sits at the cursor. Part of the batch, so the
-    /// answer that arrives is placed — and owned — by whoever made *that*
-    /// request, whatever was asked since: a newer batch replaces it, and the
-    /// older batch's answers are dropped (`claim_pending`).
+    /// The pointer cell `(col, row)` that made the in-flight batch; `None` for
+    /// a keyboard request (card at the cursor). Kept per batch so the answer is
+    /// placed and owned by whoever made that request.
     pending_screen: Option<(u16, u16)>,
     /// A keyboard hover asked for while the buffer's server was still
     /// starting, so no server could take it: `(buffer, cursor byte)`.
@@ -77,9 +74,9 @@ impl HoverState {
     // ---- Pending-request correlation --------------------------------------
 
     /// Record that a batch of hover requests (`ids`) was sent at LSP
-    /// position `(line, character)` — by the pointer resting at `screen`, or
-    /// by the keyboard (`None`). Replaces any previous batch and clears the
-    /// accumulator so responses from the prior batch are ignored.
+    /// position `(line, character)`. Replaces any previous batch and clears
+    /// the accumulator so responses from the prior batch are ignored.
+    /// `screen` is the pointer's cell, `None` for the keyboard.
     pub(crate) fn record_requests(
         &mut self,
         ids: &[u64],
@@ -169,8 +166,7 @@ impl HoverState {
 
     // ---- Screen position --------------------------------------------------
 
-    /// Where the pointer that made the answering batch rests — `None` when
-    /// the keyboard made it.
+    /// The answering batch's pointer cell; `None` for the keyboard.
     pub(crate) fn batch_screen_position(&self) -> Option<(u16, u16)> {
         self.pending_screen
     }
@@ -292,7 +288,6 @@ mod tests {
         let mut h = HoverState::default();
         h.record_requests(&[1], 0, 0, Some((15, 8)));
         assert_eq!(h.batch_screen_position(), Some((15, 8)));
-        // A keyboard batch after it is the keyboard's: no pointer cell.
         h.record_requests(&[2], 0, 0, None);
         assert_eq!(h.batch_screen_position(), None);
         h.record_requests(&[3], 0, 0, Some((1, 2)));

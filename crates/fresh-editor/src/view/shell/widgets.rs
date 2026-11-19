@@ -3377,10 +3377,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 is_focused,
                 !placeholder.is_empty(),
             );
-            // **The placeholder is the trigger's, never the list's.** The
-            // closed button reads it while nothing is chosen; it is measured
-            // with the options either way, so choosing does not resize the
-            // button. The list below is built from `options` alone.
+            // The placeholder is the closed button's only, never the list's; it
+            // is measured with the options so choosing does not resize the button.
             let with_placeholder: Vec<String>;
             let (shown, shown_index) = match placeholder.is_empty() {
                 true => (options.as_slice(), st.selected),

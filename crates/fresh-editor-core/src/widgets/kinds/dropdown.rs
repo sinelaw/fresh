@@ -223,7 +223,7 @@ pub fn resolve(
         true => 0,
         false => i.clamp(0, options.len() as i32 - 1),
     };
-    // Nothing chosen yet (`-1`) stands only where a placeholder says so.
+    // `-1` (nothing chosen) only with a placeholder.
     let selected = match unset_ok && cur < 0 {
         true => -1,
         false => clamp(cur),
@@ -481,8 +481,7 @@ pub fn cycle_selection(
         _ => (*spec_sel, false, None),
     };
     let cur = shown_index(options.len(), !placeholder.is_empty(), cur);
-    // From nothing chosen, a step lands on the first option (or, backwards,
-    // the last); there is no stepping back to the placeholder.
+    // From nothing chosen, step to the first (or last) option; never back to the placeholder.
     let new_sel = match cur < 0 {
         true if delta < 0 => options.len() as i32 - 1,
         true => 0,
@@ -668,8 +667,8 @@ pub fn commit(
     set_open(spec, widget_key, panel, false, fx);
 }
 
-/// The index a dropdown shows for `i`: `-1` (its placeholder) when it has
-/// one and nothing is chosen, else `i` clamped into the `len` options.
+/// `-1` (the placeholder) when allowed and nothing is chosen, else `i`
+/// clamped into the `len` options.
 pub fn shown_index(len: usize, unset_ok: bool, i: i32) -> i32 {
     match (unset_ok && i < 0, len) {
         (true, _) => -1,
@@ -694,8 +693,7 @@ pub fn set_index_state(
         } => (options.len(), !placeholder.is_empty()),
         _ => (0, false),
     };
-    // A plugin may set `-1` back to "nothing chosen" where a placeholder
-    // stands for it.
+    // A plugin may reset to `-1` when there is a placeholder.
     let clamped = shown_index(len, unset_ok, index).max(match unset_ok {
         true => -1,
         false => 0,

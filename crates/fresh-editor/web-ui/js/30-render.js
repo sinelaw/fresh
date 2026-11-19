@@ -69,9 +69,7 @@ function fillPane(c,p){
   } else {
     const b=div("region pane-content"); place(b,p.content); b.innerHTML=cellsSvg(p.cells, p.content.w); c.appendChild(b);
   }
-  // Where a dragged tab would land over this pane: the box the editor laid
-  // out for it (the terminal washes the same box), in the theme's drop-zone
-  // colors. Over the cells, under nothing that takes the pointer.
+  // Where a dragged tab would land over this pane, as the editor laid it out.
   const dz=p.dropZone;
   if(dz){
     const z=div("region dropzone"); place(z,dz.rect);
@@ -94,8 +92,7 @@ function fillPane(c,p){
       sb.appendChild(mk);
     }
   }
-  // The horizontal bar, when the editor lays one out (wrap off): the same
-  // track and thumb along the pane's foot, in columns.
+  // The horizontal bar, when laid out (wrap off).
   const hs=p.hscroll;
   if(hs && hs.w>0){
     const sb=div("region scrollbar hscrollbar"); place(sb,hs); c.appendChild(sb);
@@ -167,8 +164,7 @@ const REGION_FILL={
   // The plugin panels, folded from the display list the tree produced for
   // them (`regions.tree`, see 72-tree.js).
   tree:(c,reg)=>{ for(const el of treeEls(reg.tree, reg.native)) c.appendChild(el); },
-  // The same surfaces as real controls, from their semantic specs
-  // (`regions.native`, see 73-native.js) — how every skin draws them.
+  // Real controls from semantic specs (`regions.native`, 73-native.js).
   native:(c,reg)=>{ for(const el of nativeEls(reg.native)) c.appendChild(el); },
   contextMenu:(c,reg)=>{ const cm=reg.contextMenu; if(cm) c.appendChild(contextMenuEl(cm)); },
   auxModal:(c,reg)=>{ const am=reg.auxModal; if(am) for(const el of auxModalEls(am)) c.appendChild(el); },

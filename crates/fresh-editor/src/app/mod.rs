@@ -1242,10 +1242,8 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     dispatching_key: bool,
 
-    /// True while dispatching a plugin action the editor knows opens a
-    /// prompt (Live Grep), so the keys typed after the one that asked for it
-    /// wait for the prompt instead of landing in the buffer; see
-    /// `dispatch_prompt_opening_plugin_action`.
+    /// True while dispatching a prompt-opening plugin action, so typed keys
+    /// wait for the prompt (`dispatch_prompt_opening_plugin_action`).
     #[cfg(feature = "plugins")]
     dispatching_prompt_opener: bool,
 

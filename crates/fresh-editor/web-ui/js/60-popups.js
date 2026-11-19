@@ -30,12 +30,9 @@ function popupRun(run){
 function popupEl(p){
   // `popup-<kind>` lets a skin tell completion, hover, actions and lists apart.
   const el=div("popup popup-"+p.kind); place(el,p.rect);
-  // The pointer on the card is news to the editor: a hover card stays while
-  // the pointer is on it and comes down once it has left (#3733), and the
-  // card is DOM here, so the document's cell-motion forwarding skips it
-  // (`onChrome`). Report the card's own cell — one the editor reads as on
-  // the card — sharing the document handler's de-dupe, so a move back to the
-  // buffer is reported too.
+  // Report pointer moves on the card (which `onChrome` forwarding skips) so
+  // the editor keeps a hover card up while the pointer is on it (#3733).
+  // Shares the document handler's de-dupe, so a move back is reported too.
   { const c=rectCell(p.rect);
     el.onmousemove=()=>{
       const lm=lastMoveCell;
@@ -43,17 +40,11 @@ function popupEl(p){
       lastMoveCell={col:c.col,row:c.row,ctrl:false};
       sendMouse({kind:"moved",col:c.col,row:c.row});
     }; }
-  // **The popup is laid out in the editor's cells**, as the box around it
-  // is: the head takes exactly the rows the editor leaves above the content
-  // (the top border, where the terminal draws the title), the body exactly
-  // the content's rows, one row per line, and the rest of the box is the
-  // bottom border. Laid out freely, a padded title bar and rows a little
-  // taller than a cell outgrew the box and pushed the last rows out of it.
+  // Lay the popup out on the editor's cells (head = rows above the content,
+  // body = content rows); free layout overflowed the box.
   const title=p.title, desc=p.description;
   const cr=p.contentRect, n=Math.max(0,cr.h), start=p.scrollOffset||0;
-  // With no title or description the rows above and below the content are
-  // only the terminal's border: the card is the content and a thin frame,
-  // its rows still on the cells the terminal draws them on.
+  // Without title or description, the card is just the content in a thin frame.
   const bare=!title&&!desc, pad=4;
   if(bare){
     el.style.top=`${px(cr.y,CH)-pad}px`;
@@ -66,8 +57,7 @@ function popupEl(p){
   if(desc){ const dd=div("popup-desc"); dd.textContent=desc; head.appendChild(dd); }
   el.appendChild(head);
   const content=p.content;
-  // A list (completion, actions) is a content well a skin may dress; a hover
-  // card's lines carry the editor's own ink and stay as they are.
+  // A list is a well a skin may dress; hover lines keep the editor's ink.
   const body=div("popup-body"+(content.type==="list"?" ui-well":"")); body.style.height=`${px(n,CH)}px`;
   if(content.type==="list"){
     const items=content.items||[];

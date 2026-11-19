@@ -211,10 +211,8 @@
     background:var(--mac-btn);border-color:var(--hairline-strong);color:var(--fg)}
   body.macfam .set-dd{background:color-mix(in srgb,var(--bg2) 97%,transparent)}
   body.macfam .set-dd-row{background:transparent;border:none}
-  /* The shared switch and fields (47-components.css), macOS-shaped: a neutral
-     system-gray track (~macOS #E9E9EA), and the chunkier ~1.75:1 pill of
-     System Settings whose knob nearly fills it (~1.5px margin) with a faint
-     drop shadow; fields are the light macOS text field. */
+  /* The shared switch and fields (47-components.css), macOS-shaped: a gray
+     track and the chunkier System Settings pill with a near-filling knob. */
   body.macfam{--switch-track:color-mix(in srgb,var(--fg) 19%,transparent);
     --switch-w:30px;--switch-h:18px;--switch-knob:15px;--switch-pad:1.5px;--switch-knob-bg:#fff;
     --switch-knob-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.04);

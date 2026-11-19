@@ -203,12 +203,8 @@
     -webkit-backdrop-filter:none;backdrop-filter:none;
     background:var(--wa-metal);color:#e9d9c2;border:none;border-radius:3px;
     box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5)}
-  /* The confirmation card (73-native.js, `native-confirm`): a skin window like
-     the menus and popups above — brushed metal, the seam and bevel, the hard
-     drop — with an amber caption, cream text and the skin's switches for
-     answers. The answer Enter picks wears the lit olive plate the menus use
-     for their highlight; a destructive one keeps red lettering on metal, and
-     red plate when it is the one Enter picks. */
+  /* The confirmation card (73-native.js): a skin window; the Enter answer wears
+     the menus' olive plate (red when destructive). */
   body.theme-winamp .native-card.native-confirm{
     background:var(--wa-light),var(--wa-metal);color:#e9d9c2;border:none;border-radius:3px;
     box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5);padding:1em 1.2em 1.1em}
@@ -240,8 +236,7 @@
   /* Menu-bar dropdown highlight: the theme's lit olive-green plate (the same
      highlight as the right-click context menu), not the blue list-selection —
      which read as foreign in the warm chrome. */
-  /* Every menu's highlight is this plate: the menu bar's titles and items,
-     the right-click menus, the trust dialog's choice. */
+  /* Shared by the menu bar, right-click menus and the trust dialog. */
   body.theme-winamp{--wa-olive:
       radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.35),transparent 62%),
       linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%)}
@@ -304,8 +299,7 @@
     color:rgba(246,242,223,.72)}
   body.theme-winamp .ts-desc{color:rgba(233,217,194,.55)}
 
-  /* ---- the rest of the chrome the skin did not reach (survey of the scene's
-     semantics): every surface below otherwise fell back to the cosmos look. */
+  /* ---- the rest of the chrome (otherwise the cosmos look) ---- */
   /* Window titles: amber engraved caption, like the player's. */
   body.theme-winamp .trustdialog .td-title,body.theme-winamp .kbedit .kb-title,
   body.theme-winamp .auxmodal .am-title{background:none;border-bottom:1px solid rgba(0,0,0,.55);
@@ -339,13 +333,8 @@
   body.theme-winamp .fileexplorer .fx-row.multi:not(.sel){background:rgba(78,240,127,.1)}
 
   /* ==================== LCD content and shared controls ====================
-     Two rules for the whole skin. The FRAMES are hardware — brushed metal,
-     amber captions, raised chips; the CONTENT inside them is the display — the
-     black LCD with scanlines and green phosphor the status bar reads out in.
-     Content areas wear `.ui-well` (a list, a preview, an input line, a table)
-     and their secondary text `.ui-dim`; the shared controls are drawn by
-     47-components.css from the variables set here. The code buffer is not
-     content of this kind: it keeps the editor theme's syntax colours. */
+     Frames are metal hardware; content (`.ui-well`, `.ui-dim`) is the LCD. The
+     shared controls (47-components.css) read the variables set here. */
   body.theme-winamp{
     --wa-scan:repeating-linear-gradient(180deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px);
     --wa-lcd:var(--wa-scan),var(--wa-sunken);
@@ -395,9 +384,8 @@
   body.theme-winamp .ui-well .set-section{color:var(--wa-amber);text-shadow:none}
   /* A folder is amber on the display, as in the explorer. */
   body.theme-winamp .ui-well .fbrow.dir .fbname{color:var(--wa-amber)}
-  /* The selected row is lit on the display, not a foreign blue bar: a green
-     wash, brighter phosphor and a lit edge. Doubled for weight over the
-     per-surface selection rules of the base and polish layers. */
+  /* The selected row lit on the display. Doubled to outweigh the base and
+     polish layers' selection rules. */
   body.theme-winamp .ui-well .sel.sel,body.theme-winamp .fileexplorer .fx-row.sel.sel{
     background:var(--wa-lcd-sel);color:#e4ffec;box-shadow:inset 2px 0 0 var(--wa-green);border-radius:0;
     text-shadow:0 0 8px rgba(78,240,127,.75)}
@@ -412,10 +400,7 @@
   body.theme-winamp :is(.w-text-label,.kb-cfg,.kb-count,.kb-footer,.td-path,.td-triggers,.fbfoot,
     .fbtoggle:not(.on),.psopt:not(.on),.nc-hint){color:var(--wa-muted)}
 
-  /* ==================== Panels: the Orchestrator and plugin forms ==========
-     Drawn from their semantic specs (73-native.js, 65-widgets.js) as real
-     controls — the frames hardware, the lists and fields the LCD, the
-     controls the shared ones above. */
+  /* ==================== Panels: the Orchestrator and plugin forms ========== */
   /* The dock: the playlist window, an LCD well behind its toolbar. */
   body.theme-winamp .native-panel.np-dock{background:var(--wa-lcd);color:var(--wa-lcd-fg);
     border-right:1px solid #1b1109;box-shadow:inset -3px 0 0 var(--wa-face-flat),var(--wa-in)}

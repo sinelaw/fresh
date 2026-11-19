@@ -1000,8 +1000,7 @@ impl Editor {
     /// Used for mouse-triggered hover
     /// Returns `Ok(true)` if the request was dispatched, `Ok(false)` if no
     /// eligible server was available (e.g. not yet initialized).
-    /// A hover the pointer asked for, resting at `screen`: the card sits
-    /// there, and is the pointer's (`HoverState::batch_screen_position`).
+    /// The card is placed at `screen` and owned by the pointer.
     pub(crate) fn request_hover_at_position(
         &mut self,
         byte_pos: usize,
@@ -1143,10 +1142,8 @@ impl Editor {
         if all_in && accumulated_empty && diagnostic_lines.is_empty() {
             // Every capable server answered and none returned a hover, and
             // there are no overlapping diagnostics — report "no hover" exactly
-            // once (only fires on the final response of the batch), to the
-            // keyboard that asked. A pointer resting on a blank or a keyword
-            // asks on its own every time it settles; telling it "no hover"
-            // each time only filled the status bar with noise.
+            // once (only fires on the final response of the batch).
+            // Keyboard only: a resting pointer would flood the status bar.
             let from_pointer = self.active_window().hover.batch_screen_position().is_some();
             if !from_pointer {
                 let message = self
@@ -1155,14 +1152,8 @@ impl Editor {
                 self.set_status_message(message);
             }
             self.active_window_mut().hover.set_symbol_range(None);
-            // A request the pointer made (it left a screen position to anchor
-            // the card at), for where the pointer still rests, that found
-            // nothing: the pointer is on something with no hover, so the card
-            // it opened earlier is about something else and comes down
-            // (#3733). Not when the pointer has since moved on — back to the
-            // card or its symbol clears `lsp_hover_state` — and never a card
-            // the keyboard asked for or signature help
-            // (`pointer_hover_card_showing`).
+            // The resting pointer found nothing to hover, so the card it
+            // opened earlier is stale and comes down (#3733).
             let ms = &self.active_window().mouse_state;
             let still_resting = ms.lsp_hover_request_sent && ms.lsp_hover_state.is_some();
             if from_pointer && still_resting && self.pointer_hover_card_showing() {
@@ -1373,8 +1364,7 @@ impl Editor {
         popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
-        // At the pointer that asked, or at the cursor for the keyboard: the
-        // answering batch's own origin, not whichever request came last.
+        // Placed by the answering batch's origin, not the latest request.
         popup.position = if let Some((x, y)) = self.active_window().hover.batch_screen_position() {
             PopupPosition::Fixed { x, y: y + 1 }
         } else {
@@ -1405,8 +1395,7 @@ impl Editor {
             state.popups.show(popup);
             tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }
-        // A new card starts with the pointer on its symbol: no grace period
-        // left over from the previous one may take it down.
+        // A new card must not inherit the previous one's grace deadline.
         self.active_window_mut().mouse_state.hover_dismiss_at = None;
 
         // Mark hover request as sent to prevent duplicate popups during race conditions

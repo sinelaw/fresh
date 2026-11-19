@@ -65,7 +65,6 @@ function confirmCardEls(c){
   return [scrim];
 }
 
-// The answers of a dialog card, in a row at its foot.
 /** function dialogButtons(El, ConfirmButton[]) => Undefined */
 function dialogButtons(card, buttons){
   if(buttons.length===0) return;
@@ -84,11 +83,8 @@ function dialogButtons(card, buttons){
 }
 
 // ---- the settings' dialogs --------------------------------------------------
-// The prompts over the settings (unsaved changes, reset, delete or discard an
-// entry) and the shortcuts help, drawn as the same card as a confirmation, so
-// every skin's dialog styling is theirs too. `kind` is a class for a skin that
-// wants to tell them apart. Answered like the confirmation: each button presses
-// the tree node it mirrors.
+// Drawn as the same card as a confirmation so skins style them alike; `kind`
+// is a class for skins that tell them apart.
 /** function settingsDialogEls(SettingsDialog) => El[] */
 function settingsDialogEls(d){
   const scrim=div("native-scrim");

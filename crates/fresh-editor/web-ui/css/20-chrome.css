@@ -50,18 +50,14 @@
   .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;display:none}
   .tab.modified .dot{display:inline-block}
   .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
-  /* A preview tab reads as provisional, as the terminal's italic name does. */
+  /* A preview tab is italic, as in the terminal. */
   .tab.preview .name{font-style:italic}
   .tab .x:hover{background:#5a5a5a;color:#fff}
-  /* A tab's Nerd Font file icon (sent only while editor.nerd_font_icons is on). */
+  /* A tab's Nerd Font file icon. */
   .tab .ticon{flex:0 0 auto;font-family:var(--mono-family)}
-  /* A tab drag's drop zone over a pane: a bordered wash, so the text under it
-     stays readable through it, as the terminal draws it. It covers the pane's
-     whole content, whatever draws it: cells, a native panel hosted in the pane
-     (.native-panel.np-pane, 87) or a display-list page (the .tree layer, one
-     stacking context at 90). Level with floating native panels (91), which come
-     later in the document and so stay on top; under confirm dialogs and scrims
-     (110). */
+  /* A tab drag's drop zone: a bordered wash over the pane's content. z 91: above
+     pane panels (87) and the .tree layer (90), level with floating panels
+     (later in the DOM, so on top), under dialogs and scrims (110). */
   .region.dropzone{pointer-events:none;box-sizing:border-box;border:2px solid var(--dz-border,var(--accent));
     background:color-mix(in srgb,var(--dz-bg,var(--accent)) 35%,transparent);z-index:91}
   /* The strip's `+` (#3754) and the pointer while a tab is held past a click. */

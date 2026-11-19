@@ -3341,9 +3341,8 @@ impl Editor {
         }
     }
 
-    /// The explorer reads as focused only when it actually owns the keyboard
-    /// — not when a focused orchestrator dock has stolen it out from under
-    /// the (still-FileExplorer) window context.
+    /// Focused only when the explorer owns the keyboard, not when a focused
+    /// orchestrator dock has taken it.
     pub(crate) fn explorer_focused(&self) -> bool {
         self.active_window().key_context == KeyContext::FileExplorer
             && !self.dock.as_ref().is_some_and(|d| d.focused)
@@ -3494,8 +3493,7 @@ impl Editor {
         })
     }
 
-    /// Projection rows `indices`, described as the terminal's explorer
-    /// describes them (unpinned), for the web's projection of the same rows.
+    /// Shell descriptions of projection rows `indices`, for the web.
     pub(crate) fn explorer_row_descriptions(
         &self,
         indices: &[usize],
@@ -3510,9 +3508,8 @@ impl Editor {
             .collect()
     }
 
-    /// The explorer's rows as the shell describes them: the model's
-    /// projection and handles to everything a row reads. `None` while the
-    /// tree is still being built.
+    /// The explorer's projection plus what a row description reads. `None`
+    /// while the tree is still being built.
     fn explorer_rows(&self, focused: bool) -> Option<ExplorerRows> {
         let view = self.file_explorer()?;
         let win = self.active_window();

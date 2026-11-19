@@ -403,8 +403,7 @@ function widgetNodeOf(spec, ctx){
       if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
       el.appendChild(box);
     } else {
-      // Chip-first in a form: the chip stands in the field column, as a
-      // radio group without a label does and as the terminal indents it.
+      // Chip-first in a form: indent the chip into the field column, as the terminal does.
       if(spec.labelWidth>0) el.style.paddingLeft=`${spec.labelWidth}ch`;
       el.appendChild(box);
       const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
@@ -608,8 +607,7 @@ function widgetNodeOf(spec, ctx){
     // full-size ▲ (U+25B2) is ~2× the width of the small ▾ in a proportional
     // font (e.g. the macOS skin's -apple-system), so pairing it with ▾ made the
     // pill jump ~6px wider on open; the small ▴ keeps the width stable.
-    // Nothing chosen yet (-1) reads as the spec's placeholder, which is never
-    // one of the options the list shows.
+    // -1 (nothing chosen) shows the placeholder, which is never in the list.
     const ph=spec.placeholder;
     pill.textContent=((selIdx<0&&ph)?ph:((spec.options||[])[Math.max(0,selIdx)]??"—"))+(open?" ▴":" ▾");
     pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"dropdown_toggle",{}); };
@@ -1009,8 +1007,7 @@ function settingsWindowEls(s){
   const ft=div("set-footer"); const fkinds=["layer","reset","save","cancel"];
   s.footerButtons.forEach((b,i)=>{
     const sel=i===s.footerSelected&&s.focus==="footer";
-    // `set-<kind>` names each footer button for a skin (Reset is the one that
-    // throws changes away).
+    // `set-<kind>` names each footer button for skins.
     const kind=fkinds[i]||"cancel";
     const bb=aria(div("btn set-"+kind+(b==="Save"?" primary":"")+(kind==="reset"?" danger":"")+(sel?" sel":"")),"button",{}); bb.textContent=b; bb.onmousedown=setHit(kind,undefined,undefined); ft.appendChild(bb);
   }); el.appendChild(ft);
@@ -1029,8 +1026,7 @@ function settingsWindowEls(s){
     btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=aria(div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")),"button",{}); bb.textContent=b;
       bb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryButton", button:b.toLowerCase()}); }; db.appendChild(bb);}); dlg.appendChild(db);
     el.appendChild(dlg); }
-  // The shortcuts help (`showingHelp`) is one of the settings' dialogs,
-  // drawn over the window by settingsDialogEls.
+  // The shortcuts help is drawn by settingsDialogEls.
   out.push(el);
   return out;
 }

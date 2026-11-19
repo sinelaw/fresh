@@ -249,13 +249,9 @@ pub fn resolve_folder(theme: &FileIcons, open: bool, color: Color) -> Resolved {
     Resolved::with(glyph, color, over)
 }
 
-/// The icon the editor draws beside a file or folder name, as drawn: `None`
-/// while the user's `editor.nerd_font_icons` is off (the theme's chrome
-/// carries the flag, settled each frame). `folder` is `Some(open)` for a
-/// folder, which takes the explorer's directory color; a file takes its
-/// type's. The theme's one icon color (`ui.file_icon_fg`), when it names one,
-/// colors both. The terminal's explorer and the web UI's explorer and tabs
-/// all ask this, so they show the same glyph in the same color.
+/// The icon drawn beside a file or folder name (`folder` is `Some(open)`), or
+/// `None` while `editor.nerd_font_icons` is off. Shared by the terminal and web
+/// UI so both show the same glyph and color.
 pub fn shown(
     theme: &crate::view::theme::Theme,
     name: &str,
@@ -278,9 +274,7 @@ pub fn shown(
 mod tests {
     use super::*;
 
-    /// `shown` is what the terminal's explorer and the web's explorer and
-    /// tabs all draw: nothing while Nerd Font icons are off; the type's glyph
-    /// in its color, or the theme's one icon color over every icon.
+    /// Nothing while Nerd Font icons are off; `ui.file_icon_fg` overrides colors.
     #[test]
     fn shown_follows_the_nerd_font_flag_and_the_one_icon_color() {
         let mut theme =

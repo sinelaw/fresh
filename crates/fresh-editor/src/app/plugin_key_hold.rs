@@ -18,13 +18,10 @@
 //! and was dropped. A handler that opens a prompt or an action popup
 //! releases the queue, since the keys are meant for it now.
 //!
-//! Only modes defined with `holdKeys` hold keys, and the plugin actions the
-//! editor itself knows open a prompt (Live Grep, via
-//! `dispatch_prompt_opening_plugin_action`): their prompt opens a round trip
-//! after the key that asked for it, and what is typed in between is meant for
-//! it — typed straight after Alt+/, the first letter of the search landed in
-//! the buffer instead. Anywhere else a slow handler (a markdown Enter, say)
-//! would stall typing for nothing. A handler that never settles releases it
+//! Only modes defined with `holdKeys` hold keys, and plugin actions known to
+//! open a prompt (Live Grep, `dispatch_prompt_opening_plugin_action`), whose
+//! prompt opens a round trip later. Anywhere else a slow handler (a markdown
+//! Enter, say) would stall typing for nothing. A handler that never settles releases it
 //! after [`KEY_HOLD_TIMEOUT`] without a key asked for, so a stuck plugin
 //! delays typing but cannot swallow it.
 
@@ -86,9 +83,8 @@ impl Editor {
         .then(crate::server::command_access::next_request_id)
     }
 
-    /// Dispatch a plugin action the editor knows opens a prompt, holding the
-    /// keys typed after the one that asked for it until the prompt is open
-    /// (or the handler settles without one): they are the prompt's.
+    /// Dispatch a plugin action known to open a prompt, holding typed keys
+    /// until the prompt opens (or the handler settles).
     pub(super) fn dispatch_prompt_opening_plugin_action(
         &mut self,
         name: &str,

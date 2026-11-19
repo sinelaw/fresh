@@ -310,9 +310,7 @@ fn file_icon(context: &ExplorerSlotContext<'_>) -> Option<ExplorerLeadingSlotPay
         &name,
         context.is_dir.then_some(context.is_expanded),
     )?;
-    // The theme key the color came from, so a theme edit restyles it live:
-    // the one icon color when the theme names one, else the folder's
-    // directory color while the theme leaves the folder's color alone.
+    // The theme key the color came from, so a theme edit restyles it live.
     let fg_key = match theme.file_icon_fg {
         Some(_) => Some("ui.file_icon_fg"),
         None => (context.is_dir

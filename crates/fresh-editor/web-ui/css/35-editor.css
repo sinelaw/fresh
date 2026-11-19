@@ -14,10 +14,8 @@
   .fileexplorer .fx-row.sel .fx-chev{color:#fff}
   .fileexplorer .fx-row .fx-name{overflow:hidden;text-overflow:ellipsis}
   .fileexplorer .fx-row .fx-name.dir{font-weight:600}
-  /* The header's ⟳ and × (70-panels.js), and what the terminal's rows say
-     beyond the name: the git / diagnostic slot at the right edge, the name's
-     own colour, a compact row's folded ancestors, the hidden / symlink /
-     multi-selected states. */
+  /* Explorer header buttons and row extras (70-panels.js): status slot, name
+     colour, folded ancestors, hidden / symlink / multi-selected states. */
   .fileexplorer .fx-title{display:flex;align-items:center;gap:2px}
   .fileexplorer .fx-title-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
   .fileexplorer .fx-hbtn{font:inherit;background:none;border:0;padding:0 4px;color:var(--muted);cursor:default;

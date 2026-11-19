@@ -2,12 +2,7 @@
      (web-ui/css — concatenated in filename order into the page's single
      <style> block by crates/fresh-editor/build.rs.)
 
-     The page builds the same few controls in many places — a checkbox in the
-     file browser, the search options, a tree; a switch in Settings and in a
-     plugin's form; a key hint in the palette, the search options and the file
-     browser; a text field in a dialog, Settings and the keybinding editor —
-     and each place used to draw its own. Every one now wears a shared class
-     and is drawn here, from variables a skin sets once on `body`:
+     Each control wears a shared class, styled from variables a skin sets on `body`:
 
        .ui-check   a checkbox; `.on` while checked       --check-*
        .ui-switch  an on/off switch; `.on` while on      --switch-*
@@ -19,10 +14,8 @@
        .ui-well    a content area: a list, a preview, an input line
        .ui-dim     secondary text in it (a size, a date, a description)
 
-     `.ui-well` and `.ui-dim` draw nothing here: they are hooks for a skin
-     whose content areas have a look of their own (Winamp's LCD). The
-     doubled classes are weight, so these win over the older rules that
-     still style the same elements per surface. */
+     `.ui-well` / `.ui-dim` are skin hooks only (Winamp's LCD). Doubled classes
+     add weight over older per-surface rules. */
 
   :root{
     --check-size:14px;--check-radius:4px;
@@ -55,8 +48,7 @@
     color:transparent;font-size:calc(var(--check-size) * .74);line-height:1;font-weight:700;
     font-family:var(--font-family)}
   .ui-check.ui-check::after{content:"✓"}
-  /* An unchecked box shows no tick whatever ink its row gives it (a
-     selected tree row colours its glyphs). */
+  /* No tick when unchecked, whatever ink its row gives it. */
   .ui-check.ui-check.ui-check:not(.on){color:transparent}
   .ui-check.ui-check.on{background:var(--check-on-bg);border-color:var(--check-on-border);
     color:var(--check-on-fg);box-shadow:var(--check-on-shadow);text-shadow:var(--check-on-glow)}
@@ -89,9 +81,7 @@
     border:1px solid var(--field-border);border-radius:var(--field-radius);box-shadow:var(--field-shadow);
     text-shadow:var(--field-glow)}
 
-  /* ---- dropdown button ----
-     A dropdown is a button that opens a list: drawn as the skin draws a
-     button, not as a field. */
+  /* ---- dropdown button: drawn as a button, not a field ---- */
   .ui-select.ui-select.ui-select{display:inline-flex;align-items:center;gap:.3em;cursor:default;
     color:var(--select-fg);background:var(--select-bg);border:1px solid var(--select-border);
     border-radius:var(--select-radius);box-shadow:var(--select-shadow);padding:1px 9px;outline:none}
@@ -105,19 +95,16 @@
   /* A control that is shown but not available. */
   .w-toggle.disabled{opacity:.45;cursor:default}
 
-  /* ---- the status bar: who gives way (55-status.js) ----
-     Nothing wraps or spills: the left side shrinks (the element the layout
-     already cut first) with an ellipsis, the right side never does. */
+  /* ---- the status bar: only `.cut` elements shrink, with an ellipsis (55-status.js) ---- */
   .statusbar{overflow:hidden}
   .statusbar.statusbar > span{flex:0 0 auto;white-space:nowrap}
   .statusbar.statusbar > .cut{flex-shrink:1;min-width:0;max-width:none;overflow:hidden;text-overflow:ellipsis}
 
-  /* ---- a one-row prompt (Go to Line, Search, Replace): one cell tall, on
-     the row the terminal gives it, so it never covers the status bar above. */
+  /* ---- a one-row prompt (Go to Line, Search): one cell tall, so it never
+     covers the status bar. */
   .palette.input-only{height:var(--cell-h);box-sizing:border-box}
   .palette.input-only .pinput{height:var(--cell-h);padding-top:0;padding-bottom:0;box-sizing:border-box}
 
-  /* ---- a key-hint strip: each hint on one line, never wrapping under the
-     strip's edge ---- */
+  /* ---- a key-hint strip: never wraps ---- */
   .w-hintbar{flex-wrap:nowrap;overflow:hidden}
   .w-hint{white-space:nowrap;flex:0 0 auto}

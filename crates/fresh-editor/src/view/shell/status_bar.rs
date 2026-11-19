@@ -50,8 +50,7 @@ pub struct Item {
     /// The stable semantic name `status_view` projects — "lsp", "warning",
     /// "language", …
     pub name: &'static str,
-    /// The role of the element's colours ("error", "warning", "ok", …, or ""
-    /// for the bar's own), which the web paints as the terminal does.
+    /// Colour role ("error", "warning", "ok", …, or "" for the bar's own); the web reads it.
     pub tone: &'static str,
     /// Set when the element answers a click.
     pub clickable: Option<StatusBarClickable>,

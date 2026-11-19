@@ -8,9 +8,8 @@ function statusBarEl(sb){
   const segEl=seg=>{
     const s=document.createElement("span"); s.className=(seg.name==="text"?"txt":"seg"); s.dataset.name=seg.name; s.textContent=seg.text;
     if(seg.tone) s.dataset.tone=seg.tone;
-    // Who gives way when the bar is short is the layout's call, as in the
-    // terminal: the left side shrinks, the right never does, and the element
-    // the layout already cut is the one that yields, with an ellipsis.
+    // As in the terminal: the left side shrinks, the right never does, and
+    // the element the layout cut yields first.
     s.dataset.side=seg.side;
     if(seg.side!=="right" && seg.cut) s.classList.add("cut");
     const c=rectCell({x:seg.x,y:sb.rect.y,w:seg.w,h:1});
@@ -18,8 +17,7 @@ function statusBarEl(sb){
     return s;
   };
   const segs=sb.segments.filter(s=>s.text!=="");
-  // Nothing the layout cut, yet the chrome font runs wider than cells: the
-  // last element on the left gives way, as the terminal's left side does.
+  // Nothing cut but the chrome font runs wide: the last left element yields.
   const left=segs.filter(s=>s.side!=="right");
   const leftEls=left.map(segEl);
   const lastLeft=leftEls[leftEls.length-1];

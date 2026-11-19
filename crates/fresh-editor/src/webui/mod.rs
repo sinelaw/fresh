@@ -82,8 +82,7 @@
 //! harness, the Playwright request API) send no `Origin` and pass:
 //!   - `GET /`        → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
 //!   - `GET /favicon.ico` → 204
-//!   - `GET /fonts/symbols-nerd-font-mono-3.5.1.woff2` → the Nerd Font the
-//!     cells' private-use glyphs are drawn with (`NERD_FONT`)
+//!   - `GET /fonts/symbols-nerd-font-mono-3.5.1.woff2` → `NERD_FONT`
 //!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
 //!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
@@ -130,14 +129,11 @@ pub const DEFAULT_SIZE: (u16, u16) = (140, 44);
 /// therefore requires a rebuild.
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/webui-index.html"));
 
-/// Where the page loads its Nerd Font from (`web-ui/css/10-base.css`
-/// `@font-face`, `web-ui/shell.html` preload). Versioned, so the response can
-/// be cached for good.
+/// Must match `web-ui/css/10-base.css` `@font-face` and the `shell.html`
+/// preload. Versioned, so it can be cached forever.
 const NERD_FONT_PATH: &str = "/fonts/symbols-nerd-font-mono-3.5.1.woff2";
-/// The font every private-use code point in the cells is drawn with: file
-/// icons and a theme's Nerd Font glyph set reach the cells as those code
-/// points, and the browser has no Nerd Font of its own. Symbols Nerd Font
-/// Mono, whole — see `fonts/LICENSE-SymbolsNerdFont.md`.
+/// Symbols Nerd Font Mono, for the cells' private-use glyphs (file icons,
+/// theme glyphs). See `fonts/LICENSE-SymbolsNerdFont.md`.
 const NERD_FONT: &[u8] = include_bytes!("../../fonts/SymbolsNerdFontMono-Regular.woff2");
 
 /// Cap on the clipboard text exposed in the scene (`ClipboardSync`). Anything
@@ -954,11 +950,8 @@ fn handle_http(
             Ok(false)
         }
         ("GET", NERD_FONT_PATH) => {
-            // 1.2 MB, on every first page load (the page preloads it): written
-            // from its own thread on a handle to the same socket, so the editor
-            // loop — every browser's ticks and pushes — never waits on a slow
-            // link for it. The handle carries the write deadline set above,
-            // and the socket closes when the write is done.
+            // 1.2 MB: written from its own thread so the editor loop never
+            // waits on a slow link. The cloned handle keeps the write deadline.
             let mut font_stream = stream.try_clone()?;
             std::thread::Builder::new()
                 .name("webui-font".into())
@@ -1856,8 +1849,7 @@ fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> Re
     respond_with(stream, status, ctype, "", body)
 }
 
-/// `respond`, with `extra` (whole `Name: value\r\n` lines) added to the
-/// headers.
+/// `respond`, with `extra` (whole `Name: value\r\n` lines) added to the headers.
 fn respond_with(
     stream: &mut TcpStream,
     status: &str,
@@ -2103,8 +2095,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         })
         .map(
             |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
-                // The horizontal bar, where the tree laid one out (line wrap
-                // off and the bar shown): its track and thumb, in columns.
+                // The horizontal bar (wrap off): track and thumb, in columns.
                 let hscroll = editor.pane_hscroll_rect(*leaf).filter(|r| r.width > 0);
                 let (hthumb_s, hthumb_e) = editor
                     .bar_thumb(*leaf, fresh_ui::Axis::Horizontal)
@@ -2250,8 +2241,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             "tabActiveBg": color_css(t.tab_active_bg),
             "scrollbarThumb": color_css(t.scrollbar_thumb_fg),
             "scrollbarThumbHover": color_css(t.scrollbar_thumb_hover_fg),
-            // The status bar's tones (`StatusSegment.tone`), as the terminal
-            // paints them: [fg, bg] each.
+            // `StatusSegment.tone` colours: [fg, bg] each.
             "tones": {
                 "error": [color_css(t.status_error_indicator_fg), color_css(t.status_error_indicator_bg)],
                 "diagnosticError": [color_css(t.diagnostic_error_fg), color_css(t.diagnostic_error_bg)],
@@ -2570,9 +2560,7 @@ mod tests {
         digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
     };
 
-    /// The page loads the Nerd Font from `NERD_FONT_PATH`, the stylesheet's
-    /// `@font-face` and the page's preload name that same path, and what is
-    /// served there is a WOFF2 font.
+    /// The CSS `@font-face` and the preload name `NERD_FONT_PATH`, which serves WOFF2.
     #[test]
     fn nerd_font_is_served_where_the_page_loads_it() {
         assert_eq!(&super::NERD_FONT[..4], b"wOF2", "the bundled font is WOFF2");

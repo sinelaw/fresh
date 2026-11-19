@@ -1553,8 +1553,7 @@ impl Window {
         })
     }
 
-    /// The open native context menu's items as the web shows them: label,
-    /// stable id and whether the item cannot be undone, in display order.
+    /// The open native context menu's items for the web, in display order.
     pub(crate) fn context_menu_items(
         &self,
     ) -> Option<Vec<crate::view::scene::ContextMenuItemView>> {
@@ -3131,16 +3130,7 @@ impl Window {
         )
     }
 
-    /// Each pane's tab strip, as content — what the tab painter read off the
-    /// window on its way to the cells, read once into a value the tree lays
-    /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
-    ///
-    /// Only panes with a strip row: an inner leaf of a buffer group has none
-    /// (`PaneChrome::resolve`), and its group's tabs are on the pane that
-    /// holds the group. `hover` is the tab under the pointer, by target,
-    /// pane and whether it is the close button — the frame's, or none for a
-    /// grid nothing points at.
-    /// The names grouped panes' tabs go by, for `tab_names`.
+    /// Grouped panes' tab names, for `tab_names`.
     fn group_names(&self) -> HashMap<LeafId, String> {
         self.grouped_subtrees
             .iter()
@@ -3151,8 +3141,7 @@ impl Window {
             .collect()
     }
 
-    /// The names a strip of these tabs shows — told apart from each other
-    /// where they collide — by tab.
+    /// The (disambiguated) names a strip of these tabs shows.
     fn tab_names(
         &self,
         targets: &[crate::view::split::TabTarget],
@@ -3167,10 +3156,7 @@ impl Window {
         )
     }
 
-    /// `leaf`'s tabs as its strip describes them — names told apart, modified
-    /// and preview marks, group titles — for a reader outside the strip (the
-    /// web scene's tab labels and file icons). The same model `pane_strips`
-    /// builds the strip from.
+    /// `leaf`'s tab model, as `pane_strips` builds it, for the web scene.
     pub(crate) fn pane_tabs(&self, leaf: LeafId) -> Vec<crate::view::shell::tabs::Tab> {
         use crate::view::split::TabTarget;
         let Some((mgr, vs_map)) = self.buffers.splits() else {
@@ -3206,10 +3192,7 @@ impl Window {
                             && self.buffers.get(id).is_some_and(|s| s.buffer.is_modified()),
                         self.buffer_metadata.get(id).is_some_and(|m| m.binary),
                     ),
-                    // A group without a segmented title is marked as a
-                    // whole when a file one of its panels shows is
-                    // modified; one with a title marks its pieces
-                    // instead (`group_title_pieces`).
+                    // A titled group marks its pieces instead (`group_title_pieces`).
                     TabTarget::Group(leaf) => (
                         self.group_of_tab(*leaf).is_some_and(|g| {
                             g.title.is_none()
@@ -3220,10 +3203,7 @@ impl Window {
                         false,
                     ),
                 };
-                // A group with a segmented title (`setBufferGroupTitle`)
-                // shows a `*` after each piece naming a panel whose file
-                // has unsaved changes, so a comparison says which side
-                // is unsaved (issue #3691).
+                // A segmented group title marks each unsaved piece (#3691).
                 let title = match t {
                     TabTarget::Group(leaf) => self
                         .group_of_tab(*leaf)
@@ -3242,6 +3222,15 @@ impl Window {
             .collect()
     }
 
+    /// Each pane's tab strip, as content — what the tab painter read off the
+    /// window on its way to the cells, read once into a value the tree lays
+    /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
+    ///
+    /// Only panes with a strip row: an inner leaf of a buffer group has none
+    /// (`PaneChrome::resolve`), and its group's tabs are on the pane that
+    /// holds the group. `hover` is the tab under the pointer, by target,
+    /// pane and whether it is the close button — the frame's, or none for a
+    /// grid nothing points at.
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,

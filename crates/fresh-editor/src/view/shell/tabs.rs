@@ -760,9 +760,8 @@ pub fn rects(
         .collect()
 }
 
-/// Where a pane's `+` is on screen, clipped to the tab window it rides in —
-/// `None` while it is scrolled out of view (or the strip has no tabs). The web
-/// tab bar draws its own `+` from this and sends its click here (#3754).
+/// Where a pane's `+` is on screen; `None` while scrolled out of view. The web
+/// tab bar draws its own `+` from this (#3754).
 pub fn new_tab_rect(
     ui: &fresh_ui::Ui<UiMsg>,
     size: ratatui::layout::Rect,
@@ -1112,9 +1111,7 @@ mod tests {
         );
     }
 
-    /// The web UI's tab label is `label` uncapped and without the modified
-    /// mark, which it draws itself from `modified`: one dot, not two. The
-    /// preview word stays.
+    /// The web label omits the modified mark (the web draws its own dot).
     #[test]
     fn the_web_label_is_the_name_without_the_modified_mark() {
         let t = Tab {

@@ -255,12 +255,10 @@ function applyTheme(t){
   // so its text is the editor's ink, not the chrome skin's — macOS Light's
   // dark chrome text on a dark editor theme's buffer was unreadable.
   set("--ed-fg",t.fg); set("--ed-muted",legibleMuted(t.muted,t.fg,[t.bg]));
-  // The theme's cursor colour (`editor.cursor`, sent as `accent`), for the
-  // buffer caret. A skin re-points `--accent`, never this.
+  // The buffer caret (`editor.cursor`); skins re-point `--accent`, never this.
   set("--ed-caret",t.accent);
-  // The pane scrollbar's thumb, as the terminal draws it.
   set("--ed-thumb",t.scrollbarThumb); set("--ed-thumb-hover",t.scrollbarThumbHover);
-  // The status bar's tones, [fg, bg] each: --tone-<name>-fg / -bg.
+  // Status tones: --tone-<name>-fg / -bg.
   for(const [name,[fg,bg]] of Object.entries(t.tones)){ set(`--tone-${name}-fg`,fg); set(`--tone-${name}-bg`,bg); }
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
   set("--on-accent", onColor(t.accent));

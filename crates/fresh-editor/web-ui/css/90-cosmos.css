@@ -163,8 +163,7 @@
   body.theme-cosmos .ts-row.on{background:rgba(47,214,195,.20)}
   body.theme-cosmos .ts-row:hover{background:rgba(255,255,255,.10)}
 
-  /* Where a dragged tab would land: the theme's drop-zone colours as glass,
-     rounded and glowing. */
+  /* Tab drop zone as rounded, glowing glass. */
   body.theme-cosmos .region.dropzone{border-width:1px;border-radius:var(--r-md,9px);
     background:color-mix(in srgb,var(--dz-bg,var(--accent)) 22%,transparent);
     box-shadow:0 0 18px color-mix(in srgb,var(--dz-border,var(--accent)) 40%,transparent),

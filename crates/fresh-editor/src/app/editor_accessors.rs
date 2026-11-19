@@ -1542,8 +1542,7 @@ impl Editor {
             return false;
         };
 
-        // Request hover at the byte position, for the card to sit at the
-        // pointer — only mark as sent if dispatched
+        // Request hover at the byte position — only mark as sent if dispatched
         match self.request_hover_at_position(byte_pos, buffer_id, (screen_x, screen_y)) {
             Ok(true) => {
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = true;

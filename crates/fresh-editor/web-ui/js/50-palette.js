@@ -157,8 +157,7 @@ function fileBrowserEl(b,p){
     row.onmousedown=fbClick(b.listRect.x+1,r.row,true);
     list.appendChild(row);
   }
-  // The editor's scrollbar: the thumb's rows within the visible window, as a
-  // fraction of the list so it holds whatever height the skin gives a row.
+  // Thumb as a fraction of the list, so it fits any row height a skin sets.
   if(b.total>b.visibleRows && b.visibleRows>0){
     const th=div("fbthumb");
     th.style.top=`${100*b.thumbStart/b.visibleRows}%`;
