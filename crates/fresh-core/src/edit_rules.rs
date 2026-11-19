@@ -641,6 +641,64 @@ impl BufferEditRules<'_> {
     }
 }
 
+/// Markdown's built-in `edit_rules`: list editing.
+///
+/// - Enter continues a list item (the same bullet, the next number, an
+///   unchecked checkbox) with its indentation; on an item with nothing but
+///   its marker it removes the marker instead; on any other indented line it
+///   keeps the indentation.
+/// - Tab on a blank bullet or checkbox item indents it one level (the
+///   buffer's `tab_size` / `use_tabs`) and cycles the bullet (`*` → `-` →
+///   `+` → `*`); Shift+Tab takes a level off and cycles back.
+///
+/// Everywhere else the keys do what they always do. Written in the format a
+/// user writes in config.json, as the worked example of it.
+pub fn markdown_list_rules() -> Vec<EditRule> {
+    // A blank list item's text before the cursor: indentation (group 1), a
+    // bullet (2) and an optional checkbox (3), then only whitespace.
+    const BLANK_BULLET_ITEM: &str = r"^([ \t]*)([-*+]) (\[[ xX]\] )?\s*$";
+    // Nothing but whitespace after the cursor.
+    const BLANK: &str = r"^\s*$";
+    serde_json::from_value(serde_json::json!([
+        // Enter on an empty item (marker only): remove the marker.
+        {
+            "on": "newline",
+            "before": r"^[ \t]*(?:[-*+] \[[ xX]\] |\d+\. |[-*+] )\s*$",
+            "after": BLANK,
+            "replace_before": "",
+            "replace_after": ""
+        },
+        // Enter on a checkbox item: a new unchecked one. (`\n` in a
+        // template is a line break; written as the escape, the template
+        // reads on one line in the Settings UI.)
+        { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": r"\n$1$2 [ ] " },
+        // Enter on an ordered item: the next number.
+        { "on": "newline", "before": r"^([ \t]*)(\d+)\. ", "insert": r"\n$1${inc:2}. " },
+        // Enter on a bullet item: the same bullet.
+        { "on": "newline", "before": r"^([ \t]*)([-*+]) ", "insert": r"\n$1$2 " },
+        // Enter on any other indented line: keep the indentation.
+        { "on": "newline", "before": r"^([ \t]+)", "insert": r"\n$1" },
+        // Tab on a blank bullet item: one level deeper, next bullet.
+        {
+            "on": "indent",
+            "before": BLANK_BULLET_ITEM,
+            "after": BLANK,
+            "replace_before": "$1${indent}${cycle:2:*|-|+} $3",
+            "replace_after": ""
+        },
+        // Shift+Tab on a blank bullet item: one level out, previous bullet.
+        // `${dedent}` leaves the rule unapplied when there is no level to take.
+        {
+            "on": "dedent",
+            "before": BLANK_BULLET_ITEM,
+            "after": BLANK,
+            "replace_before": "${dedent:1}${cycle:2:+|-|*} $3",
+            "replace_after": ""
+        }
+    ]))
+    .expect("the built-in Markdown edit rules are well-formed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,61 +735,11 @@ mod tests {
         CompiledEditRule::compile(&r).unwrap()
     }
 
-    /// The built-in Markdown `edit_rules` (fresh-editor-core's default
-    /// `languages.markdown`), written here as the worked example of the
-    /// format.
+    /// The built-in Markdown `edit_rules`, as a plugin's set.
     fn markdown_lists() -> EditRuleSet {
-        let r = |on, before: &str, after: Option<&str>, f: fn(&mut EditRule)| {
-            let mut rule = rule(on);
-            rule.before = Some(before.to_string());
-            rule.after = after.map(str::to_string);
-            f(&mut rule);
-            rule
-        };
-        use EditRuleTrigger::*;
         EditRuleSet {
             languages: vec!["markdown".into()],
-            rules: vec![
-                r(
-                    Newline,
-                    r"^[ \t]*(?:[-*+] \[[ xX]\] |\d+\. |[-*+] )\s*$",
-                    Some(r"^\s*$"),
-                    |r| {
-                        r.replace_before = Some(String::new());
-                        r.replace_after = Some(String::new());
-                    },
-                ),
-                r(Newline, r"^([ \t]*)([-*+]) \[[ xX]\] ", None, |r| {
-                    r.insert = Some("\n$1$2 [ ] ".into())
-                }),
-                r(Newline, r"^([ \t]*)(\d+)\. ", None, |r| {
-                    r.insert = Some("\n$1${inc:2}. ".into())
-                }),
-                r(Newline, r"^([ \t]*)([-*+]) ", None, |r| {
-                    r.insert = Some("\n$1$2 ".into())
-                }),
-                r(Newline, r"^([ \t]+)", None, |r| {
-                    r.insert = Some("\n$1".into())
-                }),
-                r(
-                    Indent,
-                    r"^([ \t]*)([-*+]) (\[[ xX]\] )?\s*$",
-                    Some(r"^\s*$"),
-                    |r| {
-                        r.replace_before = Some("$1${indent}${cycle:2:*|-|+} $3".into());
-                        r.replace_after = Some(String::new());
-                    },
-                ),
-                r(
-                    Dedent,
-                    r"^([ \t]*)([-*+]) (\[[ xX]\] )?\s*$",
-                    Some(r"^\s*$"),
-                    |r| {
-                        r.replace_before = Some("${dedent:1}${cycle:2:+|-|*} $3".into());
-                        r.replace_after = Some(String::new());
-                    },
-                ),
-            ],
+            rules: markdown_list_rules(),
         }
     }
 

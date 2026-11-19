@@ -2722,62 +2722,15 @@ impl IndentRulesConfig {
     }
 }
 
-/// Markdown's built-in `edit_rules`: list editing.
-///
-/// - Enter continues a list item (the same bullet, the next number, an
-///   unchecked checkbox) with its indentation; on an item with nothing but
-///   its marker it removes the marker instead; on any other indented line it
-///   keeps the indentation.
-/// - Tab on a blank bullet or checkbox item indents it one level (the
-///   buffer's `tab_size` / `use_tabs`) and cycles the bullet (`*` → `-` →
-///   `+` → `*`); Shift+Tab takes a level off and cycles back.
-///
-/// Everywhere else the keys do what they always do. Written in the format a
-/// user writes in config.json, as the worked example of it.
+/// Markdown's built-in `edit_rules` ([`fresh_core::edit_rules::markdown_list_rules`]),
+/// as the default `languages.markdown` holds them.
 pub fn markdown_list_edit_rules() -> Vec<ConfiguredEditRule> {
-    // A blank list item's text before the cursor: indentation (group 1), a
-    // bullet (2) and an optional checkbox (3), then only whitespace.
-    const BLANK_BULLET_ITEM: &str = r"^([ \t]*)([-*+]) (\[[ xX]\] )?\s*$";
-    // Nothing but whitespace after the cursor.
-    const BLANK: &str = r"^\s*$";
-    serde_json::from_value(serde_json::json!([
-        // Enter on an empty item (marker only): remove the marker.
-        {
-            "on": "newline",
-            "before": r"^[ \t]*(?:[-*+] \[[ xX]\] |\d+\. |[-*+] )\s*$",
-            "after": BLANK,
-            "replace_before": "",
-            "replace_after": ""
-        },
-        // Enter on a checkbox item: a new unchecked one. (`\n` in a
-        // template is a line break; written as the escape, the template
-        // reads on one line in the Settings UI.)
-        { "on": "newline", "before": r"^([ \t]*)([-*+]) \[[ xX]\] ", "insert": r"\n$1$2 [ ] " },
-        // Enter on an ordered item: the next number.
-        { "on": "newline", "before": r"^([ \t]*)(\d+)\. ", "insert": r"\n$1${inc:2}. " },
-        // Enter on a bullet item: the same bullet.
-        { "on": "newline", "before": r"^([ \t]*)([-*+]) ", "insert": r"\n$1$2 " },
-        // Enter on any other indented line: keep the indentation.
-        { "on": "newline", "before": r"^([ \t]+)", "insert": r"\n$1" },
-        // Tab on a blank bullet item: one level deeper, next bullet.
-        {
-            "on": "indent",
-            "before": BLANK_BULLET_ITEM,
-            "after": BLANK,
-            "replace_before": "$1${indent}${cycle:2:*|-|+} $3",
-            "replace_after": ""
-        },
-        // Shift+Tab on a blank bullet item: one level out, previous bullet.
-        // `${dedent}` leaves the rule unapplied when there is no level to take.
-        {
-            "on": "dedent",
-            "before": BLANK_BULLET_ITEM,
-            "after": BLANK,
-            "replace_before": "${dedent:1}${cycle:2:+|-|*} $3",
-            "replace_after": ""
-        }
-    ]))
-    .expect("the built-in Markdown edit rules compile")
+    fresh_core::edit_rules::markdown_list_rules()
+        .into_iter()
+        .map(|rule| {
+            ConfiguredEditRule::new(rule).expect("the built-in Markdown edit rules compile")
+        })
+        .collect()
 }
 
 /// A language pack's `editRules`, compiled: a rule that doesn't compile is
