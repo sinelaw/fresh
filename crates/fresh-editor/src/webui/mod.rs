@@ -82,6 +82,8 @@
 //! harness, the Playwright request API) send no `Origin` and pass:
 //!   - `GET /`        → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
 //!   - `GET /favicon.ico` → 204
+//!   - `GET /fonts/symbols-nerd-font-mono-3.5.1.woff2` → the Nerd Font the
+//!     cells' private-use glyphs are drawn with (`NERD_FONT`)
 //!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
 //!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
@@ -127,6 +129,16 @@ pub const DEFAULT_SIZE: (u16, u16) = (140, 44);
 /// behaves identically wherever the binary runs. Editing the frontend
 /// therefore requires a rebuild.
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/webui-index.html"));
+
+/// Where the page loads its Nerd Font from (`web-ui/css/10-base.css`
+/// `@font-face`, `web-ui/shell.html` preload). Versioned, so the response can
+/// be cached for good.
+const NERD_FONT_PATH: &str = "/fonts/symbols-nerd-font-mono-3.5.1.woff2";
+/// The font every private-use code point in the cells is drawn with: file
+/// icons and a theme's Nerd Font glyph set reach the cells as those code
+/// points, and the browser has no Nerd Font of its own. Symbols Nerd Font
+/// Mono, whole — see `fonts/LICENSE-SymbolsNerdFont.md`.
+const NERD_FONT: &[u8] = include_bytes!("../../fonts/SymbolsNerdFontMono-Regular.woff2");
 
 /// Cap on the clipboard text exposed in the scene (`ClipboardSync`). Anything
 /// larger is truncated at a char boundary — a copy that big is better served
@@ -938,6 +950,16 @@ fn handle_http(
                 "200 OK",
                 "text/html; charset=utf-8",
                 INDEX_HTML.as_bytes(),
+            )?;
+            Ok(false)
+        }
+        ("GET", NERD_FONT_PATH) => {
+            respond_with(
+                stream,
+                "200 OK",
+                "font/woff2",
+                "Cache-Control: public, max-age=31536000, immutable\r\n",
+                NERD_FONT,
             )?;
             Ok(false)
         }
@@ -1820,12 +1842,24 @@ impl WsSession {
 }
 
 fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> Result<()> {
+    respond_with(stream, status, ctype, "", body)
+}
+
+/// `respond`, with `extra` (whole `Name: value\r\n` lines) added to the
+/// headers.
+fn respond_with(
+    stream: &mut TcpStream,
+    status: &str,
+    ctype: &str,
+    extra: &str,
+    body: &[u8],
+) -> Result<()> {
     // No CORS header: the frontend is served from this same origin, so it needs
     // none, and `Access-Control-Allow-Origin: *` would let any site the user
     // visits read `/state` (live buffer contents) cross-origin. Same-origin
     // policy is the protection here.
     let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes())?;
@@ -2498,6 +2532,20 @@ mod tests {
     use super::{
         digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
     };
+
+    /// The page loads the Nerd Font from `NERD_FONT_PATH`, the stylesheet's
+    /// `@font-face` and the page's preload name that same path, and what is
+    /// served there is a WOFF2 font.
+    #[test]
+    fn nerd_font_is_served_where_the_page_loads_it() {
+        assert_eq!(&super::NERD_FONT[..4], b"wOF2", "the bundled font is WOFF2");
+        let rel = super::NERD_FONT_PATH.trim_start_matches('/');
+        assert_eq!(
+            super::INDEX_HTML.matches(rel).count(),
+            2,
+            "the @font-face src and the preload link both load {rel}"
+        );
+    }
 
     /// Whether the scene shows a confirmation card.
     fn confirm_open(editor: &mut crate::app::Editor) -> bool {

@@ -2,6 +2,17 @@
      (web-ui/css — concatenated in filename order into the page's single
      <style> block by crates/fresh-editor/build.rs; order is load-bearing:
      later files deliberately override earlier ones.) */
+  /* ---- private-use glyphs: the bundled Nerd Font --------------------------
+     File icons and a theme's Nerd Font glyph set reach the cells as
+     private-use code points, which only a Nerd Font draws — and the browser
+     has none of its own. So the bridge serves Symbols Nerd Font Mono
+     (crates/fresh-editor/fonts, NERD_FONT in src/webui/mod.rs) and every font
+     stack names it first. `unicode-range` limits it to the private-use
+     planes: it draws every private-use code point and nothing else, so all
+     other text comes from the stack behind it exactly as before. */
+  @font-face{font-family:"Fresh Nerd Symbols";
+    src:url("fonts/symbols-nerd-font-mono-3.5.1.woff2") format("woff2");
+    unicode-range:U+E000-F8FF,U+F0000-10FFFD;font-display:block}
   /* ---- typography: ONE family, ONE size, for every pixel of the UI --------
      The buffer is a cell grid, so the shared family has to be the monospace
      stack; chrome (menus, tabs, status, palette, modals, widgets) inherits the
@@ -17,8 +28,8 @@
        the same stack. A web theme may repoint --font-family at a proportional
        system stack (macOS) without disturbing the buffer, because svg.cells is
        pinned to --mono-family below and JS measures against the monospace stack. */
-    --mono-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
-    --font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
+    --mono-family:"Fresh Nerd Symbols",ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
+    --font-family:"Fresh Nerd Symbols",ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
     --font-size-base:15px;
     --font-size:var(--font-size-base);
     --line-height:1.4}

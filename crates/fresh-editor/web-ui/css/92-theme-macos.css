@@ -29,7 +29,7 @@
      letter-spacing:normal drops the cell-tracking that proportional text does
      not want. */
   body.macfam{
-    --font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
+    --font-family:"Fresh Nerd Symbols",-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
     letter-spacing:normal;font-size:13.5px}
 
   /* ---- title bar: traffic lights + centered document title ---- */
