@@ -1494,54 +1494,45 @@ check('a switch says whether it is on, and pressing it turns it', before != null
 await page.screenshot({ path: `${SHOTS}/42-native-pane-panel.png` });
 // A page (the Welcome screen): laid out in the page's own column, as the
 // terminal sets it, and scrolled by the editor — the web follows the
-// editor's window, so a card's jump, the wheel and the page keys are one
-// scroll position.
+// editor's window, so the wheel and the page keys are one scroll position.
 await page.request.post(URL + '/action', { data: { action: 'welcome_open' } });
 const welcome = page.locator('.native-panel.np-pane.paged').first();
 await welcome.waitFor({ timeout: 8000 }).catch(() => {});
 check('the Welcome screen is a native page the editor scrolls', (await welcome.count()) === 1);
-// The doors are the sized cards that end in a jump (the code sample is
-// sized too); the page is wide enough here for the terminal to set them in a
-// row.
-const doors = await page.evaluate(() => [...document.querySelectorAll('.native-panel.paged .w-section.sized')]
-  .filter(e => /jump/.test(e.textContent)).map(e => e.getBoundingClientRect())
-  .map(r => ({ top: Math.round(r.top), h: Math.round(r.height) })));
-check('its door cards stand side by side, alike', doors.length === 3
-  && doors.every(d => d.top === doors[0].top && d.h === doors[0].h), JSON.stringify(doors));
-const pageOffset = () => page.evaluate(() =>
-  (window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1);
-const offsetPast = (cmp, o) => page.waitForFunction(([c, o]) => {
-  const v = (window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1;
-  return c === 'gt' ? v > o : c === 'lt' ? v >= 0 && v < o : v === o;
-}, [cmp, o], { timeout: 5000 }).catch(() => {});
-// A door card is one target: a blank row of it jumps as its button does.
-// Pressed on the row itself — whether the page shows the doors at the top
-// depends on the pane's height.
-const gapW = await page.evaluate(() => {
-  const g = document.querySelector('.native-panel.paged .w-section.sized .w-para-gap[data-wkey]');
-  if (!g) return 0;
-  g.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-  return g.getBoundingClientRect().width;
+// Nerd Font icons, show on startup, auto attach.
+const switches = await welcome.getByRole('switch').evaluateAll(s => s.map(e => e.getAttribute('aria-checked')));
+check('its settings are switches that say whether they are on',
+  switches.length === 3 && switches.every(v => v === 'true' || v === 'false'), JSON.stringify(switches));
+check('its essentials are buttons', (await welcome.locator('.w-button').count()) === 7);
+const pageState = () => page.evaluate(() => {
+  const p = window.fresh.scene.regions.native.panels.find(x => x.page)?.page;
+  return p ? { offset: p.offset, max: p.content - p.window } : { offset: -1, max: -1 };
 });
-await offsetPast('gt', 0);
-const gapJump = await pageOffset();
-check('a blank row of a door card jumps the page', gapW > 0 && gapJump > 0, `width=${gapW} offset=${gapJump}`);
-// The wheel over the page scrolls it in the editor: back up to the top.
+const offsetIs = (cmp, o) => page.waitForFunction(([c, o]) => {
+  const v = window.fresh.scene.regions.native.panels.find(x => x.page)?.page?.offset ?? -1;
+  return c === 'gt' ? v > o : v === o;
+}, [cmp, o], { timeout: 5000 }).catch(() => {});
+// The page is taller than its pane at this viewport.
+const { max } = await pageState();
 const wbox = await welcome.boundingBox();
-if (wbox) {
-  await page.mouse.move(wbox.x + wbox.width / 2, wbox.y + wbox.height / 2);
-  for (let i = 0; i < 6 && (await pageOffset()) > 0; i++) { await page.mouse.wheel(0, -800); await offsetPast('lt', gapJump); }
-}
-const wheeled = await pageOffset();
-check('the wheel over the page scrolls it in the editor', wheeled >= 0 && wheeled < gapJump, `${gapJump} → ${wheeled}`);
-await page.waitForFunction(() => ((window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1) === 0,
-  null, { timeout: 5000 }).catch(() => {});
-await welcome.getByRole('button', { name: /jump/ }).first().click().catch(() => {});
-await offsetPast('gt', 0);
-const jumped = await pageOffset();
-check('a card\'s jump scrolls the page in the editor, and the view follows',
-  jumped > 0 && jumped === gapJump && await page.evaluate(() => document.querySelector('.native-panel.paged').scrollTop > 0),
-  `offset=${jumped} (gap ${gapJump})`);
+if (wbox) await page.mouse.move(wbox.x + wbox.width / 2, wbox.y + wbox.height / 2);
+await page.mouse.wheel(0, 800);
+await offsetIs('gt', 0);
+const down = (await pageState()).offset;
+check('the wheel over the page scrolls it in the editor, and the view follows',
+  max > 0 && down > 0 && await page.evaluate(() => document.querySelector('.native-panel.paged').scrollTop > 0),
+  `offset=${down} of ${max}`);
+await page.mouse.wheel(0, -800);
+await offsetIs('eq', 0);
+const up = (await pageState()).offset;
+check('and back up to the top', up === 0
+  && await page.evaluate(() => document.querySelector('.native-panel.paged').scrollTop === 0), `offset=${up}`);
+await welcome.getByRole('button', { name: 'Command palette' }).click();
+const palette = page.locator('.palette');
+await palette.first().waitFor({ timeout: 5000 }).catch(() => {});
+check('a button runs its command', (await palette.count()) > 0);
+await page.keyboard.press('Escape');
+await palette.first().waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
 check('no cell caret is drawn over the page', await page.evaluate(() =>
   [...document.querySelectorAll('.caret,.tree-caret')].every(c => getComputedStyle(c).visibility === 'hidden')));
 await page.screenshot({ path: `${SHOTS}/43-native-welcome.png` });
