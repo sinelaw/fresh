@@ -65,26 +65,85 @@ impl InitTimer {
 /// Set a value at a dot-separated path inside a JSON object, creating
 /// intermediate maps as needed.
 fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Value) {
-    let segments: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
-    if segments.is_empty() {
+    set_json_pointer(root, &json_pointer_for_dot_path(path), value);
+}
+
+/// Set a value at an RFC 6901 JSON pointer inside a JSON object, creating
+/// intermediate maps as needed (and replacing a non-object in the way).
+fn set_json_pointer(root: &mut serde_json::Value, pointer: &str, value: serde_json::Value) {
+    let segments: Vec<String> = pointer
+        .split('/')
+        .skip(1)
+        .map(|s| s.replace("~1", "/").replace("~0", "~"))
+        .collect();
+    let Some((last, parents)) = segments.split_last() else {
         return;
-    }
+    };
     let mut cur = root;
-    for seg in &segments[..segments.len() - 1] {
+    for seg in parents {
         if !cur.is_object() {
             *cur = serde_json::Value::Object(serde_json::Map::new());
         }
         cur = cur
             .as_object_mut()
             .unwrap()
-            .entry((*seg).to_string())
+            .entry(seg.clone())
             .or_insert(serde_json::Value::Null);
     }
-    let last = segments[segments.len() - 1];
     if !cur.is_object() {
         *cur = serde_json::Value::Object(serde_json::Map::new());
     }
-    cur.as_object_mut().unwrap().insert(last.to_string(), value);
+    cur.as_object_mut().unwrap().insert(last.clone(), value);
+}
+
+/// Config values the session set that no config file holds, by JSON
+/// pointer, in the order they were set: `setSetting(path, value)` writes,
+/// and the languages plugins register with `registerLanguageConfig` (the
+/// whole `/languages/<id>` entry). A config re-resolved from disk (a
+/// Settings save, `reloadConfig()`) gets them laid back on top — otherwise
+/// the next save would silently undo them (#3791).
+#[derive(Debug, Default)]
+pub(crate) struct RuntimeSettings(Vec<(String, serde_json::Value)>);
+
+impl RuntimeSettings {
+    /// Remember `value` at `pointer`, replacing an earlier value there.
+    pub(crate) fn set(&mut self, pointer: String, value: serde_json::Value) {
+        self.forget(&pointer);
+        self.0.push((pointer, value));
+    }
+
+    /// Forget the value at `pointer`.
+    pub(crate) fn forget(&mut self, pointer: &str) {
+        self.0.retain(|(p, _)| p != pointer);
+    }
+
+    /// Lay the values onto `config`, freshly resolved from disk, in the
+    /// order they were set. `changed_pointers` are the JSON pointers just
+    /// written to disk: a value on (or under, or above) one of them is
+    /// superseded by that newer, explicit change — the entry is the user's
+    /// from now on — and is forgotten.
+    pub(crate) fn reapply(
+        &mut self,
+        config: &mut crate::config::Config,
+        changed_pointers: &[String],
+    ) {
+        self.0.retain(|(pointer, _)| {
+            !changed_pointers
+                .iter()
+                .any(|c| super::pointers_overlap(pointer, c))
+        });
+        if self.0.is_empty() {
+            return;
+        }
+        let mut json = serde_json::to_value(&*config).unwrap_or_default();
+        for (pointer, value) in &self.0 {
+            set_json_pointer(&mut json, pointer, value.clone());
+        }
+        match serde_json::from_value::<crate::config::Config>(json) {
+            Ok(merged) => *config = merged,
+            Err(e) => tracing::warn!("Could not re-apply setSetting values: {e}"),
+        }
+    }
 }
 
 /// Set `plugins.<plugin>.settings.<field>` to `default` unless the config
@@ -109,8 +168,15 @@ fn insert_plugin_setting_default(
 /// `~` and `/` are escaped because a pointer says so; no config key contains
 /// either today, and a silently mangled pointer is worse than a pedantic one.
 fn json_pointer_for_dot_path(path: &str) -> String {
+    json_pointer(path.split('.').filter(|s| !s.is_empty()))
+}
+
+/// The RFC 6901 JSON pointer to the value at `segments`, each escaped (`~`
+/// and `/`): a key holding a `.` — a language id, say — which a dot path
+/// can't name.
+pub(crate) fn json_pointer<'a>(segments: impl IntoIterator<Item = &'a str>) -> String {
     let mut pointer = String::new();
-    for segment in path.split('.').filter(|s| !s.is_empty()) {
+    for segment in segments {
         pointer.push('/');
         pointer.push_str(&segment.replace('~', "~0").replace('/', "~1"));
     }
@@ -748,7 +814,7 @@ impl Editor {
             host_process_handles: HashMap::new(),
             status_bar_token_registry: Mutex::new(HashMap::new()),
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
-            runtime_settings: Vec::new(),
+            runtime_settings: RuntimeSettings::default(),
             session_languages: parts.session_languages,
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
@@ -1131,12 +1197,11 @@ impl Editor {
 
         // Apply the packages' language and LSP configs (the user's config
         // takes priority), by the rule a reload re-applies them with.
-        let mut session_languages = super::SessionLanguages {
+        let session_languages = super::SessionLanguages {
             packs: scan_result.language_configs.clone(),
             pack_lsp: scan_result.lsp_configs.clone(),
-            registered: HashMap::new(),
         };
-        session_languages.reapply(&mut config, &[]);
+        session_languages.reapply(&mut config);
 
         let theme_registry = Arc::new(theme_loader.load_all(&scan_result.bundle_theme_dirs));
         t.phase("theme_loader.load_all");
@@ -2117,8 +2182,8 @@ impl Editor {
             Ok(new_config) => {
                 // Remember the write so a config re-resolved from disk (a
                 // Settings save, `reloadConfig()`) keeps it (#3791).
-                self.runtime_settings.retain(|(p, _)| *p != path);
-                self.runtime_settings.push((path.clone(), value));
+                self.runtime_settings
+                    .set(json_pointer_for_dot_path(&path), value);
                 let old_theme = self.config.theme.clone();
                 // Through `set_config`, not a bare assignment: windows read a
                 // copy of the config of their own (terminal shell, LSP, …),
@@ -2193,46 +2258,33 @@ impl Editor {
         // of that here is how the two drift.
         self.handle_set_setting(path.clone(), value.clone());
         // The file holds it now; it no longer needs re-laying after a reload.
-        self.runtime_settings.retain(|(p, _)| *p != path);
+        self.runtime_settings.forget(&pointer);
         self.persist_config_pointer(&pointer, value);
     }
 
     /// Lay the session's in-memory config state back onto a config freshly
-    /// resolved from disk: the `setSetting` writes, then every plugin's
-    /// declared `defineConfigX` defaults for fields the config leaves unset,
-    /// under both the languages of installed packs and of plugins'
-    /// `registerLanguageConfig` (see `SessionLanguages`). None of it lives
-    /// in any config file, so without this a Settings save or
-    /// `reloadConfig()` drops them and `getPluginConfig()` returns only the
-    /// user's overrides (#3791).
+    /// resolved from disk: the languages of installed packs under the
+    /// files' own (see `SessionLanguages`), the `setSetting` writes and
+    /// plugins' `registerLanguageConfig` languages on top (see
+    /// `RuntimeSettings`), then every plugin's declared `defineConfigX`
+    /// defaults for fields the config leaves unset. None of it lives in any
+    /// config file, so without this a Settings save or `reloadConfig()`
+    /// drops them and `getPluginConfig()` returns only the user's overrides
+    /// (#3791).
     ///
     /// `changed_pointers` are the JSON pointers the caller just wrote to
-    /// disk: a `setSetting` value on (or under, or above) one of them is
-    /// superseded by that newer, explicit change and is forgotten.
+    /// disk: a `setSetting` value or registered language on (or under, or
+    /// above) one of them is superseded by that newer, explicit change and
+    /// is forgotten.
     pub(crate) fn reapply_session_config(
         &mut self,
         config: &mut crate::config::Config,
         changed_pointers: &[String],
     ) {
-        // Language packs' and plugin-registered languages first: a
-        // `setSetting` on one of them applies on top, as it did before.
-        self.session_languages.reapply(config, changed_pointers);
-        self.runtime_settings.retain(|(path, _)| {
-            let pointer = json_pointer_for_dot_path(path);
-            !changed_pointers
-                .iter()
-                .any(|c| super::pointers_overlap(&pointer, c))
-        });
-        if !self.runtime_settings.is_empty() {
-            let mut json = serde_json::to_value(&*config).unwrap_or_default();
-            for (path, value) in &self.runtime_settings {
-                set_dot_path(&mut json, path, value.clone());
-            }
-            match serde_json::from_value::<crate::config::Config>(json) {
-                Ok(merged) => *config = merged,
-                Err(e) => tracing::warn!("Could not re-apply setSetting values: {e}"),
-            }
-        }
+        // Language packs' languages first: a `setSetting` or a registered
+        // language applies on top, as it did before.
+        self.session_languages.reapply(config);
+        self.runtime_settings.reapply(config, changed_pointers);
         if let Ok(schemas) = self.plugin_schemas.read() {
             for (plugin_name, schema) in schemas.iter() {
                 let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
@@ -2565,5 +2617,103 @@ fn populate_builtin_keybinding_labels(
                 snapshot.keybinding_labels.insert(key, label);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod runtime_settings_tests {
+    use super::{json_pointer, RuntimeSettings};
+    use crate::config::{Config, LanguageConfig};
+
+    /// What `registerLanguageConfig` keeps for `id`: the whole entry, with
+    /// an edit rule and a tab size.
+    fn registered(id: &str, tab_size: usize) -> (String, serde_json::Value) {
+        let pack: fresh_core::api::LanguagePackConfig = serde_json::from_value(serde_json::json!({
+            "tabSize": tab_size,
+            "editRules": [{ "on": "newline", "before": "^(;+ )", "insert": "\n$1" }]
+        }))
+        .unwrap();
+        let language = LanguageConfig::from_pack(id, pack);
+        (
+            json_pointer(["languages", id]),
+            serde_json::to_value(&language).unwrap(),
+        )
+    }
+
+    /// A registered language is forgotten once the user saves its entry —
+    /// or anything above it, which replaces it — and kept through a save of
+    /// anything else.
+    #[test]
+    fn a_save_at_or_above_a_registered_language_forgets_it() {
+        for (changed, kept) in [
+            ("/languages/other", true),
+            ("/editor/tab_size", true),
+            ("/languages/mylang/tab_size", false),
+            ("/languages/mylang", false),
+            ("/languages", false),
+        ] {
+            let mut settings = RuntimeSettings::default();
+            let (pointer, value) = registered("mylang", 3);
+            settings.set(pointer, value);
+            let mut config = Config::default();
+            settings.reapply(&mut config, &[changed.to_string()]);
+            assert_eq!(
+                config.languages.contains_key("mylang"),
+                kept,
+                "{changed}: laid back on"
+            );
+            let mut config = Config::default();
+            settings.reapply(&mut config, &[]);
+            assert_eq!(
+                config.languages.contains_key("mylang"),
+                kept,
+                "{changed}: still remembered"
+            );
+        }
+    }
+
+    /// A registered language survives the JSON round trip a re-resolved
+    /// config takes — its edit rules recompiled from how they serialize —
+    /// also under an id a dot path can't name.
+    #[test]
+    fn a_registered_language_is_laid_back_whole() {
+        for id in ["mylang", "my.lang", "a/b~c"] {
+            let mut settings = RuntimeSettings::default();
+            let (pointer, value) = registered(id, 3);
+            settings.set(pointer, value);
+            let mut config = Config::default();
+            settings.reapply(&mut config, &[]);
+            let language = &config.languages[id];
+            assert_eq!(language.tab_size, Some(3), "{id}");
+            assert_eq!(language.edit_rules.len(), 1, "{id}");
+            assert_eq!(
+                language.edit_rules[0].rule().before.as_deref(),
+                Some("^(;+ )"),
+                "{id}"
+            );
+        }
+    }
+
+    /// Registered languages and `setSetting` writes are laid back in the
+    /// order they were made: a write into the language's entry applies on
+    /// top of the registration before it, and a registration after it
+    /// replaces the entry, write and all.
+    #[test]
+    fn runtime_settings_apply_in_call_order() {
+        let mut settings = RuntimeSettings::default();
+        let (pointer, value) = registered("mylang", 3);
+        settings.set(pointer.clone(), value.clone());
+        settings.set(
+            super::json_pointer_for_dot_path("languages.mylang.tab_size"),
+            serde_json::json!(5),
+        );
+        let mut config = Config::default();
+        settings.reapply(&mut config, &[]);
+        assert_eq!(config.languages["mylang"].tab_size, Some(5));
+
+        settings.set(pointer, value);
+        let mut config = Config::default();
+        settings.reapply(&mut config, &[]);
+        assert_eq!(config.languages["mylang"].tab_size, Some(3));
     }
 }

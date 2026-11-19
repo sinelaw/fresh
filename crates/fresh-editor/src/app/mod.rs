@@ -1070,15 +1070,17 @@ pub struct Editor {
     pub(crate) plugin_schemas:
         std::sync::Arc<std::sync::RwLock<HashMap<String, serde_json::Value>>>,
 
-    /// `setSetting(path, value)` writes, in the order they were made. They
-    /// live only in memory, so a config re-resolved from disk (a Settings
-    /// save, `reloadConfig()`) gets them laid back on top — otherwise the
-    /// next save would silently undo them (#3791).
-    pub(crate) runtime_settings: Vec<(String, serde_json::Value)>,
+    /// `setSetting(path, value)` writes and `registerLanguageConfig`
+    /// languages, in the order they were made. They live only in memory,
+    /// so a config re-resolved from disk (a Settings save,
+    /// `reloadConfig()`) gets them laid back on top — otherwise the next
+    /// save would silently undo them (#3791).
+    pub(crate) runtime_settings: editor_init::RuntimeSettings,
 
-    /// Languages that live in no config file, so a config re-resolved from
-    /// disk (a Settings save, `reloadConfig()`) gets them laid back on the
-    /// way startup put them there: see [`SessionLanguages`].
+    /// Installed language packs' languages, which live in no config file,
+    /// so a config re-resolved from disk (a Settings save,
+    /// `reloadConfig()`) gets them laid back under the files' own, the way
+    /// startup put them there: see [`SessionLanguages`].
     pub(crate) session_languages: SessionLanguages,
 
     // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`
@@ -4701,12 +4703,14 @@ pub(crate) fn pointers_overlap(a: &str, b: &str) -> bool {
     a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
-/// Languages the session has that no config file holds: the installed
-/// language packs' (scanned at startup) and those plugins registered with
-/// `registerLanguageConfig` (a pack installed while the editor runs comes
-/// this way too). Without them a reload or a Settings save re-resolved the
-/// open buffers' settings without the language: its edit rules, tab size,
-/// comment prefix and the rest fell back to the global defaults.
+/// The languages of the installed language packs (scanned at startup),
+/// which no config file holds. Without them a reload or a Settings save
+/// re-resolved the open buffers' settings without the language: its edit
+/// rules, tab size, comment prefix and the rest fell back to the global
+/// defaults. (A language a plugin registers with `registerLanguageConfig`
+/// — a pack installed while the editor runs comes this way too — replaces
+/// the language's entry, so it is kept as a runtime setting at
+/// `/languages/<id>` instead: see `RuntimeSettings`.)
 #[derive(Debug, Default)]
 pub(crate) struct SessionLanguages {
     /// The scanned packs' languages and LSP servers, laid under the files'
@@ -4714,27 +4718,11 @@ pub(crate) struct SessionLanguages {
     /// startup.
     pub packs: Vec<(String, crate::config::LanguageConfig)>,
     pub pack_lsp: Vec<(String, crate::types::LspServerConfig)>,
-    /// `registerLanguageConfig` calls, by language, each replacing the
-    /// language's entry as the call did.
-    pub registered: HashMap<String, crate::config::LanguageConfig>,
 }
 
 impl SessionLanguages {
-    /// Lay these languages onto `config`, freshly resolved from disk.
-    /// `changed_pointers` are the JSON pointers just written to disk: a
-    /// registered language whose entry the user has just saved is the
-    /// user's from now on, and is forgotten here.
-    pub(crate) fn reapply(
-        &mut self,
-        config: &mut crate::config::Config,
-        changed_pointers: &[String],
-    ) {
-        self.registered.retain(|id, _| {
-            let pointer = format!("/languages/{id}");
-            !changed_pointers
-                .iter()
-                .any(|c| pointers_overlap(&pointer, c))
-        });
+    /// Lay these languages under `config`, freshly resolved from disk.
+    pub(crate) fn reapply(&self, config: &mut crate::config::Config) {
         for (id, language) in &self.packs {
             config
                 .languages
@@ -4746,35 +4734,6 @@ impl SessionLanguages {
                 .lsp
                 .entry(id.clone())
                 .or_insert_with(|| crate::types::LspLanguageConfig::Multi(vec![server.clone()]));
-        }
-        for (id, language) in &self.registered {
-            config.languages.insert(id.clone(), language.clone());
-        }
-    }
-}
-
-#[cfg(test)]
-mod session_languages_tests {
-    use super::SessionLanguages;
-
-    /// A registered language is forgotten once the user saves its entry —
-    /// or anything above it, which replaces it — and kept through a save of
-    /// anything else.
-    #[test]
-    fn a_save_at_or_above_a_registered_language_forgets_it() {
-        let mut config = crate::config::Config::default();
-        let language = config.languages["markdown"].clone();
-        let mut session = SessionLanguages::default();
-        for (changed, kept) in [
-            ("/languages/other", true),
-            ("/editor/tab_size", true),
-            ("/languages/mylang/tab_size", false),
-            ("/languages/mylang", false),
-            ("/languages", false),
-        ] {
-            session.registered.insert("mylang".into(), language.clone());
-            session.reapply(&mut config, &[changed.to_string()]);
-            assert_eq!(session.registered.contains_key("mylang"), kept, "{changed}");
         }
     }
 }

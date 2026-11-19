@@ -2735,11 +2735,19 @@ impl Editor {
         // The plugin API refused a rule that doesn't compile already; one
         // that gets here regardless is dropped with a warning.
         let lang_config = crate::config::LanguageConfig::from_pack(&language, config);
-        // Kept for a reload or a Settings save, which re-resolve the config
-        // from files that don't hold it.
-        self.session_languages
-            .registered
-            .insert(language.clone(), lang_config.clone());
+        // Kept, as a `setSetting` value is, for a reload or a Settings save,
+        // which re-resolve the config from files that don't hold it: the
+        // whole `languages.<id>` entry, by JSON pointer (an id may hold a
+        // `.`, which a dot path can't name).
+        match serde_json::to_value(&lang_config) {
+            Ok(value) => self.runtime_settings.set(
+                super::editor_init::json_pointer(["languages", language.as_str()]),
+                value,
+            ),
+            Err(e) => {
+                tracing::warn!("language {language:?}: can't keep its registered config: {e}")
+            }
+        }
         self.config_mut()
             .languages
             .insert(language.clone(), lang_config);
