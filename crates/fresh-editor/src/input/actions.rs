@@ -1,7 +1,7 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
 use crate::input::edit_rules::{
-    apply_edit_rules, cursor_languages, shift_default_moves, CursorLanguages, LanguageLookup,
+    apply_edit_rules, cursor_languages, CursorLanguages, LanguageLookup,
 };
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
@@ -1083,33 +1083,46 @@ fn handle_skip_over(events: &mut Vec<Event>, cursor_id: CursorId, insert_positio
     });
 }
 
-/// Rebase the skip-over `MoveCursor`s in `events` (at the given indices)
-/// onto the buffer as it will be once every *other* cursor's edit in the
-/// same list has applied.
+/// Rebase explicit `MoveCursor`s onto edits *other* cursors make below them
+/// in the same event list.
 ///
-/// A skip-over owns no edit — its whole effect is the move — and
-/// [`handle_skip_over`] emits it in pre-edit coordinates
-/// (`insert_position + 1`). The multi-cursor applier
-/// (`apply_events_as_bulk_edit`) shifts a cursor's `MoveCursor` for other
-/// cursors' edits only when that cursor also carries an `Insert` at its own
-/// position (the auto-close shape); a move from a cursor with no such
-/// insert is taken as already post-edit, because that is what indent and
-/// the other bulk emitters produce. So with `xx` above `a()`, both cursors
-/// at end of line, typing `)` inserted one at the first cursor and left the
-/// second one byte short of stepping over its `)` — the `;` typed next went
-/// inside the parens (#3166). Bringing the skip-over moves into post-edit
-/// coordinates here, at the emitter, keeps the applier's one rule true.
+/// The multi-cursor applier (`apply_events_as_bulk_edit`) applies every
+/// `Insert`/`Delete` against the buffer as it was before the key, then
+/// shifts a cursor's `MoveCursor` target for the other edits below it only
+/// when that cursor also carries an `Insert` at its own position (the
+/// auto-close shape); any other move is taken as already post-edit, because
+/// that is what indent and the other bulk emitters produce. An emitter whose
+/// move accounts for its own edits but not for edits made elsewhere in the
+/// same list brings it into post-edit coordinates here, keeping the
+/// applier's one rule true:
 ///
-/// Only edits by *other* cursors at strictly lower positions count. A
-/// cursor's own edits are already folded into the move it emits: the
-/// dedent variant deletes and re-inserts its own line's indent and moves
-/// relative to the result, and a selection is deleted at the position the
-/// move starts from, not below it.
-fn shift_skip_over_moves(events: &mut [Event], skip_over_moves: &[usize]) {
-    if skip_over_moves.is_empty() {
-        return;
-    }
-    let edits: Vec<(CursorId, usize, isize)> = events
+/// * the skip-over `MoveCursor`s of [`insert_char_events`]: a skip-over owns
+///   no edit, so with `xx` above `a()`, both cursors at end of line, typing
+///   `)` inserted one at the first cursor and left the second one byte short
+///   of stepping over its `)` — the `;` typed next went inside the parens
+///   (#3166);
+/// * the moves the normal handler of Enter or Shift+Tab computes for the
+///   cursors no edit rule handled, which know nothing of the rules' edits
+///   on other lines ([`apply_edit_rules`]).
+///
+/// The moves are the `MoveCursor`s among `events[moves]`; the edits they are
+/// rebased onto are the `Insert`/`Delete`s among `events[edits]`, both in
+/// the buffer's coordinates before the key. Each move is keyed on
+/// `origin(cursor, old_position)`, where its cursor was before the key, and
+/// shifted (target and anchor) by the net length of the edits of *other*
+/// cursors strictly below that. A cursor's own edits are already folded into
+/// the move it emits: the dedent skip-over deletes and re-inserts its own
+/// line's indent and moves relative to the result, and a selection is
+/// deleted at the position the move starts from, not below it. A move whose
+/// cursor has an `Insert` at its origin is left alone, since the applier
+/// shifts that one itself.
+fn rebase_moves_onto_edits(
+    events: &mut [Event],
+    edits: Range<usize>,
+    moves: impl IntoIterator<Item = usize>,
+    origin: impl Fn(CursorId, usize) -> usize,
+) {
+    let edits: Vec<(CursorId, usize, isize)> = events[edits]
         .iter()
         .filter_map(|event| match event {
             Event::Insert {
@@ -1123,22 +1136,40 @@ fn shift_skip_over_moves(events: &mut [Event], skip_over_moves: &[usize]) {
             _ => None,
         })
         .collect();
-    for &index in skip_over_moves {
+    if edits.is_empty() {
+        return;
+    }
+    for index in moves {
         let Event::MoveCursor {
             cursor_id,
             old_position,
-            new_position,
             ..
-        } = &mut events[index]
+        } = events[index]
         else {
             continue;
         };
+        let origin = origin(cursor_id, old_position);
+        let applier_shifts = events.iter().any(|e| {
+            matches!(e, Event::Insert { position, cursor_id: c, .. }
+                if *c == cursor_id && *position == origin)
+        });
+        if applier_shifts {
+            continue;
+        }
         let shift: isize = edits
             .iter()
-            .filter(|(id, position, _)| *id != *cursor_id && *position < *old_position)
+            .filter(|(id, position, _)| *id != cursor_id && *position < origin)
             .map(|(_, _, delta)| delta)
             .sum();
-        *new_position = (*new_position as isize + shift).max(0) as usize;
+        if let Event::MoveCursor {
+            new_position,
+            new_anchor,
+            ..
+        } = &mut events[index]
+        {
+            *new_position = new_position.saturating_add_signed(shift);
+            *new_anchor = new_anchor.map(|a| a.saturating_add_signed(shift));
+        }
     }
 }
 
@@ -1451,7 +1482,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 /// `apply_events_as_bulk_edit`, which applies every edit against the
 /// original buffer and shifts cursor targets itself: a skip-over's
 /// `MoveCursor` is rebased onto the other cursors' edits before it leaves
-/// here (see [`shift_skip_over_moves`]), while an auto-close's is left
+/// here (see [`rebase_moves_onto_edits`]), while an auto-close's is left
 /// pre-edit for that applier to shift. Feeding the same list to
 /// `EditorState::apply` one event at a time would shift the skip-over
 /// moves a second time. Every multi-cursor dispatcher already routes lists
@@ -1640,7 +1671,10 @@ fn insert_char_events(
         });
     }
 
-    shift_skip_over_moves(events, &skip_over_moves);
+    let len = events.len();
+    rebase_moves_onto_edits(events, 0..len, skip_over_moves, |_, old_position| {
+        old_position
+    });
 }
 
 /// Calculate the maximum valid cursor position in the buffer.
@@ -3350,6 +3384,7 @@ pub fn action_to_events_with_edit_rules(
         // (one undo step).
         Action::InsertNewline => {
             let languages = cursor_languages(state, cursors, language_lookup);
+            let rules_from = events.len();
             let ruled = apply_edit_rules(
                 state,
                 cursors,
@@ -3375,14 +3410,18 @@ pub fn action_to_events_with_edit_rules(
                     estimated_line_length,
                     &languages,
                 );
-                if let Some(r) = &ruled {
-                    shift_default_moves(&mut events[from..], rest, &r.edits);
-                }
+                // Rebase its moves onto the rules' edits (none when no rule
+                // handled a cursor).
+                let to = events.len();
+                rebase_moves_onto_edits(&mut events, rules_from..from, from..to, |id, old| {
+                    rest.get(id).map_or(old, |c| c.position)
+                });
             }
         }
 
         Action::DedentSelection => {
             let languages = cursor_languages(state, cursors, language_lookup);
+            let rules_from = events.len();
             let ruled = apply_edit_rules(
                 state,
                 cursors,
@@ -3399,9 +3438,12 @@ pub fn action_to_events_with_edit_rules(
             if let Some(rest) = rest {
                 let from = events.len();
                 handle_dedent_selection(state, rest, &mut events, tab_size, estimated_line_length);
-                if let Some(r) = &ruled {
-                    shift_default_moves(&mut events[from..], rest, &r.edits);
-                }
+                // Rebase its moves onto the rules' edits (none when no rule
+                // handled a cursor).
+                let to = events.len();
+                rebase_moves_onto_edits(&mut events, rules_from..from, from..to, |id, old| {
+                    rest.get(id).map_or(old, |c| c.position)
+                });
             }
         }
 
@@ -7367,6 +7409,71 @@ mod tests {
         let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nelse");
         type_char(&mut state, &mut cursors, ':');
         assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
+    }
+
+    /// `rebase_moves_onto_edits` shifts a move (target and anchor) by the
+    /// net length of the other cursors' edits below where its cursor was,
+    /// among the events it is told to count, and leaves alone a move whose
+    /// cursor has an insert at that position (the applier shifts that one).
+    #[test]
+    fn rebase_moves_onto_edits_counts_other_cursors_edits_below() {
+        let mv = |id: usize, old: usize, new: usize, anchor: Option<usize>| Event::MoveCursor {
+            cursor_id: CursorId(id),
+            old_position: old,
+            new_position: new,
+            old_anchor: None,
+            new_anchor: anchor,
+            old_sticky_column: None,
+            new_sticky_column: None,
+        };
+        let ins = |id: usize, at: usize, text: &str| Event::Insert {
+            position: at,
+            text: text.to_string().into(),
+            cursor_id: CursorId(id),
+        };
+        let del = |id: usize, range: Range<usize>| Event::Delete {
+            deleted_text: "x".repeat(range.len()).into(),
+            range,
+            cursor_id: CursorId(id),
+        };
+        let target = |e: &Event| match e {
+            Event::MoveCursor {
+                new_position,
+                new_anchor,
+                ..
+            } => (*new_position, *new_anchor),
+            _ => unreachable!(),
+        };
+
+        let mut events = vec![
+            // The edits counted: cursor 1's, below cursor 2 and 3.
+            ins(1, 2, "abc"),
+            del(1, 5..6),
+            // Cursor 2's own edit and an edit past its origin: not counted.
+            ins(2, 8, "zz"),
+            ins(3, 40, "qqqq"),
+            // The moves.
+            mv(2, 20, 21, Some(19)),
+            mv(3, 30, 31, None),
+            mv(4, 50, 50, None),
+            // Outside the counted range: not an edit to rebase onto.
+            ins(5, 0, "nope"),
+            ins(4, 50, "!"),
+        ];
+        rebase_moves_onto_edits(&mut events, 0..4, 4..7, |_, old| old);
+        assert_eq!(target(&events[4]), (23, Some(21)), "+3 -1 below 20");
+        assert_eq!(target(&events[5]), (35, None), "+3 -1 +2 below 30");
+        assert_eq!(
+            target(&events[6]),
+            (50, None),
+            "an insert at the cursor's own position: the applier shifts it"
+        );
+
+        // The origin is the caller's: keyed on 10 rather than the move's
+        // `old_position`, only the edits below 10 count.
+        let mut events = vec![ins(1, 2, "abc"), ins(1, 12, "zz"), mv(2, 30, 31, None)];
+        rebase_moves_onto_edits(&mut events, 0..2, 2..3, |_, _| 10);
+        assert_eq!(target(&events[2]), (34, None));
     }
 }
 
