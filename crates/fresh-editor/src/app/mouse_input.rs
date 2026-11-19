@@ -708,6 +708,7 @@ impl Editor {
 
         // Check if mouse is over a transient popup - if so, keep hover active
         if self.is_mouse_over_transient_popup(col, row) {
+            self.active_window_mut().mouse_state.hover_dismiss_at = None;
             return false;
         }
 
@@ -773,9 +774,9 @@ impl Editor {
             false, // Don't include gutter
             compose_width,
         ) else {
-            // Mouse is in the gutter — stop tracking a pending request but keep
-            // any existing popup visible. The popup is only dismissed when the
-            // mouse leaves the editor area entirely (see docstring).
+            // Mouse is in the gutter — stop tracking a pending request, and
+            // let the card go after the grace period unless the pointer comes
+            // back to it (`arm_hover_dismiss`).
             if self
                 .active_window_mut()
                 .mouse_state
@@ -785,6 +786,7 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
+            self.arm_hover_dismiss();
             return false;
         };
 
@@ -825,9 +827,8 @@ impl Editor {
                 "update_lsp_hover_state: mouse past line end or empty line, clearing hover"
             );
             // Mouse is past end of line content — stop tracking a pending
-            // request but keep any existing popup visible. The popup is only
-            // dismissed when the mouse leaves the editor area entirely
-            // (see docstring).
+            // request, and let the card go after the grace period unless the
+            // pointer comes back to it (`arm_hover_dismiss`).
             if self
                 .active_window_mut()
                 .mouse_state
@@ -837,6 +838,7 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
+            self.arm_hover_dismiss();
             return false;
         }
 
@@ -844,6 +846,7 @@ impl Editor {
         if let Some((start, end)) = self.active_window_mut().hover.symbol_range() {
             if byte_pos >= start && byte_pos < end {
                 // Mouse is still over the hovered symbol - keep hover state
+                self.active_window_mut().mouse_state.hover_dismiss_at = None;
                 return false;
             }
         }
@@ -859,16 +862,54 @@ impl Editor {
             // Position changed outside the hovered symbol range. Don't dismiss
             // the popup here: a new hover request will fire after the debounce
             // and replace the popup naturally if the mouse settles on another
-            // symbol. Dismissing eagerly tore the popup down whenever the
-            // mouse passed through whitespace between two words (issue #692).
+            // symbol — or take it down if there is nothing to hover there
+            // (`handle_hover_response`, #3733). Dismissing eagerly tore the
+            // popup down whenever the mouse passed through whitespace between
+            // two words (issue #692).
         }
 
         // Start tracking new hover position (remembering which buffer the
         // pointer is over, so the request targets that buffer — not the
-        // active one — see `lsp_hover_state`).
+        // active one — see `lsp_hover_state`). That request now decides
+        // the card's fate, so a grace deadline from the gutter is dropped.
+        self.active_window_mut().mouse_state.hover_dismiss_at = None;
         self.active_window_mut().mouse_state.lsp_hover_state =
             Some((byte_pos, std::time::Instant::now(), col, row, buffer_id));
         self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
+        false
+    }
+
+    /// The pointer left the hover card for ground with nothing to hover:
+    /// start the grace period after which `check_hover_dismiss_timer` takes
+    /// the card down (#3733). Only the first such move arms it, so wandering
+    /// around does not keep pushing the deadline out.
+    fn arm_hover_dismiss(&mut self) {
+        if !self.transient_popup_showing() || self.chrome_owns_transient_popup() {
+            return;
+        }
+        let grace = std::time::Duration::from_millis(self.config.editor.mouse_hover_delay_ms);
+        let now = self.time_source.now();
+        let ms = &mut self.active_window_mut().mouse_state;
+        if ms.hover_dismiss_at.is_none() {
+            ms.hover_dismiss_at = Some(now + grace);
+        }
+    }
+
+    /// Take the hover card down once the pointer has stayed off it for the
+    /// grace period `arm_hover_dismiss` started. Returns whether that changed
+    /// the screen.
+    pub fn check_hover_dismiss_timer(&mut self) -> bool {
+        let Some(at) = self.active_window().mouse_state.hover_dismiss_at else {
+            return false;
+        };
+        if self.time_source.now() < at {
+            return false;
+        }
+        self.active_window_mut().mouse_state.hover_dismiss_at = None;
+        if self.transient_popup_showing() && !self.chrome_owns_transient_popup() {
+            self.dismiss_transient_popups();
+            return true;
+        }
         false
     }
 

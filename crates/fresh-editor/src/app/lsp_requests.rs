@@ -1144,6 +1144,18 @@ impl Editor {
                 .unwrap_or_else(|| t!("lsp.no_hover").to_string());
             self.set_status_message(message);
             self.active_window_mut().hover.set_symbol_range(None);
+            // A request the pointer made (it left a screen position to anchor
+            // the card at) and that found nothing means the pointer rested on
+            // something with no hover: the previous card is about something
+            // else and comes down (#3733). A keyboard request leaves it.
+            if self
+                .active_window_mut()
+                .hover
+                .take_screen_position()
+                .is_some()
+            {
+                self.dismiss_transient_popups();
+            }
             return;
         }
 
@@ -1380,6 +1392,9 @@ impl Editor {
             state.popups.show(popup);
             tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }
+        // A new card starts with the pointer on its symbol: no grace period
+        // left over from the previous one may take it down.
+        self.active_window_mut().mouse_state.hover_dismiss_at = None;
 
         // Mark hover request as sent to prevent duplicate popups during race conditions
         // (e.g., when mouse moves while a hover response is pending)
