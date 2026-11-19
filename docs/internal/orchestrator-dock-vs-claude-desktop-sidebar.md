@@ -6,6 +6,22 @@
 > right-edge alignment, status, pinning and grouping. Feature parity comes
 > second. It ends with ranked recommendations and code pointers._
 
+## Outcome
+
+Implemented in sinelaw/fresh#3826. That PR covers recommendations 1–7 here,
+plus the following, which went further than this review recommended or
+differs from it:
+
+- **The status symbol moved to the right after all.** It now shares one
+  constant right-hand column with the location marker, after the git
+  summary. Idle and unopened-worktree rows leave that cell blank (no `·`
+  or `○`), so the symbols that remain are the ones that ask for attention.
+- **"clean" and "· on-disk worktree" are gone from the dock.**
+- **New: By date grouping,** dated by the last time you worked in a
+  workspace (typing or editing), not the last time you looked at it.
+- **New: an agent waiting on a first-run screen now shows "needs you",**
+  and an agent with no conversation offers **Restart**, not **Resume**.
+
 ## Method and confidence
 
 **Fresh.** I installed **Fresh 0.5.9** with the getfresh.dev one-liner
