@@ -1149,6 +1149,10 @@ struct TreeRows {
     visible_rows: Option<u32>,
     /// The surface fills (`Ctx::fill`): a table takes the width it is given.
     fill: bool,
+    /// The row the pointer is over, selected or not: `RowState` says `Hover`
+    /// only for an unselected row, and a selected row shows its
+    /// `hoverAction` under the pointer too.
+    hovered_item_key: String,
 }
 
 /// The key a memoised rows subtree reconciles under among its siblings.
@@ -1195,8 +1199,10 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
             u16,
         ) -> Node<UiMsg>,
     >;
+    let hovered_item_key = Rc::new(p.hovered_item_key.clone());
     let build_row: BuildRow = {
         let keys = keys.clone();
+        let hovered_item_key = hovered_item_key.clone();
         let tree_key = tree_key.clone();
         let table = table.clone();
         Rc::new(
@@ -1209,12 +1215,14 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                 let surface = row_surface(st, &surface);
                 let mut node = node.clone();
                 node.text.normalize_widths();
+                let item_key = keys[abs].clone();
                 // The pointer is over this row: it shows what can be done
                 // with it (its `hoverAction`) where its status was.
-                if matches!(st, fresh_ui::widgets::RowState::Hover) {
+                if matches!(st, fresh_ui::widgets::RowState::Hover)
+                    || (!hovered_item_key.is_empty() && *hovered_item_key == item_key)
+                {
                     crate::widgets::render::with_hover_action(&mut node);
                 }
-                let item_key = keys[abs].clone();
                 let table = table.as_ref().filter(|_| !node.cells.is_empty());
                 let r = match table {
                     // A cell row's body is its cells, which are nodes
@@ -2958,6 +2966,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 reveal: cx.scrollbar_reveal,
                 visible_rows: *visible_rows,
                 fill: cx.fill,
+                hovered_item_key: cx.hovered_item_key.clone(),
             };
             let rows = keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key));
             // **The memo is what the enclosing column sizes**, not the window
