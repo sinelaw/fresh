@@ -2500,8 +2500,13 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
       text: "  " + s.pending.message,
       style: { fg: pendingMsgFg(s.pending), italic: true },
     });
+    return styledRow(segs as Parameters<typeof styledRow>[0]);
   }
-  return styledRow(segs as Parameters<typeof styledRow>[0]);
+  // The git summary (↑ahead ↓behind +added −deleted) flush right, the same
+  // right group a card's name row carries: the host reserves it before
+  // fitting the name, so it stands in one column down the dock and a long
+  // name is what gets cut. A row with nothing to report has no right group.
+  return cardSplitRow(segs, gitLineParts(s).right);
 }
 
 // The dock's "card" density renders each session leaf as a fixed

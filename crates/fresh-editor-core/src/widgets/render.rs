@@ -2424,6 +2424,44 @@ fn overlays_in_bytes(entry: &TextPropertyEntry) -> Vec<InlineOverlay> {
         .collect()
 }
 
+/// The byte offset a row asks to be split at — `align: "between"` with a
+/// `splitByte` strictly inside its text — or `None` for an ordinary row.
+fn between_split(entry: &TextPropertyEntry) -> Option<usize> {
+    if entry.properties.get("align").and_then(|v| v.as_str()) != Some("between") {
+        return None;
+    }
+    entry
+        .properties
+        .get("splitByte")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .filter(|&b| b > 0 && b < entry.text.len() && entry.text.is_char_boundary(b))
+}
+
+/// A between-row cut into its left and right groups, each with the overlays
+/// that fall on it (rebased to its own text).
+fn split_between_entry(
+    entry: &TextPropertyEntry,
+) -> Option<(TextPropertyEntry, TextPropertyEntry)> {
+    let b = between_split(entry)?;
+    let mut left = TextPropertyEntry::text(&entry.text[..b]);
+    let mut right = TextPropertyEntry::text(&entry.text[b..]);
+    for o in overlays_in_bytes(entry) {
+        if o.start < b {
+            let mut l = o.clone();
+            l.end = l.end.min(b);
+            left.inline_overlays.push(l);
+        }
+        if o.end > b {
+            let mut r = o;
+            r.start = r.start.max(b) - b;
+            r.end -= b;
+            right.inline_overlays.push(r);
+        }
+    }
+    Some((left, right))
+}
+
 /// Fit a two-group row (`left` = `text[..split]`, `right` = the rest) into
 /// `width` display columns with the right group flush against the end.
 ///
@@ -2626,11 +2664,19 @@ fn tree_row_pan_range(
     cols: u32,
 ) -> (i32, i32) {
     let gutter = tree_row_gutter_cols(node, checkable, indent_cols);
+    let split = split_between_entry(&node.text);
+    let right_cols = split.as_ref().map_or(0, |(_, r)| {
+        crate::primitives::display_width::str_width(&r.text) + 1
+    });
     let budget = (cols as usize)
         .saturating_sub(gutter)
-        .saturating_sub(tree_row_action_cols(node));
+        .saturating_sub(tree_row_action_cols(node))
+        .saturating_sub(right_cols);
     let w = node.window_anchor.unwrap_or_default();
-    let text = row_text(&node.text);
+    let text = match &split {
+        Some((l, _)) => std::borrow::Cow::Borrowed(l.text.as_str()),
+        None => row_text(&node.text),
+    };
     let pinned_bytes = byte_of_char(&text, w.pinned as usize);
     let (pinned, rest) = text.split_at(pinned_bytes);
     let anchor = node.window_anchor.map(|a| {
@@ -2777,16 +2823,34 @@ pub fn render_tree_row(
     // fitted to the full width would windowed itself right across the button
     // and pushed it past the panel's edge.
     let action_cols = tree_row_action_cols(node);
+    // **A right group is a gutter too.** A row split `align: "between"`
+    // keeps its right group (a status, a count) flush against the right
+    // edge — or against the action button — in one column down the tree,
+    // and only the left group is windowed. It is reserved first, with one
+    // separating column, so a long name is what gets the `…`.
+    let split = split_between_entry(&node.text);
+    let (body_src, right_group) = match split {
+        Some((l, r)) => (std::borrow::Cow::Owned(l), Some(r)),
+        None => (std::borrow::Cow::Borrowed(&node.text), None),
+    };
+    let right_cols = right_group
+        .as_ref()
+        .map_or(0, |r| crate::primitives::display_width::str_width(&r.text));
     let budget = (panel_width as usize)
         .saturating_sub(prefix_cols)
-        .saturating_sub(action_cols);
+        .saturating_sub(action_cols)
+        .saturating_sub(if right_group.is_some() {
+            right_cols + 1
+        } else {
+            0
+        });
     // **The row's own pinned head.** A search result's `path:line` is its
     // identity, not its content: a window that slid it away left rows nobody
     // could tell apart. It stays with the prefix above and the rest of the row
     // slides under it.
     let w = node.window_anchor.unwrap_or_default();
-    let pinned_bytes = byte_of_char(&node.text.text, w.pinned as usize);
-    let (pinned, rest) = node.text.text.split_at(pinned_bytes);
+    let pinned_bytes = byte_of_char(&body_src.text, w.pinned as usize);
+    let (pinned, rest) = body_src.text.split_at(pinned_bytes);
     let pinned_cols = crate::primitives::display_width::str_width(pinned);
     text.push_str(pinned);
     let rest_start = text.len();
@@ -2798,6 +2862,20 @@ pub fn render_tree_row(
     });
     let window = window_row_body(rest, budget.saturating_sub(pinned_cols), anchor, h_offset);
     text.push_str(&window.text);
+
+    // The right group, flush against the edge (or the action button's gap).
+    let right_range = right_group.as_ref().map(|r| {
+        let drawn = crate::primitives::display_width::str_width(&text);
+        let pad = (panel_width as usize)
+            .saturating_sub(action_cols)
+            .saturating_sub(right_cols)
+            .saturating_sub(drawn)
+            .max(1);
+        text.extend(std::iter::repeat_n(' ', pad));
+        let start = text.len();
+        text.push_str(&r.text);
+        start
+    });
 
     // The action button, against the panel's right edge, so a column of
     // buttons stands where the reader last left the pointer rather than
@@ -2827,8 +2905,7 @@ pub fn render_tree_row(
     // and one wholly outside the slice is dropped rather than clamped — a
     // match highlight on text that panned off screen must not reappear on the
     // row's first cell.
-    let mut overlays: Vec<InlineOverlay> = node
-        .text
+    let mut overlays: Vec<InlineOverlay> = body_src
         .inline_overlays
         .iter()
         .flat_map(|o| {
@@ -2848,6 +2925,16 @@ pub fn render_tree_row(
         })
         .flatten()
         .collect();
+
+    // The right group's own styling, moved to where the group was drawn.
+    if let (Some(r), Some(at)) = (right_group.as_ref(), right_range) {
+        overlays.extend(r.inline_overlays.iter().map(|o| {
+            let mut m = o.clone();
+            m.start += at;
+            m.end += at;
+            m
+        }));
+    }
 
     // Disclosure glyph color — only on internal nodes, where the
     // glyph is a real character (not just two spaces).
@@ -4861,6 +4948,25 @@ pub mod tests {
     fn card_between_row_gives_way_when_the_card_is_too_narrow() {
         let row = card_row("○ feat/rate-limit", "↑12 +340 −87", 18);
         assert_eq!(row, "│○ feat/rate-lim…│");
+    }
+
+    /// **A plain (compact) tree row keeps its right group flush right too.**
+    /// The group is reserved like the action button is, so a long name is
+    /// the part that gets the `…` and both rows' status ends in one column.
+    #[test]
+    fn plain_between_row_keeps_its_right_group_flush_right() {
+        let draw = |left: &str| {
+            let mut node = tnode("", 0, false);
+            node.flush = true;
+            node.text = between_row(left, "+3");
+            render_tree_row(&node, false, false, 1, false, 24, 2, 0)
+                .entry
+                .text
+        };
+        let long = draw("○ fix/auth-bypass-in-login-handler");
+        let short = draw("○ perf/db-pool");
+        assert_eq!(long, "○ fix/auth-bypass-in… +3");
+        assert_eq!(short, "○ perf/db-pool        +3");
     }
 
     /// The fitted row carries its styling with it: the name's overlay is cut
