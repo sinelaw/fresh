@@ -1171,14 +1171,13 @@ fn test_multi_cursor_enter_mixes_rule_and_bracket_expansion() {
     fs::write(&py, "# a\nff()").unwrap();
     harness.open_file(&py).unwrap();
     harness.render().unwrap();
-    // Cursors between `(` and `)`, and at the end of `# a` above it.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    for _ in 0..3 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-    }
-    harness.editor_mut().add_cursor_above();
+    // Cursors at the end of `# a`, and between `(` and `)` below it.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.render().unwrap();
     assert_eq!(harness.editor().active_cursors().count(), 2);
 
     harness

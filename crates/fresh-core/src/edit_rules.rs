@@ -1108,8 +1108,8 @@ mod tests {
             ConfiguredEditRule::new(rule_with_insert(EditRuleTrigger::Newline, insert)).unwrap()
         };
         for (written, kept) in [
-            ("\n$1", r"\n$1"),
-            (r"\n$1", r"\n$1"),
+            ("\n- ", r"\n- "),
+            (r"\n- ", r"\n- "),
             ("a\\\nb", r"a\\\nb"),
             ("a\\\\\nb", r"a\\\nb"),
             (r"\x", r"\x"),
