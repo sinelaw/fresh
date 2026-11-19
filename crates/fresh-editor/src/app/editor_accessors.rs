@@ -1175,14 +1175,6 @@ impl Editor {
         })
     }
 
-    /// Whether a buffer has unsaved changes (for the tab's modified dot).
-    pub(crate) fn buffer_is_modified(&self, id: fresh_core::BufferId) -> bool {
-        self.buffers()
-            .get(&id)
-            .map(|s| s.buffer.is_modified())
-            .unwrap_or(false)
-    }
-
     /// Active window's utility-dock panel-id → buffer-id map.
     /// Each window owns its own dock; switching windows shows a
     /// different (possibly empty) dock.

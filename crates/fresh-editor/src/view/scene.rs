@@ -476,31 +476,45 @@ impl Editor {
             .and_then(|ui| crate::view::shell::tabs::new_tab_rect(ui, size, leaf))
             .map(RectView::from);
         let rects = self.tab_rects(leaf);
-        // The names the strip resolves for its tabs, which is what the
-        // terminal's tab icons are looked up by.
-        let names = self.active_window().pane_tab_names(leaf);
+        // The strip's own tab model — names told apart, modified and preview
+        // marks, group titles — which is what the terminal's labels and file
+        // icons are made from.
+        let model: HashMap<_, _> = self
+            .active_window()
+            .pane_tabs(leaf)
+            .into_iter()
+            .map(|t| (t.target, t))
+            .collect();
+        let preview_label = fresh_i18n::t!("buffer.preview_indicator").to_string();
         let theme = self.theme.read().unwrap();
         TabBarView {
             bar: Some(RectView::from(bar)),
             new_tab,
             tabs: rects
                 .into_iter()
-                .map(|t| {
-                    let bid = t.target.as_buffer();
+                .filter_map(|r| {
+                    let tab = model.get(&r.target)?;
+                    let bid = r.target.as_buffer();
+                    // The terminal's label, whole (the web elides with CSS)
+                    // and without the modified mark, which the web draws from
+                    // `modified`.
+                    let label =
+                        crate::view::shell::tabs::label(tab, usize::MAX, &preview_label, "")
+                            .trim()
+                            .to_string();
                     // A group's tab has no file type, so no icon.
                     let icon = bid
-                        .and(names.get(&t.target))
-                        .and_then(|name| crate::view::file_icons::shown(&theme, name, None))
+                        .and_then(|_| crate::view::file_icons::shown(&theme, &tab.name, None))
                         .map(IconView::of);
-                    TabView {
+                    Some(TabView {
                         buffer_id: bid.map(|b| b.0),
-                        label: t.label,
+                        label,
                         icon,
                         active: bid == Some(active),
-                        modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
-                        rect: RectView::from(t.name),
-                        close_rect: RectView::from(t.close),
-                    }
+                        modified: tab.modified,
+                        rect: RectView::from(r.name),
+                        close_rect: RectView::from(r.close),
+                    })
                 })
                 .collect(),
         }

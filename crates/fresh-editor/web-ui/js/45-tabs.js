@@ -81,7 +81,10 @@ function tabBarEl(p, rect){
       el.onmousedown=e=>{
         if(e.target.classList.contains("x")) return;
         e.preventDefault(); e.stopPropagation();
-        if(e.button!==0){ sendClick({button:btn(e),col:c.col,row:c.row}); return; }
+        // Right (menu) and middle (close) act on the press: the menu opens at
+        // the tab's own first cell, under its left edge, as a terminal opens
+        // it under the press.
+        if(e.button!==0){ sendClick({button:btn(e),col:t.rect.x,row:t.rect.y}); return; }
         tabDrag={press:c, pressKey:key, last:c};
         sendMouse({kind:"down",button:"left",col:c.col,row:c.row});
       }; }

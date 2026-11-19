@@ -1,0 +1,10 @@
+  /* Popups on the cell grid (js/60-popups.js lays the head and body out in the
+     editor's rows). Last but one in the cascade, so this is the one place a
+     popup row's height is decided, over every skin's padding for it: one row
+     is one cell, as in the terminal. */
+  .popup .popup-head{flex:none;overflow:hidden;display:flex;flex-direction:column;justify-content:center;
+    border-bottom:none !important}
+  .popup .popup-head .popup-title,.popup .popup-head .popup-desc{padding-top:0;padding-bottom:0;border-bottom:none}
+  .popup .popup-body{flex:none;max-height:none;padding-top:0 !important;padding-bottom:0 !important;overflow:hidden}
+  .popup .popup-row,.popup .popup-line{height:var(--cell-h);line-height:var(--cell-h);box-sizing:border-box;
+    padding-top:0 !important;padding-bottom:0 !important}

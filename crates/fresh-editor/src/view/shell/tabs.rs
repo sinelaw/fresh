@@ -702,8 +702,6 @@ fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabRect {
     pub target: TabTarget,
-    /// The label as painted — elided against the strip's width.
-    pub label: String,
     pub name: ratatui::layout::Rect,
     pub close: ratatui::layout::Rect,
 }
@@ -753,29 +751,8 @@ pub fn rects(
                     0,
                     1,
                 ));
-            // The name is the node's LAST text item. With
-            // `editor.nerd_font_icons` on, `name_node` prepends the icon as
-            // two themed runs (a space, then the glyph), and themed runs are
-            // drawn one item per fragment — so the first item is that lone
-            // space, which trimmed to "" and blanked every tab in the web UI.
-            let label = ui
-                .spec()
-                .index
-                .iter()
-                .find(|(k, _)| *k == key)
-                .and_then(|(_, r)| {
-                    ui.spec().items[r.clone()]
-                        .iter()
-                        .rev()
-                        .find_map(|i| match &i.draw {
-                            fresh_ui::Draw::Lines(l) => l.first().map(|s| s.trim().to_string()),
-                            _ => None,
-                        })
-                })
-                .unwrap_or_default();
             Some(TabRect {
                 target: t,
-                label,
                 name,
                 close,
             })
@@ -1095,7 +1072,7 @@ mod tests {
             "only the tabs on screen have rectangles: {}",
             r.len()
         );
-        assert_eq!(r[0].label, "file_0.rs");
+        assert_eq!(r[0].target, buf(0));
 
         // Asking for the last tab moves the window to it — no width passed in,
         // and no offset held anywhere in the editor.
@@ -1135,27 +1112,24 @@ mod tests {
         );
     }
 
-    /// With `editor.nerd_font_icons` on, a file tab's name node starts with
-    /// the icon's runs (a space, then the glyph). The label `rects` reports —
-    /// what the web UI shows as the tab's name — is still the name, not that
-    /// leading space (which left every web tab blank).
+    /// The web UI's tab label is `label` uncapped and without the modified
+    /// mark, which it draws itself from `modified`: one dot, not two. The
+    /// preview word stays.
     #[test]
-    fn rects_label_is_the_name_when_tabs_carry_file_icons() {
-        let s = Strip {
-            file_icons: Some(Rc::new(TabIcons {
-                table: Default::default(),
-                one_color: None,
-            })),
-            ..strip_of(2)
+    fn the_web_label_is_the_name_without_the_modified_mark() {
+        let t = Tab {
+            target: buf(0),
+            name: "a_rather_long_file_name.rs".into(),
+            modified: true,
+            preview: true,
+            binary: false,
+            title: None,
         };
-        let ui = laid_out(s, PaneControls::default(), 80);
-        let r = rects(&ui, size(80), pane(), &(0..2).map(buf).collect::<Vec<_>>());
-        let labels: Vec<&str> = r.iter().map(|t| t.label.as_str()).collect();
-        assert_eq!(labels.len(), 2, "both tabs are on screen: {r:?}");
-        assert!(
-            labels[0].contains("file_0.rs") && labels[1].contains("file_1.rs"),
-            "labels carry the names, not the icon's leading space: {labels:?}"
+        assert_eq!(
+            label(&t, usize::MAX, "(preview)", "").trim(),
+            "a_rather_long_file_name.rs (preview)"
         );
+        assert!(label(&t, usize::MAX, "(preview)", "*").contains('*'));
     }
 
     /// With a control cluster the strip yields its right columns to it and

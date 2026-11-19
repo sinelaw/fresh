@@ -1143,11 +1143,17 @@ impl Editor {
         if all_in && accumulated_empty && diagnostic_lines.is_empty() {
             // Every capable server answered and none returned a hover, and
             // there are no overlapping diagnostics — report "no hover" exactly
-            // once (only fires on the final response of the batch).
-            let message = self
-                .expired_request_message("textDocument/hover")
-                .unwrap_or_else(|| t!("lsp.no_hover").to_string());
-            self.set_status_message(message);
+            // once (only fires on the final response of the batch), to the
+            // keyboard that asked. A pointer resting on a blank or a keyword
+            // asks on its own every time it settles; telling it "no hover"
+            // each time only filled the status bar with noise.
+            let from_pointer = self.active_window().hover.batch_screen_position().is_some();
+            if !from_pointer {
+                let message = self
+                    .expired_request_message("textDocument/hover")
+                    .unwrap_or_else(|| t!("lsp.no_hover").to_string());
+                self.set_status_message(message);
+            }
             self.active_window_mut().hover.set_symbol_range(None);
             // A request the pointer made (it left a screen position to anchor
             // the card at), for where the pointer still rests, that found
@@ -1157,7 +1163,6 @@ impl Editor {
             // card or its symbol clears `lsp_hover_state` — and never a card
             // the keyboard asked for or signature help
             // (`pointer_hover_card_showing`).
-            let from_pointer = self.active_window().hover.batch_screen_position().is_some();
             let ms = &self.active_window().mouse_state;
             let still_resting = ms.lsp_hover_request_sent && ms.lsp_hover_state.is_some();
             if from_pointer && still_resting && self.pointer_hover_card_showing() {

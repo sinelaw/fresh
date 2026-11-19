@@ -42,11 +42,19 @@ function popupEl(p){
       lastMoveCell={col:c.col,row:c.row,ctrl:false};
       sendMouse({kind:"moved",col:c.col,row:c.row});
     }; }
+  // **The popup is laid out in the editor's cells**, as the box around it
+  // is: the head takes exactly the rows the editor leaves above the content
+  // (the top border, where the terminal draws the title), the body exactly
+  // the content's rows, one row per line, and the rest of the box is the
+  // bottom border. Laid out freely, a padded title bar and rows a little
+  // taller than a cell outgrew the box and pushed the last rows out of it.
   const title=p.title, desc=p.description;
-  if(title){ const t=div("popup-title"); t.textContent=title; el.appendChild(t); }
-  if(desc){ const dd=div("popup-desc"); dd.textContent=desc; el.appendChild(dd); }
-  const body=div("popup-body");
   const cr=p.contentRect, n=Math.max(0,cr.h), start=p.scrollOffset||0;
+  const head=div("popup-head"); head.style.height=`${px(Math.max(0,cr.y-p.rect.y),CH)}px`;
+  if(title){ const t=div("popup-title"); t.textContent=title; head.appendChild(t); }
+  if(desc){ const dd=div("popup-desc"); dd.textContent=desc; head.appendChild(dd); }
+  el.appendChild(head);
+  const body=div("popup-body"); body.style.height=`${px(n,CH)}px`;
   const content=p.content;
   if(content.type==="list"){
     const items=content.items||[];
