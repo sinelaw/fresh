@@ -368,6 +368,7 @@
   body.theme-winamp .dropdown,body.theme-winamp .popup,body.theme-winamp .ctxmenu,
   body.theme-winamp .palette,body.theme-winamp .palette.centered,
   body.theme-winamp .settings-modal,body.theme-winamp .m-sheet,
+  body.theme-winamp .trustdialog,body.theme-winamp .kbedit,body.theme-winamp .auxmodal,
   body.theme-winamp .widget-surface.w-floatingModal{
     -webkit-backdrop-filter:none;backdrop-filter:none;
     background:var(--wa-metal);color:#e9d9c2;border:none;border-radius:3px;
@@ -480,3 +481,58 @@
   body.theme-winamp .ts-row:hover .ts-desc,body.theme-winamp .ts-row.on .ts-desc{
     color:rgba(246,242,223,.72)}
   body.theme-winamp .ts-desc{color:rgba(233,217,194,.55)}
+
+  /* ---- the rest of the chrome the skin did not reach (survey of the scene's
+     semantics): every surface below otherwise fell back to the cosmos look. */
+  /* Window titles: amber engraved caption, like the player's. */
+  body.theme-winamp .trustdialog .td-title,body.theme-winamp .kbedit .kb-title,
+  body.theme-winamp .auxmodal .am-title{background:none;border-bottom:1px solid rgba(0,0,0,.55);
+    color:var(--wa-amber);letter-spacing:.12em;text-transform:uppercase}
+  /* Their bodies are LCD panes: the keybinding table, the aux lines. */
+  body.theme-winamp .kbedit .kb-table,body.theme-winamp .auxmodal .am-body{background:var(--wa-sunken);
+    color:#9fdcb4;box-shadow:var(--wa-in)}
+  body.theme-winamp .kbedit .kb-row.kb-head{background:#120d0a;color:var(--wa-amber)}
+  body.theme-winamp .kbedit .kb-row.sel,body.theme-winamp .auxmodal .am-line.sel,
+  body.theme-winamp .trustdialog .td-opt.sel{background:var(--sel);color:#fff;border-radius:0}
+  body.theme-winamp .kbedit .kb-btn{background:var(--wa-gloss),var(--wa-plate);color:#f0dcc2;
+    border:none;border-radius:2px;box-shadow:var(--wa-ctl)}
+  body.theme-winamp .kbedit .kb-overlay,body.theme-winamp .settings-modal .set-overlay{
+    background:var(--wa-metal);border:none;border-radius:3px;box-shadow:var(--wa-seam),var(--wa-out)}
+  /* Destructive answers: red lettering on metal, as the confirmation's. */
+  body.theme-winamp .trustdialog .td-btn.destructive,body.theme-winamp .settings-modal .btn.danger{color:#ff8a7a}
+  body.theme-winamp .ctxmenu .ctxitem.destructive:not(.sel){color:#ff8a7a}
+  body.theme-winamp:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.danger"]{color:#ff8a7a}
+  /* A changed setting's name in phosphor, like a live readout. */
+  body.theme-winamp .settings-modal .set-item.modified:not(.sel) .set-name{color:var(--wa-green)}
+  /* Where a dragged tab would land: a lit phosphor frame over the code. */
+  body.theme-winamp .region.dropzone{background:rgba(78,240,127,.12);border:1px solid var(--wa-green);
+    border-radius:0;box-shadow:0 0 10px rgba(78,240,127,.35),inset 0 0 12px rgba(78,240,127,.18)}
+  /* The new-tab "+": a raised chip at the end of the tab strip. */
+  body.theme-winamp .tab-new{background:var(--wa-gloss),var(--wa-plate);color:#f0dcc2;border-radius:0;
+    box-shadow:var(--wa-out)}
+  body.theme-winamp .tab-new:hover{background:var(--wa-gloss),linear-gradient(180deg,#67503b,#4d392a)}
+  body.theme-winamp .tab.preview .name{font-style:italic}
+  /* Search option chips (case / word / regex): toggle switches on the metal. */
+  body.theme-winamp .psopt{background:var(--wa-gloss),var(--wa-plate);color:#d9c3a6;border:none;
+    border-radius:2px;box-shadow:var(--wa-ctl)}
+  body.theme-winamp .psopt.on{color:var(--wa-green);box-shadow:var(--wa-ctl-press);
+    text-shadow:0 0 6px rgba(78,240,127,.5)}
+  body.theme-winamp .psopt .psbox{border-radius:0;border-color:#241509;background:var(--wa-sunken)}
+  body.theme-winamp .psopt.on .psbox{background:var(--wa-green);border-color:var(--wa-green-dim);color:#05200e}
+  /* Split separators: engraved grooves; lit green when grabbed. */
+  body.theme-winamp .separator{background:linear-gradient(90deg,rgba(0,0,0,.7),rgba(255,226,184,.12))}
+  body.theme-winamp .separator:hover,body.theme-winamp .resize-grip:hover{background:var(--wa-green);opacity:.6}
+  /* Pane scrollbars: a metal slider in a sunken track, as the window's own. */
+  body.theme-winamp .scrollbar .thumb{background:var(--wa-plate-brush);border-radius:0;box-shadow:var(--wa-out)}
+  body.theme-winamp .scrollbar .thumb:hover{background:var(--wa-brush),linear-gradient(180deg,#67503b,#4d392a)}
+  body.theme-winamp .palette.filebrowser .fbthumb{background:var(--wa-green-dim);border-radius:0;opacity:.8}
+  body.theme-winamp .palette.filebrowser .fbchip{border-radius:2px}
+  /* The explorer's header buttons and status slots. */
+  body.theme-winamp .fileexplorer .fx-hbtn{color:#c2ab90;border-radius:0}
+  body.theme-winamp .fileexplorer .fx-hbtn:hover{color:var(--wa-amber);background:none;
+    text-shadow:0 0 6px rgba(247,201,120,.5)}
+  body.theme-winamp .fileexplorer .fx-row.multi:not(.sel){background:rgba(78,240,127,.1)}
+  /* Popups by kind: a hover card reads as a note on the metal, a completion
+     list as the playlist. */
+  body.theme-winamp .popup.popup-completion .popup-body{background:var(--wa-sunken)}
+
