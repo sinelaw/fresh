@@ -1559,10 +1559,16 @@ impl Editor {
             auto_title: None,
             held_by_trust: false,
             resume_requires: window.terminal_resume_requires.get(&terminal_id).cloned(),
-            failed_first_run: match window.terminal_resume_requires.get(&terminal_id) {
-                // The launcher named what a conversation leaves behind: ask
-                // the window's own machine whether it is there.
-                Some(path) => !window.resume_target_exists(path),
+            failed_first_run: match window
+                .terminal_resume_requires
+                .get(&terminal_id)
+                .and_then(|path| window.resume_target_exists(path))
+            {
+                // The launcher named what a conversation leaves behind: the
+                // window's own machine says whether it is there.
+                Some(found) => !found,
+                // Named nothing, or where it pointed can't be read: the
+                // first-run heuristic.
                 None => {
                     exit_code.is_some_and(|c| c != 0)
                         && window

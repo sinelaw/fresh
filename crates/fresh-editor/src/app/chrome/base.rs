@@ -14,14 +14,14 @@ use anyhow::Result as AnyhowResult;
 
 use super::Editor;
 
-/// Behavior owned by this component: the key pipeline's tail (moved
-/// verbatim from `handle_key` — the editor content's own keyboard
-/// handling, reached when every layer above has declined).
 /// How often `window_interaction` may fire for the same window. The
 /// Orchestrator dates workspaces by the day, so a half-minute is far finer
 /// than anything reads it, and coarse enough that typing costs nothing.
 const INTERACTION_HOOK_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Behavior owned by this component: the key pipeline's tail (moved
+/// verbatim from `handle_key` — the editor content's own keyboard
+/// handling, reached when every layer above has declined).
 impl Editor {
     /// Tell plugins the user did something in the active window
     /// (`window_interaction`), at most once per window per

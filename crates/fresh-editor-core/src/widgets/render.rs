@@ -2591,6 +2591,35 @@ pub fn split_between_entry(
     Some((left, right))
 }
 
+/// The split a plain tree row is drawn with, given the `avail` columns its
+/// body and right group share — or `None`, when the row has no split or
+/// reserving its right group would leave the name fewer than
+/// [`BETWEEN_MIN_LEFT_COLS`] (then the row is drawn whole and end-cut, as a
+/// card is: on a panel that narrow the name matters more than the status).
+///
+/// Works on a row whose text is still in segments (what a plugin sends,
+/// before `normalize_widths`), so the pan range measured from the spec agrees
+/// with the paint.
+fn split_for_row(
+    entry: &TextPropertyEntry,
+    avail: usize,
+) -> Option<(TextPropertyEntry, TextPropertyEntry)> {
+    let normalized;
+    let entry = if entry.segments.is_empty() {
+        entry
+    } else {
+        let mut e = entry.clone();
+        e.normalize_widths();
+        normalized = e;
+        &normalized
+    };
+    let (left, right) = split_between_entry(entry)?;
+    use crate::primitives::display_width::str_width;
+    let left_budget = avail.checked_sub(str_width(&right.text) + 1)?;
+    let left_cols = str_width(left.text.trim_end_matches(' '));
+    (left_budget >= BETWEEN_MIN_LEFT_COLS.min(left_cols)).then_some((left, right))
+}
+
 /// Fit a two-group row (`left` = `text[..split]`, `right` = the rest) into
 /// `width` display columns with the right group flush against the end.
 ///
@@ -2794,14 +2823,14 @@ fn tree_row_pan_range(
     cols: u32,
 ) -> (i32, i32) {
     let gutter = tree_row_gutter_cols(node, checkable, indent_cols);
-    let split = split_between_entry(&node.text);
+    let avail = (cols as usize)
+        .saturating_sub(gutter)
+        .saturating_sub(tree_row_action_cols(node));
+    let split = split_for_row(&node.text, avail);
     let right_cols = split.as_ref().map_or(0, |(_, r)| {
         crate::primitives::display_width::str_width(&r.text) + 1
     });
-    let budget = (cols as usize)
-        .saturating_sub(gutter)
-        .saturating_sub(tree_row_action_cols(node))
-        .saturating_sub(right_cols);
+    let budget = avail.saturating_sub(right_cols);
     let w = node.window_anchor.unwrap_or_default();
     let text = match &split {
         Some((l, _)) => std::borrow::Cow::Borrowed(l.text.as_str()),
@@ -2958,7 +2987,12 @@ pub fn render_tree_row(
     // edge — or against the action button — in one column down the tree,
     // and only the left group is windowed. It is reserved first, with one
     // separating column, so a long name is what gets the `…`.
-    let split = split_between_entry(&node.text);
+    let split = split_for_row(
+        &node.text,
+        (panel_width as usize)
+            .saturating_sub(prefix_cols)
+            .saturating_sub(action_cols),
+    );
     let (body_src, right_group) = match split {
         Some((l, r)) => (std::borrow::Cow::Owned(l), Some(r)),
         None => (std::borrow::Cow::Borrowed(&node.text), None),
@@ -5141,6 +5175,25 @@ pub mod tests {
         )
         .unwrap();
         assert!(plain.text.contains('…'));
+    }
+
+    /// **The name keeps a readable minimum on a plain row too.** A right
+    /// group too wide to leave the name its columns is not reserved: the row
+    /// is drawn whole and cut at its end, rather than as a status with no
+    /// name and wider than the panel.
+    #[test]
+    fn plain_between_row_gives_way_when_the_panel_is_too_narrow() {
+        let mut node = tnode("", 0, false);
+        node.flush = true;
+        node.text = between_row("feature-name", "↑3 ↓12 +1234 −567");
+        let text = render_tree_row(&node, false, false, 1, false, 20, 2, 0)
+            .entry
+            .text;
+        assert!(text.starts_with("feature-name"), "{text:?}");
+        assert!(
+            crate::primitives::display_width::str_width(&text) <= 20,
+            "never wider than the panel: {text:?}"
+        );
     }
 
     /// The fitted row carries its styling with it: the name's overlay is cut

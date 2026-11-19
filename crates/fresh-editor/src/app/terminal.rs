@@ -1197,6 +1197,12 @@ impl Window {
                 .cloned();
             let ephemeral = self.ephemeral_terminals.contains(&old_id);
             let script_access = self.terminal_has_script_access(old_id);
+            // An agent with no conversation to rejoin is re-run from its
+            // launch command here too, as on restore and on restart.
+            let first_run = self
+                .terminal_resume_requires
+                .get(&old_id)
+                .is_some_and(|p| self.resume_target_missing(p));
 
             let spawn = RespawnSpec {
                 old_id,
@@ -1209,7 +1215,7 @@ impl Window {
                 launch_argv,
                 ephemeral,
                 script_access,
-                first_run: false,
+                first_run,
             };
             match self.respawn_terminal_pty(buffer_id, spawn) {
                 Some(_) => revived += 1,

@@ -1943,10 +1943,19 @@ function loadInteracted(): Record<string, number> {
 // a new stable id, and the root is what still says it is the same workspace.
 // The stable id's own entry wins where both exist, so co-tenants sharing a
 // root keep their own dates.
+// Entries kept: the most recent, so a store that outlives deleted workspaces
+// can't grow without bound. Far more than a dock lists.
+const INTERACTED_MAX = 400;
+
 function recordInteraction(stableId: string | undefined, root: string, at = Date.now()): void {
   const store = loadInteracted();
   if (stableId) store[stableIdKey(stableId)] = at;
   store[normRoot(root)] = at;
+  const keys = Object.keys(store);
+  if (keys.length > INTERACTED_MAX) {
+    keys.sort((a, b) => store[a] - store[b]);
+    for (const k of keys.slice(0, keys.length - INTERACTED_MAX)) delete store[k];
+  }
   editor.setGlobalState(INTERACTED_KEY, store as unknown as object);
 }
 
@@ -2423,6 +2432,16 @@ interface DockTree {
 // matching descendant are dropped so results aren't buried under empty
 // folders.
 function buildDockTree(filtered: number[]): DockTree {
+  dockRemoteThisBuild = null;
+  dockRemoteThisBuild = dockHasRemote();
+  try {
+    return buildDockTreeRows(filtered);
+  } finally {
+    dockRemoteThisBuild = null;
+  }
+}
+
+function buildDockTreeRows(filtered: number[]): DockTree {
   const nodes: TreeNode[] = [];
   const keys: string[] = [];
   const model: DockNode[] = [];
@@ -2770,7 +2789,11 @@ function withRowMenuOnHover(row: TextPropertyEntry): TextPropertyEntry {
 // stands to the left of the column, and the name gets what remains: the
 // host reserves the whole right group before fitting the name.
 
+// Whether any workspace is remote, settled once per tree build (see
+// `buildDockTree`) rather than walked again for every row.
+let dockRemoteThisBuild: boolean | null = null;
 function dockHasRemote(): boolean {
+  if (dockRemoteThisBuild !== null) return dockRemoteThisBuild;
   for (const s of orchestratorSessions.values()) if (s.remote) return true;
   return false;
 }
@@ -3719,20 +3742,28 @@ function scheduleScreenTail(s: AgentSession): void {
   s.screenTailPending = true;
   const quietFor = (): number => (s.lastOutputAt === null ? Infinity : Date.now() - s.lastOutputAt);
   const run = async (): Promise<void> => {
-    while (quietFor() < IDLE_AFTER_MS) {
-      await editor.delay(Math.max(50, IDLE_AFTER_MS - quietFor() + 50));
+    let screens: TerminalScreen[] = [];
+    // Wait for quiet, read, and — when output arrived during the read (its
+    // own call found this read pending and left it to us) — wait again.
+    for (;;) {
+      while (quietFor() < IDLE_AFTER_MS) {
+        await editor.delay(Math.max(50, IDLE_AFTER_MS - quietFor() + 50));
+      }
+      screens = await editor.getTerminalScreens(s.id);
+      if (quietFor() >= IDLE_AFTER_MS) break;
     }
-    const screens = await editor.getTerminalScreens(s.id);
     s.screenTailPending = false;
-    // Output arrived while the screen was read: that output re-arms a read.
-    if (quietFor() < IDLE_AFTER_MS || orchestratorSessions.get(s.id) !== s) return;
+    if (orchestratorSessions.get(s.id) !== s) return;
     // The agent's own terminal: the window's only one, or the one its tab
-    // names after the agent; failing both, every terminal in the window.
+    // names after the agent. With several and none named for it, there is no
+    // telling which is the agent's, and a side shell's `[y/N]` must not mark
+    // the agent as needing you — so no tail, as the cursor-row history
+    // already keeps to the agent's own terminal.
     const own = screens.length <= 1
       ? screens
       : screens.filter((sc) => s.terminalTitle && sc.name === s.terminalTitle);
     const tail: string[] = [];
-    for (const sc of own.length > 0 ? own : screens) {
+    for (const sc of own) {
       tail.push(...sc.lines.map((l) => l.trim()).filter((l) => l !== "").slice(-RECENT_LINES));
     }
     s.screenTail = tail;
@@ -7328,7 +7359,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     if (s?.url && plan?.kind !== "teleport") {
       items.push({ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser", ...(items.length ? {} : { intent: "primary" as const }) });
     }
-    items.push({ label: editor.t("dock.ctx_move"), key: "ctx-live-move" });
+    if (dockGroupBy() !== "date") items.push({ label: editor.t("dock.ctx_move"), key: "ctx-live-move" });
     return contextMenuSpec(s ? s.title : state.target.key, items, [], s ? liveInfoLines(s) : []);
   }
   // A folder's context menu: organise actions (Rename / New Subfolder /
@@ -7371,7 +7402,8 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     [
       { label: editor.t("dock.ctx_visit"), key: "ctx-visit", intent: "primary" },
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename-session" },
-      { label: editor.t("dock.ctx_move"), key: "ctx-move" },
+      // By date there are no folders on screen to pick from.
+      ...(dockGroupBy() === "date" ? [] : [{ label: editor.t("dock.ctx_move"), key: "ctx-move" }]),
       { label: editor.t(s && isPinned(s) ? "dock.ctx_unpin" : "dock.ctx_pin"), key: "ctx-pin" },
       // Re-scans the whole list, not just this row: a worktree added or
       // removed outside the editor shows up (or goes) without reopening the
@@ -7569,6 +7601,14 @@ function fileDockRow(row: DockNode, folderId: string | null): void {
  *  that is only in one. */
 function dropFolderFor(row: DockNode, to: DockNode): string | null | undefined {
   const external = row.kind === "live";
+  // By date there are no folders on screen to drop into, and a pinned row
+  // stands outside its folder: dropping on either would file the row into
+  // a folder the user can't see.
+  if (to.kind !== "folder" && dockGroupBy() === "date") return undefined;
+  if (to.kind === "session") {
+    const target = orchestratorSessions.get(to.sessionId);
+    if (target && isPinned(target)) return undefined;
+  }
   switch (to.kind) {
     case "folder":
       // A dock heading is no place to file a row.
@@ -19031,6 +19071,8 @@ editor.on("widget_event", (e) => {
     // The `⋯` a hovered row shows (see `withRowMenuOnHover`) → that row's
     // menu, anchored at the row the way the keyboard's is.
     if (e.event_type === "action" && dockMode && e.widget_key === "sessions") {
+      // Choosing a folder to move into: a row's menu is not a target.
+      if (movePick) return;
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const key = typeof payload.key === "string" ? payload.key : null;
       if (openDialog && key && openDialog.dockKeys.includes(key)) {

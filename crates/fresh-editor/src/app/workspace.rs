@@ -1105,7 +1105,7 @@ impl crate::app::window::Window {
             .agent_resume
             .as_ref()
             .and_then(|r| r.requires.as_deref())
-            .is_some_and(|p| !self.resume_target_exists(p));
+            .is_some_and(|p| self.resume_target_missing(p));
         let resume_argv = terminal
             .agent_resume
             .as_ref()
@@ -1296,7 +1296,7 @@ impl crate::app::window::Window {
                 // Nothing to rejoin when the conversation it needs isn't there.
                 failed_first_run: resume_requires
                     .as_deref()
-                    .is_some_and(|p| !self.resume_target_exists(p)),
+                    .is_some_and(|p| self.resume_target_missing(p)),
                 resume_requires,
             },
         );

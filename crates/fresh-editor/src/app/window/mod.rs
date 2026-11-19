@@ -2821,20 +2821,32 @@ impl Window {
     /// level (`~/.claude/projects/*/<id>.jsonl`): the agent names the folder
     /// after the cwd in ways not worth re-deriving, and the id alone is
     /// unique.
-    pub fn resume_target_exists(&self, path: &std::path::Path) -> bool {
+    ///
+    /// `None` — can't tell — when the folder the path would be in is not
+    /// there at all. That is what a launcher that guessed the agent's
+    /// storage wrong (another config dir, a changed layout) looks like, and a
+    /// wrong "no conversation" would turn a working Resume into a re-launch
+    /// for good; callers fall back to their pre-check behaviour instead.
+    pub fn resume_target_exists(&self, path: &std::path::Path) -> Option<bool> {
         use crate::model::host_path::HostPath;
         let fs = &self.authority().filesystem;
+        let exists = |p: &std::path::Path| fs.exists(HostPath::from_os_str(p.as_os_str()));
         let spelled = path.to_string_lossy();
         let Some((dir, rest)) = spelled.split_once("/*/") else {
-            return fs.exists(HostPath::from_os_str(path.as_os_str()));
+            if exists(path) {
+                return Some(true);
+            }
+            return path.parent().filter(|d| exists(d)).map(|_| false);
         };
-        let Ok(entries) = fs.read_dir(HostPath::from_os_str(std::ffi::OsStr::new(dir))) else {
-            return false;
-        };
-        entries.iter().any(|e| {
-            let candidate = e.path.as_path().join(rest);
-            fs.exists(HostPath::from_os_str(candidate.as_os_str()))
-        })
+        let entries = fs
+            .read_dir(HostPath::from_os_str(std::ffi::OsStr::new(dir)))
+            .ok()?;
+        Some(entries.iter().any(|e| exists(&e.path.as_path().join(rest))))
+    }
+
+    /// The conversation a terminal's resume needs is known not to be there.
+    pub fn resume_target_missing(&self, path: &std::path::Path) -> bool {
+        self.resume_target_exists(path) == Some(false)
     }
 
     pub fn authority(&self) -> &crate::services::authority::Authority {

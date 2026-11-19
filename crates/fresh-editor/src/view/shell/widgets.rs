@@ -2966,7 +2966,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 reveal: cx.scrollbar_reveal,
                 visible_rows: *visible_rows,
                 fill: cx.fill,
-                hovered_item_key: cx.hovered_item_key.clone(),
+                // Only a tree whose rows change under the pointer carries
+                // it: the memo compares this, and a pointer moving over any
+                // other tree must not rebuild its rows.
+                hovered_item_key: if nodes.iter().any(|n| {
+                    n.text
+                        .properties
+                        .contains_key(crate::widgets::render::HOVER_ACTION_PROPERTY)
+                }) {
+                    cx.hovered_item_key.clone()
+                } else {
+                    String::new()
+                },
             };
             let rows = keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key));
             // **The memo is what the enclosing column sizes**, not the window
