@@ -3225,7 +3225,9 @@ fn dock_card_git_line_right_aligned_to_card_border() {
         let Some(inner) = line.split('│').nth(1) else {
             return false;
         };
-        !inner.ends_with(' ') && line[..b].contains("zzz_other")
+        // `+2`, one space, then the state cell — the row's last, blank
+        // while idle — against the border.
+        (inner.ends_with("+2  ") || inner.ends_with("+2 *")) && line[..b].contains("zzz_other")
     })
     .unwrap();
 }

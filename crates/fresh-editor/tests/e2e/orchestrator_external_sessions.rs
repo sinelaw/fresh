@@ -593,7 +593,7 @@ fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
         .unwrap();
     // The copy is a workspace named as the session; the cloud row stays and
     // says where the copy went.
-    h.wait_until(|h| h.screen_to_string().contains("· Fix the auth bug"))
+    h.wait_until(|h| workspace_row(&h.screen_to_string(), "Fix the auth bug"))
         .unwrap();
     let screen = h.screen_to_string();
     assert!(
@@ -636,7 +636,7 @@ fn teleporting_the_same_session_twice_gives_each_copy_its_own_worktree() {
             .any(|n| n == "fix-the-auth-bug")
     })
     .unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("· Fix the auth bug"))
+    h.wait_until(|h| workspace_row(&h.screen_to_string(), "Fix the auth bug"))
         .unwrap();
 
     start_teleport(&mut h);
@@ -684,7 +684,7 @@ fn a_name_typed_over_the_proposed_one_names_the_copy() {
 
     h.wait_until(|_| worktree_names(&root).iter().any(|n| n == "auth-work"))
         .unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("· auth-work"))
+    h.wait_until(|h| workspace_row(&h.screen_to_string(), "auth-work"))
         .unwrap();
     // The workspaces are the rows above the Claude group, whose own row
     // for the cloud session keeps the session's title.
@@ -836,4 +836,16 @@ fn a_drag_whose_release_is_lost_stops_being_drawn() {
     .unwrap();
     h.wait_until(|h| !lifted(h) && codex_band(h) != band)
         .unwrap();
+}
+
+/// Whether the dock lists a *workspace* named `name`: a row above the
+/// external sessions' `▼ Claude` group, read left of the dock wall. The
+/// cloud session a copy was made from keeps the same title on its own row
+/// under that group, and a workspace row carries no leading state glyph to
+/// tell the two apart by (the state sits at the row's right edge).
+fn workspace_row(screen: &str, name: &str) -> bool {
+    screen
+        .lines()
+        .take_while(|l| !l.contains("▼ Claude"))
+        .any(|l| l.split('│').next().unwrap_or("").contains(name))
 }
