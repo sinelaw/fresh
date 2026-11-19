@@ -13,7 +13,7 @@ Every stop is a screenshot; the frames become
   homepage/public/assets/orchestrator.webp        the loop, an animated WebP
   homepage/public/assets/orchestrator.mp4         the same, for the link
   homepage/public/assets/shots/orchestrator.webp  its first frame, the still
-  homepage/public/assets/shots/review-diff.webp   the db-pool-tuning stop
+  homepage/public/assets/shots/review-diff.webp   db-pool-tuning, dock closed
 
 Every frame is the whole kitty window, status bar included.
 
@@ -44,7 +44,7 @@ REVIEW = 4                      # db-pool-tuning: its change open in Review Diff
 HOLD = 1.2                      # seconds on each workspace
 HOLD_SHOTS = 3                  # frames per hold, so working agents move
 HOP = 0.09                      # seconds per row passed over
-UP, DOWN, DOCK = "\x1b[A", "\x1b[B", "\x1bo"
+UP, DOWN, DOCK, ESC, PALETTE = "\x1b[A", "\x1b[B", "\x1bo", "\x1b", "\x10"
 
 
 def main():
@@ -65,7 +65,7 @@ def main():
                 "COLUMNS": str(COLS), "LINES": str(ROWS)})
 
     frames = []                 # (png, seconds on screen)
-    review = []                 # index of the first frame on db-pool-tuning
+    review_png = os.path.join(FRAMES, "review-diff.png")
 
     with Display() as d:
         k = Kitty(d, [rec.FRESH, "--no-upgrade-check"], cwd=rec.DEMO, env=env, cols=COLS, rows=ROWS)
@@ -91,8 +91,6 @@ def main():
                 frames.append((p, secs))
 
             def hold():
-                if row == REVIEW:
-                    review.append(len(frames))
                 for _ in range(HOLD_SHOTS):
                     t0 = time.monotonic()
                     snap(HOLD / HOLD_SHOTS)
@@ -117,12 +115,28 @@ def main():
                 time.sleep(0.6)
                 if i < row - STOPS[0] - 1:
                     snap(HOP)
+
+            # the Review Diff still: db-pool-tuning with the dock closed, so
+            # the diff has the whole window
+            for _ in range(REVIEW - STOPS[0]):
+                k.send(DOWN)
+                time.sleep(0.3)
+            time.sleep(1.5)
+            k.send(ESC)                   # out of the dock, into the workspace
+            time.sleep(0.8)
+            k.send(PALETTE)
+            time.sleep(0.8)
+            k.send("Orchestrator: Toggle Dock")
+            time.sleep(1.2)
+            k.send("\r")
+            time.sleep(2.0)
+            k.shot(review_png)
         finally:
             k.close()
             os.system("pkill -9 -f 'target/debug/fresh' 2>/dev/null; pkill -9 -f coding_agent.py 2>/dev/null; "
                       "pkill -9 -f waiting_agent.py 2>/dev/null")
     print(f"{len(frames)} frames, {sum(s for _, s in frames):.1f}s")
-    encode(frames, frames[review[0]][0])
+    encode(frames, review_png)
 
 
 def still(png, name):

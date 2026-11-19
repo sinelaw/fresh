@@ -21,15 +21,16 @@ imageio-ffmpeg`). Work files go to `target/ad/` (`AD_WORK` overrides).
 
 ## Landing page media
 
-The landing page (`homepage/index.html`) plays the calm cut in its hero. Its
-stills and the Orchestrator loop are screenshots of the current build running
+The landing page (`homepage/index.html`) does not use the cut: its hero is a
+terminal window sliding between the page's own stills. The stills and the
+Orchestrator loop are screenshots of the current build running
 in a real kitty window on a virtual X display, in the Quiet theme (the Settings
 editor in High Contrast) with JetBrainsMono Nerd Font and Nerd Font icons on.
 They replay the same scripted clips as the ad (`rec.py`), each in a window
 sized for its still and photographed whole, so the status bar is real too.
 
 ```sh
-scripts/ad/site.sh                     # stills + Orchestrator loop (+ film after build.sh)
+scripts/ad/site.sh                     # stills + Orchestrator loop
 python3 scripts/ad/kitty_shots.py palette settings   # just these stills
 python3 scripts/ad/kitty_orchestrator.py              # just the Orchestrator loop
 ```
@@ -62,7 +63,7 @@ mkdir -p ~/.local/share/fonts/nerd && curl -fsSL https://github.com/ryanoasis/ne
 | `kitty.py` | Runs a program in kitty on a private Xvfb display, types into it over kitty's remote-control socket, and screenshots the window |
 | `kitty_shots.py` | Website stills: replays a `rec.py` clip in kitty and grabs the window at a moment; one still per theme for the crossfade |
 | `kitty_orchestrator.py` + `orchestrator_init.ts` | The Orchestrator loop: an `init.ts` builds six workspaces in two folders, then the dock walks through them, one screenshot per stop, into an animated WebP, an mp4 and the still |
-| `site.sh` | Runs both of the above, and writes a 720×1280 encode of the calm cut into `homepage/public/assets/` |
+| `site.sh` | Runs both of the above |
 | `favicon.py` | Cuts the leaf out of `docs/logo.png`, brightens it, and writes the landing page's favicons |
 
 ## Editing the cut

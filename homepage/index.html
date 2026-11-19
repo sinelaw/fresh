@@ -228,8 +228,8 @@
         .hero { padding: 150px 0 0; }
         .hero-grid {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 380px;
-            gap: 90px;
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+            gap: 64px;
             align-items: center;
         }
         .hero-text { min-width: 0; }
@@ -238,36 +238,56 @@
         .hero-links .free { color: var(--faint); }
         .keep { white-space: nowrap; }
 
-        /* The film, in a slim black frame */
-        .film {
-            position: relative;
-            margin: 0;
-            border-radius: 26px;
-            padding: 8px;
-            background: #050506;
-            border: 1px solid var(--line-2);
-            box-shadow: 0 60px 120px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.6);
+        /* The hero: a terminal window sliding between the views shown
+           further down the page (the same image files, so nothing extra to
+           load). Plain images and a CSS animation: no video, no script, so it
+           shows in every browser (#3822: Safari drew no picture for the old
+           video). 7 views x 4 s = 28 s; each holds, then slides
+           0.7 s to the next; the track ends on a copy of the first view so
+           the loop is seamless. Images of slightly different shapes are
+           fitted to the top left on the terminal's own background. */
+        .hero-demo { margin: 0; min-width: 0; }
+        .slides { position: relative; overflow: hidden; aspect-ratio: 2000 / 1383; background: #18191e; }
+        .slides-track {
+            display: flex; width: 800%; height: 100%;
+            animation: slide 28s cubic-bezier(0.65, 0, 0.35, 1) infinite;
         }
-        .film video {
-            display: block; width: 100%; height: auto;
-            aspect-ratio: 9 / 16;
-            border-radius: 19px;
-            background: #0c0d0f;
-            cursor: pointer;
+        .window .slides-track img {
+            flex: none; width: 12.5000%; height: 100%;
+            object-fit: contain; object-position: left top;
         }
-        .film-sound {
-            position: absolute; right: 22px; bottom: 22px;
-            background: rgba(12, 13, 15, 0.72);
-            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+        @keyframes slide {
+            0%, 11.786% { transform: translateX(0); }
+            14.286%, 26.071% { transform: translateX(-12.5000%); }
+            28.571%, 40.357% { transform: translateX(-25.0000%); }
+            42.857%, 54.643% { transform: translateX(-37.5000%); }
+            57.143%, 68.929% { transform: translateX(-50.0000%); }
+            71.429%, 83.214% { transform: translateX(-62.5000%); }
+            85.714%, 97.5% { transform: translateX(-75.0000%); }
+            100% { transform: translateX(-87.5000%); }
+        }
+        .slide-names { position: absolute; right: 14px; bottom: 14px; height: 30px; min-width: 150px; }
+        .slide-names span {
+            position: absolute; right: 0; bottom: 0;
+            white-space: nowrap;
+            font-size: 11.5px; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase;
+            color: var(--paper-2);
+            background: rgba(12, 13, 15, 0.86);
             border: 1px solid var(--line-2);
             border-radius: 999px;
-            color: var(--paper-2);
-            font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.06em;
-            padding: 7px 14px;
-            cursor: pointer;
-            transition: border-color 0.3s var(--ease), color 0.3s var(--ease);
+            padding: 6px 13px;
+            opacity: 0;
+            animation: slide-name 28s linear infinite both;
+            animation-delay: calc(var(--i) * 4s);
         }
-        .film-sound:hover { color: var(--paper); border-color: var(--sage); }
+        @keyframes slide-name {
+            0% { opacity: 0; } 1.25% { opacity: 1; } 11.071% { opacity: 1; } 12.143% { opacity: 0; } 100% { opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .slides-track { animation: none; }
+            .slide-names span { animation: none; }
+            .slide-names span:first-child { opacity: 1; }
+        }
         .hero .eyebrow { display: block; margin-bottom: 30px; }
         .hero h1 {
             font-family: var(--serif);
@@ -577,6 +597,12 @@
             gap: 64px;
             align-items: center;
         }
+        .review-text { min-width: 0; }
+        .review-text .eyebrow { display: block; margin-bottom: 16px; color: var(--sage); }
+        .review-text h3 { font-family: var(--serif); font-weight: 400; font-size: 2.2rem; line-height: 1.1; color: var(--paper); }
+        .review-text h3 em { color: var(--sage); }
+        .review-text p { margin-top: 16px; color: var(--paper-2); font-size: 16px; }
+        .review-text .points { margin-top: 24px; }
 
         /* ---------- Sections with a centred head ---------- */
         .section { padding: 150px 0 0; }
@@ -721,7 +747,7 @@
             .hero-text .lede { margin-left: auto; margin-right: auto; }
             .hero-text .install { margin-left: auto; margin-right: auto; }
             .hero-text .install-tabs, .hero-text .hero-links { justify-content: center; }
-            .film { max-width: 360px; margin: 0 auto; }
+            .hero-demo { max-width: 720px; width: 100%; margin: 0 auto; }
             .beats { grid-template-columns: 1fr; gap: 40px; margin: 64px 0; }
             .orchestra-review { grid-template-columns: 1fr; gap: 36px; }
             .teach { grid-template-columns: 1fr; gap: 28px; padding: 30px 24px; }
@@ -745,7 +771,6 @@
             .window-bar { height: 30px; }
             .ticker { margin-top: 80px; }
             .orchestra { padding: 110px 0 100px; }
-            .film { max-width: 300px; }
             .section { padding-top: 110px; }
             .closing { padding: 130px 0 110px; }
             .footer-row { flex-direction: column; align-items: flex-start; }
@@ -807,7 +832,7 @@
         </div>
     </div>
 
-    <!-- Hero: the opening line of the film, and the film itself -->
+    <!-- Hero: the opening line, and Fresh itself sliding between views -->
     <header class="hero" id="top">
         <div class="wrap hero-grid">
             <div class="hero-text">
@@ -837,14 +862,25 @@
                 </div>
             </div>
 
-            <!-- The 30-second film, cut from live recordings of the current
-                 build (scripts/ad). Muted autoplay loop; with reduced motion it
-                 waits on its poster until asked. -->
-            <figure class="film reveal">
-                <video id="film" src="public/assets/fresh-film.mp4" poster="public/assets/fresh-film-poster.webp"
-                       width="720" height="1280" muted loop playsinline preload="metadata"
-                       aria-label="A 30-second film of Fresh: familiar editing, themes, the settings editor and the Orchestrator"></video>
-                <button type="button" class="film-sound" id="film-sound" aria-pressed="false">Sound on</button>
+            <!-- A terminal window sliding between views of Fresh: the stills
+                 from the sections below (scripts/ad/kitty_shots.py). -->
+            <figure class="hero-demo reveal">
+                <div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">fresh</span></div>
+                    <div class="slides" role="img" aria-label="Fresh in a terminal, sliding between views: the Orchestrator dock with agents in their workspaces, Review Diff, editing with multiple cursors, the command palette, the Quiet theme, the Settings editor, and a 2 GB log file">
+                        <div class="slides-track">
+                            <img src="public/assets/shots/orchestrator.webp" alt="" width="2000" height="1383" decoding="async" fetchpriority="high">
+                            <img src="public/assets/shots/review-diff.webp" alt="" width="2000" height="1383" decoding="async">
+                            <img src="public/assets/shots/multicursor.webp" alt="" width="1681" height="1233" decoding="async">
+                            <img src="public/assets/shots/palette.webp" alt="" width="2000" height="1320" decoding="async">
+                            <img src="public/assets/shots/theme-quiet.webp" alt="" width="1600" height="1100" decoding="async">
+                            <img src="public/assets/shots/settings.webp" alt="" width="2000" height="1400" decoding="async">
+                            <img src="public/assets/shots/huge-file.webp" alt="" width="1600" height="1100" decoding="async">
+                            <img src="public/assets/shots/orchestrator.webp" alt="" width="2000" height="1383" decoding="async">
+                        </div>
+                        <div class="slide-names" aria-hidden="true"><span style="--i:0">Orchestrator</span><span style="--i:1">Review Diff</span><span style="--i:2">Multi-cursor</span><span style="--i:3">Command palette</span><span style="--i:4">Quiet theme</span><span style="--i:5">Settings</span><span style="--i:6">A 2 GB log</span></div>
+                    </div>
+                </div>
             </figure>
         </div>
 
@@ -918,14 +954,19 @@
             <div class="orchestra-review reveal" id="git-review">
                 <a href="public/assets/shots/review-diff.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">review diff</span></div>
-                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff in a workspace beside the Orchestrator dock: the hunks of a change to src/cache.rs, with added and removed lines" width="2000" height="1383" loading="lazy" decoding="async">
+                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff of a workspace's change to src/cache.rs: its hunks, with added and removed lines" width="2000" height="1383" loading="lazy" decoding="async">
                 </div></a>
-                <ul class="points">
-                    <li>Hunk-level stage / unstage / discard</li>
-                    <li>Side-by-side diff view</li>
-                    <li>Line comments and review notes, exported to Markdown</li>
-                    <li>Git gutter, git log viewer, git grep</li>
-                </ul>
+                <div class="review-text">
+                    <span class="eyebrow">Review Diff</span>
+                    <h3>Read the change <em>before it lands.</em><a class="anchor-link" href="#git-review" aria-label="Permalink to Review Diff">#</a></h3>
+                    <p>Every change in a workspace, hunk by hunk, whether you wrote it or an agent did. Stage what's ready, send back what isn't, and keep your notes beside the lines they are about.</p>
+                    <ul class="points">
+                        <li>Hunk-level stage / unstage / discard</li>
+                        <li>Side-by-side diff view</li>
+                        <li>Line comments and review notes, exported to Markdown</li>
+                        <li>Git gutter, git log viewer, git grep</li>
+                    </ul>
+                </div>
             </div>
         </div>
     </section>
@@ -1599,41 +1640,6 @@
             const start = () => setTimeout(loadBeacons, 0);
             if (document.readyState === 'complete') start();
             else window.addEventListener('load', start);
-        })();
-    </script>
-
-    <!-- The film plays, muted, while it is on screen, and pauses when it
-         is not. With reduced motion it waits on its poster until clicked. -->
-    <script>
-        (function () {
-            const v = document.getElementById('film');
-            const btn = document.getElementById('film-sound');
-            if (!v) return;
-            const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            let wanted = !calm;
-            const setSound = on => {
-                v.muted = !on;
-                btn.textContent = on ? 'Sound off' : 'Sound on';
-                btn.setAttribute('aria-pressed', on);
-            };
-            btn.addEventListener('click', e => {
-                e.stopPropagation();
-                setSound(v.muted);
-                wanted = true;
-                v.play().catch(() => {});
-            });
-            v.addEventListener('click', () => {
-                if (v.paused) { wanted = true; v.play().catch(() => {}); }
-                else { wanted = false; v.pause(); }
-            });
-            if ('IntersectionObserver' in window) {
-                new IntersectionObserver(([e]) => {
-                    if (e.isIntersecting && wanted) v.play().catch(() => {});
-                    else if (!e.isIntersecting) v.pause();
-                }, { threshold: 0.35 }).observe(v);
-            } else if (wanted) {
-                v.play().catch(() => {});
-            }
         })();
     </script>
 
