@@ -290,7 +290,7 @@ impl LanguageManifestConfig {
     pub fn to_language_config(&self) -> LanguageConfig {
         LanguageConfig {
             comment_prefix: self.comment_prefix.clone(),
-            auto_indent: self.auto_indent.unwrap_or(true),
+            auto_indent: self.auto_indent,
             show_whitespace_tabs: self.show_whitespace_tabs.unwrap_or(true),
             use_tabs: self.use_tabs,
             tab_size: self.tab_size,

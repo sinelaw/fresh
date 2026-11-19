@@ -2698,7 +2698,7 @@ impl Editor {
         // Convert LanguagePackConfig to the internal LanguageConfig format
         let lang_config = crate::config::LanguageConfig {
             comment_prefix: config.comment_prefix,
-            auto_indent: config.auto_indent.unwrap_or(true),
+            auto_indent: config.auto_indent,
             use_tabs: config.use_tabs,
             tab_size: config.tab_size,
             show_whitespace_tabs: config.show_whitespace_tabs.unwrap_or(true),

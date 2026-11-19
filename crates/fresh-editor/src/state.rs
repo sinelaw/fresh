@@ -156,6 +156,11 @@ pub struct BufferSettings {
     /// Set based on language config; can be changed per-buffer by user
     pub tab_size: usize,
 
+    /// Whether Enter indents the new line (and a typed closer re-indents
+    /// its line). Set based on global + language config: a language's
+    /// `auto_indent` wins, otherwise `editor.auto_indent`.
+    pub auto_indent: bool,
+
     /// Whether to auto-close brackets, parentheses, and quotes.
     /// Set based on global + language config.
     pub auto_close: bool,
@@ -209,6 +214,7 @@ impl Default for BufferSettings {
             whitespace_override: None,
             tab_indicators_override: None,
             tab_size: 4,
+            auto_indent: true,
             auto_close: true,
             auto_surround: true,
             virtual_space: crate::config::VirtualSpaceMode::default(),
@@ -242,6 +248,7 @@ impl BufferSettings {
             .use_tabs_override
             .or(self.editorconfig.use_tabs)
             .unwrap_or(resolved.use_tabs);
+        self.auto_indent = resolved.auto_indent;
         self.auto_close = resolved.auto_close;
         self.auto_surround = resolved.auto_surround;
         self.virtual_space = self

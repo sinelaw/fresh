@@ -1635,9 +1635,12 @@
           "default": null
         },
         "auto_indent": {
-          "description": "Auto-indent new lines.",
-          "type": "boolean",
-          "default": true
+          "description": "Auto-indent new lines. `null` uses `editor.auto_indent`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
         },
         "auto_close": {
           "description": "Auto-close brackets and quotes. `null` uses `editor.auto_close`.",

@@ -4886,11 +4886,9 @@ interface LanguageConfig {
 		*/
 		comment_prefix?: string | null;
 		/**
-		* Auto-indent new lines.
-		*
-		* Default: `true`
+		* Auto-indent new lines. `null` uses `editor.auto_indent`.
 		*/
-		auto_indent?: boolean;
+		auto_indent?: boolean | null;
 		/**
 		* Auto-close brackets and quotes. `null` uses `editor.auto_close`.
 		*/

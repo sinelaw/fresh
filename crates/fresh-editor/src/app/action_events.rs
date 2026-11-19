@@ -16,7 +16,6 @@ impl crate::app::window::Window {
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
-        let auto_indent = self.config().editor.auto_indent;
         let estimated_line_length = self.config().editor.estimated_line_length;
 
         // Use the *effective* active split: when the user is focused on an
@@ -77,6 +76,9 @@ impl crate::app::window::Window {
         self.buffers
             .with_buffer_and_split(buffer_id, active_split, |state, vs| {
                 let tab_size = state.buffer_settings.tab_size;
+                // Per buffer: the language's `auto_indent` when it sets one,
+                // else `editor.auto_indent` (#3815).
+                let auto_indent = state.buffer_settings.auto_indent;
                 let auto_close = state.buffer_settings.auto_close;
                 let auto_surround = state.buffer_settings.auto_surround;
                 convert_action_to_events(

@@ -2322,3 +2322,83 @@ fn test_config_indent_next_line_pattern_applies() {
         content
     );
 }
+
+/// Open `name` holding `content` under `config`, press Enter at the end of
+/// the buffer and return the buffer text (#3815 helpers).
+fn enter_at_end_with(config: Config, name: &str, content: &str) -> String {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join(name);
+    std::fs::write(&file_path, content).unwrap();
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.get_buffer_content().unwrap()
+}
+
+/// #3815: a language's `auto_indent: false` reaches Enter — the new line
+/// starts at column 0 although `editor.auto_indent` is on.
+#[test]
+fn test_language_auto_indent_false_gives_plain_newline() {
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    config.languages.get_mut("python").unwrap().auto_indent = Some(false);
+    assert_eq!(
+        enter_at_end_with(config, "t.py", "def foo():\n    x = 1"),
+        "def foo():\n    x = 1\n"
+    );
+}
+
+/// #3815: the built-in Makefile config sets `auto_indent: false`, so Enter
+/// after a recipe line no longer copies its tab.
+#[test]
+fn test_makefile_builtin_auto_indent_false() {
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    assert_eq!(
+        enter_at_end_with(config, "Makefile", "all:\n\techo hi"),
+        "all:\n\techo hi\n"
+    );
+}
+
+/// #3815: a language that doesn't set `auto_indent` follows the global
+/// setting, on or off.
+#[test]
+fn test_global_auto_indent_applies_when_language_unset() {
+    let mut config = Config::default();
+    assert_eq!(config.languages["python"].auto_indent, None);
+    config.editor.auto_indent = false;
+    assert_eq!(
+        enter_at_end_with(config.clone(), "t.py", "def foo():\n    x = 1"),
+        "def foo():\n    x = 1\n"
+    );
+    config.editor.auto_indent = true;
+    assert_eq!(
+        enter_at_end_with(config, "t.py", "def foo():\n    x = 1"),
+        "def foo():\n    x = 1\n    "
+    );
+}
+
+/// #3815: the per-language value wins over the global one.
+#[test]
+fn test_language_auto_indent_true_wins_over_global_false() {
+    let mut config = Config::default();
+    config.editor.auto_indent = false;
+    config.languages.get_mut("python").unwrap().auto_indent = Some(true);
+    assert_eq!(
+        enter_at_end_with(config, "t.py", "def foo():\n    x = 1"),
+        "def foo():\n    x = 1\n    "
+    );
+}

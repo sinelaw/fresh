@@ -260,8 +260,10 @@ fn language_entry_text_field_aligns_with_toggles() {
     let bracket_col = |needle: &str| -> Option<usize> {
         let line = screen.lines().find(|l| l.contains(needle))?;
         // The value cell's `[` is the first `[` after the `: ` column.
+        // Counted in characters, not bytes: rows differ in multi-byte
+        // markers (`●` on a nullable field) before the label.
         let colon = line.find(": [")?;
-        Some(colon + 2)
+        Some(line[..colon].chars().count() + 2)
     };
     let grammar_col = bracket_col("Grammar").unwrap_or_else(|| {
         panic!("Grammar row should render an aligned `: [` cell; screen:\n{screen}")

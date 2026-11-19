@@ -1273,7 +1273,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             filenames: Some(cfg.filenames.clone()),
             grammar: Some(cfg.grammar.clone()),
             comment_prefix: cfg.comment_prefix.clone(),
-            auto_indent: Some(cfg.auto_indent),
+            auto_indent: cfg.auto_indent,
             auto_close: cfg.auto_close,
             auto_surround: cfg.auto_surround,
             textmate_grammar: cfg.textmate_grammar.clone(),
@@ -1305,7 +1305,7 @@ impl PartialLanguageConfig {
             comment_prefix: self
                 .comment_prefix
                 .or_else(|| defaults.comment_prefix.clone()),
-            auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
+            auto_indent: self.auto_indent.or(defaults.auto_indent),
             auto_close: self.auto_close.or(defaults.auto_close),
             auto_surround: self.auto_surround.or(defaults.auto_surround),
             textmate_grammar: self
@@ -1654,7 +1654,7 @@ impl Default for LanguageConfig {
             filenames: Vec::new(),
             grammar: String::new(),
             comment_prefix: None,
-            auto_indent: true,
+            auto_indent: None,
             auto_close: None,
             auto_surround: None,
             textmate_grammar: None,

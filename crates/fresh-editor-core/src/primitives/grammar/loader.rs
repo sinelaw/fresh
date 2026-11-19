@@ -890,7 +890,7 @@ mod tests {
                 filenames: vec!["CUSTOMBUILD".to_string()],
                 grammar: "Bourne Again Shell (bash)".to_string(),
                 comment_prefix: Some("#".to_string()),
-                auto_indent: true,
+                auto_indent: Some(true),
                 auto_close: None,
                 auto_surround: None,
                 textmate_grammar: None,
