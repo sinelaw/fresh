@@ -284,22 +284,24 @@ impl QuickOpenRegistry {
         }
     }
 
+    /// The registered file provider, which owns the project's file list.
+    fn file_provider(&self) -> Option<&FileProvider> {
+        let (provider, _) = self.get_provider_for_input("")?;
+        provider.as_any().downcast_ref::<FileProvider>()
+    }
+
     /// Keep the file picker aligned with the project explorer toggles.
     pub fn set_file_visibility(&self, show_hidden: bool) {
-        if let Some((provider, _)) = self.get_provider_for_input("") {
-            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
-                fp.set_visibility(show_hidden);
-            }
+        if let Some(fp) = self.file_provider() {
+            fp.set_visibility(show_hidden);
         }
     }
 
     /// List gitignored files in the file picker when the project explorer
     /// shows them.
     pub fn set_file_include_gitignored(&self, include_gitignored: bool) {
-        if let Some((provider, _)) = self.get_provider_for_input("") {
-            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
-                fp.set_include_gitignored(include_gitignored);
-            }
+        if let Some(fp) = self.file_provider() {
+            fp.set_include_gitignored(include_gitignored);
         }
     }
 
@@ -308,20 +310,24 @@ impl QuickOpenRegistry {
     /// created outside the editor shows up on the next open rather than only
     /// after a restart (issue #3765).
     pub fn mark_file_list_stale(&self) {
-        if let Some((provider, _)) = self.get_provider_for_input("") {
-            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
-                fp.mark_stale();
-            }
+        if let Some(fp) = self.file_provider() {
+            fp.mark_stale();
+        }
+    }
+
+    /// Stop (and retire) any background file scan. Called when the file
+    /// finder closes, however it closes.
+    pub fn cancel_file_loading(&self) {
+        if let Some(fp) = self.file_provider() {
+            fp.cancel_loading();
         }
     }
 
     /// Leave out of the file picker what `file_explorer.custom_ignore_patterns`
     /// ignores.
     pub fn set_file_ignore_patterns(&self, patterns: &[String]) {
-        if let Some((provider, _)) = self.get_provider_for_input("") {
-            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
-                fp.set_custom_ignore_patterns(patterns);
-            }
+        if let Some(fp) = self.file_provider() {
+            fp.set_custom_ignore_patterns(patterns);
         }
     }
 

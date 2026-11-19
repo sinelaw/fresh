@@ -977,16 +977,8 @@ impl Editor {
                     }
                 }
                 PromptType::QuickOpen => {
-                    // Cancel any in-progress background file loading
-                    if let Some((provider, _)) = self.quick_open_registry.get_provider_for_input("")
-                    {
-                        if let Some(fp) = provider
-                            .as_any()
-                            .downcast_ref::<crate::input::quick_open::providers::FileProvider>(
-                        ) {
-                            fp.cancel_loading();
-                        }
-                    }
+                    // The background file scan is stopped in `drop_prompt`,
+                    // which both this path and the confirm path go through.
                     // Undo any live goto-line preview so the cursor returns to
                     // where it was before the prompt was opened.
                     self.restore_goto_line_preview_snapshot();

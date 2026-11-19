@@ -601,6 +601,15 @@ impl Editor {
     /// exactly as long as the prompt that shows it.
     pub(crate) fn drop_prompt(&mut self) -> Option<crate::view::prompt::Prompt> {
         let prompt = self.active_window_mut().prompt.take()?;
+        // Stop the file finder's background scan here rather than in
+        // `cancel_prompt`, because that is only the Esc path: confirming with
+        // Enter is the *common* way to leave the finder, and it used to walk
+        // the project on after the user had moved on. A scan left running
+        // also makes the next open treat it as covering that open's
+        // staleness mark, so a file created in between stayed invisible.
+        if prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen {
+            self.quick_open_registry.cancel_file_loading();
+        }
         if let Some(key) = &prompt.toolbar {
             let _ = self.widget_registry.unmount(key);
         }
