@@ -322,10 +322,18 @@ impl Editor {
     }
 
     pub(super) fn refresh_open_buffer_settings_from_config(&mut self) {
+        self.refresh_open_buffer_settings_for(None);
+    }
+
+    /// Re-resolve the settings of the open buffers in `language` (every open
+    /// buffer for `None`) from the current config.
+    pub(super) fn refresh_open_buffer_settings_for(&mut self, language: Option<&str>) {
         let config = self.config.clone();
         for window in self.windows.values_mut() {
             for state in window.buffers.as_map_mut().values_mut() {
-                state.apply_buffer_config(&config);
+                if language.is_none_or(|language| state.language == language) {
+                    state.apply_buffer_config(&config);
+                }
             }
         }
     }
