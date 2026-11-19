@@ -2158,9 +2158,14 @@ mod tests {
 
         let user_config_path = resolver.user_config_path();
         std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        // At the current version, so no migration touches the file: a save
+        // brings an older one up to date first, and v1→v2 adds `{remote}` to
+        // a customised `status_bar.left`, as loading it would.
         std::fs::write(
             &user_config_path,
-            "{\n  \"editor\": {\n    \"status_bar\": { \"left\": [] },\n    \"theme\": \"\"\n  }\n}",
+            format!(
+                "{{\n  \"version\": {CURRENT_CONFIG_VERSION},\n  \"editor\": {{\n    \"status_bar\": {{ \"left\": [] }},\n    \"theme\": \"\"\n  }}\n}}"
+            ),
         )
         .unwrap();
 
