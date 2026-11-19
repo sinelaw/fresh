@@ -294,6 +294,8 @@ pub struct TabView {
 pub struct TabBarView {
     pub bar: Option<RectView>,
     pub tabs: Vec<TabView>,
+    /// The strip's `+` (new file / terminal), while it is on screen.
+    pub new_tab: Option<RectView>,
 }
 
 // ─────────────────────────── status bar ───────────────────────────
@@ -419,8 +421,14 @@ impl Editor {
             return TabBarView::default();
         };
         let active = self.active_buffer();
+        let new_tab = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| crate::view::shell::tabs::new_tab_rect(ui, size, leaf))
+            .map(RectView::from);
         TabBarView {
             bar: Some(RectView::from(bar)),
+            new_tab,
             tabs: self
                 .tab_rects(leaf)
                 .into_iter()

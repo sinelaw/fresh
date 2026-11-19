@@ -137,6 +137,7 @@
     cells: CellRow[],
     tabBar: Rect | Null,
     tabs: Tab[],
+    newTab: Rect | Null,
     vscroll: Rect,
     thumbStart: Number,
     thumbEnd: Number,
@@ -158,7 +159,7 @@
 
 // view/scene.rs `TabBarView`. Not sent as a unit: its fields travel as
 // `Pane.tabBar` (= `bar`) and `Pane.tabs`.
-/** type TabBar = { bar: Rect | Null, tabs: Tab[] } */
+/** type TabBar = { bar: Rect | Null, tabs: Tab[], newTab: Rect | Null } */
 
 // ───────────────────────────── menu ─────────────────────────────
 

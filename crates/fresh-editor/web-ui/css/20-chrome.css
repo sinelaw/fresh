@@ -51,6 +51,10 @@
   .tab.modified .dot{display:inline-block}
   .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
   .tab .x:hover{background:#5a5a5a;color:#fff}
+  /* The strip's `+` (#3754) and the pointer while a tab is held past a click. */
+  .tabbar .tab-new{display:flex;align-items:center;padding:0 10px;color:var(--muted);flex:0 0 auto;cursor:default}
+  .tabbar .tab-new:hover{color:var(--fg);background:var(--hover,rgba(255,255,255,.06))}
+  body.tabdragging,body.tabdragging *{cursor:grabbing !important}
 
   /* ---- status bar (native) ---- */
   .statusbar{display:flex;align-items:center;background:var(--status-bg);color:var(--status-fg);

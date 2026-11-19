@@ -783,6 +783,21 @@ pub fn rects(
         .collect()
 }
 
+/// Where a pane's `+` is on screen, clipped to the tab window it rides in —
+/// `None` while it is scrolled out of view (or the strip has no tabs). The web
+/// tab bar draws its own `+` from this and sends its click here (#3754).
+pub fn new_tab_rect(
+    ui: &fresh_ui::Ui<UiMsg>,
+    size: ratatui::layout::Rect,
+    pane: LeafId,
+) -> Option<ratatui::layout::Rect> {
+    let window = ui.rect_of(ui.find_by_key(&tab_window_key(pane))?);
+    let r = ui
+        .rect_of(ui.find_by_key(&new_tab_key(pane))?)
+        .intersect(window);
+    (r.w > 0 && r.h > 0).then(|| super::screen_rect(r, size))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
