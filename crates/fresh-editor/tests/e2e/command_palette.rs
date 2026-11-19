@@ -2497,3 +2497,41 @@ fn test_quick_open_tab_completes_across_a_backslash_in_a_name() {
         "Tab should stop where the two names diverge: {prompt}"
     );
 }
+
+/// Quick Open lists a file created outside the editor, without a restart.
+///
+/// The provider loads the project's file list once per cwd, and closing the
+/// prompt only cancelled an in-flight walk — it left the list in place. So a
+/// file that appeared while the editor was running stayed invisible to the
+/// finder for the life of the process (issue #3765).
+///
+/// The new file has to sit in a **subdirectory** for this to bite. For a name
+/// typed at the project root the provider's direct `read_dir` prefix probe
+/// finds the file whether the cached list is current or not, which is exactly
+/// what masked the bug in day-to-day use.
+#[test]
+fn test_quick_open_lists_a_file_created_outside_the_editor() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let subdir = project_root.join("outsidesub");
+    fs::create_dir(&subdir).unwrap();
+    fs::write(subdir.join("outside_existing.txt"), "existing\n").unwrap();
+
+    // First open builds and caches the file list — the precondition for the
+    // bug. Waiting on a file the prefix probe cannot reach from a bare name
+    // is what proves the cached list is what put it on screen.
+    type_in_quick_open_file_mode(&mut harness, "outside_", &["outside_existing.txt"]);
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Created behind the editor's back, as `git switch` or a scaffolding tool
+    // would.
+    fs::write(subdir.join("outside_zeta.txt"), "zeta\n").unwrap();
+
+    // The next open has to find it. Without the reload this waits forever:
+    // the cached list predates the file, and a bare name gives the prefix
+    // probe no directory to look in.
+    type_in_quick_open_file_mode(&mut harness, "outside_zeta", &["outside_zeta.txt"]);
+}

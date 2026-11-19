@@ -239,6 +239,14 @@ impl Editor {
         prompt.set_input_plain(prefix.to_string());
         self.set_prompt(prompt);
 
+        // The file list is cached per cwd for the life of the process, and
+        // closing the prompt only cancels an in-flight walk. Mark it stale on
+        // every open so files created outside the editor since the last open
+        // are picked up; the cached entries stay on screen while the reload
+        // runs, and no reload starts at all unless the user actually asks the
+        // file provider for suggestions.
+        self.quick_open_registry.mark_file_list_stale();
+
         self.update_quick_open_suggestions(prefix);
     }
 
@@ -969,16 +977,8 @@ impl Editor {
                     }
                 }
                 PromptType::QuickOpen => {
-                    // Cancel any in-progress background file loading
-                    if let Some((provider, _)) = self.quick_open_registry.get_provider_for_input("")
-                    {
-                        if let Some(fp) = provider
-                            .as_any()
-                            .downcast_ref::<crate::input::quick_open::providers::FileProvider>(
-                        ) {
-                            fp.cancel_loading();
-                        }
-                    }
+                    // The background file scan is stopped in `drop_prompt`,
+                    // which both this path and the confirm path go through.
                     // Undo any live goto-line preview so the cursor returns to
                     // where it was before the prompt was opened.
                     self.restore_goto_line_preview_snapshot();

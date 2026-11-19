@@ -339,6 +339,25 @@ struct FileCache {
     /// The latest load's cancel flag. Each load gets its own, so starting a
     /// new one can't revive one that was told to stop.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set when the file finder opens: the cached list was built at some
+    /// earlier point and the tree may have moved under it since. The next
+    /// request for the list serves the cached entries *and* starts a reload,
+    /// so the user waits for no walk but also never holds a list that only a
+    /// restart can refresh.
+    ///
+    /// A load already in flight satisfies the mark — it was started no
+    /// earlier than the previous time the finder opened.
+    stale: bool,
+    /// Whether `files` is a *complete* list rather than a partial snapshot
+    /// from a walk still in progress. A cancelled walk can leave a short list
+    /// behind, so "there are entries" is not the same as "the list is whole":
+    /// partial suppression and the scanning indicator both key off this.
+    complete: bool,
+    /// Whether the in-flight load is refreshing a list that is already on
+    /// screen and complete. Such a load's partial results are dropped: swapping a
+    /// complete list for a growing prefix of a new walk makes rows the user
+    /// is reading vanish and come back.
+    revalidating: bool,
 }
 
 /// Provider for finding files in the project.
@@ -370,6 +389,17 @@ pub struct FileProvider {
     custom_ignore_patterns: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
+/// Whether a reload over this cache is refreshing a list that is already
+/// complete on screen — the only case where the walk's partial snapshots must
+/// be dropped rather than shown.
+///
+/// "Has entries" is not enough: a cancelled walk can leave a short list, and a
+/// walk still arriving leaves a growing one. Dropping partials over either
+/// would strand the finder on that short list for the length of the reload.
+fn refreshing_complete_list(cache: &FileCache) -> bool {
+    cache.files.is_some() && cache.complete
+}
+
 impl FileProvider {
     /// Rows the file finder hands to the palette for one keystroke. The
     /// palette shows ten at a time and the list is re-ranked on every
@@ -399,6 +429,9 @@ impl FileProvider {
                 loaded_cwd: None,
                 generation: 0,
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                stale: false,
+                revalidating: false,
+                complete: false,
             })),
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             filesystem,
@@ -480,6 +513,31 @@ impl FileProvider {
             c.files = None;
             c.loading = false;
             c.loaded_cwd = None;
+            // Nothing is cached to be stale, and the next load starts cold.
+            c.stale = false;
+            c.revalidating = false;
+            c.complete = false;
+        }
+    }
+
+    /// Mark the cached file list as possibly out of date without discarding
+    /// it, so the next request for it serves the cached entries and starts a
+    /// reload in the background.
+    ///
+    /// Called when the file finder opens. The list is loaded once per cwd and
+    /// nothing else invalidates it, so a file created outside the editor —
+    /// `git switch`, a scaffolding tool, another editor — stayed invisible to
+    /// the finder until the editor was restarted (issue #3765). Only files
+    /// under a subdirectory went missing in practice: for a name typed at the
+    /// project root [`Self::probe_prefix`] reads the directory directly and
+    /// never consults this cache.
+    ///
+    /// Unlike [`Self::clear_cache`] this keeps the entries, because the
+    /// finder is wired to avoid making the user wait on a walk: dropping them
+    /// would put "Loading files…" in front of every open on a large project.
+    pub fn mark_stale(&self) {
+        if let Ok(mut c) = self.cache.lock() {
+            c.stale = true;
         }
     }
 
@@ -488,7 +546,17 @@ impl FileProvider {
     pub fn cancel_loading(&self) {
         if let Ok(mut c) = self.cache.lock() {
             c.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            // Retire the load as well as stopping it: bumping the generation
+            // makes `set_cache` / `set_partial_cache` reject anything it still
+            // sends. `walk_dir_with_updates` delivers its final `complete`
+            // result without re-checking the cancel flag, and that result is
+            // whatever prefix the walk had reached — empty, for a walk
+            // cancelled early. Without this it would replace a good cached
+            // list with that prefix, which is worse than the staleness this
+            // whole mechanism exists to fix.
+            c.generation += 1;
             c.loading = false;
+            c.revalidating = false;
         }
     }
 
@@ -503,6 +571,8 @@ impl FileProvider {
             }
             c.files = Some(files);
             c.loading = false;
+            c.revalidating = false;
+            c.complete = true;
         }
     }
 
@@ -518,14 +588,32 @@ impl FileProvider {
             if c.loaded_cwd.as_deref() != Some(cwd) || c.generation != generation {
                 return;
             }
+            // Refreshing a list the user can already see: a growing prefix of
+            // the new walk is a *smaller* list than the one on screen, so
+            // showing it would drop rows and then bring them back. Partial
+            // results exist to fill an empty finder; wait for the complete
+            // one instead.
+            if c.revalidating {
+                return;
+            }
             c.files = Some(files);
+            c.complete = false;
             // Keep c.loading = true — the walk is still in progress.
         }
     }
 
-    /// Returns `true` if a background file scan is in progress.
-    fn is_loading(&self) -> bool {
-        self.cache.lock().is_ok_and(|c| c.loading)
+    /// Whether the finder should report its list as still being built.
+    ///
+    /// A reload refreshing a list that is already complete on screen must not:
+    /// every row is there, and saying otherwise adds a "Scanning…" row and —
+    /// through [`QuickOpenProvider::suggestions_incomplete`] — turns Tab
+    /// path-completion off for the length of the walk, on every open. Before
+    /// the list was revalidated at all, a second open completed instantly;
+    /// keeping this quiet is what preserves that.
+    fn load_visible_as_scanning(&self) -> bool {
+        self.cache
+            .lock()
+            .is_ok_and(|c| c.loading && !(c.complete && c.files.is_some()))
     }
 
     /// Record file access for frecency ranking
@@ -662,12 +750,24 @@ impl FileProvider {
         // picker keeps showing the first project's files.
         let cwd_matches = cache.loaded_cwd.as_deref() == Some(cwd);
         if cwd_matches {
-            if let Some(files) = &cache.files {
-                return Some(std::sync::Arc::clone(files));
-            }
             if cache.loading {
-                return None; // already loading this cwd
+                // A load for this cwd is already running. Closing the prompt
+                // retires the load (`cancel_loading`), so one still running
+                // here was started after this open's staleness mark — it
+                // discharges the mark. Serve what there is (`None` while the
+                // first load is still filling the cache, which shows
+                // "Loading…").
+                cache.stale = false;
+                return cache.files.clone();
             }
+            if !cache.stale {
+                if let Some(files) = &cache.files {
+                    return Some(std::sync::Arc::clone(files));
+                }
+            }
+            // Nothing cached yet, or the list is stale and no load is
+            // running: fall through to start one. A stale list is returned
+            // below so the finder keeps showing results meanwhile.
         } else {
             // Stale cwd: cancel any in-flight load for the old cwd and
             // reset so the load below starts fresh for `cwd`.
@@ -678,9 +778,20 @@ impl FileProvider {
             cache.loading = false;
         }
 
-        // No cache for this cwd, not loading — kick off background load
+        // No usable cache for this cwd, not loading — kick off background load
+        let serving = cache.files.clone();
+        // Only a complete list may be refreshed silently. A partial one (left
+        // by a walk that was cancelled, or still arriving) has to keep taking
+        // the incremental updates, or the finder would sit on a short list for
+        // the length of the walk.
+        let refreshing_complete_list = refreshing_complete_list(&cache);
         cache.loaded_cwd = Some(cwd.to_string());
         cache.generation += 1;
+        // The load starting here reflects the tree as of now, so it discharges
+        // the staleness mark immediately rather than on completion — otherwise
+        // every keystroke would start another walk.
+        cache.stale = false;
+        cache.revalidating = refreshing_complete_list;
         let generation = cache.generation;
         let (sender, runtime) = match (&self.async_sender, &self.runtime) {
             (Some(s), Some(rt)) => (s.clone(), rt.clone()),
@@ -755,16 +866,24 @@ impl FileProvider {
             walk_dir_with_updates(
                 &*filesystem,
                 &cwd,
-                generation,
+                WalkReport {
+                    sender: &sender,
+                    generation,
+                    // Building a snapshot every 300ms — a full clone of every
+                    // path found so far — only to have the receiver drop it
+                    // is pure waste, and each one also costs the UI a re-match
+                    // over the cached list.
+                    send_partials: !refreshing_complete_list,
+                },
                 &cancel,
                 &frecency,
-                &sender,
                 show_hidden,
                 &custom_ignore,
             );
         });
 
-        None
+        // Whatever was cached stays on screen until the reload completes.
+        serving
     }
 
     /// Synchronous fallback when no tokio runtime is available (e.g., tests).
@@ -865,17 +984,34 @@ const WALK_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 
 /// Walk the directory tree, sending periodic partial updates to the UI so
 /// fuzzy results can be recalculated as new files are discovered.
+/// Where a walk sends its results, and whether the caller wants the
+/// incremental ones. Grouped so the walk keeps a readable signature.
+struct WalkReport<'a> {
+    sender: &'a std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
+    /// Stamped on every message so a superseded or retired load's results can
+    /// be told apart from the current one's.
+    generation: u64,
+    /// Partial snapshots fill an *empty* finder. When the reload is
+    /// refreshing a list that is already complete on screen the receiver
+    /// drops them, so the walk does not build them in the first place.
+    send_partials: bool,
+}
+
 fn walk_dir_with_updates(
     fs: &dyn crate::model::filesystem::FileSystem,
     cwd: &str,
-    generation: u64,
+    report: WalkReport<'_>,
     cancel: &std::sync::atomic::AtomicBool,
     frecency: &std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>,
-    sender: &std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
     show_hidden: bool,
     custom_ignore: &CustomIgnore,
 ) {
     use std::path::Path;
+    let WalkReport {
+        sender,
+        generation,
+        send_partials,
+    } = report;
 
     let base = Path::new(cwd);
     let mut paths: Vec<String> = Vec::new();
@@ -895,7 +1031,7 @@ fn walk_dir_with_updates(
             paths.push(rel.to_string());
 
             // Send a partial snapshot at regular intervals.
-            if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
+            if send_partials && last_send.elapsed() >= WALK_UPDATE_INTERVAL {
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = paths
                     .iter()
@@ -933,6 +1069,11 @@ fn walk_dir_with_updates(
     }
 
     if receiver_gone {
+        return;
+    }
+    // A cancelled walk's `paths` is a truncated prefix, not the project. The
+    // git fast path already declines to report one; so must this.
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
 
@@ -1006,7 +1147,7 @@ impl QuickOpenProvider for FileProvider {
         // Get cached files (may be partial during an in-progress scan) or
         // kick off a background load.
         let files = self.get_or_start_loading(&context.cwd);
-        let still_loading = self.is_loading();
+        let still_loading = self.load_visible_as_scanning();
 
         // Fast prefix probe: check the filesystem directly for the query
         // treated as a literal path prefix.  This gives instant results even
@@ -1493,6 +1634,196 @@ mod tests {
     /// backend. Before this re-pointing existed the provider was stuck on its
     /// construction-time (local) spawner, which is exactly what surfaced host
     /// files in a remote session.
+    /// Seed the cache as a finished load for `cwd` would leave it.
+    fn seed_complete(fp: &FileProvider, cwd: &str, names: &[&str]) {
+        let mut c = fp.cache.lock().unwrap();
+        c.loaded_cwd = Some(cwd.to_string());
+        c.files = Some(std::sync::Arc::new(
+            names
+                .iter()
+                .map(|n| FileEntry {
+                    relative_path: (*n).to_string(),
+                    frecency_score: 0.0,
+                })
+                .collect(),
+        ));
+        c.complete = true;
+        c.loading = false;
+    }
+
+    fn cached_paths(fp: &FileProvider) -> Vec<String> {
+        let c = fp.cache.lock().unwrap();
+        c.files
+            .as_ref()
+            .map(|f| f.iter().map(|e| e.relative_path.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Marking the list stale must cost exactly one reload, not one per
+    /// keystroke. The mark is discharged when the load *starts*; with no
+    /// runtime every `suggestions()` would otherwise walk the tree again.
+    ///
+    /// Invisible on screen (the rows look the same either way), so it is
+    /// pinned here rather than in an e2e test.
+    #[test]
+    fn stale_mark_is_discharged_when_the_reload_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap().to_string();
+        let fp = make_file_provider();
+        seed_complete(&fp, &cwd, &["seeded.txt"]);
+
+        fp.mark_stale();
+        assert!(fp.cache.lock().unwrap().stale, "open marks the list stale");
+
+        // First request after the mark reloads (sync fallback, no runtime).
+        let _ = fp.get_or_start_loading(&cwd);
+        assert!(
+            !fp.cache.lock().unwrap().stale,
+            "the reload that just started covers the mark"
+        );
+
+        // A second request in the same prompt session must not reload again:
+        // the real list is empty here, so a re-walk would be observable as a
+        // generation bump.
+        let gen_after_first = fp.cache.lock().unwrap().generation;
+        let _ = fp.get_or_start_loading(&cwd);
+        assert_eq!(
+            fp.cache.lock().unwrap().generation,
+            gen_after_first,
+            "a second keystroke must not start another walk"
+        );
+    }
+
+    /// A walk that was cancelled must not be able to replace a good list with
+    /// the prefix it had reached. `walk_dir_with_updates` sends its final
+    /// `complete` result without re-reading the cancel flag, so the guard has
+    /// to be the generation that `cancel_loading` bumps.
+    #[test]
+    fn a_cancelled_load_cannot_clobber_the_cached_list() {
+        let fp = make_file_provider();
+        seed_complete(&fp, "/proj", &["a.txt", "b.txt"]);
+
+        // A reload starts, then the prompt closes.
+        let generation = {
+            let mut c = fp.cache.lock().unwrap();
+            c.generation += 1;
+            c.loading = true;
+            c.revalidating = true;
+            c.generation
+        };
+        fp.cancel_loading();
+
+        // The cancelled walk still delivers — empty, as an early cancel is.
+        fp.set_cache("/proj", generation, std::sync::Arc::new(vec![]));
+        assert_eq!(
+            cached_paths(&fp),
+            vec!["a.txt".to_string(), "b.txt".to_string()],
+            "a retired load's results must be dropped, not served"
+        );
+        // A late partial from the same walk is equally unwelcome.
+        fp.set_partial_cache("/proj", generation, std::sync::Arc::new(vec![]));
+        assert_eq!(cached_paths(&fp).len(), 2, "late partial must be dropped");
+    }
+
+    /// Which cache states count as "a complete list is on screen". Only
+    /// those may have the walk's partial snapshots dropped; anything else
+    /// would strand the finder on a short list.
+    #[test]
+    fn only_a_complete_cached_list_suppresses_partials() {
+        let fp = make_file_provider();
+        let one = || {
+            std::sync::Arc::new(vec![FileEntry {
+                relative_path: "a.txt".to_string(),
+                frecency_score: 0.0,
+            }])
+        };
+        for (files, complete, expected, what) in [
+            (Some(one()), true, true, "a complete list is protected"),
+            (
+                Some(one()),
+                false,
+                false,
+                "a partial list must keep filling in",
+            ),
+            (None, true, false, "nothing cached, nothing to protect"),
+            (None, false, false, "cold load"),
+        ] {
+            let mut c = fp.cache.lock().unwrap();
+            c.files = files;
+            c.complete = complete;
+            assert_eq!(refreshing_complete_list(&c), expected, "{what}");
+        }
+    }
+
+    /// The gate itself: while refreshing a complete list the walk's partial
+    /// snapshots are shorter than what is on screen, so taking them would
+    /// drop rows the user is reading.
+    #[test]
+    fn partials_are_dropped_only_while_refreshing_a_complete_list() {
+        let fp = make_file_provider();
+        seed_complete(&fp, "/proj", &["a.txt", "b.txt", "c.txt"]);
+
+        let generation = {
+            let mut c = fp.cache.lock().unwrap();
+            c.generation += 1;
+            c.loading = true;
+            c.revalidating = true; // refreshing a complete list
+            c.generation
+        };
+        fp.set_partial_cache(
+            "/proj",
+            generation,
+            std::sync::Arc::new(vec![FileEntry {
+                relative_path: "a.txt".to_string(),
+                frecency_score: 0.0,
+            }]),
+        );
+        assert_eq!(
+            cached_paths(&fp).len(),
+            3,
+            "a growing prefix must not replace the complete list on screen"
+        );
+
+        // Cold load: partials are the only thing the finder has to show.
+        fp.cache.lock().unwrap().revalidating = false;
+        fp.set_partial_cache(
+            "/proj",
+            generation,
+            std::sync::Arc::new(vec![FileEntry {
+                relative_path: "a.txt".to_string(),
+                frecency_score: 0.0,
+            }]),
+        );
+        assert_eq!(
+            cached_paths(&fp),
+            vec!["a.txt".to_string()],
+            "a partial list must still fill an unfinished one"
+        );
+        assert!(
+            !fp.cache.lock().unwrap().complete,
+            "a partial snapshot leaves the list incomplete"
+        );
+    }
+
+    /// Refreshing a complete list must stay silent: the "Scanning…" row marks
+    /// the result set incomplete, which switches Tab path-completion off for
+    /// the length of the walk — on every open, where before there was no
+    /// reload at all.
+    #[test]
+    fn refreshing_a_complete_list_does_not_report_scanning() {
+        let fp = make_file_provider();
+        seed_complete(&fp, "/proj", &["a.txt"]);
+        fp.cache.lock().unwrap().loading = true;
+        assert!(
+            !fp.load_visible_as_scanning(),
+            "a complete list is still complete while it is refreshed"
+        );
+
+        // Nothing complete to stand on: the finder must say it is scanning.
+        fp.cache.lock().unwrap().complete = false;
+        assert!(fp.load_visible_as_scanning());
+    }
+
     #[test]
     fn set_backends_repoints_spawner_and_invalidates_cache() {
         let mut fp = make_file_provider();
@@ -1949,7 +2280,7 @@ mod tests {
         }]);
         provider.set_partial_cache("/proj", 0, partial);
 
-        assert!(provider.is_loading());
+        assert!(provider.cache.lock().unwrap().loading);
         assert!(provider.cache.lock().unwrap().files.is_some());
 
         // Final set_cache should clear loading
@@ -1959,7 +2290,7 @@ mod tests {
         }]);
         provider.set_cache("/proj", 0, final_files);
 
-        assert!(!provider.is_loading());
+        assert!(!provider.cache.lock().unwrap().loading);
 
         // A stale-cwd update is ignored.
         let stale = std::sync::Arc::new(vec![FileEntry {
