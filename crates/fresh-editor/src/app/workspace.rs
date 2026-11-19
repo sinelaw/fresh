@@ -1294,7 +1294,7 @@ impl crate::app::window::Window {
                 auto_title: terminal.auto_title.clone(),
                 held_by_trust,
                 // Nothing to rejoin when the conversation it needs isn't there.
-                failed_first_run: resume_requires
+                nothing_to_resume: resume_requires
                     .as_deref()
                     .is_some_and(|p| self.resume_target_missing(p)),
                 resume_requires,

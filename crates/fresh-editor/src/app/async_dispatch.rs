@@ -1559,24 +1559,13 @@ impl Editor {
             auto_title: None,
             held_by_trust: false,
             resume_requires: window.terminal_resume_requires.get(&terminal_id).cloned(),
-            failed_first_run: match window
+            // The launcher named what a conversation leaves behind: the
+            // window's own machine says whether it is there. Named nothing,
+            // or where it pointed can't be read: a resume, as ever.
+            nothing_to_resume: window
                 .terminal_resume_requires
                 .get(&terminal_id)
-                .and_then(|path| window.resume_target_exists(path))
-            {
-                // The launcher named what a conversation leaves behind: the
-                // window's own machine says whether it is there.
-                Some(found) => !found,
-                // Named nothing, or where it pointed can't be read: the
-                // first-run heuristic.
-                None => {
-                    exit_code.is_some_and(|c| c != 0)
-                        && window
-                            .terminal_first_runs
-                            .get(&terminal_id)
-                            .is_some_and(|at| at.elapsed() < crate::app::window::FIRST_RUN_GRACE)
-                }
-            },
+                .is_some_and(|path| window.resume_target_missing(path)),
         }
     }
 

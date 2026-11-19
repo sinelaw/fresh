@@ -157,20 +157,16 @@ pub struct ExitedTerminal {
     /// it was, so it runs again once the folder is trusted.
     pub held_by_trust: bool,
     /// There is no conversation to resume: the path its launcher named
-    /// (`resume_requires`) is not there, or — with no such path — its *first*
-    /// run (launched, not resumed) failed within [`FIRST_RUN_GRACE`]. Either
-    /// way it quit before a conversation began (a declined trust prompt, a
-    /// failed start), so a restart re-runs the launch command instead.
-    pub failed_first_run: bool,
+    /// (`resume_requires`) is known not to be there — it quit before a
+    /// conversation began (a declined trust prompt, a failed start) — so a
+    /// restart re-runs the launch command instead. Never set for an agent
+    /// that named no such path: without one there is no telling, and it is
+    /// offered a resume as it always was.
+    pub nothing_to_resume: bool,
     /// The terminal's `resume_requires` path, carried so a workspace save
     /// keeps it for the next restore.
     pub resume_requires: Option<std::path::PathBuf>,
 }
-
-/// How long an agent's first run has to last before an error exit can be
-/// taken to have left a conversation behind. Long enough to cover a startup
-/// failure or a declined prompt, far shorter than any real exchange.
-pub const FIRST_RUN_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 
 impl ExitedTerminal {
     /// Short name of the process that died — the basename of the resume or
@@ -200,7 +196,7 @@ impl ExitedTerminal {
     /// <id>` then fails with "No conversation found", and offering it is
     /// offering a second failure.
     pub fn resumes_agent(&self) -> bool {
-        self.resume.as_ref().is_some_and(|argv| !argv.is_empty()) && !self.failed_first_run
+        self.resume.as_ref().is_some_and(|argv| !argv.is_empty()) && !self.nothing_to_resume
     }
 }
 
@@ -1165,14 +1161,6 @@ pub struct Window {
     /// just re-run their launch command.
     pub terminal_resume_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
-
-    /// Agent terminals on their first run — spawned from the launch command
-    /// while a resume argv is held for later — and when they started. An
-    /// error exit inside [`FIRST_RUN_GRACE`] means the run never produced a
-    /// conversation ([`ExitedTerminal::failed_first_run`]). A resumed run has
-    /// no entry: its conversation existed.
-    pub terminal_first_runs:
-        std::collections::HashMap<crate::services::terminal::TerminalId, std::time::Instant>,
 
     /// For an agent terminal whose launcher said so, the path whose
     /// existence means its resume argv has a conversation to rejoin
@@ -2744,7 +2732,6 @@ impl Window {
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
-            terminal_first_runs: std::collections::HashMap::new(),
             terminal_resume_requires: std::collections::HashMap::new(),
             terminal_script_tokens: std::collections::HashMap::new(),
             exited_terminals: HashMap::new(),
@@ -5840,21 +5827,21 @@ mod exited_terminal_tests {
             title: None,
             auto_title: None,
             held_by_trust: false,
-            failed_first_run: false,
+            nothing_to_resume: false,
             resume_requires: None,
         }
     }
 
-    /// An agent whose first run died before it had a conversation is offered
-    /// a restart, not a resume that could only fail.
+    /// An agent that quit before it had a conversation is offered a
+    /// restart, not a resume that could only fail.
     #[test]
-    fn a_failed_first_run_has_nothing_to_resume() {
+    fn an_agent_with_no_conversation_has_nothing_to_resume() {
         let mut e = record(
             Some(&["claude", "--session-id", "x"]),
             Some(&["claude", "--resume", "x"]),
         );
         assert!(e.resumes_agent());
-        e.failed_first_run = true;
+        e.nothing_to_resume = true;
         assert!(!e.resumes_agent());
         assert_eq!(e.program_name(), Some("claude"));
     }
