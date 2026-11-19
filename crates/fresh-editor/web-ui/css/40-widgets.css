@@ -26,14 +26,8 @@
   .w-col{display:flex;flex-direction:column;gap:4px}
   .w-toggle{display:inline-flex;align-items:center;gap:6px;cursor:default;padding:1px 4px;border-radius:4px}
   .w-toggle.on{color:var(--accent)}
-  /* Sliding switch, identical geometry to the Settings `.set-switch`.
-     On-state uses --ui-accent (the brandable teal), NOT --accent — that's
-     the cursor colour, which is white in the stock dark theme and would
-     render a white pill with an invisible white knob. */
-  .w-toggle .w-box{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;flex:0 0 auto;transition:background .1s}
-  .w-toggle .w-box::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
-  .w-toggle.on .w-box{background:var(--ui-accent,var(--accent))}
-  .w-toggle.on .w-box::after{left:14px;background:var(--on-ui-accent,#fff)}
+  /* The switch is the shared one (.ui-switch, 47-components.css), as the
+     Settings toggles are. */
   .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
     .w-button{cursor:default;padding:1px 10px;border:1px solid var(--hairline-strong,var(--border));border-radius:4px;color:var(--fg)}
   .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -107,9 +101,7 @@
   .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px}
   .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
   /* toggle switch */
-  .settings-modal .set-switch{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;transition:background .1s}
-  .settings-modal .set-switch::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
-  .settings-modal .set-switch.on{background:var(--accent)} .settings-modal .set-switch.on::after{left:14px;background:#fff}
+  /* .set-switch is the shared switch (.ui-switch, 47-components.css). */
   /* number stepper */
   .settings-modal .set-step{display:inline-block;width:18px;text-align:center;border:1px solid var(--hairline-strong,var(--border));border-radius:3px;cursor:default}
   .settings-modal .set-num-v{min-width:34px;text-align:center}

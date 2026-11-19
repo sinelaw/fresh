@@ -397,7 +397,7 @@ function widgetNodeOf(spec, ctx){
     // not a unicode ☑/☐ glyph. `labelFirst` renders the form layout
     // (`Auto mode : [switch]`) so the chip aligns under a column of controls;
     // the default keeps the chip-first `[switch] label` layout.
-    const box=document.createElement("span"); box.className="w-box";
+    const box=document.createElement("span"); box.className="w-box ui-switch"+(spec.checked?" on":"");
     if(spec.labelFirst){
       if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
       el.appendChild(box);
@@ -486,7 +486,7 @@ function widgetNodeOf(spec, ctx){
     // Width as the terminal sizes it: a multi-line field (or one asked to)
     // fills its row; a `fieldWidth` is a width in characters.
     const fill=spec.fullWidth||((spec.rows||1)>1&&!spec.fieldWidth);
-    const el=div("w-text"+(focused?" focus":"")+(fill?" fill":""));
+    const el=div("w-text ui-field"+(focused?" focus":"")+(fill?" fill":""));
     if(!fill&&spec.fieldWidth>0) el.style.width=`calc(${spec.fieldWidth}ch + 1.2em)`;
     // A form-style field (`label` + `labelWidth`) keeps its label OUTSIDE the
     // bordered field, in the shared label column, so the label doesn't get
@@ -729,7 +729,7 @@ function widgetNodeOf(spec, ctx){
         row.appendChild(g);
       }
       if(spec.checkable&&n.checked!=null){
-        const cb=document.createElement("span"); cb.className="w-tree-check"; cb.textContent=n.checked?"☑ ":"☐ ";
+        const cb=document.createElement("span"); cb.className="w-tree-check ui-check"+(n.checked?" on":"");
         cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,wkey,"toggle",{index:i,key,checked:!n.checked},null); };
         row.appendChild(cb);
       }
@@ -849,7 +849,7 @@ const SET_LIST_KINDS = new Set(["textList","map","objectArray","dualList"]);
 /** function settingControlEl(SettingControl, Number, Boolean) => El */
 function settingControlEl(c, idx, live){
   const k=c.kind, el=document.createElement("span"); el.className="set-ctl set-"+k;
-  if(c.kind==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); aria(sw,"switch",{checked:!!c.checked}); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx,undefined); }
+  if(c.kind==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch ui-switch"+(c.checked?" on":""); aria(sw,"switch",{checked:!!c.checked}); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx,undefined); }
   else if(c.kind==="number"){
     const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit!=="")b.onmousedown=setHit(hit,idx,undefined);return b;};
     // The value as the JSON carries it, shown the way the TUI's cell shows it:
@@ -868,8 +868,8 @@ function settingControlEl(c, idx, live){
       // stay in view (right-aligning under the flush-right control).
       mountPopover(d);
       requestAnimationFrame(()=>positionFloatingPopover(p, d, {align:"end"})); } }
-  else if(c.kind==="text"){ const f=document.createElement("span"); f.className="set-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
-  else if(c.kind==="json"){ const f=document.createElement("span"); f.className="set-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
+  else if(c.kind==="text"){ const f=document.createElement("span"); f.className="set-field ui-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
+  else if(c.kind==="json"){ const f=document.createElement("span"); f.className="set-field ui-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
   // The field is `type_name`: the enum's rename_all renames variants, not fields.
   else if(c.kind==="complex"){ el.textContent=`‹${c.type_name}›`; el.classList.add("set-dim"); }
   return el;
@@ -961,7 +961,7 @@ function settingItemRows(items, container, live, entry){
       for(const named of ctl.querySelectorAll("[role]")) named.setAttribute("aria-label", it.name); head.appendChild(ctl); if(entry&&selectHit) ctl.onmousedown=selectHit; }
     row.appendChild(head);
     const desc=it.description;
-    if(desc){ const d=div("set-desc"); d.textContent=desc; row.appendChild(d); }
+    if(desc){ const d=div("set-desc ui-dim"); d.textContent=desc; row.appendChild(d); }
     if(isList) row.appendChild(settingListEl(it.control,it.index,live&&!entry));
     container.appendChild(row);
   }
@@ -980,7 +980,7 @@ function settingsWindowEls(s){
   const title=div("set-title"); title.textContent=s.title+"  —  layer: "+s.targetLayer; el.appendChild(title);
   const body=div("set-body");
   // left: category tree
-  const cats=aria(div("set-cats"+(s.focus==="categories"?" focus":"")), "tree", {label:"Categories"});
+  const cats=aria(div("set-cats ui-well"+(s.focus==="categories"?" focus":"")), "tree", {label:"Categories"});
   for(const c of s.categories){ const r=aria(div("set-cat"+(c.selected?" sel":"")), "treeitem",
       {selected:!!c.selected, level:c.nested?2:1, expanded:c.expandable?!!c.expanded:null, label:c.name});
     if(c.nested) r.appendChild(document.createTextNode("    "));
@@ -990,8 +990,8 @@ function settingsWindowEls(s){
     if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=aria(div("set-cat-sec"),"treeitem",{selected:false,level:2,label:sec}); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
   body.appendChild(cats);
   // right: items, or search results
-  const right=div("set-items"+(s.focus==="settings"?" focus":""));
-  if(s.searchActive){ const sb=div("set-search"); sb.textContent="Search: "+s.searchQuery+"▌"; right.appendChild(sb);
+  const right=div("set-items ui-well"+(s.focus==="settings"?" focus":""));
+  if(s.searchActive){ const sb=div("set-search ui-field"); sb.textContent="Search: "+s.searchQuery+"▌"; right.appendChild(sb);
     s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;rr.onmousedown=setHit("searchResult",i,undefined);right.appendChild(rr);}); }
   else { settingItemRows(s.items, right, true, false); }
   body.appendChild(right);
@@ -1040,7 +1040,7 @@ function keybindingEditorEls(kb){
   const hdr=div("kb-header");
   const cfg=div("kb-cfg"); cfg.textContent="Config: "+kb.configPath+(kb.keymaps.length>0?("   Maps: "+kb.keymaps.join(", ")):""); hdr.appendChild(cfg);
   if(kb.search.active){
-    const sb=div("kb-search"+(kb.search.focused?" focus":""));
+    const sb=div("kb-search ui-field"+(kb.search.focused?" focus":""));
     const lbl=document.createElement("b"); lbl.textContent=kb.search.mode==="recordKey"?"REC KEY ":"SEARCH "; sb.appendChild(lbl);
     const val=document.createElement("span");
     val.textContent=kb.search.mode==="recordKey"?(kb.search.keyDisplay||"Press a key…"):(kb.search.query+(kb.search.focused?"▌":""));
@@ -1054,7 +1054,7 @@ function keybindingEditorEls(kb){
   el.appendChild(hdr);
 
   // table
-  const tbl=div("kb-table");
+  const tbl=div("kb-table ui-well");
   const head=div("kb-row kb-head"); for(const c of ["Key","Action","Description","Context","Source"]){ const s=document.createElement("span"); s.className="kb-col kb-"+c.toLowerCase(); s.textContent=c; head.appendChild(s); } tbl.appendChild(head);
   const start=kb.scrollOffset||0, n=kb.viewport||kb.rows.length;
   const kbHit=i=>e=>{ e.preventDefault(); e.stopPropagation(); sendKbedit({a:i}); };
@@ -1127,7 +1127,7 @@ function auxModalEls(m){
   const el=div("region auxmodal "+(anchored?"anchored":"centered")+" am-"+m.kind);
   if(rect!==null&&anchored){ el.style.left=`${px(rect.x,CW)}px`; el.style.top=`${px(rect.y,CH)}px`; }
   const title=div("am-title"); title.textContent=m.title; el.appendChild(title);
-  const body=div("am-body");
+  const body=div("am-body ui-well");
   for(const ln of m.lines){ const r=div("am-line"+(ln.selected?" sel":"")); r.textContent=ln.text||" "; body.appendChild(r); }
   el.appendChild(body);
   const footer=m.footer;

@@ -111,7 +111,7 @@ function tabBarEl(p, rect){
   // The `+` (new file / terminal), at the cell the editor laid it out at.
   const newTab=p.newTab;
   if(newTab){
-    const plus=div("tab-new"); plus.textContent="+"; plus.title="New tab";
+    const plus=div("tab-new ui-chip"); plus.textContent="+"; plus.title="New tab";
     const pc=rectCell(newTab);
     plus.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:pc.col,row:pc.row}); };
     bar.appendChild(plus);

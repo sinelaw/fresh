@@ -55,8 +55,10 @@ function popupEl(p){
   if(title){ const t=div("popup-title"); t.textContent=title; head.appendChild(t); }
   if(desc){ const dd=div("popup-desc"); dd.textContent=desc; head.appendChild(dd); }
   el.appendChild(head);
-  const body=div("popup-body"); body.style.height=`${px(n,CH)}px`;
   const content=p.content;
+  // A list (completion, actions) is a content well a skin may dress; a hover
+  // card's lines carry the editor's own ink and stay as they are.
+  const body=div("popup-body"+(content.type==="list"?" ui-well":"")); body.style.height=`${px(n,CH)}px`;
   if(content.type==="list"){
     const items=content.items||[];
     for(let j=0;j<n;j++){

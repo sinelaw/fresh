@@ -56,10 +56,10 @@ function fileExplorerEl(fe){
   // The header's buttons, as the terminal's: ⟳ re-reads the tree, × hides the
   // sidebar. Each presses the tree node it mirrors.
   const rk=fe.refreshKey;
-  if(rk){ const b=nativeButton("fx-hbtn fx-refresh", rk); b.textContent="⟳"; b.title="Refresh"; title.appendChild(b); }
-  const cb=nativeButton("fx-hbtn fx-close", fe.closeKey); cb.textContent="×"; cb.title="Close"; title.appendChild(cb);
+  if(rk){ const b=nativeButton("fx-hbtn fx-refresh ui-chip", rk); b.textContent="⟳"; b.title="Refresh"; title.appendChild(b); }
+  const cb=nativeButton("fx-hbtn fx-close ui-chip", fe.closeKey); cb.textContent="×"; cb.title="Close"; title.appendChild(cb);
   el.appendChild(title);
-  const list=div("fx-list"); list.style.paddingTop=list.style.paddingBottom="0";
+  const list=div("fx-list ui-well"); list.style.paddingTop=list.style.paddingBottom="0";
   const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
   // Newer cores provide the exact screen-row mapping, including sticky
   // ancestors. Keep the contiguous fallback for compatibility with an older

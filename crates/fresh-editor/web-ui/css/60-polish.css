@@ -61,7 +61,6 @@
   /* Readable text/fills ON accent-coloured backgrounds (fixes the white-on-white
      primary button under high-contrast). */
   .settings-modal .btn.primary,.w-button.primary,.trustdialog .td-btn.primary{color:var(--on-accent)}
-  .settings-modal .set-switch.on::after{background:var(--on-accent)}
   .set-dd-row.sel,.kbedit .kb-btn.focus{color:var(--on-accent)}
 
   /* Quiet, uniform hover affordance. */

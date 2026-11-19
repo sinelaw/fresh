@@ -88,10 +88,7 @@
     color:var(--muted);cursor:default;border:1px solid transparent}
   .palette.filebrowser .fbtoggle:hover{background:var(--hover)}
   .palette.filebrowser .fbtoggle.on{color:var(--fg)}
-  .palette.filebrowser .fbbox{display:inline-flex;align-items:center;justify-content:center;
-    width:14px;height:14px;border-radius:3px;border:1px solid var(--hairline-strong,var(--border));
-    font-size:10px;line-height:1}
-  .palette.filebrowser .fbtoggle.on .fbbox{background:var(--ui-accent);color:var(--on-ui-accent);border-color:transparent}
+  /* The box is the shared checkbox (.ui-check, 47-components.css). */
   .palette.filebrowser .fbkey{color:var(--muted);opacity:.8}
   /* Header and rows share one grid so the columns line up. */
   .palette.filebrowser .fbhead,.palette.filebrowser .fbrow{

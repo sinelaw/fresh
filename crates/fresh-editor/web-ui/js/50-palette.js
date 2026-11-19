@@ -10,15 +10,15 @@
 // cell rect so the editor stays the source of truth).
 /** function paletteListEl(Palette, Rect) => El */
 function paletteListEl(p, list){
-  const listBox=div("plist");
+  const listBox=div("plist ui-well");
   const start=p.scrollStart||0, n=p.visibleCount||p.suggestions.length;
   for(let j=0;j<n;j++){
     const idx=start+j; const s=p.suggestions[idx]; if(!s) break;
     const row=div("prow"+(idx===p.selected?" sel":"")+(s.disabled?" disabled":""));
     const tx=document.createElement("span"); tx.className="ptext"; tx.textContent=s.text; row.appendChild(tx);
-    const ds=document.createElement("span"); ds.className="pdesc"; ds.textContent=s.description??""; row.appendChild(ds);
+    const ds=document.createElement("span"); ds.className="pdesc ui-dim"; ds.textContent=s.description??""; row.appendChild(ds);
     const kb=s.keybinding;
-    if(kb){ const k=document.createElement("span"); k.className="pkey"; k.textContent=kb; row.appendChild(k); }
+    if(kb){ const k=document.createElement("span"); k.className="pkey ui-key"; k.textContent=kb; row.appendChild(k); }
     if(list){ const cell={col:list.x+1,row:list.y+j};
       row.onmousedown=e=>{ if(s.disabled) return; e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); }; }
     listBox.appendChild(row);
@@ -41,11 +41,12 @@ function searchOptionsEl(p){
   const bar=div("psearchopts");
   for(const o of so.options){
     const chip=div("psopt"+(o.active?" on":""));
-    const box=document.createElement("span"); box.className="psbox";
-    box.textContent=o.active?"✓":""; chip.appendChild(box);
+    // One checkbox for every skin (`ui-check`, css/47-components.css).
+    const box=document.createElement("span"); box.className="psbox ui-check"+(o.active?" on":"");
+    chip.appendChild(box);
     const lb=document.createElement("span"); lb.textContent=o.label; chip.appendChild(lb);
     const sc=o.shortcut;
-    if(sc){ const k=document.createElement("span"); k.className="pskey"; k.textContent=sc; chip.appendChild(k); }
+    if(sc){ const k=document.createElement("span"); k.className="pskey ui-key"; k.textContent=sc; chip.appendChild(k); }
     const col=o.x+Math.floor(o.w/2), row=so.row;
     chip.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col,row}); };
     bar.appendChild(chip);
@@ -97,7 +98,7 @@ function fileBrowserEl(b,p){
 
   // The prompt input — inside the card, where the TUI's prompt row logically
   // belongs to this dialog even though the grid puts it on the last row.
-  const bar=div("pinput");
+  const bar=div("pinput ui-well");
   if(p.message){ const m=document.createElement("span"); m.className="pmsg"; m.textContent=p.message; bar.appendChild(m); }
   const q=document.createElement("span"); q.className="q";
   q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
@@ -109,7 +110,7 @@ function fileBrowserEl(b,p){
   const tools=div("fbtools");
   const nav=div("fbnav");
   for(const s of b.shortcuts){
-    const c=div("fbchip"+(s.selected?" sel":""));
+    const c=div("fbchip ui-chip"+(s.selected?" sel":""));
     c.textContent=s.label; if(s.description) c.title=s.description;
     const cell=spanCell(s); c.onmousedown=fbClick(cell.col,cell.row,false);
     nav.appendChild(c);
@@ -118,10 +119,10 @@ function fileBrowserEl(b,p){
   const tog=div("fbtoggles");
   for(const t of b.toggles){
     const c=div("fbtoggle"+(t.active?" on":""));
-    const box=document.createElement("span"); box.className="fbbox"; box.textContent=t.active?"✓":""; c.appendChild(box);
+    const box=document.createElement("span"); box.className="fbbox ui-check"+(t.active?" on":""); c.appendChild(box);
     const lb=document.createElement("span"); lb.textContent=t.label; c.appendChild(lb);
     const tsc=t.shortcut;
-    if(tsc){ const k=document.createElement("span"); k.className="fbkey"; k.textContent=tsc; c.appendChild(k); }
+    if(tsc){ const k=document.createElement("span"); k.className="fbkey ui-key"; k.textContent=tsc; c.appendChild(k); }
     const cell=spanCell(t); c.onmousedown=fbClick(cell.col,cell.row,false);
     tog.appendChild(c);
   }
@@ -141,7 +142,7 @@ function fileBrowserEl(b,p){
   // Rows. A double-click opens (or descends into) the entry, exactly like the
   // TUI: the browser's click count rides along and the editor's own
   // double-click path decides what that means.
-  const list=div("fbrows");
+  const list=div("fbrows ui-well");
   const berr=b.error;
   if(b.loading){ const l=div("fbempty"); l.textContent="Loading…"; list.appendChild(l); }
   else if(berr){ const l=div("fbempty fberr"); l.textContent=berr; list.appendChild(l); }
@@ -150,8 +151,8 @@ function fileBrowserEl(b,p){
     const row=div("fbrow"+(r.selected?" sel":"")+(r.isDir?" dir":"")+(r.matchesFilter?"":" nomatch"));
     const nm=document.createElement("span"); nm.className="fbname";
     nm.textContent=r.name+(r.isDir?"/":(r.isSymlink?"@":"")); nm.title=r.name;
-    const sz=document.createElement("span"); sz.className="fbsize"; sz.textContent=r.size||"—";
-    const md=document.createElement("span"); md.className="fbmod"; md.textContent=r.modified||"—";
+    const sz=document.createElement("span"); sz.className="fbsize ui-dim"; sz.textContent=r.size||"—";
+    const md=document.createElement("span"); md.className="fbmod ui-dim"; md.textContent=r.modified||"—";
     row.appendChild(nm); row.appendChild(sz); row.appendChild(md);
     row.onmousedown=fbClick(b.listRect.x+1,r.row,true);
     list.appendChild(row);
@@ -206,7 +207,7 @@ function paletteInputOnlyEl(p){
   el.style.top="auto";
   const gridBottom=px((sc?sc.h:0)||0,CH);
   el.style.bottom=`${Math.max(0, appH()-gridBottom)}px`;
-  const bar=div("pinput");
+  const bar=div("pinput ui-well");
   bar.style.borderBottom="none";
   bar.style.borderTop="1px solid var(--hairline)";
   // The TUI draws this prompt flush from column 0 across the full row; drop the
@@ -294,7 +295,7 @@ function paletteCardEl(p, list){
   const tbSpec=p.toolbar;
   if(tbSpec){ const tb=div("ptoolbar"); tb.appendChild(widgetEl(tbSpec, {kind:"toolbar", focusKey:p.toolbarFocus})); el.appendChild(tb); }
   // input bar (query + status + count)
-  const bar=div("pinput");
+  const bar=div("pinput ui-well");
   const q=document.createElement("span"); q.className="q";
   q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
   bar.appendChild(q); scrollToCaret(q);
@@ -312,7 +313,7 @@ function paletteCardEl(p, list){
     const body=div("pbody");
     listBox.style.flex=`0 0 ${px(list.w,CW)}px`;
     const h=`${px(pr.h,CH)}px`; listBox.style.maxHeight=h;
-    const pv=div("ppreview"); pv.style.flex="1"; pv.style.height=h;
+    const pv=div("ppreview ui-well"); pv.style.flex="1"; pv.style.height=h;
     pv.innerHTML=cellsSvg(pc, pr.w);
     body.appendChild(listBox); body.appendChild(pv);
     el.appendChild(body);
