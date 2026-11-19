@@ -10,8 +10,8 @@ use include_dir::{include_dir, Dir};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// The plugins directory embedded at compile time
-static EMBEDDED_PLUGINS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/plugins");
+/// The plugins directory embedded at compile time, as build.rs staged it.
+static EMBEDDED_PLUGINS: Dir<'_> = include_dir!("$OUT_DIR/embedded-plugins");
 
 /// Cached path to the extracted plugins directory
 static EXTRACTED_PLUGINS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -101,6 +101,11 @@ fn extract_plugins() -> Result<PathBuf, std::io::Error> {
     let tmp_dir = cache_base.join(format!(".pending.{}.{}", pid, nanos));
 
     extract_dir_recursive(&EMBEDDED_PLUGINS, &tmp_dir)?;
+    // A build with precompiled plugins embeds their JavaScript, not their source.
+    #[cfg(feature = "precompiled-plugins")]
+    for plugin in PRECOMPILED {
+        std::fs::write(tmp_dir.join(plugin.file), plugin.js)?;
+    }
     // Marker is written *inside* the temp dir so the rename publishes
     // the directory and its completeness signal in one atomic step.
     std::fs::write(tmp_dir.join(".extracted"), b"")?;
@@ -154,10 +159,10 @@ fn extract_plugins() -> Result<PathBuf, std::io::Error> {
     };
 
     if result.is_ok() {
-        tracing::info!(
-            "Successfully extracted {} embedded plugin files",
-            count_files(&EMBEDDED_PLUGINS)
-        );
+        let files = count_files(&EMBEDDED_PLUGINS);
+        #[cfg(feature = "precompiled-plugins")]
+        let files = files + PRECOMPILED.len();
+        tracing::info!("Successfully extracted {} embedded plugin files", files);
         // Clean up old cache versions (other content hashes) and stale
         // pending/stale-rename leftovers from prior crashes. Only does
         // anything once we've successfully committed our extraction.
@@ -220,7 +225,7 @@ mod tests {
     use super::*;
 
     /// Every plugin loaded from the embedded directory has its JavaScript
-    /// already: none would need a compiler at run time. (Only when the build
+    /// already, and no TypeScript is embedded for it. (Only when the build
     /// script could compile them; see build.rs.)
     #[cfg(fresh_plugins_precompiled)]
     #[test]
@@ -230,7 +235,8 @@ mod tests {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
             let path = entry.path();
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            if !name.ends_with(".ts") || name.contains(".i18n.") {
+            assert!(!name.ends_with(".ts"), "{name} is embedded");
+            if !name.ends_with(".js") {
                 continue;
             }
             let source = std::fs::read_to_string(&path).unwrap();
@@ -243,12 +249,58 @@ mod tests {
         }
         assert_eq!(checked, PRECOMPILED.len());
         assert!(checked > 40, "only {checked} plugins found");
+        // Bundled into the plugins' JavaScript; only the API types remain.
+        assert!(EMBEDDED_PLUGINS.get_file("lib/index.ts").is_none());
+        assert!(dir.join("lib/fresh.d.ts").is_file());
+    }
+
+    /// The embedded plugins load, under their usual names, from JavaScript
+    /// alone.
+    #[cfg(fresh_plugins_precompiled)]
+    #[test]
+    fn embedded_plugins_load_without_typescript() {
+        use fresh_plugin_runtime::thread::PluginThreadHandle;
+
+        let dir = get_embedded_plugins_dir().expect("embedded plugins extract");
+        let handle =
+            PluginThreadHandle::spawn(std::sync::Arc::new(fresh_core::services::NoopServiceBridge))
+                .unwrap();
+        let (errors, discovered) =
+            handle.load_plugins_from_dir_with_config(dir, &std::collections::HashMap::new());
+        assert!(errors.is_empty(), "{errors:?}");
+
+        let mut expected: Vec<String> = PRECOMPILED
+            .iter()
+            .map(|p| p.file.trim_end_matches(".js").to_string())
+            .collect();
+        expected.sort();
+        let mut found: Vec<String> = discovered.keys().cloned().collect();
+        found.sort();
+        assert_eq!(found, expected);
+
+        let loaded = handle.list_plugins();
+        assert_eq!(loaded.len(), expected.len());
+        for plugin in &loaded {
+            assert_eq!(plugin.path.extension().unwrap(), "js", "{}", plugin.name);
+        }
+        if fresh_plugin_runtime::fresh_parser_js::CAN_EMIT_DECLARATIONS {
+            assert!(loaded.iter().any(|p| p.declarations.is_some()));
+        }
     }
 
     #[test]
     fn test_embedded_plugins_exist() {
         // Verify that plugins are embedded
         assert!(EMBEDDED_PLUGINS.files().count() > 0 || EMBEDDED_PLUGINS.dirs().count() > 0);
+    }
+
+    /// The plugins' own tests and the examples are not run from the binary.
+    #[test]
+    fn tests_and_examples_are_not_embedded() {
+        assert!(EMBEDDED_PLUGINS.get_dir("tests").is_none());
+        assert!(EMBEDDED_PLUGINS.get_dir("examples").is_none());
+        assert!(EMBEDDED_PLUGINS.get_file("lib/fresh.d.ts").is_some());
+        assert!(EMBEDDED_PLUGINS.get_dir("schemas").is_some());
     }
 
     #[test]
