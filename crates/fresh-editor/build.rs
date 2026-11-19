@@ -111,13 +111,10 @@ fn main() {
         }
     }
 
-    // Generate plugins content hash for cache invalidation
     #[cfg(feature = "embed-plugins")]
     {
         println!("cargo::rerun-if-changed=plugins");
-        if let Err(e) = generate_plugins_hash() {
-            eprintln!("Warning: Failed to generate plugins hash: {}", e);
-        }
+        stage_embedded_plugins();
     }
 
     #[cfg(feature = "precompiled-plugins")]
@@ -260,34 +257,66 @@ fn precompile_plugins() {
     println!("cargo::rustc-cfg=fresh_plugins_precompiled");
 }
 
-/// Generate a hash of all plugin files for cache invalidation
+/// Copy the part of `plugins/` that `services::plugins::embedded` embeds to
+/// `$OUT_DIR/embedded-plugins`, and write `plugins_hash.txt`, a hash of that
+/// copy, which names the directory it is extracted to. Left out: `tests/` and
+/// `examples/`, which nothing reads at run time.
 #[cfg(feature = "embed-plugins")]
-fn generate_plugins_hash() -> Result<(), Box<dyn std::error::Error>> {
-    use std::collections::hash_map::DefaultHasher;
+fn stage_embedded_plugins() {
     use std::hash::Hasher;
 
-    let plugins_dir = Path::new("plugins");
-    let mut hasher = DefaultHasher::new();
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    let staged = out_dir.join("embedded-plugins");
+    if staged.exists() {
+        fs::remove_dir_all(&staged).expect("clear embedded-plugins");
+    }
+    let skip = |rel: &Path| rel == Path::new("tests") || rel == Path::new("examples");
+    copy_tree(Path::new("plugins"), &staged, Path::new(""), &skip).expect("stage plugins");
 
-    // Hash all files in the plugins directory recursively
-    hash_directory(plugins_dir, &mut hasher)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_directory(&staged, &staged, &mut hasher).expect("hash staged plugins");
+    fs::write(
+        out_dir.join("plugins_hash.txt"),
+        format!("{:016x}", hasher.finish()),
+    )
+    .expect("write plugins_hash.txt");
+}
 
-    let hash = format!("{:016x}", hasher.finish());
-
-    let out_dir = std::env::var("OUT_DIR")?;
-    let dest_path = Path::new(&out_dir).join("plugins_hash.txt");
-    fs::write(&dest_path, &hash)?;
-
+/// Copy `src` to `dst`, leaving out every entry whose path relative to the
+/// root (`rel` is `src`'s) `skip` matches.
+#[cfg(feature = "embed-plugins")]
+fn copy_tree(
+    src: &Path,
+    dst: &Path,
+    rel: &Path,
+    skip: &dyn Fn(&Path) -> bool,
+) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let rel = rel.join(entry.file_name());
+        if skip(&rel) {
+            continue;
+        }
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_tree(&path, &target, &rel, skip)?;
+        } else {
+            fs::copy(&path, &target)?;
+        }
+    }
     Ok(())
 }
 
+/// Hash the names (relative to `root`) and contents of every file under `dir`.
 #[cfg(feature = "embed-plugins")]
-fn hash_directory(dir: &Path, hasher: &mut impl std::hash::Hasher) -> std::io::Result<()> {
+fn hash_directory(
+    root: &Path,
+    dir: &Path,
+    hasher: &mut impl std::hash::Hasher,
+) -> std::io::Result<()> {
     use std::hash::Hash;
-
-    if !dir.exists() {
-        return Ok(());
-    }
 
     let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
     // Sort for deterministic ordering
@@ -295,15 +324,11 @@ fn hash_directory(dir: &Path, hasher: &mut impl std::hash::Hasher) -> std::io::R
 
     for entry in entries {
         let path = entry.path();
-        // Hash the relative path
-        path.strip_prefix("plugins").unwrap_or(&path).hash(hasher);
-
+        path.strip_prefix(root).unwrap_or(&path).hash(hasher);
         if path.is_dir() {
-            hash_directory(&path, hasher)?;
+            hash_directory(root, &path, hasher)?;
         } else {
-            // Hash file contents
-            let contents = fs::read(&path)?;
-            contents.hash(hasher);
+            fs::read(&path)?.hash(hasher);
         }
     }
 

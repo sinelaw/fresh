@@ -10,8 +10,8 @@ use include_dir::{include_dir, Dir};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// The plugins directory embedded at compile time
-static EMBEDDED_PLUGINS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/plugins");
+/// The plugins directory embedded at compile time, as build.rs staged it.
+static EMBEDDED_PLUGINS: Dir<'_> = include_dir!("$OUT_DIR/embedded-plugins");
 
 /// Cached path to the extracted plugins directory
 static EXTRACTED_PLUGINS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -249,6 +249,15 @@ mod tests {
     fn test_embedded_plugins_exist() {
         // Verify that plugins are embedded
         assert!(EMBEDDED_PLUGINS.files().count() > 0 || EMBEDDED_PLUGINS.dirs().count() > 0);
+    }
+
+    /// The plugins' own tests and the examples are not run from the binary.
+    #[test]
+    fn tests_and_examples_are_not_embedded() {
+        assert!(EMBEDDED_PLUGINS.get_dir("tests").is_none());
+        assert!(EMBEDDED_PLUGINS.get_dir("examples").is_none());
+        assert!(EMBEDDED_PLUGINS.get_file("lib/fresh.d.ts").is_some());
+        assert!(EMBEDDED_PLUGINS.get_dir("schemas").is_some());
     }
 
     #[test]
