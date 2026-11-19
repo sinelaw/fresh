@@ -416,6 +416,49 @@ fn test_set_tab_size_command() {
     );
 }
 
+/// "Set Tab Size" pins the buffer's tab size: a config reload (which
+/// re-resolves every open buffer's settings) keeps it, and "Reset Buffer
+/// Settings" drops it for the configured size.
+#[test]
+fn test_set_tab_size_survives_config_reload_until_reset() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "\tX").unwrap();
+
+    let mut harness = EditorTestHarness::with_config(80, 24, Config::default()).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    let tab_size = |h: &EditorTestHarness| h.editor().active_state().buffer_settings.tab_size;
+    let configured = tab_size(&harness);
+    assert_ne!(configured, 2, "precondition: the configured size isn't 2");
+
+    run_command(&mut harness, "Set Tab Size");
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("2").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(tab_size(&harness), 2);
+
+    harness.editor_mut().reload_config();
+    harness.render().unwrap();
+    assert_eq!(
+        tab_size(&harness),
+        2,
+        "a config reload keeps the buffer's size"
+    );
+
+    run_command(&mut harness, "Reset Buffer Settings");
+    assert_eq!(
+        tab_size(&harness),
+        configured,
+        "reset goes back to the configured size"
+    );
+}
+
 /// Test that "Reset Buffer Settings" restores config defaults
 #[test]
 fn test_reset_buffer_settings_command() {

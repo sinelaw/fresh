@@ -156,6 +156,11 @@ pub struct BufferSettings {
     /// Set based on language config; can be changed per-buffer by user
     pub tab_size: usize,
 
+    /// Explicit per-buffer tab size, set by "Set Tab Size". `None` = follow
+    /// `.editorconfig` and the resolved language config. Wins over both, so
+    /// a config reload or a language pack re-resolving the buffer keeps it.
+    pub tab_size_override: Option<usize>,
+
     /// Whether Enter indents the new line (and a typed closer re-indents
     /// its line). Set based on global + language config: a language's
     /// `auto_indent` wins, otherwise `editor.auto_indent`. `None` for a
@@ -223,6 +228,7 @@ impl Default for BufferSettings {
             whitespace_override: None,
             tab_indicators_override: None,
             tab_size: 4,
+            tab_size_override: None,
             auto_indent: None,
             auto_close: true,
             auto_surround: true,
@@ -248,12 +254,15 @@ impl BufferSettings {
     ///
     /// Explicit per-buffer user overrides are preserved: `virtual_space`
     /// keeps following `virtual_space_override`, `use_tabs` follows
-    /// `use_tabs_override` and `whitespace` follows `whitespace_override`
-    /// when one is set. (The indentation-guide and fold-indicator pins live
+    /// `use_tabs_override`, `tab_size` follows `tab_size_override` and
+    /// `whitespace` follows `whitespace_override` when one is set. (The indentation-guide and fold-indicator pins live
     /// on `BufferViewState` — per split — and are consulted at render time,
     /// so re-stamping the language gate below can't clear them.)
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
-        self.tab_size = self.editorconfig.tab_size.unwrap_or(resolved.tab_size);
+        self.tab_size = self
+            .tab_size_override
+            .or(self.editorconfig.tab_size)
+            .unwrap_or(resolved.tab_size);
         self.use_tabs = self
             .use_tabs_override
             .or(self.editorconfig.use_tabs)
@@ -288,6 +297,7 @@ impl BufferSettings {
     pub fn clear_user_overrides(&mut self) {
         self.virtual_space_override = None;
         self.use_tabs_override = None;
+        self.tab_size_override = None;
         self.whitespace_override = None;
         self.tab_indicators_override = None;
         self.highlight_occurrences_override = None;
@@ -2127,6 +2137,24 @@ mod tests {
             ),
             "re-applying the stored override must reproduce the toggled state"
         );
+    }
+
+    /// A tab size pinned on the buffer ("Set Tab Size") outlasts the config
+    /// being re-applied, over `.editorconfig` too, until the pins are
+    /// cleared.
+    #[test]
+    fn test_tab_size_override_survives_apply_config() {
+        let config = crate::config::Config::default();
+        let resolved = crate::config::BufferConfig::resolve(&config, None);
+        let mut settings = BufferSettings::default();
+        settings.editorconfig.tab_size = Some(8);
+        settings.tab_size_override = Some(2);
+        settings.apply_config(&resolved);
+        assert_eq!(settings.tab_size, 2);
+
+        settings.clear_user_overrides();
+        settings.apply_config(&resolved);
+        assert_eq!(settings.tab_size, 8, "back to `.editorconfig`'s size");
     }
 
     #[test]
