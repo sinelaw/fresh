@@ -94,6 +94,15 @@ function fillPane(c,p){
       sb.appendChild(mk);
     }
   }
+  // The horizontal bar, when the editor lays one out (wrap off): the same
+  // track and thumb along the pane's foot, in columns.
+  const hs=p.hscroll;
+  if(hs && hs.w>0){
+    const sb=div("region scrollbar hscrollbar"); place(sb,hs); c.appendChild(sb);
+    const th=document.createElement("div"); th.className="thumb";
+    th.style.left=`${px(p.hthumbStart,CW)}px`; th.style.width=`${Math.max(CW, px(Math.max(1,p.hthumbEnd-p.hthumbStart),CW))}px`;
+    sb.appendChild(th);
+  }
 }
 function renderPane(i){
   const host=regionHost("panes"), panes=liveScene().regions.panes;

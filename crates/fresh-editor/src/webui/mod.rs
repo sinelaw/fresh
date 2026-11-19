@@ -2103,6 +2103,13 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         })
         .map(
             |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
+                // The horizontal bar, where the tree laid one out (line wrap
+                // off and the bar shown): its track and thumb, in columns.
+                let hscroll = editor.pane_hscroll_rect(*leaf).filter(|r| r.width > 0);
+                let (hthumb_s, hthumb_e) = editor
+                    .bar_thumb(*leaf, fresh_ui::Axis::Horizontal)
+                    .map(|(s, e, _)| (s, e))
+                    .unwrap_or((0, 0));
                 let (content_rect, scrollbar_rect) = (&content_rect, &scrollbar_rect);
                 // Tabs are derived once in the core (`Editor::tab_bar_view`).
                 let tb = editor.tab_bar_view(*leaf);
@@ -2143,6 +2150,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                     "vscroll": rect_json(*scrollbar_rect),
                     "thumbStart": thumb_s,
                     "thumbEnd": thumb_e,
+                    "hscroll": hscroll.map(rect_json),
+                    "hthumbStart": hthumb_s,
+                    "hthumbEnd": hthumb_e,
                     // Plugin scrollbar markers. The web frontend draws its own
                     // scrollbar from `vscroll`/`thumb*` rather than reading the
                     // painted cells, so markers must travel as data too.

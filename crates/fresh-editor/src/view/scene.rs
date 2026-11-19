@@ -307,6 +307,13 @@ pub struct TabView {
     pub icon: Option<IconView>,
     pub active: bool,
     pub modified: bool,
+    /// A preview tab (the next file opened replaces it); the terminal draws
+    /// its name in italics.
+    pub preview: bool,
+    /// The buffer is binary (`[BIN]` in the label).
+    pub binary: bool,
+    /// A group's tab rather than a buffer's.
+    pub group: bool,
     pub rect: RectView,
     pub close_rect: RectView,
 }
@@ -515,6 +522,9 @@ impl Editor {
                         icon,
                         active: bid == Some(active),
                         modified: tab.modified,
+                        preview: tab.preview,
+                        binary: tab.binary,
+                        group: bid.is_none(),
                         rect: RectView::from(r.name),
                         close_rect: RectView::from(r.close),
                     })

@@ -68,7 +68,8 @@ function tabBarEl(p, rect){
   const bar=div("region tabbar"); place(bar,rect);
   bar.dataset.row=String(rect.y);
   for(const t of p.tabs){
-    const el=div("tab"+(t.active?" active":"")+(t.modified?" modified":""));
+    const el=div("tab"+(t.active?" active":"")+(t.modified?" modified":"")
+      +(t.preview?" preview":"")+(t.binary?" binary":"")+(t.group?" group":""));
     // Which tab this is, across rebuilds: its pane and its buffer (a group
     // tab, which has none, by its label).
     const bid=t.bufferId;

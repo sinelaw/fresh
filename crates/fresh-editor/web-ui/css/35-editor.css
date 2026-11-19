@@ -42,6 +42,8 @@
   .scrollbar{background:transparent}
   .thumb{position:absolute;right:1px;width:8px;border-radius:4px;background:var(--ed-thumb,#5a5a5a)}
   .thumb:hover{background:var(--ed-thumb-hover,#7a7a7a)}
+  /* The horizontal bar's thumb lies along the pane's foot. */
+  .hscrollbar .thumb{right:auto;top:auto;bottom:1px;width:auto;height:8px}
   /* Plugin scrollbar markers sit on the left half of the track so the thumb
      stays visible underneath — the DOM counterpart of the TUI half-block. */
   .scrollbar-marker{position:absolute;left:0;width:5px;z-index:1;pointer-events:none}

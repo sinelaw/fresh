@@ -50,6 +50,8 @@
   .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;display:none}
   .tab.modified .dot{display:inline-block}
   .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
+  /* A preview tab reads as provisional, as the terminal's italic name does. */
+  .tab.preview .name{font-style:italic}
   .tab .x:hover{background:#5a5a5a;color:#fff}
   /* A tab's Nerd Font file icon (sent only while editor.nerd_font_icons is on). */
   .tab .ticon{flex:0 0 auto;font-family:var(--mono-family)}

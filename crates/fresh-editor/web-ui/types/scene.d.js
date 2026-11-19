@@ -145,6 +145,9 @@
     vscroll: Rect,
     thumbStart: Number,
     thumbEnd: Number,
+    hscroll: Rect | Null,
+    hthumbStart: Number,
+    hthumbEnd: Number,
     vscrollMarkers: ScrollbarMarker[]
 } */
 
@@ -158,6 +161,9 @@
     icon: Icon | Null,
     active: Boolean,
     modified: Boolean,
+    preview: Boolean,
+    binary: Boolean,
+    group: Boolean,
     rect: Rect,
     closeRect: Rect
 } */
