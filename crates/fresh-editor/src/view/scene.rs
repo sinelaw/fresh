@@ -276,6 +276,26 @@ impl Editor {
 
 // ─────────────────────────── tabs ───────────────────────────
 
+/// A file or folder's Nerd Font icon, as the terminal draws it beside the
+/// name (`file_icons::shown`): present only while `editor.nerd_font_icons`
+/// is on. The web draws the glyph with its bundled Nerd Font.
+#[derive(Debug, Clone, Serialize)]
+pub struct IconView {
+    pub glyph: String,
+    /// CSS color; `None` for a color a browser has no value for (the
+    /// terminal's default foreground).
+    pub color: Option<String>,
+}
+
+impl IconView {
+    fn of(icon: crate::view::file_icons::Resolved) -> Self {
+        IconView {
+            color: css_color(icon.color),
+            glyph: icon.glyph,
+        }
+    }
+}
+
 /// One tab in a pane's tab bar (semantic; geometry from the pipeline's
 /// TabLayout for click/close hit-testing).
 #[derive(Debug, Clone, Serialize)]
@@ -283,6 +303,8 @@ impl Editor {
 pub struct TabView {
     pub buffer_id: Option<usize>,
     pub label: String,
+    /// The file-type icon a buffer's tab shows before its name.
+    pub icon: Option<IconView>,
     pub active: bool,
     pub modified: bool,
     pub rect: RectView,
@@ -426,17 +448,37 @@ impl Editor {
             .as_ref()
             .and_then(|ui| crate::view::shell::tabs::new_tab_rect(ui, size, leaf))
             .map(RectView::from);
+        let rects = self.tab_rects(leaf);
+        // The names the strip resolves for its tabs, which is what the
+        // terminal's tab icons are looked up by.
+        let names = {
+            let w = self.active_window();
+            let targets: Vec<_> = rects.iter().map(|t| t.target).collect();
+            crate::view::ui::tabs::resolve_tab_names(
+                &targets,
+                w.buffers.as_map(),
+                &w.buffer_metadata,
+                &w.composite_buffers,
+                &HashMap::new(),
+            )
+        };
+        let theme = self.theme.read().unwrap();
         TabBarView {
             bar: Some(RectView::from(bar)),
             new_tab,
-            tabs: self
-                .tab_rects(leaf)
+            tabs: rects
                 .into_iter()
                 .map(|t| {
                     let bid = t.target.as_buffer();
+                    // A group's tab has no file type, so no icon.
+                    let icon = bid
+                        .and(names.get(&t.target))
+                        .and_then(|name| crate::view::file_icons::shown(&theme, name, None))
+                        .map(IconView::of);
                     TabView {
                         buffer_id: bid.map(|b| b.0),
                         label: t.label,
+                        icon,
                         active: bid == Some(active),
                         modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
                         rect: RectView::from(t.name),
@@ -843,6 +885,9 @@ pub struct FileRow {
     pub depth: usize,
     pub is_dir: bool,
     pub expanded: bool,
+    /// The row's file-type or folder icon, as the terminal's explorer draws
+    /// it.
+    pub icon: Option<IconView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -890,6 +935,7 @@ impl Editor {
         ))?;
         let tree = view.tree();
         let projection = view.projection();
+        let theme = self.theme.read().unwrap();
         let rows = projection
             .rows
             .iter()
@@ -898,6 +944,12 @@ impl Editor {
                 depth: r.indent,
                 is_dir: r.is_dir(),
                 expanded: r.is_expanded(),
+                icon: crate::view::file_icons::shown(
+                    &theme,
+                    &r.entry.name,
+                    r.is_dir().then(|| r.is_expanded()),
+                )
+                .map(IconView::of),
             })
             .collect();
         let title = tree

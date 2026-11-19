@@ -1,0 +1,12 @@
+  /* Nerd Font file icons in the explorer and on tabs (sent only while the
+     editor's `editor.nerd_font_icons` is on). Last in the cascade so it is the
+     one place their color is decided, over every skin's rules for the web's own
+     line icons (which color by row state and folder-ness):
+       - the editor theme's color for the file type (`--icon-color`, set per
+         icon from the scene), as the terminal draws it — the editor theme's
+         colors are made for its own background, which the explorer and tab
+         bar keep in every skin but one;
+       - macOS Light, which paints the sidebar and tabs with its own light
+         palette, draws them in that palette's text color, as Finder does. */
+  .fileexplorer .fx-icon.nerd,.tab .ticon{color:var(--icon-color,currentColor) !important}
+  body.theme-macos .fileexplorer .fx-icon.nerd,body.theme-macos .tab .ticon{color:var(--muted) !important}

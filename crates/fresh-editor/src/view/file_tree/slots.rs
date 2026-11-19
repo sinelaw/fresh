@@ -300,41 +300,33 @@ impl ExplorerLeadingSlotProvider for DefaultLeadingSlotProvider {
 /// Both give way to the theme's `ui.file_icon_fg` when it names one. Through
 /// the same slot, so folder and file icons at one depth share a column.
 fn file_icon(context: &ExplorerSlotContext<'_>) -> Option<ExplorerLeadingSlotPayload> {
-    if !context.theme.chrome.nerd_font {
-        return None;
-    }
     let theme = context.theme;
-    let (icon, own_key) = if context.is_dir {
-        (
-            crate::view::file_icons::resolve_folder(
-                &theme.file_icons,
-                context.is_expanded,
-                theme.file_explorer_directory_fg,
-            ),
-            // Named only while the theme leaves the folder's color alone.
-            theme
+    let name = match context.is_dir {
+        true => String::new(),
+        false => context.path.file_name()?.to_string_lossy().into_owned(),
+    };
+    let icon = crate::view::file_icons::shown(
+        theme,
+        &name,
+        context.is_dir.then_some(context.is_expanded),
+    )?;
+    // The theme key the color came from, so a theme edit restyles it live:
+    // the one icon color when the theme names one, else the folder's
+    // directory color while the theme leaves the folder's color alone.
+    let fg_key = match theme.file_icon_fg {
+        Some(_) => Some("ui.file_icon_fg"),
+        None => (context.is_dir
+            && theme
                 .file_icons
                 .folder
                 .as_ref()
                 .and_then(|o| o.color)
-                .is_none()
-                .then_some("ui.file_explorer_directory_fg"),
-        )
-    } else {
-        let name = context.path.file_name()?.to_string_lossy();
-        (
-            crate::view::file_icons::resolve(&theme.file_icons, &name),
-            None,
-        )
-    };
-    let (glyph, own_color) = (icon.glyph, icon.color);
-    let (fg, fg_key) = match theme.file_icon_fg {
-        Some(c) => (c, Some("ui.file_icon_fg")),
-        None => (own_color, own_key),
+                .is_none())
+        .then_some("ui.file_explorer_directory_fg"),
     };
     Some(ExplorerLeadingSlotPayload {
-        text: glyph,
-        fg,
+        text: icon.glyph,
+        fg: icon.color,
         fg_key: fg_key.map(str::to_string),
         min_width: DEFAULT_LEADING_SLOT_MIN_WIDTH,
     })

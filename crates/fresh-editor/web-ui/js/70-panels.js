@@ -65,7 +65,13 @@ function fileExplorerEl(fe){
     chev.textContent=r.isDir?(r.expanded?"▾":"▸"):"";
     row.appendChild(chev);
     const ic=document.createElement("span"); ic.className="fx-icon"+(r.isDir?" dir":"");
-    ic.innerHTML=fileIcon(r.name,{dir:r.isDir,expanded:r.expanded}); row.appendChild(ic);
+    // With `editor.nerd_font_icons` on, the editor sends the icon the terminal
+    // draws (glyph and color; the bundled Nerd Font draws the glyph);
+    // otherwise the web's own line icons.
+    const icon=r.icon;
+    if(icon){ ic.classList.add("nerd"); ic.textContent=icon.glyph; const color=icon.color; if(color) ic.style.setProperty("--icon-color",color); }
+    else ic.innerHTML=fileIcon(r.name,{dir:r.isDir,expanded:r.expanded});
+    row.appendChild(ic);
     const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":""); name.textContent=r.name;
     row.appendChild(name);
     const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row

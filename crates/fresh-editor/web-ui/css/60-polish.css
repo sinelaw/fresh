@@ -93,6 +93,8 @@
   /* ---- shared inline-SVG icons (file explorer) ---- */
   .ficon{width:14px;height:14px;display:block;flex:0 0 auto}
   .fileexplorer .fx-icon{display:inline-flex;align-items:center;flex:0 0 auto}
+  /* The editor's Nerd Font icon: a glyph in the cell font, one cell wide. */
+  .fileexplorer .fx-icon.nerd{font-family:var(--mono-family);justify-content:center;width:1.2em}
   /* Explorer icons: quietly muted; folders take the accent so the tree structure
      reads at a glance. Selected rows flip to --on-sel via currentColor. */
   .fileexplorer .fx-icon{color:var(--muted)}

@@ -151,6 +151,7 @@
 /** type Tab = {
     bufferId: Number | Null,
     label: String,
+    icon: Icon | Null,
     active: Boolean,
     modified: Boolean,
     rect: Rect,
@@ -382,7 +383,11 @@
 // ───────────────────────────── file explorer ─────────────────────────────
 
 // view/scene.rs `FileRow`.
-/** type FileRow = { name: String, depth: Number, isDir: Boolean, expanded: Boolean } */
+/** type FileRow = { name: String, depth: Number, isDir: Boolean, expanded: Boolean, icon: Icon | Null } */
+
+// view/scene.rs `IconView`: a file or folder's Nerd Font icon, sent only while
+// `editor.nerd_font_icons` is on.
+/** type Icon = { glyph: String, color: String | Null } */
 
 // view/scene.rs `FileExplorerView`.
 /** type FileExplorer = {

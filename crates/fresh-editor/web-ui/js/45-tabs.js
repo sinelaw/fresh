@@ -76,6 +76,13 @@ function tabBarEl(p, rect){
         tabDrag={press:c, pressL:String(t.rect.x), last:c};
         sendMouse({kind:"down",button:"left",col:c.col,row:c.row});
       }; }
+    // The file-type icon the terminal's tab shows, while `editor.nerd_font_icons` is on.
+    const icon=t.icon;
+    if(icon){
+      const ic=document.createElement("span"); ic.className="ticon"; ic.textContent=icon.glyph;
+      const color=icon.color; if(color) ic.style.setProperty("--icon-color",color);
+      el.appendChild(ic);
+    }
     const name=document.createElement("span"); name.className="name"; name.textContent=t.label; el.appendChild(name);
     const dot=document.createElement("span"); dot.className="dot"; el.appendChild(dot);
     const x=document.createElement("span"); x.className="x"; x.textContent="×";
