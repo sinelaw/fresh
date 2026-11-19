@@ -642,11 +642,16 @@ printf '\033[44mBLUE\033[49m\n'"#,
     /// a notch back then moved it somewhere else, not back to where it stood.
     #[test]
     fn a_drawing_arriving_in_a_dual_view_lines_the_panes_up_again() {
+        // The tool draws only once the test says so — by creating `go` — so
+        // the drawing lands after the panes have been placed and synced, as a
+        // slow tool's does, with no clock in the test.
         let tools = tempfile::TempDir::new().unwrap();
+        let go = tools.path().join("go");
         let slow = stub(
             tools.path(),
             "stub-slow",
-            r#"sleep 1; for i in $(seq 1 14); do printf 'ROW %s\n' $i; done"#,
+            r#"while [ ! -e "$2" ]; do sleep 0.05; done
+for i in $(seq 1 14); do printf 'ROW %s\n' $i; done"#,
         );
         let mut md = String::from("# Doc\n\n");
         for i in 0..40 {
@@ -658,8 +663,14 @@ printf '\033[44mBLUE\033[49m\n'"#,
         }
         let (mut h, _tmp) = harness_with_renderers(
             &md,
-            serde_json::json!({ "mermaid": { "command": slow, "args": ["{file}"] } }),
+            serde_json::json!({
+                "mermaid": { "command": slow, "args": ["{file}", go.to_string_lossy()] }
+            }),
         );
+        // A notch a line, delivered whole: a notch of several lines is walked
+        // out over the following frames by the clock, so where the panes
+        // stood when the screen was read would depend on the machine's speed.
+        h.editor_mut().config_mut().editor.mouse_wheel_scroll_lines = 1;
         run(&mut h, "Markdown: Source/Compose Dual Mode");
         h.wait_until(|h| screen_has(h, "Pre 0")).unwrap();
 
@@ -670,14 +681,19 @@ printf '\033[44mBLUE\033[49m\n'"#,
                 .lines()
                 .position(|l| l.chars().take(half).collect::<String>().contains(text))
         };
-        for _ in 0..40 {
+        for _ in 0..120 {
             if left_row_of(&h, "```mermaid").is_some_and(|r| (4..12).contains(&r)) {
                 break;
             }
             h.mouse_scroll_down(10, 15).unwrap();
         }
         assert!(left_row_of(&h, "```mermaid").is_some_and(|r| (4..12).contains(&r)));
-        // The drawing arrives a moment later, taller than the source block.
+        assert!(
+            !screen_has(&h, "ROW 1"),
+            "the drawing must not be in before the panes are placed"
+        );
+        // Now the drawing arrives, taller than the source block.
+        std::fs::write(&go, "").unwrap();
         h.wait_until(|h| screen_has(h, "ROW 14")).unwrap();
         for _ in 0..3 {
             h.render().unwrap();
