@@ -334,7 +334,7 @@ fn read_existing_json(path: &Path) -> Result<Value, ConfigError> {
 
 /// Current config schema version.
 /// Increment this when making breaking changes to config structure.
-pub const CURRENT_CONFIG_VERSION: u32 = 3;
+pub const CURRENT_CONFIG_VERSION: u32 = 4;
 
 /// Apply all necessary migrations to bring a config JSON to the current version.
 pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
@@ -349,6 +349,9 @@ pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
     }
     if version < 3 {
         value = migrate_v2_to_v3(value)?;
+    }
+    if version < 4 {
+        value = migrate_v3_to_v4(value)?;
     }
     // Whatever the version says: an old name can come back into a current
     // file (pasted from older docs, or written by an older build sharing the
@@ -416,6 +419,31 @@ fn migrate_v2_to_v3(mut value: Value) -> Result<Value, ConfigError> {
         map.insert("version".to_string(), Value::Number(3.into()));
     }
     rename_legacy_keys(&mut value);
+    Ok(value)
+}
+
+/// Migration from v3 to v4: `languages.<id>.auto_indent` now takes effect.
+///
+/// Before v4 a language's `auto_indent` was a plain bool defaulting to
+/// `true` that nothing read on Enter, and the Settings language dialog wrote
+/// every field of an entry when any one changed — so many files hold
+/// `"auto_indent": true` for languages the user never meant to set it for.
+/// Read as written, it would now override `editor.auto_indent: false`. Those
+/// values had no effect, so dropping them keeps the behaviour unchanged: the
+/// language follows `editor.auto_indent`. A `false` is left alone.
+fn migrate_v3_to_v4(mut value: Value) -> Result<Value, ConfigError> {
+    if let Value::Object(ref mut map) = value {
+        map.insert("version".to_string(), Value::Number(4.into()));
+        if let Some(Value::Object(languages)) = map.get_mut("languages") {
+            for language in languages.values_mut() {
+                if let Value::Object(language) = language {
+                    if language.get("auto_indent") == Some(&Value::Bool(true)) {
+                        language.remove("auto_indent");
+                    }
+                }
+            }
+        }
+    }
     Ok(value)
 }
 
@@ -757,8 +785,9 @@ impl ConfigResolver {
         // Preserve any manual edits made externally; delta takes precedence.
         // Fail loudly on an unparseable existing file rather than discarding it
         // (which would clobber the user's whole config on write).
-        let mut original = read_existing_json(&path)?;
-        rename_legacy_keys(&mut original);
+        // Brought to the current version first, as it reads on load, so the
+        // file is written at that version (see `migrate_config`).
+        let original = migrate_config(read_existing_json(&path)?)?;
         // Invalid fields the file already has (the loader ignores them with a
         // warning) don't block the save: the rest of the file is merged, and
         // they are put back afterwards for the user to fix.
@@ -795,8 +824,11 @@ impl ConfigResolver {
     ) -> Result<(), ConfigError> {
         let path = self.layer_write_path(layer)?;
 
-        let mut config_value = read_existing_json(&path)?;
-        rename_legacy_keys(&mut config_value);
+        // Brought to the current version first, as it reads on load, so the
+        // file is written at that version: a value a migration would drop on
+        // the next load (an old file's stale entry) is dropped now, and one
+        // the changes write isn't mistaken for it.
+        let mut config_value = migrate_config(read_existing_json(&path)?)?;
 
         // A change that replaces a whole array or object the file had an
         // invalid entry in drops that entry: say so, since the user's file
@@ -3186,6 +3218,153 @@ mod tests {
 
         let editor = migrated.get("editor").unwrap();
         assert_eq!(editor.get("tab_size"), Some(&serde_json::json!(4)));
+    }
+
+    /// Effective `auto_indent` of a buffer in `language` under `config`.
+    fn language_auto_indent(config: &Config, language: &str) -> bool {
+        crate::config::BufferConfig::resolve(config, Some(language)).auto_indent
+    }
+
+    /// A pre-v4 file's `languages.<id>.auto_indent: true` (written by the
+    /// old Settings dialog, and never read on Enter) is dropped on load, in
+    /// every layer, so the language follows `editor.auto_indent`; a `false`
+    /// and the entry's other fields stay.
+    #[test]
+    fn migration_v3_to_v4_drops_stale_language_auto_indent() {
+        let v3 = r#"{
+            "version": 3,
+            "editor": { "auto_indent": false },
+            "languages": {
+                "python": { "auto_indent": true, "tab_size": 2 },
+                "rust": { "auto_indent": false }
+            }
+        }"#;
+        for layer in [ConfigLayer::User, ConfigLayer::Project] {
+            let (temp, resolver) = create_test_resolver();
+            let path = resolver.layer_write_path(layer).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, v3).unwrap();
+
+            let config = resolver.resolve().unwrap();
+            assert_eq!(config.languages["python"].auto_indent, None, "{layer:?}");
+            assert!(!language_auto_indent(&config, "python"), "{layer:?}");
+            assert_eq!(config.languages["python"].tab_size, Some(2), "{layer:?}");
+            assert_eq!(
+                config.languages["rust"].auto_indent,
+                Some(false),
+                "{layer:?}"
+            );
+            drop(temp);
+        }
+
+        // A version-less file (written by the old Settings dialog into a
+        // new file) migrates through v4 as well.
+        let migrated = migrate_config(serde_json::json!({
+            "languages": { "python": { "auto_indent": true } }
+        }))
+        .unwrap();
+        assert!(migrated.pointer("/languages/python/auto_indent").is_none());
+        assert_eq!(
+            migrated.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+    }
+
+    /// A v4 file's explicit `auto_indent: true` is the user's choice and
+    /// overrides `editor.auto_indent: false`.
+    #[test]
+    fn migration_v4_keeps_explicit_language_auto_indent() {
+        let (temp, resolver) = create_test_resolver();
+        let path = resolver.user_config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+                "version": 4,
+                "editor": { "auto_indent": false },
+                "languages": { "python": { "auto_indent": true } }
+            }"#,
+        )
+        .unwrap();
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.languages["python"].auto_indent, Some(true));
+        assert!(language_auto_indent(&config, "python"));
+        drop(temp);
+    }
+
+    /// Saving a setting writes the file at the current version, with the
+    /// stale value gone; an explicit `true` saved afterwards (or into a new
+    /// file) then survives the reload.
+    #[test]
+    fn save_upgrades_a_v3_file_and_keeps_a_new_explicit_auto_indent() {
+        let (temp, resolver) = create_test_resolver();
+        let path = resolver.user_config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+                "version": 3,
+                "editor": { "auto_indent": false },
+                "languages": { "python": { "auto_indent": true } }
+            }"#,
+        )
+        .unwrap();
+        let read =
+            || -> Value { serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap() };
+
+        let changes = std::collections::HashMap::from([(
+            "/check_for_updates".to_string(),
+            serde_json::json!(false),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written = read();
+        assert_eq!(
+            written.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION)),
+            "{written}"
+        );
+        assert!(
+            written.pointer("/languages/python/auto_indent").is_none(),
+            "{written}"
+        );
+        assert!(!language_auto_indent(
+            &resolver.resolve().unwrap(),
+            "python"
+        ));
+
+        let changes = std::collections::HashMap::from([(
+            "/languages/python/auto_indent".to_string(),
+            serde_json::json!(true),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        assert!(language_auto_indent(&resolver.resolve().unwrap(), "python"));
+
+        // `save_to_layer` writes the current version too.
+        let mut config = resolver.resolve().unwrap();
+        config.editor.line_numbers = !config.editor.line_numbers;
+        resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
+        assert_eq!(
+            read().get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+        assert!(language_auto_indent(&resolver.resolve().unwrap(), "python"));
+
+        // A new file, too.
+        let project = resolver.layer_write_path(ConfigLayer::Project).unwrap();
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::Project)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&project).unwrap()).unwrap();
+        assert_eq!(
+            written.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+        drop(temp);
     }
 
     /// `orchestrator_mode` is now `auto_attach`; when a file somehow holds

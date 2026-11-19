@@ -251,8 +251,7 @@ To add syntax highlighting and LSP support for a new language, open **Settings â
     "mylang": {
       "extensions": ["ml", "myl"],
       "grammar": "mylang",
-      "comment_prefix": "#",
-      "auto_indent": true
+      "comment_prefix": "#"
     }
   },
   "lsp": {
