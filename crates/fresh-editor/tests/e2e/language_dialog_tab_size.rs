@@ -10,6 +10,7 @@
 //! asserts on rendered output, per CONTRIBUTING.md ("E2E Tests Observe, Not
 //! Inspect").
 
+use crate::common::dialog::{focus_field, row_with};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -24,23 +25,6 @@ fn typescript_only_config() -> Config {
         "precondition: typescript ships as a built-in language"
     );
     config
-}
-
-/// Return the full text of the first rendered row that contains `needle`.
-fn row_with(harness: &EditorTestHarness, needle: &str) -> String {
-    harness
-        .screen_to_string()
-        .lines()
-        .find(|line| line.contains(needle))
-        .unwrap_or("")
-        .to_string()
-}
-
-/// True when the row showing `label` carries the dialog's focus marker (`>`),
-/// which the renderer draws before the focused field's text.
-fn row_is_focused(harness: &EditorTestHarness, label: &str) -> bool {
-    let row = row_with(harness, label);
-    row.split(label).next().unwrap_or("").contains('>')
 }
 
 /// From a freshly opened Settings panel, focus the right-hand list, walk down
@@ -75,23 +59,6 @@ fn open_language_dialog(harness: &mut EditorTestHarness) {
     );
 }
 
-/// Walk the dialog's field focus down until the Tab Size row is the focused one.
-/// (Tab Size sits near the bottom of a tall dialog, so it scrolls into view as
-/// the focus walks toward it.)
-fn focus_tab_size(harness: &mut EditorTestHarness) {
-    for _ in 0..80 {
-        if row_is_focused(harness, "Tab Size") {
-            return;
-        }
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
-    panic!(
-        "could not focus the Tab Size field; screen was:\n{}",
-        harness.screen_to_string()
-    );
-}
-
 /// Typing a new Tab Size and committing the field must keep the typed value.
 /// Pre-fix the commit cancelled the number edit, so the field snapped back to
 /// its inherited `0`.
@@ -101,7 +68,7 @@ fn language_tab_size_edit_survives_commit() {
     harness.render().unwrap();
 
     open_language_dialog(&mut harness);
-    focus_tab_size(&mut harness);
+    focus_field(&mut harness, "Tab Size");
 
     // Inherited to start with: the value reads 0 and offers the (Inherited) badge.
     assert!(

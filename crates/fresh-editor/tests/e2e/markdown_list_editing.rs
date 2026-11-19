@@ -23,7 +23,7 @@ use std::fs;
 
 /// Create a harness in a fresh project directory, with the built-in
 /// config: Markdown's list editing needs no plugin.
-fn markdown_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
+fn markdown_harness(width: u16, height: u16) -> EditorTestHarness {
     markdown_harness_with_config(width, height, Default::default())
 }
 
@@ -32,17 +32,9 @@ fn markdown_harness_with_config(
     width: u16,
     height: u16,
     config: fresh::config::Config,
-) -> (EditorTestHarness, tempfile::TempDir) {
+) -> EditorTestHarness {
     init_tracing_from_env();
-
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    let harness =
-        EditorTestHarness::with_config_and_working_dir(width, height, config, project_root)
-            .unwrap();
-    (harness, temp_dir)
+    EditorTestHarness::with_temp_project_and_config(width, height, config).unwrap()
 }
 
 /// Helper: open a markdown file. The rules need no activation: they apply
@@ -50,13 +42,6 @@ fn markdown_harness_with_config(
 fn open_md(harness: &mut EditorTestHarness, path: &std::path::Path) {
     harness.open_file(path).unwrap();
     harness.render().unwrap();
-}
-
-/// Helper: get buffer content, panicking if unavailable.
-fn buf(harness: &EditorTestHarness) -> String {
-    harness
-        .get_buffer_content()
-        .expect("buffer content should be available")
 }
 
 /// Open `name` holding `content`, press End then Enter, and return the text.
@@ -72,7 +57,7 @@ fn enter_at_end_of_first_line(
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    buf(harness)
+    harness.get_buffer_content().unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +67,7 @@ fn enter_at_end_of_first_line(
 /// In a .md file Enter continues a list item, with no activation step.
 #[test]
 fn test_rules_apply_in_md_file() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = enter_at_end_of_first_line(&mut harness, "readme.md", "- item\n");
     assert_eq!(content, "- item\n- \n");
@@ -92,7 +77,7 @@ fn test_rules_apply_in_md_file() {
 /// In a non-markdown file Enter is the plain newline: no list continuation.
 #[test]
 fn test_rules_do_not_apply_in_non_md_file() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = enter_at_end_of_first_line(&mut harness, "main.rs", "- item\n");
     assert_eq!(
@@ -110,7 +95,7 @@ fn test_rules_do_not_apply_in_non_md_file() {
 /// followed by the same indent and bullet.
 #[test]
 fn test_enter_continues_unordered_list() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "- top\n  - nested\n";
     let fixture = TestFixture::new("list.md", content).unwrap();
@@ -138,7 +123,7 @@ fn test_enter_continues_unordered_list() {
 /// Pressing Enter at the end of an ordered list item should insert the next number.
 #[test]
 fn test_enter_continues_ordered_list() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "1. first\n2. second\n";
     let fixture = TestFixture::new("ordered.md", content).unwrap();
@@ -166,7 +151,7 @@ fn test_enter_continues_ordered_list() {
 /// Pressing Enter at the end of a checkbox item should insert an unchecked checkbox.
 #[test]
 fn test_enter_continues_checkbox() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "- [x] done task\n";
     let fixture = TestFixture::new("checkbox.md", content).unwrap();
@@ -192,7 +177,7 @@ fn test_enter_continues_checkbox() {
 /// Pressing Enter on an empty list item (just the bullet) should remove the marker.
 #[test]
 fn test_enter_clears_empty_bullet() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "- item\n- \n";
     let fixture = TestFixture::new("empty.md", content).unwrap();
@@ -224,7 +209,7 @@ fn test_enter_clears_empty_bullet() {
 /// Pressing Enter on a line with no indentation should just insert a plain newline.
 #[test]
 fn test_enter_no_indent_on_unindented_line() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "Hello world\n";
     let fixture = TestFixture::new("plain.md", content).unwrap();
@@ -246,7 +231,7 @@ fn test_enter_no_indent_on_unindented_line() {
         })
         .unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let lines: Vec<&str> = content.lines().collect();
     assert!(
         lines.len() >= 2,
@@ -266,7 +251,7 @@ fn test_enter_no_indent_on_unindented_line() {
 /// match the *line's* leading whitespace (not the cursor column).
 #[test]
 fn test_enter_deep_indent() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "        deep indent text\n";
     let fixture = TestFixture::new("deep.md", content).unwrap();
@@ -297,7 +282,7 @@ fn test_enter_deep_indent() {
 /// Tab should insert 4 spaces at the cursor position.
 #[test]
 fn test_tab_inserts_spaces() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "text\n";
     let fixture = TestFixture::new("tab.md", content).unwrap();
@@ -326,7 +311,7 @@ fn test_tab_inserts_spaces() {
 fn test_tab_follows_editor_tab_size() {
     let mut config = fresh::config::Config::default();
     config.editor.tab_size = 2;
-    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
+    let mut harness = markdown_harness_with_config(80, 24, config);
 
     let fixture = TestFixture::new("tab2.md", "text\n- \n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -368,7 +353,7 @@ fn test_tab_follows_markdown_language_settings() {
     let mut config = fresh::config::Config::default();
     config.editor.tab_size = 2;
     config.languages.get_mut("markdown").unwrap().tab_size = Some(3);
-    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config.clone());
+    let mut harness = markdown_harness_with_config(80, 24, config.clone());
 
     let fixture = TestFixture::new("tab3.md", "text\n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -380,7 +365,7 @@ fn test_tab_follows_markdown_language_settings() {
     harness.assert_no_plugin_errors();
 
     config.languages.get_mut("markdown").unwrap().use_tabs = Some(true);
-    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
+    let mut harness = markdown_harness_with_config(80, 24, config);
     let fixture = TestFixture::new("tabs.md", "text\n- \n").unwrap();
     open_md(&mut harness, &fixture.path);
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -416,9 +401,9 @@ fn test_tab_follows_markdown_language_settings() {
 fn test_new_markdown_file_uses_markdown_language_settings() {
     let mut config = fresh::config::Config::default();
     config.languages.get_mut("markdown").unwrap().tab_size = Some(3);
-    let (mut harness, temp_dir) = markdown_harness_with_config(80, 24, config);
+    let mut harness = markdown_harness_with_config(80, 24, config);
 
-    let path = temp_dir.path().join("not_yet_saved.md");
+    let path = harness.project_dir().unwrap().join("not_yet_saved.md");
     open_md(&mut harness, &path);
     harness.type_text("text").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -433,7 +418,7 @@ fn test_new_markdown_file_uses_markdown_language_settings() {
 /// outside Markdown, instead of replacing the selection with spaces (#3666).
 #[test]
 fn test_tab_indents_a_multi_line_selection() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "https://a.example/one\nhttps://b.example/two\nhttps://c.example/three\n";
     let fixture = TestFixture::new("urls.md", content).unwrap();
@@ -464,7 +449,7 @@ fn test_tab_indents_a_multi_line_selection() {
 /// Tab with several cursors indents at every cursor, not just the primary.
 #[test]
 fn test_tab_with_multiple_cursors_indents_each_line() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "one\ntwo\nthree\n";
     let fixture = TestFixture::new("multi.md", content).unwrap();
@@ -491,7 +476,7 @@ fn test_tab_with_multiple_cursors_indents_each_line() {
 /// Multiple Tab presses should accumulate spaces.
 #[test]
 fn test_multiple_tabs() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "x\n";
     let fixture = TestFixture::new("tabs.md", content).unwrap();
@@ -520,7 +505,7 @@ fn test_multiple_tabs() {
 /// Tab on a blank unordered list item should indent and cycle the bullet.
 #[test]
 fn test_tab_cycles_bullet_on_blank_item() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     // Start with "* " (asterisk bullet, no content)
     let content = "* \n";
@@ -556,7 +541,7 @@ fn test_tab_cycles_bullet_on_blank_item() {
 /// then presses Shift+Tab through a full reverse cycle.
 #[test]
 fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     // Start with "    - " — as if Tab was already pressed once on "* "
     let content = "    - \n";
@@ -584,7 +569,7 @@ fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
 /// then Shift+Tab reverses the entire sequence back to the starting state.
 #[test]
 fn test_tab_shift_tab_full_round_trip() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     // Start with "* " (asterisk bullet, no content)
     let content = "* \n";
@@ -681,7 +666,7 @@ fn test_tab_shift_tab_full_round_trip() {
 /// Characters should be inserted normally (the mode is not read-only).
 #[test]
 fn test_normal_typing_works() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "\n";
     let fixture = TestFixture::new("type.md", content).unwrap();
@@ -694,7 +679,7 @@ fn test_normal_typing_works() {
     harness.type_text("Hello markdown").unwrap();
     harness.render().unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("Hello markdown"),
         "Typed text should appear in buffer. Got:\n{:?}",
@@ -712,19 +697,19 @@ fn test_normal_typing_works() {
 /// the .md buffer it continues lists again.
 #[test]
 fn test_rules_follow_the_active_buffer() {
-    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let md_fixture = TestFixture::new("doc.md", "- a\n").unwrap();
     open_md(&mut harness, &md_fixture.path);
 
-    let txt_path = temp_dir.path().join("project_root").join("notes.txt");
+    let txt_path = harness.project_dir().unwrap().join("notes.txt");
     fs::write(&txt_path, "- plain\n").unwrap();
     harness.open_file(&txt_path).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert_eq!(buf(&harness), "- plain\n\n");
+    harness.assert_buffer_content("- plain\n\n");
 
     open_md(&mut harness, &md_fixture.path);
     harness
@@ -734,7 +719,7 @@ fn test_rules_follow_the_active_buffer() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert_eq!(buf(&harness), "- a\n- \n");
+    harness.assert_buffer_content("- a\n- \n");
     harness.assert_no_plugin_errors();
 }
 
@@ -747,7 +732,7 @@ fn test_rules_follow_the_active_buffer() {
 /// the id `mdx` — or added to `markdown`'s extensions — they do.
 #[test]
 fn test_rules_apply_for_mdx_when_configured() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let content = enter_at_end_of_first_line(&mut harness, "plain.mdx", "- item\n");
     assert_eq!(harness.editor().active_state().language, "text");
     assert_eq!(content, "- item\n\n");
@@ -756,7 +741,7 @@ fn test_rules_apply_for_mdx_when_configured() {
     let mut mdx = config.languages["markdown"].clone();
     mdx.extensions = vec!["mdx".to_string()];
     config.languages.insert("mdx".to_string(), mdx);
-    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
+    let mut harness = markdown_harness_with_config(80, 24, config);
     let content = enter_at_end_of_first_line(&mut harness, "component.mdx", "- item\n");
     assert_eq!(harness.editor().active_state().language, "mdx");
     assert_eq!(content, "- item\n- \n");
@@ -766,7 +751,7 @@ fn test_rules_apply_for_mdx_when_configured() {
 /// The rules also apply to .markdown files.
 #[test]
 fn test_rules_apply_for_markdown_extension() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = enter_at_end_of_first_line(&mut harness, "readme.markdown", "1. one\n");
     assert_eq!(content, "1. one\n2. \n");
@@ -781,7 +766,7 @@ fn test_rules_apply_for_markdown_extension() {
 /// (auto-continue bullet), then type a sub-item.
 #[test]
 fn test_enter_then_type_workflow() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let content = "- item\n";
     let fixture = TestFixture::new("workflow.md", content).unwrap();
@@ -806,7 +791,7 @@ fn test_enter_then_type_workflow() {
     harness.type_text("next").unwrap();
     harness.render().unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("- item\n- next"),
         "Expected '- item\\n- next'. Got:\n{:?}",
@@ -824,7 +809,7 @@ fn test_enter_then_type_workflow() {
 /// Issue #1140: "Pressing enter with multiple cursors only adds a newline to the last cursor"
 #[test]
 fn test_multi_cursor_enter_inserts_at_all_cursors() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let fixture = TestFixture::new("multi.md", "aaa\nbbb\nccc\n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -855,7 +840,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
         })
         .unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.lines().count() >= 5,
         "Enter with 2 cursors should produce at least 5 lines (was 4, added 2 newlines). Got {} lines:\n{:?}",
@@ -873,7 +858,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
         })
         .unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let x_count = content.matches('X').count();
     assert_eq!(
         x_count, 2,
@@ -887,7 +872,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
 /// at all cursor positions (falling back to insert_newline for multi-cursor).
 #[test]
 fn test_multi_cursor_enter_on_list_items() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let fixture =
         TestFixture::new("list_multi.md", "- item one\n- item two\n- item three\n").unwrap();
@@ -916,7 +901,7 @@ fn test_multi_cursor_enter_on_list_items() {
         })
         .unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.lines().count() >= 5,
         "Enter with 2 cursors on list items should produce at least 5 lines. Got {} lines:\n{:?}",
@@ -934,7 +919,7 @@ fn test_multi_cursor_enter_on_list_items() {
         })
         .unwrap();
 
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let x_count = content.matches('X').count();
     assert_eq!(
         x_count, 2,
@@ -968,7 +953,7 @@ fn chars(text: &str) -> Vec<(KeyCode, KeyModifiers)> {
 /// handler, so the characters after Enter landed before it did.
 #[test]
 fn test_burst_typing_around_enter_keeps_key_order() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let fixture = TestFixture::new("burst.md", "").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -980,7 +965,7 @@ fn test_burst_typing_around_enter_keeps_key_order() {
     keys.extend(chars("three"));
     burst(&mut harness, &keys);
     // The edits are already there, before any async work is looked at.
-    assert_eq!(buf(&harness), "- one\n- two\n- three");
+    harness.assert_buffer_content("- one\n- two\n- three");
 
     // Tab / Shift+Tab on a blank item and Enter on an empty one, in a burst.
     let tab = (KeyCode::Tab, KeyModifiers::NONE);
@@ -994,7 +979,7 @@ fn test_burst_typing_around_enter_keeps_key_order() {
     burst(&mut harness, &keys);
     harness.render().unwrap();
     assert_eq!(
-        buf(&harness),
+        harness.get_buffer_content().unwrap(),
         "- one\n- two\n- three\n    + deep\n- out\npara"
     );
     harness.assert_no_plugin_errors();
@@ -1007,7 +992,7 @@ fn test_burst_typing_around_enter_keeps_key_order() {
 /// Enter continues the marker at every cursor, each with its own kind.
 #[test]
 fn test_multi_cursor_enter_continues_each_marker() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let fixture = TestFixture::new("mc.md", "- one\n* two\n1. th\n").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -1018,7 +1003,7 @@ fn test_multi_cursor_enter_continues_each_marker() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("X").unwrap();
-    assert_eq!(buf(&harness), "- one\n- X\n* two\n* X\n1. th\n2. X\n");
+    harness.assert_buffer_content("- one\n- X\n* two\n* X\n1. th\n2. X\n");
     harness.assert_no_plugin_errors();
 }
 
@@ -1028,7 +1013,7 @@ fn test_multi_cursor_enter_continues_each_marker() {
 /// moved to.
 #[test]
 fn test_multi_cursor_shift_tab_mixes_rule_and_normal_dedent() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let fixture = TestFixture::new("mix.md", "    - \n    text\n").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -1039,14 +1024,14 @@ fn test_multi_cursor_shift_tab_mixes_rule_and_normal_dedent() {
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.type_text("X").unwrap();
-    assert_eq!(buf(&harness), "* X\nteXxt\n");
+    harness.assert_buffer_content("* X\nteXxt\n");
     harness.assert_no_plugin_errors();
 }
 
 /// A rule's edit is one undo step, like the key it stands in for.
 #[test]
 fn test_rule_edits_undo_in_one_step() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let fixture = TestFixture::new("undo.md", "- one\n").unwrap();
     open_md(&mut harness, &fixture.path);
     let undo = |h: &mut EditorTestHarness| {
@@ -1058,21 +1043,21 @@ fn test_rule_edits_undo_in_one_step() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert_eq!(buf(&harness), "- one\n- \n");
+    harness.assert_buffer_content("- one\n- \n");
     // Tab rewrites both sides of the cursor (a delete and an insert).
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    assert_eq!(buf(&harness), "- one\n    + \n");
+    harness.assert_buffer_content("- one\n    + \n");
     undo(&mut harness);
-    assert_eq!(buf(&harness), "- one\n- \n");
+    harness.assert_buffer_content("- one\n- \n");
     // Enter on the empty item clears it; undo brings the marker back.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert_eq!(buf(&harness), "- one\n\n");
+    harness.assert_buffer_content("- one\n\n");
     undo(&mut harness);
-    assert_eq!(buf(&harness), "- one\n- \n");
+    harness.assert_buffer_content("- one\n- \n");
     undo(&mut harness);
-    assert_eq!(buf(&harness), "- one\n");
+    harness.assert_buffer_content("- one\n");
     harness.assert_no_plugin_errors();
 }
 
@@ -1081,7 +1066,7 @@ fn test_rule_edits_undo_in_one_step() {
 /// buffer's line ending.
 #[test]
 fn test_enter_continues_list_in_crlf_buffer() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let fixture = TestFixture::new("crlf.md", "- one\r\n2. two\r\n").unwrap();
     open_md(&mut harness, &fixture.path);
 
@@ -1090,7 +1075,7 @@ fn test_enter_continues_list_in_crlf_buffer() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("X").unwrap();
-    assert_eq!(buf(&harness), "- one\r\n- X\r\n2. two\r\n");
+    harness.assert_buffer_content("- one\r\n- X\r\n2. two\r\n");
 
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -1098,7 +1083,7 @@ fn test_enter_continues_list_in_crlf_buffer() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("Y").unwrap();
-    assert_eq!(buf(&harness), "- one\r\n- X\r\n2. two\r\n3. Y\r\n");
+    harness.assert_buffer_content("- one\r\n- X\r\n2. two\r\n3. Y\r\n");
     harness.assert_no_plugin_errors();
 }
 
@@ -1108,8 +1093,8 @@ fn test_enter_continues_list_in_crlf_buffer() {
 /// compute the edit's offsets from that copy (and underflow in debug builds).
 #[test]
 fn test_enter_on_a_line_that_is_not_utf8_is_the_plain_newline() {
-    let (mut harness, temp_dir) = markdown_harness(100, 24);
-    let path = temp_dir.path().join("project_root").join("bytes.md");
+    let mut harness = markdown_harness(100, 24);
+    let path = harness.project_dir().unwrap().join("bytes.md");
     fs::write(&path, b"- a\xffb\n").unwrap();
     open_md(&mut harness, &path);
     // Opened as UTF-8 regardless, so the buffer holds the 0xFF byte.
@@ -1149,7 +1134,14 @@ fn test_enter_on_a_line_that_is_not_utf8_is_the_plain_newline() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("Y").unwrap();
-    assert!(buf(&harness).ends_with("- X\n- Y\n"), "{:?}", buf(&harness));
+    assert!(
+        harness
+            .get_buffer_content()
+            .unwrap()
+            .ends_with("- X\n- Y\n"),
+        "{:?}",
+        harness.get_buffer_content().unwrap()
+    );
 }
 
 /// With one cursor on a line a rule handles and another between brackets
@@ -1159,7 +1151,7 @@ fn test_enter_on_a_line_that_is_not_utf8_is_the_plain_newline() {
 /// which put the second cursor past the end of the buffer.
 #[test]
 fn test_multi_cursor_enter_mixes_rule_and_bracket_expansion() {
-    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     write_user_config_and_reload(
         &mut harness,
         serde_json::json!({ "languages": { "python": { "edit_rules": [
@@ -1169,7 +1161,7 @@ fn test_multi_cursor_enter_mixes_rule_and_bracket_expansion() {
     assert!(harness.config().editor.auto_indent);
     assert!(harness.config().editor.auto_close);
 
-    let py = temp_dir.path().join("project_root").join("mix.py");
+    let py = harness.project_dir().unwrap().join("mix.py");
     fs::write(&py, "# a\nff()").unwrap();
     harness.open_file(&py).unwrap();
     harness.render().unwrap();
@@ -1185,12 +1177,12 @@ fn test_multi_cursor_enter_mixes_rule_and_bracket_expansion() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    let len = buf(&harness).len();
+    let len = harness.get_buffer_content().unwrap().len();
     for (_, c) in harness.editor().active_cursors().iter() {
         assert!(c.position <= len, "a cursor past the end: {}", c.position);
     }
     harness.type_text("X").unwrap();
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let lines: Vec<&str> = content.split('\n').collect();
     assert_eq!(lines.len(), 5, "{content:?}");
     assert_eq!(lines[0], "# a");
@@ -1204,14 +1196,14 @@ fn test_multi_cursor_enter_mixes_rule_and_bracket_expansion() {
 /// where it was (its insert would otherwise carry the cursor past it).
 #[test]
 fn test_rule_changing_only_the_text_after_the_cursor_keeps_the_cursor() {
-    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     write_user_config_and_reload(
         &mut harness,
         serde_json::json!({ "languages": { "python": { "edit_rules": [
             { "on": "indent", "before": r"\($", "after": r"^\)$", "replace_after": "  )" }
         ] } } }),
     );
-    let py = temp_dir.path().join("project_root").join("after.py");
+    let py = harness.project_dir().unwrap().join("after.py");
     fs::write(&py, "f()\n").unwrap();
     harness.open_file(&py).unwrap();
     harness.render().unwrap();
@@ -1222,9 +1214,9 @@ fn test_rule_changing_only_the_text_after_the_cursor_keeps_the_cursor() {
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    assert_eq!(buf(&harness), "f(  )\n");
+    harness.assert_buffer_content("f(  )\n");
     harness.type_text("X").unwrap();
-    assert_eq!(buf(&harness), "f(X  )\n");
+    harness.assert_buffer_content("f(X  )\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1245,7 +1237,7 @@ fn write_user_config_and_reload(harness: &mut EditorTestHarness, config: serde_j
 /// Enter is the plain newline, Tab the plain Tab.
 #[test]
 fn test_user_config_turns_markdown_list_editing_off() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     write_user_config_and_reload(
         &mut harness,
         serde_json::json!({ "languages": { "markdown": { "edit_rules": [] } } }),
@@ -1259,9 +1251,9 @@ fn test_user_config_turns_markdown_list_editing_off() {
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     assert!(
-        buf(&harness).starts_with("* "),
+        harness.get_buffer_content().unwrap().starts_with("* "),
         "no bullet cycling: {:?}",
-        buf(&harness)
+        harness.get_buffer_content().unwrap()
     );
 }
 
@@ -1270,7 +1262,7 @@ fn test_user_config_turns_markdown_list_editing_off() {
 /// naming `languages.python.edit_rules` and its index); the others apply.
 #[test]
 fn test_user_config_edit_rules_for_another_language() {
-    let (mut harness, temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     write_user_config_and_reload(
         &mut harness,
         serde_json::json!({ "languages": { "python": { "edit_rules": [
@@ -1285,7 +1277,7 @@ fn test_user_config_edit_rules_for_another_language() {
         "the invalid rule is dropped, the other kept"
     );
 
-    let py = temp_dir.path().join("project_root").join("t.py");
+    let py = harness.project_dir().unwrap().join("t.py");
     fs::write(&py, "    # note\nx = 1\n").unwrap();
     harness.open_file(&py).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -1293,7 +1285,7 @@ fn test_user_config_edit_rules_for_another_language() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("more").unwrap();
-    assert_eq!(buf(&harness), "    # note\n    # more\nx = 1\n");
+    harness.assert_buffer_content("    # note\n    # more\nx = 1\n");
 
     // Markdown keeps its built-in rules: the user's file set Python's only.
     let content = enter_at_end_of_first_line(&mut harness, "still.md", "- item\n");
@@ -1304,18 +1296,18 @@ fn test_user_config_edit_rules_for_another_language() {
 /// has now, not the ones it opened with.
 #[test]
 fn test_config_reload_brings_changed_edit_rules() {
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     let fixture = TestFixture::new("reload.md", "- item\n> quote\n").unwrap();
     open_md(&mut harness, &fixture.path);
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert_eq!(buf(&harness), "- item\n- \n> quote\n");
+    harness.assert_buffer_content("- item\n- \n> quote\n");
     harness
         .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
         .unwrap();
-    assert_eq!(buf(&harness), "- item\n> quote\n");
+    harness.assert_buffer_content("- item\n> quote\n");
 
     // Now Markdown's rules continue block quotes and nothing else.
     write_user_config_and_reload(
@@ -1332,7 +1324,7 @@ fn test_config_reload_brings_changed_edit_rules() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     assert_eq!(
-        buf(&harness),
+        harness.get_buffer_content().unwrap(),
         "- item\n\n> quote\n",
         "the list rule is gone"
     );
@@ -1341,7 +1333,7 @@ fn test_config_reload_brings_changed_edit_rules() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    assert_eq!(buf(&harness), "- item\n\n> quote\n> \n");
+    harness.assert_buffer_content("- item\n\n> quote\n> \n");
 }
 
 /// Saving an unrelated Markdown setting in the Settings UI (Auto Close)
@@ -1353,7 +1345,7 @@ fn test_config_reload_brings_changed_edit_rules() {
 fn test_settings_save_of_another_markdown_field_keeps_the_rules() {
     let mut config = fresh::config::Config::default();
     config.languages.retain(|name, _| name == "markdown");
-    let (mut harness, _temp_dir) = markdown_harness_with_config(120, 34, config);
+    let mut harness = markdown_harness_with_config(120, 34, config);
     harness.render().unwrap();
 
     harness.open_settings().unwrap();
@@ -1421,7 +1413,7 @@ fn test_settings_save_of_another_markdown_field_keeps_the_rules() {
 #[test]
 fn test_insert_line_below_continues_an_empty_item() {
     use fresh::input::keybindings::Action;
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
 
     let fixture = TestFixture::new("below.md", "- \n1. one\n").unwrap();
     open_md(&mut harness, &fixture.path);
@@ -1429,7 +1421,7 @@ fn test_insert_line_below_continues_an_empty_item() {
         .editor_mut()
         .dispatch_action_for_tests(Action::InsertLineBelow);
     harness.type_text("a").unwrap();
-    assert_eq!(buf(&harness), "- \n- a\n1. one\n");
+    harness.assert_buffer_content("- \n- a\n1. one\n");
 
     // From the start of a numbered item: the next number, below it.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -1438,7 +1430,7 @@ fn test_insert_line_below_continues_an_empty_item() {
         .editor_mut()
         .dispatch_action_for_tests(Action::InsertLineBelow);
     harness.type_text("b").unwrap();
-    assert_eq!(buf(&harness), "- \n- a\n1. one\n2. b\n");
+    harness.assert_buffer_content("- \n- a\n1. one\n2. b\n");
 }
 
 /// A plugin's `executeAction("insert_newline")` is the user's Enter: on an
@@ -1573,7 +1565,7 @@ editor.registerEditRules("comments", {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("more").unwrap();
-    assert_eq!(buf(&harness), "    # note\n    # more\n");
+    harness.assert_buffer_content("    # note\n    # more\n");
 
     harness
         .editor()
@@ -1594,7 +1586,7 @@ editor.registerEditRules("comments", {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("x").unwrap();
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let lines: Vec<&str> = content.split('\n').collect();
     assert_eq!(
         lines[..2],
@@ -1621,13 +1613,13 @@ fn test_mdx_added_to_markdown_extensions_gets_list_editing() {
         .unwrap()
         .extensions
         .push("mdx".to_string());
-    let (mut harness, _temp_dir) = markdown_harness_with_config(80, 24, config);
+    let mut harness = markdown_harness_with_config(80, 24, config);
     let content = enter_at_end_of_first_line(&mut harness, "page.mdx", "1. one\n");
     assert_eq!(harness.editor().active_state().language, "markdown");
     assert_eq!(content, "1. one\n2. \n");
 
     // The same from the user's config.json, after a reload.
-    let (mut harness, _temp_dir) = markdown_harness(80, 24);
+    let mut harness = markdown_harness(80, 24);
     write_user_config_and_reload(
         &mut harness,
         serde_json::json!({ "languages": { "markdown": {
@@ -1724,7 +1716,7 @@ fn test_no_list_continuation_inside_a_python_fence() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("q").unwrap();
-    assert_eq!(buf(&harness), "```python\n- x\nq\n```\n");
+    harness.assert_buffer_content("```python\n- x\nq\n```\n");
 }
 
 /// Enter after `def f():` in a ```python block indents like Python, though
@@ -1738,7 +1730,7 @@ fn test_enter_indents_like_python_inside_a_python_fence() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("pass").unwrap();
-    assert_eq!(buf(&harness), "```python\ndef f():\n    pass\n```\n");
+    harness.assert_buffer_content("```python\ndef f():\n    pass\n```\n");
 }
 
 /// A Python edit rule from the user's config applies on a line of a
@@ -1762,7 +1754,7 @@ fn test_python_config_rule_applies_inside_a_python_fence_only() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("more").unwrap();
-    assert_eq!(buf(&harness), "```python\n# note\n# more\n```\n# heading\n");
+    harness.assert_buffer_content("```python\n# note\n# more\n```\n# heading\n");
 
     end_of_line(&mut harness, 4);
     harness
@@ -1770,7 +1762,7 @@ fn test_python_config_rule_applies_inside_a_python_fence_only() {
         .unwrap();
     harness.type_text("h2").unwrap();
     assert_eq!(
-        buf(&harness),
+        harness.get_buffer_content().unwrap(),
         "```python\n# note\n# more\n```\n# heading\nh2\n",
         "a Markdown heading is not a Python comment"
     );
@@ -1787,7 +1779,7 @@ fn test_list_continuation_right_after_a_closing_fence() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("next").unwrap();
-    assert_eq!(buf(&harness), "```python\nx = 1\n```\n- after\n- next\n");
+    harness.assert_buffer_content("```python\nx = 1\n```\n- after\n- next\n");
 }
 
 /// A block that names no language — or one Fresh doesn't know — is code
@@ -1801,7 +1793,7 @@ fn test_no_list_rules_in_an_unlabelled_or_unknown_fence() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("u").unwrap();
-    assert_eq!(buf(&harness), "```\n- y\nu\n```\n");
+    harness.assert_buffer_content("```\n- y\nu\n```\n");
 
     open_in_project(&mut harness, "unknown.md", "```nosuchlang\n1. one\n```\n");
     end_of_line(&mut harness, 1);
@@ -1809,7 +1801,7 @@ fn test_no_list_rules_in_an_unlabelled_or_unknown_fence() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("v").unwrap();
-    assert_eq!(buf(&harness), "```nosuchlang\n1. one\nv\n```\n");
+    harness.assert_buffer_content("```nosuchlang\n1. one\nv\n```\n");
 }
 
 /// Tab on a blank bullet inside a block is the plain Tab: no indent-and-
@@ -1820,7 +1812,7 @@ fn test_tab_inside_a_fence_does_not_cycle_bullets() {
     open_in_project(&mut harness, "tab.md", "```python\n- \n```\n");
     end_of_line(&mut harness, 1);
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let lines: Vec<&str> = content.split('\n').collect();
     assert!(
         lines[1].starts_with("- ") && lines[1].len() > 2,
@@ -1852,7 +1844,7 @@ fn test_cursors_in_and_out_of_a_fence_each_get_their_own_rules() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("X").unwrap();
-    assert_eq!(buf(&harness), "- a\n- X\n```python\nX\n- b\nX\n```\n");
+    harness.assert_buffer_content("- a\n- X\n```python\nX\n- b\nX\n```\n");
 }
 
 /// The same holds for any host whose highlighter knows embedded regions,
@@ -1883,7 +1875,7 @@ fn test_vue_script_block_gets_javascript_rules() {
         .unwrap();
     harness.type_text("x").unwrap();
     assert_eq!(
-        buf(&harness),
+        harness.get_buffer_content().unwrap(),
         "<template>\n  <div/>\n</template>\n<script>\n// note\n// more\nfunction f() {\n    x\n</script>\n"
     );
 
@@ -1894,7 +1886,7 @@ fn test_vue_script_block_gets_javascript_rules() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    let content = buf(&harness);
+    let content = harness.get_buffer_content().unwrap();
     let lines: Vec<&str> = content.split('\n').collect();
     assert!(lines[1].ends_with("// c "), "{content:?}");
     assert_eq!(
@@ -1937,7 +1929,7 @@ fn test_non_embedding_language_is_unaffected() {
         .unwrap();
     harness.type_text("y").unwrap();
     assert_eq!(
-        buf(&harness),
+        harness.get_buffer_content().unwrap(),
         "# note\n# more\ndef f():\n    pass\n- x\ny\n"
     );
 }
@@ -2000,5 +1992,5 @@ editor.registerEditRules("semis", {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.type_text("d").unwrap();
-    assert_eq!(buf(&harness), "a;\nd\n```python\nb;\n;; c\n```\n");
+    harness.assert_buffer_content("a;\nd\n```python\nb;\n;; c\n```\n");
 }

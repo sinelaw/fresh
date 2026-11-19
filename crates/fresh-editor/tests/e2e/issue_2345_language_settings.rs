@@ -19,6 +19,7 @@
 //! Both tests drive only keyboard events and assert on rendered output, per
 //! CONTRIBUTING.md ("E2E Tests Observe, Not Inspect").
 
+use crate::common::dialog::{focus_field, row_with};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -59,16 +60,6 @@ fn run_command(harness: &mut EditorTestHarness, command: &str) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-}
-
-/// Return the full text of the first rendered row that contains `needle`.
-fn row_with(harness: &EditorTestHarness, needle: &str) -> String {
-    let screen = harness.screen_to_string();
-    screen
-        .lines()
-        .find(|line| line.contains(needle))
-        .unwrap_or("")
-        .to_string()
 }
 
 /// From a freshly opened Settings panel, focus the right-hand list and walk
@@ -340,7 +331,7 @@ fn issue_2345_reset_button_restores_builtin_default() {
     harness.render().unwrap();
 
     open_html_language_dialog(&mut harness);
-    focus_format_on_save(&mut harness);
+    focus_field(&mut harness, "Format On Save");
 
     // At its built-in default, the field offers no Reset (nothing to undo) and
     // — being non-nullable — never offers Inherit.
@@ -377,28 +368,6 @@ fn issue_2345_reset_button_restores_builtin_default() {
     );
 }
 
-/// Walk from the dialog's first field down to `Format On Save` (past Auto
-/// Close/Indent/Surround, Comment Prefix, Edit Rules, the two Extensions rows
-/// and Filenames). Walked to rather than counted: list fields take a focus
-/// stop per row.
-fn focus_format_on_save(harness: &mut EditorTestHarness) {
-    for _ in 0..40 {
-        // The focus marker `>` sits in the dialog, between its border and
-        // the label.
-        let row = row_with(harness, "Format On Save");
-        let before_label = row.split("Format On Save").next().unwrap_or("");
-        if before_label.rsplit('│').next().unwrap_or("").contains('>') {
-            return;
-        }
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
-    panic!(
-        "could not focus Format On Save; screen was:\n{}",
-        harness.screen_to_string()
-    );
-}
-
 /// Issue #2345: the `[Reset]` button is reachable both ways too. Tab forward
 /// past it to the next field, then Shift+Tab back onto it, and Enter resets the
 /// right field — exercising the action-button focus stops in both directions.
@@ -410,7 +379,7 @@ fn issue_2345_reset_button_reachable_by_back_tab() {
     open_html_language_dialog(&mut harness);
 
     // Change Format On Save so it offers [Reset].
-    focus_format_on_save(&mut harness);
+    focus_field(&mut harness, "Format On Save");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap(); // toggle on
