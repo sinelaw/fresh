@@ -189,9 +189,6 @@ pub(crate) struct RuleEdits {
     /// The cursors no rule handled, for the key's normal handler; `None`
     /// when every cursor was handled.
     pub rest: Option<Cursors>,
-    /// The rules' edits as `(position, delete_len, insert_len)` in the
-    /// buffer as it was before the key, for [`shift_default_moves`].
-    pub edits: Vec<(usize, usize, usize)>,
 }
 
 /// Where a cursor's line lies in the buffer.
@@ -252,6 +249,12 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
 /// shares its line with no other cursor (or another cursor's selection), and
 /// a rule applies there. `None` when no cursor was handled: the key then
 /// does exactly what it does without rules.
+///
+/// The events are positioned in the buffer as it was before the key, as the
+/// bulk applier (`apply_events_as_bulk_edit`) reads them: the rules read
+/// the buffer but leave it alone. The key's normal handler rebases its own
+/// moves for the cursors left over onto them (`rebase_moves_onto_edits` in
+/// [`crate::input::actions`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_edit_rules(
     state: &mut EditorState,
@@ -301,7 +304,6 @@ pub(crate) fn apply_edit_rules(
     // Candidates, handled from the end of the buffer back, so each edit
     // leaves the positions of the ones still to come alone.
     let mut handled: Vec<CursorId> = Vec::new();
-    let mut edits: Vec<(usize, usize, usize)> = Vec::new();
     let mut max_end_before = 0usize;
     let mut candidates = Vec::new();
     for (i, &(start, end, id)) in spans.iter().enumerate() {
@@ -384,7 +386,6 @@ pub(crate) fn apply_edit_rules(
                 });
                 after_inserted = true;
             }
-            edits.push((pos, after.len(), edit.after.len()));
         }
         let keep = common_prefix_len(&before, &edit.before);
         let from = line_start + keep;
@@ -403,9 +404,7 @@ pub(crate) fn apply_edit_rules(
                 cursor_id: id,
             });
         }
-        if from < pos || !inserted.is_empty() {
-            edits.push((from, pos - from, inserted.len()));
-        } else if after_inserted {
+        if from == pos && inserted.is_empty() && after_inserted {
             // Only the text after the cursor changed: its insert would carry
             // the cursor past it, so put the cursor back.
             events.push(Event::MoveCursor {
@@ -430,65 +429,5 @@ pub(crate) fn apply_edit_rules(
         }
         rest
     });
-    Some(RuleEdits { rest, edits })
-}
-
-/// Shift the `MoveCursor` targets the key's normal handler computed for the
-/// cursors no rule handled (`rest`, as they were before the key;
-/// `default_events`), by the rules' `edits`.
-///
-/// A handler that moves cursors explicitly (Shift+Tab's dedent) computes
-/// their new positions from its own edits only. The bulk apply
-/// (`apply_events_as_bulk_edit`) takes such a target as final, unless the
-/// cursor also has an insert at its own position from before the key (Enter's
-/// bracket expansion, the auto-close shape): it then shifts the target for
-/// every edit below that position itself, so such a move is left alone here
-/// or it would be shifted twice. The test is the applier's own: an insert at
-/// the cursor's position before the key, whatever the move's `old_position`.
-/// The rules' edits are on other lines, so each one lies wholly before or
-/// after the cursor, and the shift is the net length of those before it.
-pub(crate) fn shift_default_moves(
-    default_events: &mut [Event],
-    rest: &Cursors,
-    edits: &[(usize, usize, usize)],
-) {
-    if edits.is_empty() {
-        return;
-    }
-    let shift_at = |pos: usize| -> isize {
-        edits
-            .iter()
-            .filter(|(at, _, _)| *at < pos)
-            .map(|(_, del, ins)| *ins as isize - *del as isize)
-            .sum()
-    };
-    let inserts_at: Vec<(CursorId, usize)> = default_events
-        .iter()
-        .filter_map(|e| match e {
-            Event::Insert {
-                position,
-                cursor_id,
-                ..
-            } => Some((*cursor_id, *position)),
-            _ => None,
-        })
-        .collect();
-    for event in default_events.iter_mut() {
-        if let Event::MoveCursor {
-            cursor_id,
-            old_position,
-            new_position,
-            new_anchor,
-            ..
-        } = event
-        {
-            let original = rest.get(*cursor_id).map(|c| c.position);
-            if original.is_some_and(|p| inserts_at.contains(&(*cursor_id, p))) {
-                continue;
-            }
-            let shift = shift_at(original.unwrap_or(*old_position));
-            *new_position = new_position.saturating_add_signed(shift);
-            *new_anchor = new_anchor.map(|a| a.saturating_add_signed(shift));
-        }
-    }
+    Some(RuleEdits { rest })
 }
