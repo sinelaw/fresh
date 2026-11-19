@@ -1,15 +1,18 @@
 /* Natively laid-out surfaces (`regions.native`, js/73-native.js): the shell's
    surfaces as a desktop app draws them — the chrome font, real buttons, pixel
    spacing — instead of the display list's character cells. Only while the
-   body carries `native-panels` (on for the themes in NATIVE_PANEL_THEMES).
+   body carries `native-panels` (on for the themes in NATIVE_PANEL_THEMES); the
+   confirmation card alone while it carries `native-dialogs` (those themes,
+   and the ones in NATIVE_CONFIRM_THEMES).
 
    The display-list items of a surface drawn here are hidden, not removed:
    the tree still lays them out, because every press is routed to the node
    where its layout put it. `visibility` keeps their boxes (and so nothing
    reflows); `pointer-events` stops a stray press reaching them through the
    native surface's gaps. */
-body.native-panels .tree-surface.confirm,
-body.native-panels .tree-item[data-surface-kind="confirm"],
+body.native-dialogs .tree-surface.confirm,
+body.native-dialogs .tree-item[data-surface-kind="confirm"],
+body.native-dialogs .tree:has(> .tree-surface.confirm) .tree-scrim,
 body.native-panels .tree-item[data-interior],
 body.native-panels .tree-item[data-surface-kind="dock"],
 body.native-panels .tree-item[data-surface-kind="floating"],

@@ -29,6 +29,15 @@ function nativePanelsOn(){
   return NATIVE_PANEL_THEMES.includes(webTheme);
 }
 
+// Which web themes draw the confirmation card natively, apart from the panels:
+// every theme that lays panels out natively, and Winamp, whose dock and
+// floating panels are skinned in their cells (95-theme-winamp.css) but whose
+// dialogs are skin windows like its menus and popups. Drawn from the display
+// list instead, the card wore the editor theme's colours, not the skin's.
+const NATIVE_CONFIRM_THEMES = ["winamp"];
+/** function nativeConfirmOn() => Boolean */
+function nativeConfirmOn(){ return nativePanelsOn() || NATIVE_CONFIRM_THEMES.includes(webTheme); }
+
 // Whether a cell lies under a natively laid-out panel. Such a panel puts its
 // fields elsewhere than the cells the terminal's cursor marks, and its own
 // focused input carries the caret — so no cell caret is drawn there.
@@ -218,11 +227,11 @@ function alignFieldLabels(root){
   }
 }
 
-/** function nativeEls(NativeView) => El[] */
-function nativeEls(n){
+/** function nativeEls(NativeView, Boolean) => El[] */
+function nativeEls(n, panels){
   const out=[];
   if(!n) return out;
-  for(const p of (n.panels||[])){
+  for(const p of (panels?(n.panels||[]):[])){
     // A floating panel stands over everything else. A press outside an
     // anchored pop-up dismisses it (and is spent doing so); a centred modal
     // swallows it. Either way it reaches nothing behind, as in the terminal.

@@ -372,6 +372,32 @@
     -webkit-backdrop-filter:none;backdrop-filter:none;
     background:var(--wa-metal);color:#e9d9c2;border:none;border-radius:3px;
     box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5)}
+  /* The confirmation card (73-native.js, `native-confirm`): a skin window like
+     the menus and popups above — brushed metal, the seam and bevel, the hard
+     drop — with an amber caption, cream text and the skin's switches for
+     answers. The answer Enter picks wears the lit olive plate the menus use
+     for their highlight; a destructive one keeps red lettering on metal, and
+     red plate when it is the one Enter picks. */
+  body.theme-winamp .native-card.native-confirm{
+    background:var(--wa-light),var(--wa-metal);color:#e9d9c2;border:none;border-radius:3px;
+    box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5);padding:1em 1.2em 1.1em}
+  body.theme-winamp .native-confirm .nc-title{color:var(--wa-amber);letter-spacing:.12em;
+    text-transform:uppercase;font-size:.95em;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+  body.theme-winamp .native-confirm .nc-body{color:#e9d9c2}
+  body.theme-winamp .native-confirm .nc-detail{color:var(--wa-green);background:var(--wa-sunken);
+    box-shadow:var(--wa-in);border-radius:2px;padding:.4em .6em}
+  body.theme-winamp .native-confirm .nc-btn{background:var(--wa-gloss),var(--wa-plate);color:#f0dcc2;
+    border:none;border-radius:2px;box-shadow:var(--wa-ctl);text-shadow:0 1px 0 rgba(0,0,0,.55)}
+  body.theme-winamp .native-confirm .nc-btn:hover{background:var(--wa-gloss),linear-gradient(180deg,#67503b,#4d392a)}
+  body.theme-winamp .native-confirm .nc-btn:active{box-shadow:var(--wa-ctl-press)}
+  body.theme-winamp .native-confirm .nc-btn.selected{
+    background:radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.4),transparent 62%),
+      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%);color:#f7f8e6;
+    box-shadow:var(--wa-ring),var(--wa-vbevel),inset 0 1px 0 rgba(255,255,255,.32),0 2px 4px rgba(0,0,0,.45)}
+  body.theme-winamp .native-confirm .nc-btn.destructive{color:#ff8a7a}
+  body.theme-winamp .native-confirm .nc-btn.destructive.selected{color:#fff3ee;
+    background:radial-gradient(90% 130% at 50% -22%,rgba(255,220,200,.35),transparent 62%),
+      linear-gradient(180deg,#b0503e 0%,#93392b 46%,#62231a 100%)}
   /* Their list bodies are LCD panes. */
   body.theme-winamp .palette .plist,body.theme-winamp .palette .pinput,
   body.theme-winamp .palette .ppreview,body.theme-winamp .palette .fbrows{background:var(--wa-sunken)}
