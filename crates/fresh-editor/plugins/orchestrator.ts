@@ -1812,11 +1812,100 @@ function setExternalCollapsed(group: ExternalGroup, collapsed: boolean): void {
 }
 
 // Every expansion the dock's tree is drawn with: the user's open folders,
-// plus the external sessions group unless they folded it.
+// plus the external sessions group and the dock's own groups (Pinned, the
+// date headings) unless they folded them.
 function dockExpandedKeys(): string[] {
   const keys = Array.from(loadExpanded());
   for (const g of EXTERNAL_GROUPS) if (!externalCollapsed(g)) keys.push(externalGroupKey(g));
+  const collapsedViews = viewCollapsedSet();
+  for (const id of VIEW_FOLDER_IDS) if (!collapsedViews.has(id)) keys.push(folderNodeKey(id));
   return keys;
+}
+
+// ── The dock's own groups: Pinned, and the date headings ─────────────────
+//
+// Headings the dock draws itself, not folders a user made: they fold like
+// one (a `folder` node under a reserved `__view:` id, the way the external
+// sessions groups use `__external:`) but have no menu, cannot be renamed or
+// deleted, and are no place to drop a row. Open by default; a fold is
+// remembered per heading.
+const VIEW_FOLDER_PREFIX = "__view:";
+const PINNED_VIEW_ID = VIEW_FOLDER_PREFIX + "pinned";
+const VIEW_COLLAPSED_KEY = "orchestrator.dock.view_collapsed";
+// Every heading the dock can draw, so the expansion set can name them all
+// before the tree that holds them is built.
+const VIEW_FOLDER_IDS: string[] = [PINNED_VIEW_ID];
+
+function isViewFolder(id: string | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith(VIEW_FOLDER_PREFIX);
+}
+
+// A heading the user can't reorganise: an external group or a dock heading.
+function isSyntheticFolder(id: string | null | undefined): boolean {
+  return isExternalFolder(id) || isViewFolder(id);
+}
+
+function viewCollapsedSet(): Set<string> {
+  const v = editor.getGlobalState(VIEW_COLLAPSED_KEY);
+  return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+}
+
+// Open or fold any folder row by its node key — a user folder, an external
+// group or a dock heading, each remembered where it belongs. The one place
+// both the click path and the host's own fold event go through.
+function setFolderKeyExpanded(folderKey: string, expanded: boolean): void {
+  const group = externalGroupOfKey(folderKey);
+  if (group) {
+    setExternalCollapsed(group, !expanded);
+    return;
+  }
+  const id = folderKey.slice(FOLDER_NODE_PREFIX.length);
+  if (isViewFolder(id)) {
+    const set = viewCollapsedSet();
+    if (expanded) set.delete(id);
+    else set.add(id);
+    editor.setGlobalState(VIEW_COLLAPSED_KEY, [...set]);
+    return;
+  }
+  const set = loadExpanded();
+  if (expanded) set.add(folderKey);
+  else set.delete(folderKey);
+  saveExpanded();
+}
+
+function folderKeyExpanded(folderKey: string): boolean {
+  return dockExpandedKeys().includes(folderKey);
+}
+
+// Pinned workspaces: listed under a Pinned heading at the top of the dock,
+// out of whatever folder they are filed in (the filing is kept, and an
+// unpinned row goes back to it). Keyed like a folder assignment — the
+// stable id where there is one, else the root — and a pin made on an
+// on-disk worktree (root only) still holds once it is opened.
+const PINNED_KEY = "orchestrator.dock.pinned";
+let dockPinned: Set<string> | null = null;
+
+function loadPinned(): Set<string> {
+  if (dockPinned) return dockPinned;
+  const raw = editor.getGlobalState(PINNED_KEY);
+  dockPinned = new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  return dockPinned;
+}
+
+function isPinned(s: AgentSession): boolean {
+  const set = loadPinned();
+  return (!!s.stableId && set.has(stableIdKey(s.stableId))) || set.has(normRoot(s.root));
+}
+
+function setPinned(s: AgentSession, on: boolean): void {
+  const set = loadPinned();
+  if (on) {
+    set.add(s.stableId ? stableIdKey(s.stableId) : normRoot(s.root));
+  } else {
+    if (s.stableId) set.delete(stableIdKey(s.stableId));
+    set.delete(normRoot(s.root));
+  }
+  editor.setGlobalState(PINNED_KEY, [...set] as unknown as object);
 }
 
 // The last answer drawn, so a poll that changed nothing costs no repaint.
@@ -2235,8 +2324,17 @@ function buildDockTree(filtered: number[]): DockTree {
   const keys: string[] = [];
   const model: DockNode[] = [];
 
+  // Pinned workspaces leave their folder for the Pinned heading at the top.
+  const pinned = dockMode
+    ? filtered.filter((id) => {
+      const s = orchestratorSessions.get(id);
+      return !!s && isPinned(s);
+    })
+    : [];
+  const pinnedSet = new Set(pinned);
   const membersByFolder = new Map<string | null, number[]>();
   for (const id of filtered) {
+    if (pinnedSet.has(id)) continue;
     const fid = folderOfSession(id);
     const arr = membersByFolder.get(fid) ?? [];
     arr.push(id);
@@ -2353,7 +2451,17 @@ function buildDockTree(filtered: number[]): DockTree {
       for (const s of liveByFolder.get(f.id) ?? []) emitLive(s, depth + 1);
     }
   };
-  // Workspaces in no folder first, then the folders.
+  // Pinned first, then workspaces in no folder, then the folders.
+  if (pinned.length > 0) {
+    const heading: DockFolder = { id: PINNED_VIEW_ID, name: editor.t("dock.group_pinned"), parent: null };
+    nodes.push(treeNode(folderNodeEntry(heading, pinned.length, attentionCounts(pinned)), {
+      depth: 0,
+      hasChildren: true,
+    }));
+    keys.push(folderNodeKey(PINNED_VIEW_ID));
+    model.push({ kind: "folder", folderId: PINNED_VIEW_ID });
+    for (const sid of pinned) emitSession(sid, 1);
+  }
   for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
   walk(null, 0);
 
@@ -6863,15 +6971,7 @@ function closeCreateFolderDialog(): void {
 // host-owned tree state.
 function toggleDockFolderExpansion(folderKey: string): void {
   if (!openPanel) return;
-  const group = externalGroupOfKey(folderKey);
-  if (group) {
-    setExternalCollapsed(group, !externalCollapsed(group));
-  } else {
-    const set = loadExpanded();
-    if (set.has(folderKey)) set.delete(folderKey);
-    else set.add(folderKey);
-    saveExpanded();
-  }
+  setFolderKeyExpanded(folderKey, !folderKeyExpanded(folderKey));
   // Through the reconciler: while a search holds every folder open, the
   // flip is remembered for later rather than drawn.
   applyDockExpansion();
@@ -7024,6 +7124,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       { label: editor.t("dock.ctx_visit"), key: "ctx-visit", intent: "primary" },
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename-session" },
       { label: editor.t("dock.ctx_move"), key: "ctx-move" },
+      { label: editor.t(s && isPinned(s) ? "dock.ctx_unpin" : "dock.ctx_pin"), key: "ctx-pin" },
       // Re-scans the whole list, not just this row: a worktree added or
       // removed outside the editor shows up (or goes) without reopening the
       // dock.
@@ -7114,6 +7215,8 @@ function openDockContextMenu(index: number, col: number, row: number): void {
   if (!openDialog) return;
   const node = openDialog.dockNodes[index];
   if (!node) return;
+  // A dock heading (Pinned, a date) has nothing to organise.
+  if (node.kind === "folder" && isViewFolder(node.folderId)) return;
   const target: DockMenuTarget = node.kind === "folder"
     ? { kind: "folder", id: node.folderId }
     : node.kind === "live"
@@ -7220,6 +7323,8 @@ function dropFolderFor(row: DockNode, to: DockNode): string | null | undefined {
   const external = row.kind === "live";
   switch (to.kind) {
     case "folder":
+      // A dock heading is no place to file a row.
+      if (isViewFolder(to.folderId)) return undefined;
       if (!isExternalFolder(to.folderId)) return to.folderId;
       return external ? null : undefined;
     case "session":
@@ -17666,7 +17771,7 @@ function dockActivate(): void {
   const node = dockSelectedNode();
   // Choosing a folder: Enter on one picks it; nothing else is a target.
   if (movePick) {
-    if (node?.kind === "folder" && !isExternalFolder(node.folderId)) applyMovePick(node.folderId);
+    if (node?.kind === "folder" && !isSyntheticFolder(node.folderId)) applyMovePick(node.folderId);
     return;
   }
   if (node && node.kind === "folder") {
@@ -18192,6 +18297,13 @@ editor.on("widget_event", (e) => {
         // Same centered dialog as folder rename; the host blurs the dock as it mounts.
         closeDockContextMenu();
         openRenameWorkspaceDialog(id);
+        return;
+      }
+      if (e.widget_key === "ctx-pin") {
+        closeDockContextMenu();
+        const s = orchestratorSessions.get(id);
+        if (s) setPinned(s, !isPinned(s));
+        if (openPanel && dockMode) refreshOpenDialog();
         return;
       }
       if (e.widget_key === "ctx-move") {
@@ -18721,7 +18833,7 @@ editor.on("widget_event", (e) => {
           // Choosing a folder: a click on one picks it; a click anywhere
           // else in the tree only moves the highlight.
           if (movePick) {
-            if (payload.via === "click" && node?.kind === "folder" && !isExternalFolder(node.folderId)) {
+            if (payload.via === "click" && node?.kind === "folder" && !isSyntheticFolder(node.folderId)) {
               applyMovePick(node.folderId);
             }
             return;
@@ -18894,15 +19006,7 @@ editor.on("widget_event", (e) => {
       const key = payload.key;
       const expanded = payload.expanded;
       if (typeof key === "string" && key.startsWith(FOLDER_NODE_PREFIX)) {
-        const group = externalGroupOfKey(key);
-        if (group) {
-          setExternalCollapsed(group, expanded !== true);
-        } else {
-          const set = loadExpanded();
-          if (expanded === true) set.add(key);
-          else set.delete(key);
-          saveExpanded();
-        }
+        setFolderKeyExpanded(key, expanded === true);
         // A fold changes how many rows the tree occupies; re-render so
         // the blank padding between the tree and the bottom hint bar
         // re-balances and the hints stay pinned to the dock's bottom.

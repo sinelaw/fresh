@@ -40,6 +40,8 @@ Folders group workspaces however you like: by feature, by customer, by "done, to
 
 The same row menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
 
+**Pin to top** in a row's menu lists the workspace under a **Pinned** heading at the top of the dock, wherever it is filed; **Unpin** puts it back. Pins survive restarts.
+
 ## Starting a task
 
 Click **+ New** at the top of the dock, or run **Orchestrator: New Workspace**, to open the **New Workspace** dialog. Fill in, top to bottom:
