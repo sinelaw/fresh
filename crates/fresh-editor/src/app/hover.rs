@@ -59,10 +59,13 @@ pub(crate) struct HoverState {
     /// Overlay handle for the symbol highlight, so the caller can remove
     /// the previous highlight via `RemoveOverlay` before adding a new one.
     symbol_overlay: Option<OverlayHandle>,
-    /// Screen cell `(col, row)` where the popup should be placed. Set
-    /// when a mouse-triggered hover request is fired; consumed when the
-    /// popup is rendered.
-    screen_position: Option<(u16, u16)>,
+    /// The in-flight batch's screen cell `(col, row)`: where the pointer
+    /// that asked rests, for the card to sit at. `None` for a keyboard
+    /// request, whose card sits at the cursor. Part of the batch, so the
+    /// answer that arrives is placed — and owned — by whoever made *that*
+    /// request, whatever was asked since: a newer batch replaces it, and the
+    /// older batch's answers are dropped (`claim_pending`).
+    pending_screen: Option<(u16, u16)>,
     /// A keyboard hover asked for while the buffer's server was still
     /// starting, so no server could take it: `(buffer, cursor byte)`.
     /// Re-issued once that server finishes initializing, if the cursor is
@@ -74,11 +77,19 @@ impl HoverState {
     // ---- Pending-request correlation --------------------------------------
 
     /// Record that a batch of hover requests (`ids`) was sent at LSP
-    /// position `(line, character)`. Replaces any previous batch and clears
-    /// the accumulator so responses from the prior batch are ignored.
-    pub(crate) fn record_requests(&mut self, ids: &[u64], line: u32, character: u32) {
+    /// position `(line, character)` — by the pointer resting at `screen`, or
+    /// by the keyboard (`None`). Replaces any previous batch and clears the
+    /// accumulator so responses from the prior batch are ignored.
+    pub(crate) fn record_requests(
+        &mut self,
+        ids: &[u64],
+        line: u32,
+        character: u32,
+        screen: Option<(u16, u16)>,
+    ) {
         self.pending_requests = ids.iter().copied().collect();
         self.pending_position = Some((line, character));
+        self.pending_screen = screen;
         self.accumulated.clear();
     }
 
@@ -130,6 +141,7 @@ impl HoverState {
     pub(crate) fn clear_pending(&mut self) {
         self.pending_requests.clear();
         self.pending_position = None;
+        self.pending_screen = None;
         self.accumulated.clear();
     }
 
@@ -157,12 +169,10 @@ impl HoverState {
 
     // ---- Screen position --------------------------------------------------
 
-    pub(crate) fn set_screen_position(&mut self, pos: (u16, u16)) {
-        self.screen_position = Some(pos);
-    }
-
-    pub(crate) fn take_screen_position(&mut self) -> Option<(u16, u16)> {
-        self.screen_position.take()
+    /// Where the pointer that made the answering batch rests — `None` when
+    /// the keyboard made it.
+    pub(crate) fn batch_screen_position(&self) -> Option<(u16, u16)> {
+        self.pending_screen
     }
 }
 
@@ -180,7 +190,7 @@ mod tests {
     #[test]
     fn claim_pending_returns_position_and_clears_state() {
         let mut h = HoverState::default();
-        h.record_requests(&[7], 10, 20);
+        h.record_requests(&[7], 10, 20, None);
         assert!(!h.pending_is_empty());
         assert_eq!(h.claim_pending(7), Some((10, 20)));
         // Batch now empty.
@@ -192,7 +202,7 @@ mod tests {
     #[test]
     fn claim_pending_across_multi_server_batch_keeps_position_until_last() {
         let mut h = HoverState::default();
-        h.record_requests(&[1, 2], 3, 4);
+        h.record_requests(&[1, 2], 3, 4, None);
         // First response: position returned, batch not yet empty.
         assert_eq!(h.claim_pending(1), Some((3, 4)));
         assert!(!h.pending_is_empty());
@@ -204,7 +214,7 @@ mod tests {
     #[test]
     fn claim_pending_rejects_stale_response() {
         let mut h = HoverState::default();
-        h.record_requests(&[7], 10, 20);
+        h.record_requests(&[7], 10, 20, None);
         // Older response arrives after a newer request went out.
         assert_eq!(h.claim_pending(3), None);
         // Correct one still works.
@@ -214,8 +224,8 @@ mod tests {
     #[test]
     fn record_requests_overwrites_previous_batch() {
         let mut h = HoverState::default();
-        h.record_requests(&[1], 0, 0);
-        h.record_requests(&[2], 5, 5);
+        h.record_requests(&[1], 0, 0, None);
+        h.record_requests(&[2], 5, 5, None);
         assert_eq!(h.claim_pending(1), None);
         assert_eq!(h.claim_pending(2), Some((5, 5)));
     }
@@ -223,7 +233,7 @@ mod tests {
     #[test]
     fn record_requests_clears_accumulator() {
         let mut h = HoverState::default();
-        h.record_requests(&[1], 0, 0);
+        h.record_requests(&[1], 0, 0, None);
         h.push_payload(HoverPayload {
             contents: "a".to_string(),
             is_markdown: false,
@@ -231,14 +241,14 @@ mod tests {
             server_name: None,
         });
         assert_eq!(h.accumulated().len(), 1);
-        h.record_requests(&[2], 0, 0);
+        h.record_requests(&[2], 0, 0, None);
         assert!(h.accumulated().is_empty());
     }
 
     #[test]
     fn push_payload_accumulates_in_order() {
         let mut h = HoverState::default();
-        h.record_requests(&[1, 2], 0, 0);
+        h.record_requests(&[1, 2], 0, 0, None);
         h.push_payload(HoverPayload {
             contents: "first".to_string(),
             is_markdown: false,
@@ -261,7 +271,7 @@ mod tests {
     #[test]
     fn clear_pending_drops_without_returning_position() {
         let mut h = HoverState::default();
-        h.record_requests(&[7], 10, 20);
+        h.record_requests(&[7], 10, 20, None);
         h.clear_pending();
         assert!(h.pending_is_empty());
         assert_eq!(h.claim_pending(7), None);
@@ -278,10 +288,15 @@ mod tests {
     }
 
     #[test]
-    fn take_screen_position_drains_on_first_call() {
+    fn screen_position_belongs_to_the_batch() {
         let mut h = HoverState::default();
-        h.set_screen_position((15, 8));
-        assert_eq!(h.take_screen_position(), Some((15, 8)));
-        assert_eq!(h.take_screen_position(), None);
+        h.record_requests(&[1], 0, 0, Some((15, 8)));
+        assert_eq!(h.batch_screen_position(), Some((15, 8)));
+        // A keyboard batch after it is the keyboard's: no pointer cell.
+        h.record_requests(&[2], 0, 0, None);
+        assert_eq!(h.batch_screen_position(), None);
+        h.record_requests(&[3], 0, 0, Some((1, 2)));
+        h.clear_pending();
+        assert_eq!(h.batch_screen_position(), None);
     }
 }

@@ -951,6 +951,7 @@ impl Editor {
                 &sent_ids,
                 line as u32,
                 character as u32,
+                None,
             );
         }
 
@@ -999,10 +1000,13 @@ impl Editor {
     /// Used for mouse-triggered hover
     /// Returns `Ok(true)` if the request was dispatched, `Ok(false)` if no
     /// eligible server was available (e.g. not yet initialized).
+    /// A hover the pointer asked for, resting at `screen`: the card sits
+    /// there, and is the pointer's (`HoverState::batch_screen_position`).
     pub(crate) fn request_hover_at_position(
         &mut self,
         byte_pos: usize,
         buffer_id: BufferId,
+        screen: (u16, u16),
     ) -> AnyhowResult<bool> {
         // Resolve against the buffer the pointer is over — not necessarily the
         // active one. Hovering a non-active split (or a virtual UI buffer with
@@ -1073,6 +1077,7 @@ impl Editor {
                 &sent_ids,
                 line as u32,
                 character as u32,
+                Some(screen),
             );
         }
 
@@ -1152,11 +1157,7 @@ impl Editor {
             // card or its symbol clears `lsp_hover_state` — and never a card
             // the keyboard asked for or signature help
             // (`pointer_hover_card_showing`).
-            let from_pointer = self
-                .active_window_mut()
-                .hover
-                .take_screen_position()
-                .is_some();
+            let from_pointer = self.active_window().hover.batch_screen_position().is_some();
             let ms = &self.active_window().mouse_state;
             let still_resting = ms.lsp_hover_request_sent && ms.lsp_hover_state.is_some();
             if from_pointer && still_resting && self.pointer_hover_card_showing() {
@@ -1367,8 +1368,9 @@ impl Editor {
         popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
-        popup.position = if let Some((x, y)) = self.active_window_mut().hover.take_screen_position()
-        {
+        // At the pointer that asked, or at the cursor for the keyboard: the
+        // answering batch's own origin, not whichever request came last.
+        popup.position = if let Some((x, y)) = self.active_window().hover.batch_screen_position() {
             PopupPosition::Fixed { x, y: y + 1 }
         } else {
             PopupPosition::BelowCursor

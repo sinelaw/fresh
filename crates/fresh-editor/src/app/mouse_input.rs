@@ -941,7 +941,7 @@ impl Editor {
     ///
     /// Of the transient popups — hover cards, signature help, the explorer's
     /// status tooltip — only a hover card requested by the pointer is placed
-    /// at a fixed screen cell (the pointer's, `HoverState::screen_position`);
+    /// at a fixed screen cell (the pointer's, `HoverState::batch_screen_position`);
     /// a keyboard hover and signature help sit at the cursor, and the
     /// tooltip belongs to the explorer (`chrome_owns_transient_popup`). Only
     /// that card is the pointer's to take down: moving the mouse must not

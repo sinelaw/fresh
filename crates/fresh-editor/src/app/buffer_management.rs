@@ -836,10 +836,7 @@ impl Editor {
             self.active_window_mut().mouse_state.lsp_hover_state
         {
             if !self.active_window_mut().mouse_state.lsp_hover_request_sent {
-                self.active_window_mut()
-                    .hover
-                    .set_screen_position((screen_x, screen_y));
-                match self.request_hover_at_position(byte_pos, buffer_id) {
+                match self.request_hover_at_position(byte_pos, buffer_id, (screen_x, screen_y)) {
                     Ok(true) => {
                         self.active_window_mut().mouse_state.lsp_hover_request_sent = true;
                         return true;
