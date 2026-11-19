@@ -32,12 +32,16 @@ PY
 # see tests/fixtures/coding_agent.py). COLUMNS pins each agent to the pane it is filmed
 # in (claude full-width beside the dock, codex in half a split): when the agent's pty
 # reports more columns than the pane shows, its cursor-up redraw leaves stale lines.
+# AD_AGENT_COLUMNS overrides it for a scene with other pane widths.
 printf '#!/bin/sh\nexec "%s" --no-upgrade-check --no-restore "$@"\n' "${FRESH:-$REPO/target/debug/fresh}" > "$W/bin/fresh"
 cp "$REPO/crates/fresh-editor/tests/fixtures/coding_agent.py" "$W/bin/"
 for spec in claude:112 codex:55; do
   a=${spec%%:*}; cols=${spec##*:}
-  printf '#!/bin/sh\nCOLUMNS=%s exec python3 "%s/bin/coding_agent.py" --as %s "$@"\n' "$cols" "$W" "$a" > "$W/bin/$a"
+  printf '#!/bin/sh\nCOLUMNS=${AD_AGENT_COLUMNS:-%s} exec python3 "%s/bin/coding_agent.py" --as %s "$@"\n' "$cols" "$W" "$a" > "$W/bin/$a"
 done
+# `opencode --ask`: opencode paused on a permission prompt (kitty_orchestrator.py)
+cp "$HERE/waiting_agent.py" "$W/bin/"
+printf '#!/bin/sh\n[ "$1" = --ask ] && exec python3 "%s/bin/waiting_agent.py" opencode\nCOLUMNS=${AD_AGENT_COLUMNS:-112} exec python3 "%s/bin/coding_agent.py" --as opencode "$@"\n' "$W" "$W" > "$W/bin/opencode"
 chmod +x "$W"/bin/*
 
 # Demo project: no project manifest, so the workspace opens Trusted.

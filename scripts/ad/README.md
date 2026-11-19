@@ -19,9 +19,30 @@ Needs a debug build (`build.sh` makes one), Python 3 with `pyte`, `Pillow` and
 `numpy`, Node with Playwright's Chromium, and `ffmpeg` (or `pip install
 imageio-ffmpeg`). Work files go to `target/ad/` (`AD_WORK` overrides).
 
-The landing page (`homepage/index.html`) uses the same material: its stills
-are crops of these recordings and its hero plays the calm cut.
-`scripts/ad/site.sh` refreshes both after a `build.sh` run.
+## Landing page media
+
+The landing page (`homepage/index.html`) plays the calm cut in its hero. Its
+stills and the Orchestrator loop are screenshots of the current build running
+in a real kitty window on a virtual X display, in the Quiet theme (the Settings
+editor in High Contrast) with JetBrainsMono Nerd Font and Nerd Font icons on.
+They replay the same scripted clips as the ad (`rec.py`).
+
+```sh
+scripts/ad/site.sh                     # stills + Orchestrator loop (+ film after build.sh)
+python3 scripts/ad/kitty_shots.py palette settings   # just these stills
+python3 scripts/ad/kitty_orchestrator.py              # just the Orchestrator loop
+```
+
+Needs `Xvfb`, ImageMagick (`import`), `xwininfo` (x11-utils), kitty (on
+`PATH`, `KITTY=…`, or `/opt/kitty.app` from kitty's installer), Mesa's GL
+(kitty draws with OpenGL; the software renderer is enough) and JetBrainsMono
+Nerd Font installed for fontconfig. On Ubuntu:
+
+```sh
+apt-get install -y xvfb imagemagick x11-utils libgl1-mesa-dri libegl1 libxcb-xkb1 libxkbcommon-x11-0
+curl -fsSL https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin launch=n dest=/opt
+mkdir -p ~/.local/share/fonts/nerd && curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz | tar -xJ -C ~/.local/share/fonts/nerd && fc-cache -f
+```
 
 ## Pipeline
 
@@ -29,8 +50,7 @@ are crops of these recordings and its hero plays the calm cut.
 |---|---|
 | `setup.sh` | Work dir: demo repo, isolated XDG config (Tokyo Night), fake `claude`/`codex` shims, a 2 GB log, fonts, logo |
 | `rec.py` | Drives `fresh` in a pty per clip from a key/mouse timeline; writes asciicast plus key (`k`) and mouse (`m`) marker events |
-| `rec_dock.py` | Records the landing page's Orchestrator loop by sampling a hand-built Fresh session running in tmux while it steps through the dock |
-| `waiting_agent.py` | A fake agent paused on a permission prompt, for the Orchestrator loop |
+| `waiting_agent.py` | A fake agent paused on a permission prompt (`opencode --ask`), for the Orchestrator loop |
 | `cast2frames.py` | Replays a cast through `pyte` into deduplicated screen snapshots at 30 fps |
 | `music.py` | Fast cut's score: 137 BPM, D minor with a raised C♯ and G♯ (Ukrainian Dorian), reed lead, bass-heavy mix |
 | `music_calm.py` | Calm cut's score: 70 BPM, D major, rolled electric-piano chords over a pad and sub, convolution reverb |
@@ -38,8 +58,10 @@ are crops of these recordings and its hero plays the calm cut.
 | `ad.html` + `scenes.js` | Fast cut: page and cut list |
 | `calm.html` + `calm.js` | Calm cut: page, style overrides and cut list |
 | `render.mjs` | Headless Chromium renders each frame and pipes PNGs to ffmpeg (`AD_PAGE`, `AD_AUDIO` pick the cut) |
-| `shots.html` + `shots.js` | Website stills: a crop of one recorded screen, drawn at 2× |
-| `site.sh` | Writes the stills and a 720×1280 encode of the calm cut into `homepage/public/assets/` |
+| `kitty.py` | Runs a program in kitty on a private Xvfb display, types into it over kitty's remote-control socket, and screenshots cell crops of the window |
+| `kitty_shots.py` | Website stills: replays a `rec.py` clip in kitty and grabs the window at a moment; one still per theme for the crossfade |
+| `kitty_orchestrator.py` + `orchestrator_init.ts` | The Orchestrator loop: an `init.ts` builds six workspaces in two folders, then the dock walks through them, one screenshot per stop, into an animated WebP, an mp4 and the still |
+| `site.sh` | Runs both of the above, and writes a 720×1280 encode of the calm cut into `homepage/public/assets/` |
 | `favicon.py` | Cuts the leaf out of `docs/logo.png`, brightens it, and writes the landing page's favicons |
 
 ## Editing the cut
