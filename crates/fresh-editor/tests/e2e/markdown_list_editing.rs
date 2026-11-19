@@ -1745,6 +1745,51 @@ fn test_enter_indents_like_python_inside_a_python_fence() {
     harness.assert_buffer_content("```python\ndef f():\n    pass\n```\n");
 }
 
+/// A `}` typed on an indented line of a ```js block dedents by
+/// JavaScript's rules, as in a `.js` file: Markdown's own `auto_indent` is
+/// off, and a delimiter left indented would keep the next lines (the closing
+/// fence among them) indented too.
+#[test]
+fn test_closing_brace_dedents_inside_a_js_fence() {
+    let mut harness = grammar_harness_with(Some(auto_indent_config()));
+    open_in_project(
+        &mut harness,
+        "brace.md",
+        "```js\nfunction g() {\n    q\n```\n",
+    );
+    end_of_line(&mut harness, 2);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("}").unwrap();
+    harness.assert_buffer_content("```js\nfunction g() {\n    q\n}\n```\n");
+}
+
+/// `else:` typed on an indented line of a ```python block dedents to its
+/// `if`, as in a `.py` file.
+#[test]
+fn test_else_dedents_inside_a_python_fence() {
+    let mut harness = grammar_harness_with(Some(auto_indent_config()));
+    open_in_project(&mut harness, "else.md", "```python\nif x:\n    a\n```\n");
+    end_of_line(&mut harness, 2);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("else:").unwrap();
+    harness.assert_buffer_content("```python\nif x:\n    a\nelse:\n```\n");
+}
+
+/// Outside a fence, Markdown's `auto_indent: false` holds: a `}` typed on
+/// an indented line stays where it was typed.
+#[test]
+fn test_closing_brace_outside_a_fence_keeps_its_indent() {
+    let mut harness = grammar_harness_with(Some(auto_indent_config()));
+    open_in_project(&mut harness, "prose.md", "text {\n  \n");
+    end_of_line(&mut harness, 1);
+    harness.type_text("}").unwrap();
+    harness.assert_buffer_content("text {\n  }\n");
+}
+
 /// A Python edit rule from the user's config applies on a line of a
 /// ```python block, and not on the same text outside it.
 #[test]

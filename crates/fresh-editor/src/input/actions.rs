@@ -1,7 +1,7 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
 use crate::input::edit_rules::{
-    apply_edit_rules, cursor_languages, CursorLanguages, LanguageLookup,
+    apply_edit_rules, cursor_languages, CursorLanguages, LanguageLookup, RegionLanguage,
 };
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
@@ -980,10 +980,29 @@ fn non_grammar_indent(
     }
 }
 
-/// The closing-delimiter dedent by the buffer's regex indentation rules
-/// ([`buffer_indent_rules`]); `None` when it has none.
-fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize) -> Option<usize> {
-    let rules = buffer_indent_rules(state)?;
+/// The regex indentation rules for text at a cursor: its embedded region's
+/// language's ([`indent_rules_for`]) when it is on a region's content line,
+/// else the buffer's ([`buffer_indent_rules`]).
+fn indent_rules_at(
+    state: &EditorState,
+    region: Option<&RegionLanguage>,
+) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
+    match region {
+        Some(region) => indent_rules_for(region.language.as_deref(), region.syntax.as_deref()),
+        None => buffer_indent_rules(state),
+    }
+}
+
+/// The closing-delimiter dedent by the regex indentation rules at the
+/// cursor ([`indent_rules_at`]); `None` when there are none.
+fn rules_dedent(
+    state: &EditorState,
+    region: Option<&RegionLanguage>,
+    position: usize,
+    ch: char,
+    tab_size: usize,
+) -> Option<usize> {
+    let rules = indent_rules_at(state, region)?;
     rules.calculate_dedent_for_delimiter(&state.buffer, position, ch, tab_size, |b| {
         byte_is_code(state, b)
     })
@@ -996,13 +1015,19 @@ fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize)
 /// AST dedent; everything else uses the per-language regex rules tier
 /// (scope-masked, keyed by syntax name), then the generic C-style bracket
 /// scanner for unknown syntaxes.
+///
+/// On a content line of an embedded region (a fenced code block), the
+/// region's language decides, as it does for Enter: its regex rules, else the
+/// bracket scanner. Tree-sitter parses the buffer's language, which the
+/// region's text is not part of.
 fn calculate_closing_delimiter_indent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     insert_position: usize,
     ch: char,
     tab_size: usize,
 ) -> usize {
-    if let Some(language) = state.highlighter.language() {
+    if let (None, Some(language)) = (region, state.highlighter.language()) {
         if language.ts_language().is_some() {
             return state
                 .indent_calculator
@@ -1017,7 +1042,7 @@ fn calculate_closing_delimiter_indent(
                 .unwrap_or(0);
         }
     }
-    if let Some(indent) = rules_dedent(state, insert_position, ch, tab_size) {
+    if let Some(indent) = rules_dedent(state, region, insert_position, ch, tab_size) {
         return indent;
     }
     // No bundled grammar and no rules: language-agnostic bracket scanner.
@@ -1063,6 +1088,7 @@ fn indent_to_string(indent_width: usize, use_tabs: bool, tab_size: usize) -> Str
 /// Returns true if handled (caller should continue to next cursor).
 fn handle_skip_over_with_dedent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     ch: char,
@@ -1070,7 +1096,8 @@ fn handle_skip_over_with_dedent(
     line_start: usize,
     tab_size: usize,
 ) -> bool {
-    let correct_indent = calculate_closing_delimiter_indent(state, insert_position, ch, tab_size);
+    let correct_indent =
+        calculate_closing_delimiter_indent(state, region, insert_position, ch, tab_size);
     let use_tabs = state.buffer_settings.use_tabs;
 
     // Calculate current visual indent width (tabs count as tab_size columns)
@@ -1223,10 +1250,22 @@ fn rebase_moves_onto_edits(
     }
 }
 
+/// Whether the text before `insert_position` on the line starting at
+/// `line_start` begins with indentation: the only lines a typed closing
+/// delimiter or keyword re-indents.
+fn starts_indented(state: &mut EditorState, line_start: usize, insert_position: usize) -> bool {
+    insert_position > line_start
+        && state
+            .buffer
+            .get_text_range_mut(line_start, 1)
+            .is_ok_and(|b| matches!(b.first(), Some(b' ' | b'\t')))
+}
+
 /// Handle auto-dedent: when typing a closing delimiter on a line with only spaces,
 /// fix the indentation and insert the delimiter.
 fn handle_auto_dedent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     ch: char,
@@ -1234,7 +1273,8 @@ fn handle_auto_dedent(
     line_start: usize,
     tab_size: usize,
 ) {
-    let correct_indent = calculate_closing_delimiter_indent(state, insert_position, ch, tab_size);
+    let correct_indent =
+        calculate_closing_delimiter_indent(state, region, insert_position, ch, tab_size);
 
     // Delete the incorrect spacing
     let spaces_to_delete = insert_position - line_start;
@@ -1282,6 +1322,7 @@ fn handle_auto_dedent(
 #[allow(clippy::too_many_arguments)]
 fn handle_keyword_dedent(
     state: &mut EditorState,
+    region: Option<&RegionLanguage>,
     events: &mut Vec<Event>,
     cursor_id: CursorId,
     ch: char,
@@ -1301,7 +1342,7 @@ fn handle_keyword_dedent(
     if !matches!(char_after, None | Some(b'\n') | Some(b'\r')) {
         return false;
     }
-    let Some(rules) = buffer_indent_rules(state) else {
+    let Some(rules) = indent_rules_at(state, region) else {
         return false;
     };
 
@@ -1549,6 +1590,7 @@ fn insert_char_events(
     auto_close: bool,
     auto_surround: bool,
     block_pads: &[(CursorId, usize)],
+    language_lookup: Option<&LanguageLookup<'_>>,
 ) {
     let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
     let auto_close_char = get_auto_close_char(ch, auto_close, &state.language);
@@ -1561,7 +1603,24 @@ fn insert_char_events(
     // they are rebased onto the other cursors' edits after the loop.
     let mut skip_over_moves: Vec<usize> = Vec::new();
 
+    // A cursor in a fenced code block re-indents a closing delimiter or a
+    // keyword by the block's language, as Enter indents by it. Both re-indent
+    // only an indented line, so the cursors' languages are looked up — once,
+    // for all of them — only when some cursor's line starts with whitespace.
+    let languages = if cursor_data
+        .iter()
+        .any(|d| starts_indented(state, d.line_start, d.insert_position))
+    {
+        cursor_languages(state, cursors, language_lookup)
+    } else {
+        CursorLanguages::default()
+    };
+
     for data in cursor_data {
+        // On a content line of an embedded region, the region's language
+        // decides whether and how a typed delimiter or keyword re-indents.
+        let region = languages.get(data.cursor_id);
+        let indent_here = region.map_or(auto_indent, |r| r.auto_indent);
         // Virtual space: materialize the gap between the buffer/line content
         // end and the cursor, then the typed character — as one Insert so a
         // single undo removes both. Auto-close/skip-over don't apply out in
@@ -1644,6 +1703,7 @@ fn insert_char_events(
                         && data.insert_position > data.line_start
                         && handle_skip_over_with_dedent(
                             state,
+                            region,
                             events,
                             data.cursor_id,
                             ch,
@@ -1665,12 +1725,13 @@ fn insert_char_events(
 
         // Try auto-dedent for closing delimiters
         if is_closing_delimiter
-            && auto_indent
+            && indent_here
             && data.only_spaces
             && data.insert_position > data.line_start
         {
             handle_auto_dedent(
                 state,
+                region,
                 events,
                 data.cursor_id,
                 ch,
@@ -1684,11 +1745,12 @@ fn insert_char_events(
         // Electric keyword dedent (issue #2582): typing the char that
         // completes a dedent-trigger line (`else:`, `end`, custom `CLOSE`, …)
         // re-indents the line the same way `}` does above.
-        if auto_indent
+        if indent_here
             && !is_closing_delimiter
             && !had_selection
             && handle_keyword_dedent(
                 state,
+                region,
                 events,
                 data.cursor_id,
                 ch,
@@ -3415,6 +3477,7 @@ pub fn action_to_events_with_edit_rules(
                 auto_close,
                 auto_surround,
                 &block_pads,
+                language_lookup,
             );
         }
 
