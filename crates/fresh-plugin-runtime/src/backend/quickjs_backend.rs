@@ -10174,6 +10174,7 @@ impl JsEditorApi {
                 command: opts.command,
                 title: opts.title,
                 resume: opts.resume,
+                resume_requires: opts.resume_requires,
                 env: opts.env,
                 allow_script: opts.allow_script.unwrap_or(false),
                 adopt_window: opts.adopt_window.map(fresh_core::WindowId),

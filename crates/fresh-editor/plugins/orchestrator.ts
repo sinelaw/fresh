@@ -159,6 +159,13 @@ interface AgentSession {
   // first (capped at RECENT_LINES). `sessionState` matches these against
   // BLOCKED_PATTERNS to tell a "waiting on you" prompt from plain idle.
   recentLines?: string[];
+  // The bottom of the agent terminal's visible screen (its last
+  // RECENT_LINES non-blank rows), read once it has gone quiet. A full-screen
+  // TUI parks its cursor at the top of its own UI after drawing, so the
+  // cursor row `recentLines` is built from never holds its prompt — this
+  // does. Cleared by new output; `screenTailPending` while a read waits.
+  screenTail?: string[];
+  screenTailPending?: boolean;
   // `true` once the agent has produced a sustained burst of output
   // (≥ WORK_MIN_MS) while its window was NOT the active one — i.e.
   // there is something the user hasn't seen yet. Cleared on activation.
@@ -3274,8 +3281,17 @@ const BUILTIN_BLOCKED_SOURCES: string[] = [
   "\\bdon'?t ask again\\b",
   "\\bwaiting for (your )?(input|approval|confirmation)\\b",
   "\\besc(ape)? to cancel\\b",
+  // A selection menu's footer — Claude Code's and Codex's first-run screens
+  // and their pickers end in one ("Enter to confirm · Esc to cancel").
+  "\\benter to (confirm|select|continue)\\b",
+  // Claude Code's first-run screens that end in nothing the rules above
+  // read as a question, though an agent sitting on one waits on the user as
+  // surely as on a permission prompt: the theme picker (its last line is the
+  // syntax-theme hint) and the sign-in method picker.
+  "\\bsyntax theme: .*\\(ctrl\\+t to (disable|enable)\\)",
+  "\\bselect login method\\b",
 ];
-const BUILTIN_RULES_VERSION = 1;
+const BUILTIN_RULES_VERSION = 2;
 
 // The rule set in force: where it came from and its version, for
 // `explainState` and the CLI's `agent explain`.
@@ -3509,7 +3525,9 @@ async function loadDetectionRules(): Promise<DetectionRules> {
 // The most recent line of the agent terminal that reads as a question for
 // the user, with the rule that matched it — or null when none does.
 function agentQuestionMatch(s: AgentSession): { line: string; rule: string; index: number } | null {
-  const lines = s.recentLines ?? [];
+  // The bottom of the screen last, so it is read first: it is where a TUI's
+  // prompt actually is.
+  const lines = [...(s.recentLines ?? []), ...(s.screenTail ?? [])];
   for (let i = lines.length - 1; i >= 0; i--) {
     const idx = BLOCKED_PATTERNS.findIndex((re) => re.test(lines[i]));
     if (idx >= 0) {
@@ -3582,7 +3600,7 @@ function explainState(s: AgentSession): StateExplanation {
     outputAgeMs: age,
     osc: s.oscRunning ?? null,
     unseenWork: s.workedSinceSeen === true,
-    recentLines: [...(s.recentLines ?? [])],
+    recentLines: [...(s.recentLines ?? []), ...(s.screenTail ?? [])],
     rules: { version: detectionRules.version, source: detectionRules.source },
   };
 }
@@ -3644,6 +3662,40 @@ function attentionCounts(ids: Iterable<number>): { blocked: number; done: number
 // These rows are shown verbatim in the Explain popup, so a line that is only
 // cursor-parking and a bell has to read as empty rather than as the question
 // that blocked the agent.
+// Read the bottom of the agent's screen once it has gone quiet (see
+// `AgentSession.screenTail`). One read in flight per session: a chatty
+// terminal calls this on every output batch, and each call only clears the
+// stale tail; the waiting read re-arms itself until the output stops.
+function scheduleScreenTail(s: AgentSession): void {
+  s.screenTail = undefined;
+  if (s.screenTailPending) return;
+  s.screenTailPending = true;
+  const quietFor = (): number => (s.lastOutputAt === null ? Infinity : Date.now() - s.lastOutputAt);
+  const run = async (): Promise<void> => {
+    while (quietFor() < IDLE_AFTER_MS) {
+      await editor.delay(Math.max(50, IDLE_AFTER_MS - quietFor() + 50));
+    }
+    const screens = await editor.getTerminalScreens(s.id);
+    s.screenTailPending = false;
+    // Output arrived while the screen was read: that output re-arms a read.
+    if (quietFor() < IDLE_AFTER_MS || orchestratorSessions.get(s.id) !== s) return;
+    // The agent's own terminal: the window's only one, or the one its tab
+    // names after the agent; failing both, every terminal in the window.
+    const own = screens.length <= 1
+      ? screens
+      : screens.filter((sc) => s.terminalTitle && sc.name === s.terminalTitle);
+    const tail: string[] = [];
+    for (const sc of own.length > 0 ? own : screens) {
+      tail.push(...sc.lines.map((l) => l.trim()).filter((l) => l !== "").slice(-RECENT_LINES));
+    }
+    s.screenTail = tail;
+    if (agentQuestionMatch(s) && openPanel && dockMode) refreshOpenDialog();
+  };
+  void run().catch(() => {
+    s.screenTailPending = false;
+  });
+}
+
 function noteRecentLine(s: AgentSession, line: string): void {
   const clean = line
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
@@ -9165,7 +9217,7 @@ function agentSessionUuid(): string {
 function resolveAgentLaunch(
   argv: string[],
   opts?: { auto?: boolean; prompt?: string; systemPrompt?: string },
-): { launch: string[]; resume?: string[] } {
+): { launch: string[]; resume?: string[]; transcript?: (cwd: string) => string } {
   if (argv.length === 0) return { launch: argv };
   const argv0 = argv[0];
   const base = editor.pathBasename(argv0) || argv0;
@@ -9214,9 +9266,14 @@ function resolveAgentLaunch(
       return { launch: [...withAuto, ...promptArgs], resume };
     }
     const id = agentSessionUuid();
+    const { transcriptFor, configDir } = entry.spec.provision;
     return {
       launch: [...withAuto, idFlag, id, ...promptArgs],
       resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id)), ...autoArgs],
+      // Where the conversation for `id` will be, for the cwd it runs in.
+      transcript: transcriptFor && configDir
+        ? (cwd) => transcriptFor(cwd, id, configDir((n) => editor.getEnv(n) || "", homeDir()))
+        : undefined,
     };
   }
   if (entry.spec.continue) {
@@ -16160,7 +16217,7 @@ async function runLocalCreate(id: number): Promise<void> {
   const teach = teachEntry?.systemPrompt ?? null;
 
   const argv = splitAgentCmd(cmd);
-  const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv, {
+  const { launch: launchArgv, resume: resumeArgv, transcript } = resolveAgentLaunch(argv, {
     auto: spec.auto,
     prompt: spec.startPrompt,
     systemPrompt: teach ? FRESH_CLI_SYSTEM_PROMPT : undefined,
@@ -16183,6 +16240,9 @@ async function runLocalCreate(id: number): Promise<void> {
       command: launchArgv.length > 0 ? launchArgv : undefined,
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
+      // Only on this computer: the agent's config folder (and so its
+      // transcript) is read from here, and a remote one's is elsewhere.
+      resumeRequires: transcript && isLocalDir(root) ? transcript(root) : undefined,
       // Grow the placeholder the user has been looking at (and may have
       // renamed or filed away) into the live session, keeping its window id
       // and durable workspace id.
@@ -19544,6 +19604,7 @@ editor.on("terminal_output", (payload) => {
       typeof payload.last_line === "string"
     ) {
       noteRecentLine(s, payload.last_line);
+      scheduleScreenTail(s);
     }
     // Terminal output is activity — feed the dock's day-granularity recency
     // order (persists at most once per session per day).

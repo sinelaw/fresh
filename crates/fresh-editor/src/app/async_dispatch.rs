@@ -1558,6 +1558,18 @@ impl Editor {
             title: None,
             auto_title: None,
             held_by_trust: false,
+            failed_first_run: match window.terminal_resume_requires.get(&terminal_id) {
+                // The launcher named what a conversation leaves behind: ask
+                // the window's own machine whether it is there.
+                Some(path) => !window.resume_target_exists(path),
+                None => {
+                    exit_code.is_some_and(|c| c != 0)
+                        && window
+                            .terminal_first_runs
+                            .get(&terminal_id)
+                            .is_some_and(|at| at.elapsed() < crate::app::window::FIRST_RUN_GRACE)
+                }
+            },
         }
     }
 

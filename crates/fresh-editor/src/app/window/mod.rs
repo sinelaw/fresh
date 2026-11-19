@@ -156,7 +156,18 @@ pub struct ExitedTerminal {
     /// (#3778), not because it exited: a save keeps it as the live terminal
     /// it was, so it runs again once the folder is trusted.
     pub held_by_trust: bool,
+    /// There is no conversation to resume: the path its launcher named
+    /// (`resume_requires`) is not there, or — with no such path — its *first*
+    /// run (launched, not resumed) failed within [`FIRST_RUN_GRACE`]. Either
+    /// way it quit before a conversation began (a declined trust prompt, a
+    /// failed start), so a restart re-runs the launch command instead.
+    pub failed_first_run: bool,
 }
+
+/// How long an agent's first run has to last before an error exit can be
+/// taken to have left a conversation behind. Long enough to cover a startup
+/// failure or a declined prompt, far shorter than any real exchange.
+pub const FIRST_RUN_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 
 impl ExitedTerminal {
     /// Short name of the process that died — the basename of the resume or
@@ -182,8 +193,11 @@ impl ExitedTerminal {
 
     /// Whether restarting this terminal rejoins an agent conversation (as
     /// opposed to re-running the launch command or opening a plain shell).
+    /// Not when its first run died before there was one: `claude --resume
+    /// <id>` then fails with "No conversation found", and offering it is
+    /// offering a second failure.
     pub fn resumes_agent(&self) -> bool {
-        self.resume.as_ref().is_some_and(|argv| !argv.is_empty())
+        self.resume.as_ref().is_some_and(|argv| !argv.is_empty()) && !self.failed_first_run
     }
 }
 
@@ -1148,6 +1162,21 @@ pub struct Window {
     /// just re-run their launch command.
     pub terminal_resume_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
+
+    /// Agent terminals on their first run — spawned from the launch command
+    /// while a resume argv is held for later — and when they started. An
+    /// error exit inside [`FIRST_RUN_GRACE`] means the run never produced a
+    /// conversation ([`ExitedTerminal::failed_first_run`]). A resumed run has
+    /// no entry: its conversation existed.
+    pub terminal_first_runs:
+        std::collections::HashMap<crate::services::terminal::TerminalId, std::time::Instant>,
+
+    /// For an agent terminal whose launcher said so, the path whose
+    /// existence means its resume argv has a conversation to rejoin
+    /// (`CreateWindowWithTerminalOptions::resume_requires`). Checked on exit,
+    /// through this window's own filesystem.
+    pub terminal_resume_requires:
+        std::collections::HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
 
     /// Terminals whose child was handed a `FRESH_CMD_TOKEN` capability token
     /// (`allowScript`), mapped to the token that terminal's *current*
@@ -2712,6 +2741,8 @@ impl Window {
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
+            terminal_first_runs: std::collections::HashMap::new(),
+            terminal_resume_requires: std::collections::HashMap::new(),
             terminal_script_tokens: std::collections::HashMap::new(),
             exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
@@ -2782,6 +2813,27 @@ impl Window {
     }
 
     /// This window's backend (local / devcontainer / remote).
+    /// Whether a terminal's `resume_requires` path is there, on this
+    /// window's own machine. One `*` component matches any directory at that
+    /// level (`~/.claude/projects/*/<id>.jsonl`): the agent names the folder
+    /// after the cwd in ways not worth re-deriving, and the id alone is
+    /// unique.
+    pub fn resume_target_exists(&self, path: &std::path::Path) -> bool {
+        use crate::model::host_path::HostPath;
+        let fs = &self.authority().filesystem;
+        let spelled = path.to_string_lossy();
+        let Some((dir, rest)) = spelled.split_once("/*/") else {
+            return fs.exists(HostPath::from_os_str(path.as_os_str()));
+        };
+        let Ok(entries) = fs.read_dir(HostPath::from_os_str(std::ffi::OsStr::new(dir))) else {
+            return false;
+        };
+        entries.iter().any(|e| {
+            let candidate = e.path.as_path().join(rest);
+            fs.exists(HostPath::from_os_str(candidate.as_os_str()))
+        })
+    }
+
     pub fn authority(&self) -> &crate::services::authority::Authority {
         &self.connection.authority
     }
@@ -5773,7 +5825,22 @@ mod exited_terminal_tests {
             title: None,
             auto_title: None,
             held_by_trust: false,
+            failed_first_run: false,
         }
+    }
+
+    /// An agent whose first run died before it had a conversation is offered
+    /// a restart, not a resume that could only fail.
+    #[test]
+    fn a_failed_first_run_has_nothing_to_resume() {
+        let mut e = record(
+            Some(&["claude", "--session-id", "x"]),
+            Some(&["claude", "--resume", "x"]),
+        );
+        assert!(e.resumes_agent());
+        e.failed_first_run = true;
+        assert!(!e.resumes_agent());
+        assert_eq!(e.program_name(), Some("claude"));
     }
 
     /// The status-bar indicator names the program that died. The resume argv

@@ -1296,6 +1296,7 @@ impl Editor {
                 command,
                 title,
                 resume,
+                resume_requires,
                 env,
                 allow_script,
                 adopt_window,
@@ -1308,6 +1309,7 @@ impl Editor {
                     command,
                     title,
                     resume,
+                    resume_requires,
                     env,
                     allow_script,
                     adopt_window,
@@ -4948,6 +4950,7 @@ impl Editor {
         command: Option<Vec<String>>,
         title: Option<String>,
         resume: Option<Vec<String>>,
+        resume_requires: Option<String>,
         env: Option<std::collections::HashMap<String, String>>,
         allow_script: bool,
         adopt_window: Option<fresh_core::WindowId>,
@@ -5021,6 +5024,13 @@ impl Editor {
             adopt,
         ) {
             Ok((window_id, terminal_id, buffer_id)) => {
+                if let (Some(path), Some(w)) = (
+                    resume_requires.filter(|p| !p.is_empty()),
+                    self.windows.get_mut(&window_id),
+                ) {
+                    w.terminal_resume_requires
+                        .insert(terminal_id, std::path::PathBuf::from(path));
+                }
                 let api_result = fresh_core::api::SessionWithTerminalResult {
                     window_id: window_id.0,
                     // The durable id is minted with the window, so a caller

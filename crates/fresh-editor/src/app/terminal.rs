@@ -1209,6 +1209,7 @@ impl Window {
                 launch_argv,
                 ephemeral,
                 script_access,
+                first_run: false,
             };
             match self.respawn_terminal_pty(buffer_id, spawn) {
                 Some(_) => revived += 1,
@@ -1248,7 +1249,17 @@ impl Window {
             return None;
         }
 
-        let spawn_argv = spec.resume_argv.as_ref().or(spec.launch_argv.as_ref());
+        // A failed first run is run again from its launch command — there is
+        // no conversation to resume — while its resume argv is kept for once
+        // there is one.
+        let spawn_argv = if spec.first_run {
+            spec.launch_argv.as_ref().or(spec.resume_argv.as_ref())
+        } else {
+            spec.resume_argv.as_ref().or(spec.launch_argv.as_ref())
+        };
+        let is_first_run = spec.resume_argv.is_some()
+            && spawn_argv.is_some()
+            && spawn_argv == spec.launch_argv.as_ref();
         let wrapper = match spawn_argv {
             Some(argv) => self.authority().terminal_command(argv),
             None => self.resolved_terminal_wrapper(),
@@ -1298,12 +1309,23 @@ impl Window {
         // values come from the caller's spec rather than the maps, so this is
         // correct even when the exit path already dropped the old entries.
         self.rekey_terminal_script_token(spec.old_id, new_id);
+        // What a resume needs carries over to the reborn terminal.
+        if let Some(path) = self.terminal_resume_requires.remove(&spec.old_id) {
+            self.terminal_resume_requires.insert(new_id, path);
+        }
         if new_id != spec.old_id {
             self.terminal_backing_files.remove(&spec.old_id);
             self.terminal_log_files.remove(&spec.old_id);
             self.terminal_commands.remove(&spec.old_id);
             self.terminal_resume_commands.remove(&spec.old_id);
+            self.terminal_first_runs.remove(&spec.old_id);
             self.ephemeral_terminals.remove(&spec.old_id);
+        }
+        if is_first_run {
+            self.terminal_first_runs
+                .insert(new_id, std::time::Instant::now());
+        } else {
+            self.terminal_first_runs.remove(&new_id);
         }
         if let Some(p) = spec.backing_path {
             self.terminal_backing_files.insert(new_id, p);
@@ -1365,11 +1387,18 @@ impl Window {
         command: Option<Vec<String>>,
         resume: Option<Vec<String>>,
     ) {
+        let launched = command.as_ref().is_some_and(|a| !a.is_empty());
         if let Some(argv) = command {
             self.terminal_commands.insert(terminal_id, argv);
         }
         if let Some(argv) = resume.filter(|a| !a.is_empty()) {
             self.terminal_resume_commands.insert(terminal_id, argv);
+            // An agent started from its launch command, with a resume held
+            // for later: its first run, timed for `failed_first_run`.
+            if launched {
+                self.terminal_first_runs
+                    .insert(terminal_id, std::time::Instant::now());
+            }
         }
     }
 
@@ -1408,6 +1437,7 @@ impl Window {
             .clone()
             .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
         let launch_argv = exited.command.clone().filter(|argv| !argv.is_empty());
+        let first_run = exited.failed_first_run;
 
         let spec = RespawnSpec {
             old_id: exited.terminal_id,
@@ -1420,6 +1450,7 @@ impl Window {
             launch_argv,
             ephemeral: exited.ephemeral,
             script_access: exited.script_access,
+            first_run,
         };
         let Some(new_id) = self.respawn_terminal_pty(buffer_id, spec) else {
             // Put the record back so the user can retry the restart.
@@ -1473,6 +1504,11 @@ struct RespawnSpec {
     /// [`Window::remint_terminal_script_env`]) rather than inheriting the dead
     /// one's, which it could not see anyway.
     script_access: bool,
+    /// Run the launch argv even though a resume argv is held: the agent's
+    /// first run failed before it had a conversation (see
+    /// `ExitedTerminal::failed_first_run`). The resume argv is still
+    /// registered for the reborn terminal, for once there is one.
+    first_run: bool,
 }
 
 impl Editor {

@@ -1269,6 +1269,8 @@ impl crate::app::window::Window {
                 // the launch/resume argv above do.
                 auto_title: terminal.auto_title.clone(),
                 held_by_trust,
+                // Restored from a save: whatever its first run did is long past.
+                failed_first_run: false,
             },
         );
         Some(buffer_id)

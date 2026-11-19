@@ -1537,6 +1537,17 @@ type CreateWindowWithTerminalOptions = {
 	*/
 	resume?: Array<string>;
 	/**
+	* A path whose existence means `resume` has a conversation to rejoin —
+	* for Claude Code, the session's transcript. When the agent exits and
+	* the path is not there (it quit before the conversation began: a
+	* declined trust prompt, a failed start), the editor offers to *restart*
+	* it from `command` instead of a resume that could only fail. Checked on
+	* the window's own machine; a path component that is just an asterisk
+	* matches any directory at that level. Omitted, a resume is always
+	* offered.
+	*/
+	resumeRequires?: string;
+	/**
 	* Extra environment variables to set in the spawned
 	* terminal's child process, on top of the inherited/activated
 	* env. Applied after the editor's control vars (`TERM`,
