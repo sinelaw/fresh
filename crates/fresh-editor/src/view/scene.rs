@@ -311,6 +311,16 @@ pub struct TabView {
     pub close_rect: RectView,
 }
 
+/// Where a dragged tab would land over a pane: the box the terminal washes
+/// over the content (`splits::drop_zone_node`), as layout placed it, in the
+/// theme's drop-zone colors.
+#[derive(Debug, Clone, Serialize)]
+pub struct DropZoneView {
+    pub rect: RectView,
+    pub bg: Option<String>,
+    pub border: Option<String>,
+}
+
 /// A pane's tab bar: the bar rect (when laid out) and its tabs.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TabBarView {
@@ -427,6 +437,23 @@ fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
 }
 
 impl Editor {
+    /// The drop zone a tab drag shows over `leaf`, while it shows one.
+    pub fn drop_zone_view(&self, leaf: LeafId) -> Option<DropZoneView> {
+        let f = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+        let rect = crate::view::shell::rect_of(
+            self.shell_ui.as_ref()?,
+            &crate::view::shell::splits::drop_zone_key(leaf),
+            size,
+        )?;
+        let theme = self.theme.read().unwrap();
+        Some(DropZoneView {
+            rect: RectView::from(rect),
+            bg: css_color(theme.tab_drop_zone_bg),
+            border: css_color(theme.tab_drop_zone_border),
+        })
+    }
+
     /// Semantic tab bar for a pane (leaf). Single derivation of tab labels /
     /// active / modified shared by the TUI tab renderer and the web bridge.
     pub fn tab_bar_view(&self, leaf: LeafId) -> TabBarView {

@@ -2138,6 +2138,8 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                     "tabBar": serde_json::to_value(tb.bar).unwrap_or(Value::Null),
                     "tabs": serde_json::to_value(tb.tabs).unwrap_or_else(|_| json!([])),
                     "newTab": serde_json::to_value(tb.new_tab).unwrap_or(Value::Null),
+                    // A tab drag's drop zone over this pane, while it shows one.
+                    "dropZone": serde_json::to_value(editor.drop_zone_view(*leaf)).unwrap_or(Value::Null),
                     "vscroll": rect_json(*scrollbar_rect),
                     "thumbStart": thumb_s,
                     "thumbEnd": thumb_e,

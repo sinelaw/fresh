@@ -138,6 +138,7 @@
     tabBar: Rect | Null,
     tabs: Tab[],
     newTab: Rect | Null,
+    dropZone: DropZone | Null,
     vscroll: Rect,
     thumbStart: Number,
     thumbEnd: Number,
@@ -384,6 +385,9 @@
 
 // view/scene.rs `FileRow`.
 /** type FileRow = { name: String, depth: Number, isDir: Boolean, expanded: Boolean, icon: Icon | Null } */
+
+// view/scene.rs `DropZoneView`: where a dragged tab would land over a pane.
+/** type DropZone = { rect: Rect, bg: String | Null, border: String | Null } */
 
 // view/scene.rs `IconView`: a file or folder's Nerd Font icon, sent only while
 // `editor.nerd_font_icons` is on.

@@ -2370,8 +2370,10 @@ pub fn close_key(id: LeafId) -> Key {
 fn drop_zone_node(zone: crate::app::types::TabDropZone) -> Node<UiMsg> {
     use crate::app::shell_host::shell_theme::attrs;
     use crate::app::types::TabDropZone as Z;
+    let key = drop_zone_key(zone.split_id());
     let zone_box = || {
         col()
+            .key(key.clone())
             .theme(attrs(
                 "ui.tab_drop_zone_border",
                 "ui.tab_drop_zone_bg",
@@ -2389,6 +2391,13 @@ fn drop_zone_node(zone: crate::app::types::TabDropZone) -> Node<UiMsg> {
             col().children([col().flex(1), zone_box().h(Sizing::Pct(50)).min_h(2)])
         }
     }
+}
+
+/// The box a dragged tab's drop zone washes over pane `id`'s content
+/// (`drop_zone_node`), keyed so a frontend that draws its own chrome — the
+/// web UI — can show the same box where layout put it.
+pub fn drop_zone_key(id: LeafId) -> Key {
+    Key::Pair("pane_drop_zone".into(), id.0 .0 as u64)
 }
 
 pub fn content_key(id: LeafId) -> Key {

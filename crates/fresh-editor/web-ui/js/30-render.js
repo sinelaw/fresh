@@ -69,6 +69,17 @@ function fillPane(c,p){
   } else {
     const b=div("region pane-content"); place(b,p.content); b.innerHTML=cellsSvg(p.cells, p.content.w); c.appendChild(b);
   }
+  // Where a dragged tab would land over this pane: the box the editor laid
+  // out for it (the terminal washes the same box), in the theme's drop-zone
+  // colors. Over the cells, under nothing that takes the pointer.
+  const dz=p.dropZone;
+  if(dz){
+    const z=div("region dropzone"); place(z,dz.rect);
+    const bg=dz.bg, border=dz.border;
+    if(bg) z.style.setProperty("--dz-bg",bg);
+    if(border) z.style.setProperty("--dz-border",border);
+    c.appendChild(z);
+  }
   if(p.vscroll && p.vscroll.w>0){
     const sb=div("region scrollbar"); place(sb,p.vscroll); c.appendChild(sb);
     const th=document.createElement("div"); th.className="thumb";
