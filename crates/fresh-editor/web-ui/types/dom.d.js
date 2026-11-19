@@ -49,7 +49,7 @@
     surface: String?, surfaceKind: String?, interior: String?, page: String?, layer: String?,
     cellLeft: String?, wkey: String?,
     l: String?, r: String?, row: String?, endCol: String?,
-    prompt: String?, level: String?, tone: String?
+    prompt: String?, level: String?, tone: String?, id: String?
 } */
 
 /** type DOMRect = {

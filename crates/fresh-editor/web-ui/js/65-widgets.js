@@ -1143,9 +1143,9 @@ function auxModalEls(m){
 function contextMenuEl(cm){
   const el=div("region ctxmenu ctx-"+cm.kind);
   el.style.left=`${px(cm.x,CW)}px`; el.style.top=`${px(cm.y,CH)}px`;
-  cm.items.forEach((label,i)=>{
-    const row=div("ctxitem"+(i===cm.highlighted?" sel":""));
-    row.textContent=label;
+  cm.items.forEach((it,i)=>{
+    const row=div("ctxitem"+(i===cm.highlighted?" sel":"")+(it.destructive?" destructive":""));
+    row.textContent=it.label; row.dataset.id=it.id;
     const cell={col:cm.x+1,row:cm.y+1+i};
     row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); };
     row.onmouseenter=()=>sendMouse({kind:"moved",col:cell.col,row:cell.row});

@@ -1894,7 +1894,17 @@ pub struct ContextMenuView {
     pub x: u16,
     pub y: u16,
     pub highlighted: usize,
-    pub items: Vec<String>,
+    pub items: Vec<ContextMenuItemView>,
+}
+
+/// One context-menu item: its label, a stable `id` for styling, and whether
+/// it cannot be undone (Delete, Close Split).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextMenuItemView {
+    pub label: String,
+    pub id: &'static str,
+    pub destructive: bool,
 }
 
 impl Editor {
@@ -1925,7 +1935,7 @@ impl Editor {
             x,
             y,
             highlighted: core.highlighted,
-            items: w.context_menu_labels()?,
+            items: w.context_menu_items()?,
         })
     }
 }

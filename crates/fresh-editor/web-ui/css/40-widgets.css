@@ -214,6 +214,7 @@
   .trustdialog .td-btn.destructive:hover{color:var(--danger,#f47067);border-color:var(--danger,#f47067)}
   .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;min-width:160px}
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .ctxmenu .ctxitem.destructive{color:var(--danger,#f47067)}
   .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
   /* floating / dock widget panel surfaces (native plugin UI). The surface is
      a column flex box and the LIST inside it is the scroll container (flex:1;

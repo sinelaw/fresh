@@ -1553,6 +1553,36 @@ impl Window {
         })
     }
 
+    /// The open native context menu's items as the web shows them: label,
+    /// stable id and whether the item cannot be undone, in display order.
+    pub(crate) fn context_menu_items(
+        &self,
+    ) -> Option<Vec<crate::view::scene::ContextMenuItemView>> {
+        use crate::app::types::ContextMenuKind;
+        use crate::view::scene::ContextMenuItemView as V;
+        macro_rules! view {
+            ($items:expr) => {
+                $items
+                    .iter()
+                    .map(|i| V {
+                        label: i.label(),
+                        id: i.id(),
+                        destructive: i.destructive(),
+                    })
+                    .collect()
+            };
+        }
+        let (kind, _) = self.open_context_menu()?;
+        Some(match kind {
+            ContextMenuKind::FileExplorer => {
+                view!(self.file_explorer_context_menu.as_ref()?.items())
+            }
+            ContextMenuKind::NewTab => view!(self.new_tab_menu.as_ref()?.items()),
+            ContextMenuKind::Tab => view!(self.tab_context_menu.as_ref()?.items()),
+            ContextMenuKind::CloseSplit => view!(self.close_split_menu.as_ref()?.items()),
+        })
+    }
+
     /// Dismiss whichever native context menu is open (all three fields are
     /// cleared unconditionally — only one is ever set).
     pub(crate) fn close_context_menus(&mut self) {

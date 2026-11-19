@@ -722,8 +722,11 @@
     x: Number,
     y: Number,
     highlighted: Number,
-    items: String[]
+    items: ContextMenuItem[]
 } */
+
+// view/scene.rs `ContextMenuItemView`.
+/** type ContextMenuItem = { label: String, id: String, destructive: Boolean } */
 
 // view/scene.rs `AuxLine`.
 /** type AuxLine = { text: String, selected: Boolean } */
