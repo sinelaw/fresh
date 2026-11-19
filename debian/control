@@ -1,6 +1,8 @@
 Source: fresh-editor
 Section: editors
 Maintainer: Noam Lewis <jones.noamle@gmail.com>
+Uploaders:
+ Damian Daniel <damian@danielovci.net>,
 # The librust-*-dev entries are generated:
 #   scripts/debian.py packages --control Packages.xz \
 #     --baseline oldstable/Packages.xz --baseline stable/Packages.xz
@@ -11,13 +13,9 @@ Build-Depends:
  debhelper-compat (= 14),
  dh-cargo (>= 34),
  cargo:native (>= 1.95),
- rustc:native (>= 1.95),
- python3:native,
- python3-tomlkit,
+ esbuild:native,
  libclang-dev,
  libquickjs,
- pkgconf,
- esbuild:native,
  librust-alacritty-terminal-0.26+default-dev,
  librust-anyhow-1-dev (>= 1.0.100-~~),
  librust-arboard-3+wayland-data-control-dev (>= 3.6-~~),
@@ -125,6 +123,10 @@ Build-Depends:
  librust-which-8+default-dev,
  librust-xattr-1+default-dev (>= 1.6-~~),
  librust-xz2-0.1+default-dev,
+ pkgconf,
+ python3-tomlkit,
+ python3:native,
+ rustc:native (>= 1.95),
 Standards-Version: 4.7.4
 Homepage: https://getfresh.dev/
 Vcs-Browser: https://salsa.debian.org/sinelaw/fresh-editor

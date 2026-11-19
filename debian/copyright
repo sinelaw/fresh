@@ -116,7 +116,8 @@ License: CC0-1.0
 Comment: AppStream metadata, under the metadata license AppStream asks for.
 
 Files: debian/*
-Copyright: 2026 Noam Lewis <jones.noamle@gmail.com>
+Copyright: 2026 Noam Lewis <jones.noamle@gmail.com>,
+	   2026 Damian Daniel <damian@danielovci.net>
 License: GPL-3+
 
 License: sublimehq-packages
@@ -137,7 +138,7 @@ License: GPL-3+
  GNU General Public License for more details.
  .
  You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ along with this program.  If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
  .
  On Debian systems, the complete text of the GNU General Public License
  version 3 can be found in "/usr/share/common-licenses/GPL-3".
