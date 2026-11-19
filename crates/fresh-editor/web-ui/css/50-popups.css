@@ -3,7 +3,7 @@
      <style> block by crates/fresh-editor/build.rs; order is load-bearing:
      later files deliberately override earlier ones.) */
   /* ---- popups (completion / hover / action / list / text) — native ---- */
-  .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
+  .popup{position:absolute;z-index:75;background:var(--bg2);border:1px solid var(--border);
     border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;display:flex;flex-direction:column}
   .popup .popup-title{padding:3px 10px;color:var(--fg);background:#2d2d30;border-bottom:1px solid #3a3a3a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .popup .popup-desc{padding:2px 10px;color:var(--muted);border-bottom:1px solid #3a3a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -146,6 +146,25 @@ impl TabContextMenuItem {
             Self::ExtractToNewWorkspace => t!("tab.extract_to_new_workspace").to_string(),
         }
     }
+
+    /// A stable name for the item, for the web (`data-id`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Close => "close",
+            Self::CloseOthers => "closeOthers",
+            Self::CloseToRight => "closeToRight",
+            Self::CloseToLeft => "closeToLeft",
+            Self::CloseAll => "closeAll",
+            Self::CopyRelativePath => "copyRelativePath",
+            Self::CopyFullPath => "copyFullPath",
+            Self::ExtractToNewWorkspace => "extractToNewWorkspace",
+        }
+    }
+
+    /// Whether the item cannot be undone: none, as closing an unsaved tab asks first.
+    pub fn destructive(&self) -> bool {
+        false
+    }
 }
 
 /// State for tab context menu (right-click popup on tabs)
@@ -208,6 +227,19 @@ impl NewTabMenuItem {
             Self::NewFile => t!("tab.new_file").to_string(),
         }
     }
+
+    /// A stable name for the item, for the web (`data-id`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::NewTerminal => "newTerminal",
+            Self::NewFile => "newFile",
+        }
+    }
+
+    /// Whether the item does something that cannot be undone.
+    pub fn destructive(&self) -> bool {
+        false
+    }
 }
 
 /// State for the "+" new-tab popup menu (left-click on the tab bar's
@@ -263,6 +295,19 @@ impl CloseSplitMenuItem {
             Self::CloseSplit => t!("action.close_split").to_string(),
             Self::Cancel => t!("confirm.cancel").to_string(),
         }
+    }
+
+    /// A stable name for the item, for the web (`data-id`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::CloseSplit => "closeSplit",
+            Self::Cancel => "cancel",
+        }
+    }
+
+    /// Whether the item cannot be undone.
+    pub fn destructive(&self) -> bool {
+        matches!(self, Self::CloseSplit)
     }
 }
 
@@ -372,6 +417,27 @@ impl FileExplorerContextMenuItem {
             Self::CopyFullPath => t!("explorer.context.copy_full_path").to_string(),
             Self::CopyRelativePath => t!("explorer.context.copy_relative_path").to_string(),
         }
+    }
+
+    /// A stable name for the item, for the web (`data-id`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::NewFile => "newFile",
+            Self::NewDirectory => "newDirectory",
+            Self::Rename => "rename",
+            Self::Cut => "cut",
+            Self::Copy => "copy",
+            Self::Paste => "paste",
+            Self::Duplicate => "duplicate",
+            Self::Delete => "delete",
+            Self::CopyFullPath => "copyFullPath",
+            Self::CopyRelativePath => "copyRelativePath",
+        }
+    }
+
+    /// Whether the item does something that cannot be undone.
+    pub fn destructive(&self) -> bool {
+        matches!(self, Self::Delete)
     }
 }
 

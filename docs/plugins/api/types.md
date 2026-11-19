@@ -5422,6 +5422,12 @@ type WidgetSpec = {
   * letter the label does not contain, underlines nothing.
   */
   mnemonic?: string | null;
+  /**
+  * Shown but not available: drawn dimmed, never focused, and a press
+  * or a key on it does nothing. For a choice the form cannot offer
+  * right now (a git worktree on a folder that is not a repository).
+  */
+  disabled?: boolean;
   key?: string | null;
 } | {
   "kind": "number";
@@ -5509,6 +5515,14 @@ type WidgetSpec = {
   * taller than its window. Defaults to `0`.
   */
   scrollOffset: number;
+  /**
+  * What the closed dropdown shows while nothing is chosen
+  * (`selected_index` `-1`), e.g. `Choose an agent…`. It is not an
+  * option: the open list shows only `options`, and once a value is
+  * chosen the dropdown cannot step back to it. Empty = no
+  * placeholder; `selected_index` is then clamped into `options`.
+  */
+  placeholder?: string;
   key?: string | null;
 } | {
   "kind": "radio";

@@ -951,6 +951,7 @@ impl Editor {
                 &sent_ids,
                 line as u32,
                 character as u32,
+                None,
             );
         }
 
@@ -999,10 +1000,12 @@ impl Editor {
     /// Used for mouse-triggered hover
     /// Returns `Ok(true)` if the request was dispatched, `Ok(false)` if no
     /// eligible server was available (e.g. not yet initialized).
+    /// The card is placed at `screen` and owned by the pointer.
     pub(crate) fn request_hover_at_position(
         &mut self,
         byte_pos: usize,
         buffer_id: BufferId,
+        screen: (u16, u16),
     ) -> AnyhowResult<bool> {
         // Resolve against the buffer the pointer is over — not necessarily the
         // active one. Hovering a non-active split (or a virtual UI buffer with
@@ -1073,6 +1076,7 @@ impl Editor {
                 &sent_ids,
                 line as u32,
                 character as u32,
+                Some(screen),
             );
         }
 
@@ -1139,11 +1143,22 @@ impl Editor {
             // Every capable server answered and none returned a hover, and
             // there are no overlapping diagnostics — report "no hover" exactly
             // once (only fires on the final response of the batch).
-            let message = self
-                .expired_request_message("textDocument/hover")
-                .unwrap_or_else(|| t!("lsp.no_hover").to_string());
-            self.set_status_message(message);
+            // Keyboard only: a resting pointer would flood the status bar.
+            let from_pointer = self.active_window().hover.batch_screen_position().is_some();
+            if !from_pointer {
+                let message = self
+                    .expired_request_message("textDocument/hover")
+                    .unwrap_or_else(|| t!("lsp.no_hover").to_string());
+                self.set_status_message(message);
+            }
             self.active_window_mut().hover.set_symbol_range(None);
+            // The resting pointer found nothing to hover, so the card it
+            // opened earlier is stale and comes down (#3733).
+            let ms = &self.active_window().mouse_state;
+            let still_resting = ms.lsp_hover_request_sent && ms.lsp_hover_state.is_some();
+            if from_pointer && still_resting && self.pointer_hover_card_showing() {
+                self.dismiss_transient_popups();
+            }
             return;
         }
 
@@ -1349,8 +1364,8 @@ impl Editor {
         popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
-        popup.position = if let Some((x, y)) = self.active_window_mut().hover.take_screen_position()
-        {
+        // Placed by the answering batch's origin, not the latest request.
+        popup.position = if let Some((x, y)) = self.active_window().hover.batch_screen_position() {
             PopupPosition::Fixed { x, y: y + 1 }
         } else {
             PopupPosition::BelowCursor
@@ -1380,6 +1395,8 @@ impl Editor {
             state.popups.show(popup);
             tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }
+        // A new card must not inherit the previous one's grace deadline.
+        self.active_window_mut().mouse_state.hover_dismiss_at = None;
 
         // Mark hover request as sent to prevent duplicate popups during race conditions
         // (e.g., when mouse moves while a hover response is pending)

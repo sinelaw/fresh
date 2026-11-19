@@ -15,26 +15,11 @@
 // shell's layout put it (`apply_node` in webui/mod.rs). The node's own handler
 // decides what the press means — the same code a terminal click runs.
 
-// Which web themes lay surfaces out natively. The others keep the display
-// list's faithful cell rendering: Cosmos and Winamp are designed around it.
-// `fresh.nativePanels` in localStorage ("on"/"off") overrides either way.
-const NATIVE_PANEL_THEMES = ["compact", "macos", "macos-dark"];
-/** function nativePanelsOn() => Boolean */
-function nativePanelsOn(){
-  /** let pref: String | Null */
-  let pref=null;
-  try { pref=localStorage.getItem("fresh.nativePanels"); } catch(_) {}
-  if(pref==="on") return true;
-  if(pref==="off") return false;
-  return NATIVE_PANEL_THEMES.includes(webTheme);
-}
-
 // Whether a cell lies under a natively laid-out panel. Such a panel puts its
 // fields elsewhere than the cells the terminal's cursor marks, and its own
 // focused input carries the caret — so no cell caret is drawn there.
 /** function underNative(NativeView, Number, Number) => Boolean */
 function underNative(n, x, y){
-  if(!document.body.classList.contains("native-panels")) return false;
   const inRect=r=>x>=r.x && x<r.x+r.w && y>=r.y && y<r.y+r.h;
   return n.panels.some(p=>{ const f=p.frame; return inRect(p.rect)||(f!==undefined&&inRect(f)); });
 }
@@ -75,10 +60,18 @@ function confirmCardEls(c){
   const title=div("nc-title"); title.textContent=c.title; card.appendChild(title);
   if(c.body){ const p=div("nc-body"); p.id="nc-body"; p.textContent=c.body; card.appendChild(p); }
   if(c.detail){ const d=div("nc-detail"); d.textContent=c.detail; card.appendChild(d); }
+  dialogButtons(card, c.buttons);
+  scrim.appendChild(card);
+  return [scrim];
+}
+
+/** function dialogButtons(El, ConfirmButton[]) => Undefined */
+function dialogButtons(card, buttons){
+  if(buttons.length===0) return;
   const row=div("nc-buttons");
-  for(const b of c.buttons){
+  for(const b of buttons){
     const el=nativeButton("nc-btn"+(b.selected?" selected":"")+(b.destructive?" destructive":"")
-      +(b.escape?" escape":""), b.key);
+      +(b.escape?" escape":"")+(b.hovered?" hovered":""), b.key);
     const [pre, acc, post]=b.label;
     el.append(pre);
     if(acc){ const u=document.createElement("span"); u.className="accel"; u.textContent=acc; el.appendChild(u); }
@@ -87,6 +80,36 @@ function confirmCardEls(c){
     row.appendChild(el);
   }
   card.appendChild(row);
+}
+
+// ---- the settings' dialogs --------------------------------------------------
+// Drawn as the same card as a confirmation so skins style them alike; `kind`
+// is a class for skins that tell them apart.
+/** function settingsDialogEls(SettingsDialog) => El[] */
+function settingsDialogEls(d){
+  const scrim=div("native-scrim");
+  scrim.addEventListener("mousedown", e=>{ e.preventDefault(); e.stopPropagation(); });
+  const card=div("native-card native-confirm settings-dialog sd-"+d.kind);
+  aria(card, "alertdialog", {modal:true, label:d.title, description:null});
+  card.addEventListener("mousedown", e=>{ e.stopPropagation(); });
+  const title=div("nc-title"); title.textContent=d.title; card.appendChild(title);
+  if(d.body){ const p=div("nc-body"); p.textContent=d.body; card.appendChild(p); }
+  if(d.changes.length>0){
+    const ul=document.createElement("ul"); ul.className="nc-changes";
+    for(const c of d.changes){ const li=document.createElement("li"); li.textContent=c; ul.appendChild(li); }
+    card.appendChild(ul);
+  }
+  if(d.lines.length>0){
+    const t=div("nc-help");
+    for(const l of d.lines){
+      if(l.heading){ const h=div("nc-help-head"); h.textContent=l.key; t.appendChild(h); continue; }
+      const k=div("nc-help-key"); k.textContent=l.key; t.appendChild(k);
+      const v=div("nc-help-desc"); v.textContent=l.desc; t.appendChild(v);
+    }
+    card.appendChild(t);
+  }
+  dialogButtons(card, d.buttons);
+  if(d.help){ const h=div("nc-hint"); h.textContent=d.help; card.appendChild(h); }
   scrim.appendChild(card);
   return [scrim];
 }

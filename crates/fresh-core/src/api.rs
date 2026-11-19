@@ -2647,6 +2647,11 @@ pub enum WidgetSpec {
         /// letter the label does not contain, underlines nothing.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mnemonic: Option<String>,
+        /// Shown but not available: drawn dimmed, never focused, and a press
+        /// or a key on it does nothing. For a choice the form cannot offer
+        /// right now (a git worktree on a folder that is not a repository).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        disabled: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2743,6 +2748,13 @@ pub enum WidgetSpec {
         /// taller than its window. Defaults to `0`.
         #[serde(default)]
         scroll_offset: u32,
+        /// What the closed dropdown shows while nothing is chosen
+        /// (`selected_index` `-1`), e.g. `Choose an agent…`. It is not an
+        /// option: the open list shows only `options`, and once a value is
+        /// chosen the dropdown cannot step back to it. Empty = no
+        /// placeholder; `selected_index` is then clamped into `options`.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        placeholder: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

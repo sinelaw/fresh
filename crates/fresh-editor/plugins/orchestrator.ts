@@ -8849,14 +8849,9 @@ interface AgentPreset {
   key: string;
   resumes: boolean;
   custom?: boolean;
-  // The `Choose an agent…` placeholder, listed only until a choice is made.
-  unset?: boolean;
 }
 function agentPresets(): AgentPreset[] {
   const presets: AgentPreset[] = [
-    ...(form?.agentUnset
-      ? [{ label: editor.t("form.agent_choose"), cmd: "", key: "agent-preset-unset", resumes: false, unset: true }]
-      : []),
     { label: editor.t("form.agent_terminal"), cmd: "", key: "agent-preset-terminal", resumes: false },
   ];
   for (const e of AGENT_REGISTRY) {
@@ -8881,7 +8876,6 @@ function agentPresets(): AgentPreset[] {
 // known agent / the empty shell, else "custom…" (covers a typed command or an
 // agent with extra args). Drives the dropdown's active highlight.
 function activeAgentPresetKey(): string {
-  if (form?.agentUnset) return "agent-preset-unset";
   if (form?.agentCustom) return "agent-preset-custom";
   const current = form ? form.cmd.value.trim() : "";
   const match = agentPresets().find((p) => !p.custom && p.cmd === current);
@@ -13459,11 +13453,14 @@ function machineRows(): WidgetSpec[] {
 function agentPresetRow(): WidgetSpec {
   const presets = agentPresets();
   const activeKey = activeAgentPresetKey();
-  const selectedIndex = Math.max(0, presets.findIndex((p) => p.key === activeKey));
+  // Until an agent is chosen the dropdown shows `Choose an agent…` as its
+  // placeholder (`-1`): a prompt, never one of the options listed.
+  const selectedIndex = form?.agentUnset ? -1 : Math.max(0, presets.findIndex((p) => p.key === activeKey));
   return dropdown(presets.map((p) => p.label), {
     selectedIndex,
     label: formLabel("form.agent"),
     labelWidth: FORM_LABEL_W,
+    placeholder: editor.t("form.agent_choose"),
     key: "agent_dropdown",
   });
 }
@@ -13631,9 +13628,9 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
   if (!worktreeEnabled) {
     // Not a git path: say so where the toggle would be, and stop.
     out.push(
-      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
+      toggle(false, editor.t("form.create_worktree_short"), {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.menu_disabled_fg" },
+        disabled: true,
       }),
       fieldNote(editor.t("form.disabled_non_git").replace(/^\s*[(（]|[)）]\s*$/g, ""), {
         fg: "ui.menu_disabled_fg",
@@ -13737,9 +13734,9 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   const out: WidgetSpec[] = [];
   if (f.remoteProbing) {
     out.push(
-      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
+      toggle(false, editor.t("form.create_worktree_short"), {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.menu_disabled_fg" },
+        disabled: true,
       }),
       fieldNote(editor.t("form.remote_probing"), {
         fg: "ui.menu_disabled_fg",
@@ -13769,9 +13766,9 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   }
   if (f.remoteIsGit === false) {
     out.push(
-      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
+      toggle(false, editor.t("form.create_worktree_short"), {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.menu_disabled_fg" },
+        disabled: true,
       }),
       fieldNote(editor.t("form.remote_non_git"), {
         fg: "ui.menu_disabled_fg",
@@ -14493,7 +14490,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     teachFreshCli: true,
     branch: { value: "", cursor: 0 },
     newBranch: { value: "", cursor: 0 },
-    agentCustom: storedCmd !== undefined && !agentPresets().some((p) => !p.custom && !p.unset && p.cmd === lastCmd.trim()),
+    agentCustom: storedCmd !== undefined && !agentPresets().some((p) => !p.custom && p.cmd === lastCmd.trim()),
     agentUnset: storedCmd === undefined,
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
@@ -18331,15 +18328,13 @@ editor.on("widget_event", (e) => {
       if (typeof index === "number") {
         const presets = agentPresets();
         const preset = presets[index];
-        if (preset && !preset.unset) {
+        if (preset) {
           const wasUnset = form.agentUnset;
           form.agentUnset = false;
           applyAgentPreset(preset);
-          // The placeholder left the list, so every option moved up one.
-          if (wasUnset) {
-            renderForm();
-            formPanel.setDropdown("agent_dropdown", agentPresets().findIndex((p) => p.key === preset.key));
-          }
+          // The placeholder is the dropdown's, not an option, so the indices
+          // do not move when it goes; only the form's rows may change.
+          if (wasUnset) renderForm();
         }
       }
       return;

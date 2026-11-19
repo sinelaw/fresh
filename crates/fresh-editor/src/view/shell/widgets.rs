@@ -2282,13 +2282,15 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             label_first,
             label_width,
             mnemonic,
+            disabled,
             key,
         } => {
             let key = key.as_deref();
-            let is_focused = match key.is_some_and(|k| !k.is_empty()) {
-                true => cx.is_focused(key),
-                false => *focused,
-            };
+            let is_focused = !*disabled
+                && match key.is_some_and(|k| !k.is_empty()) {
+                    true => cx.is_focused(key),
+                    false => *focused,
+                };
             let (mut entry, chip) = match label_first {
                 true => crate::widgets::render_toggle_form(
                     *checked,
@@ -2320,6 +2322,16 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // The pointer lights the whole chip and label the way it lights a
             // button. Focus paints its own band, so hover only shows where
             // focus is not.
+            // A disabled toggle is drawn dimmed and answers nothing.
+            if *disabled {
+                let mut style = entry.style.clone().unwrap_or_default();
+                style.fg = Some(fresh_core::api::OverlayColorSpec::theme_key(
+                    "ui.menu_disabled_fg",
+                ));
+                entry.style = Some(style);
+                entry.inline_overlays.clear();
+                return entry_row(&entry, &cx.surface);
+            }
             if cx.is_hovered(key) && !is_focused {
                 crate::widgets::apply_hover_band(&mut entry);
             }
@@ -3345,6 +3357,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             label_width,
             open,
             scroll_offset,
+            placeholder,
             key,
         } => {
             use crate::widgets::kinds::dropdown as dd;
@@ -3355,10 +3368,30 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 true => cx.is_focused(key),
                 false => *focused,
             };
-            let st = dd::resolve(options, *selected_index, *open, key, cx.states, is_focused);
-            let rendered = crate::widgets::render_dropdown(
+            let st = dd::resolve(
                 options,
-                st.selected,
+                *selected_index,
+                *open,
+                key,
+                cx.states,
+                is_focused,
+                !placeholder.is_empty(),
+            );
+            // The placeholder is the closed button's only, never the list's; it
+            // is measured with the options so choosing does not resize the button.
+            let with_placeholder: Vec<String>;
+            let (shown, shown_index) = match placeholder.is_empty() {
+                true => (options.as_slice(), st.selected),
+                false => {
+                    with_placeholder = std::iter::once(placeholder.clone())
+                        .chain(options.iter().cloned())
+                        .collect();
+                    (with_placeholder.as_slice(), st.selected + 1)
+                }
+            };
+            let rendered = crate::widgets::render_dropdown(
+                shown,
+                shown_index,
                 label,
                 is_focused,
                 *label_width,
@@ -5570,6 +5603,7 @@ pub(crate) mod tests {
             label_first,
             label_width: 0,
             mnemonic: None,
+            disabled: false,
             key: Some("t".into()),
         }
     }
@@ -6796,6 +6830,7 @@ pub(crate) mod tests {
             label_width: 0,
             open,
             scroll_offset: scroll,
+            placeholder: String::new(),
             key: Some("mode".into()),
         }
     }

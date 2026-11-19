@@ -295,6 +295,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         left,
         chain,
         name,
+        name_fg: name_fg.clone(),
         trailing: slots.trailing.as_ref().map(|slot| fe::Slot {
             text: slot.text.clone(),
             theme: pair(&slot_paint(slot.fg, &slot.fg_key), ground),
@@ -338,6 +339,7 @@ pub fn describe_preview_row(
             .into_iter()
             .map(|(text, bg)| (text.to_string(), pair("ui.file_explorer_fg", bg)))
             .collect(),
+        name_fg: "ui.file_explorer_fg".to_string(),
         trailing: None,
         error: None,
         segment,

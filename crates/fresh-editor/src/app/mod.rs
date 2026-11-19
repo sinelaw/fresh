@@ -195,6 +195,9 @@ pub fn editor_tick(
     if editor.check_mouse_hover_timer() {
         needs_render = true;
     }
+    if editor.check_hover_dismiss_timer() {
+        needs_render = true;
+    }
     // A drop's move preview, in the explorer and in plugin trees: a frame per
     // character while it types, and what follows it (the explorer's
     // confirmation, the plugin's `movepreviewend`) once it has played out.
@@ -1247,6 +1250,11 @@ pub struct Editor {
     /// a plugin started.
     #[cfg(feature = "plugins")]
     dispatching_key: bool,
+
+    /// True while dispatching a prompt-opening plugin action, so typed keys
+    /// wait for the prompt (`dispatch_prompt_opening_plugin_action`).
+    #[cfg(feature = "plugins")]
+    dispatching_prompt_opener: bool,
 
     /// True while dispatching actions that are a plugin's doing rather than
     /// the user's (a timer tick, an `executeActions` step), so

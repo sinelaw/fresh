@@ -62,8 +62,9 @@ pub fn open_new_workspace_form(harness: &mut EditorTestHarness) {
 }
 
 /// A first launch has no agent chosen (`Choose an agent…`), and Launch waits
-/// for one. Pick `terminal` — the list's first real entry, under the
-/// placeholder — so a test that launches can. A no-op once an agent is set.
+/// for one. Pick `terminal` — the list's first entry, which the list opens
+/// on: `Choose an agent…` is the closed dropdown's placeholder, not an option
+/// — so a test that launches can. A no-op once an agent is set.
 pub fn choose_terminal_agent(harness: &mut EditorTestHarness) {
     if !harness.screen_to_string().contains("[Choose an agent…") {
         return;
@@ -75,7 +76,11 @@ pub fn choose_terminal_agent(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| h.screen_to_string().contains("│ terminal"))
         .unwrap();
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    let open = harness.screen_to_string();
+    assert!(
+        !open.contains("│ Choose an agent"),
+        "the placeholder is not one of the options the list shows. Screen:\n{open}",
+    );
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

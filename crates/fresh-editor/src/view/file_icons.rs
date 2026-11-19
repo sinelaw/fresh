@@ -249,9 +249,54 @@ pub fn resolve_folder(theme: &FileIcons, open: bool, color: Color) -> Resolved {
     Resolved::with(glyph, color, over)
 }
 
+/// The icon drawn beside a file or folder name (`folder` is `Some(open)`), or
+/// `None` while `editor.nerd_font_icons` is off. Shared by the terminal and web
+/// UI so both show the same glyph and color.
+pub fn shown(
+    theme: &crate::view::theme::Theme,
+    name: &str,
+    folder: Option<bool>,
+) -> Option<Resolved> {
+    if !theme.chrome.nerd_font {
+        return None;
+    }
+    let icon = match folder {
+        Some(open) => resolve_folder(&theme.file_icons, open, theme.file_explorer_directory_fg),
+        None => resolve(&theme.file_icons, name),
+    };
+    Some(Resolved {
+        color: theme.file_icon_fg.unwrap_or(icon.color),
+        glyph: icon.glyph,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Nothing while Nerd Font icons are off; `ui.file_icon_fg` overrides colors.
+    #[test]
+    fn shown_follows_the_nerd_font_flag_and_the_one_icon_color() {
+        let mut theme =
+            crate::view::theme::Theme::from_json(r#"{"name": "t", "extends": "builtin://dark"}"#)
+                .unwrap();
+        assert_eq!(shown(&theme, "main.rs", None), None, "off: no icon");
+        theme.chrome.use_nerd_font(true);
+        let rs = shown(&theme, "main.rs", None).unwrap();
+        assert_eq!(rs, resolve(&theme.file_icons, "main.rs"));
+        let dir = shown(&theme, "", Some(true)).unwrap();
+        assert_eq!(dir.glyph, FOLDER_OPEN);
+        assert_eq!(dir.color, theme.file_explorer_directory_fg);
+        theme.file_icon_fg = Some(Color::Rgb(1, 2, 3));
+        assert_eq!(
+            shown(&theme, "main.rs", None).unwrap().color,
+            Color::Rgb(1, 2, 3)
+        );
+        assert_eq!(
+            shown(&theme, "", Some(false)).unwrap().color,
+            Color::Rgb(1, 2, 3)
+        );
+    }
 
     #[test]
     fn names_win_over_extensions_and_unknown_files_get_the_default() {

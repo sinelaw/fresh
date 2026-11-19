@@ -34,6 +34,10 @@ pub struct MouseState {
     pub lsp_hover_state: Option<(usize, std::time::Instant, u16, u16, BufferId)>,
     /// Whether we've already sent a hover request for the current position
     pub lsp_hover_request_sent: bool,
+    /// When the hover card comes down after the pointer left it for nothing
+    /// hoverable (#3733). The grace lets the pointer cross the gutter to the
+    /// card (#692); returning to the card or symbol disarms it.
+    pub hover_dismiss_at: Option<std::time::Instant>,
 }
 
 impl MouseState {

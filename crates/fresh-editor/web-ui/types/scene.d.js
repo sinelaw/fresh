@@ -68,7 +68,10 @@
     border: String | Null,
     statusBg: String | Null,
     statusFg: String | Null,
-    tabActiveBg: String | Null
+    tabActiveBg: String | Null,
+    scrollbarThumb: String | Null,
+    scrollbarThumbHover: String | Null,
+    tones: Dict<[String | Null, String | Null]>
 } */
 
 // src/webui/mod.rs `scene_json` (`regions`). The menu fields are
@@ -137,9 +140,14 @@
     cells: CellRow[],
     tabBar: Rect | Null,
     tabs: Tab[],
+    newTab: Rect | Null,
+    dropZone: DropZone | Null,
     vscroll: Rect,
     thumbStart: Number,
     thumbEnd: Number,
+    hscroll: Rect | Null,
+    hthumbStart: Number,
+    hthumbEnd: Number,
     vscrollMarkers: ScrollbarMarker[]
 } */
 
@@ -150,15 +158,19 @@
 /** type Tab = {
     bufferId: Number | Null,
     label: String,
+    icon: Icon | Null,
     active: Boolean,
     modified: Boolean,
+    preview: Boolean,
+    binary: Boolean,
+    group: Boolean,
     rect: Rect,
     closeRect: Rect
 } */
 
 // view/scene.rs `TabBarView`. Not sent as a unit: its fields travel as
 // `Pane.tabBar` (= `bar`) and `Pane.tabs`.
-/** type TabBar = { bar: Rect | Null, tabs: Tab[] } */
+/** type TabBar = { bar: Rect | Null, tabs: Tab[], newTab: Rect | Null } */
 
 // ───────────────────────────── menu ─────────────────────────────
 
@@ -213,6 +225,8 @@
 // "plugin" | "text" (per the Rust doc comment).
 /** type StatusSegment = {
     name: String,
+    tone: String,
+    cut: Boolean,
     key: String | Null,
     text: String,
     x: Number,
@@ -381,7 +395,21 @@
 // ───────────────────────────── file explorer ─────────────────────────────
 
 // view/scene.rs `FileRow`.
-/** type FileRow = { name: String, depth: Number, isDir: Boolean, expanded: Boolean } */
+/** type FileRow = {
+    name: String, depth: Number, isDir: Boolean, expanded: Boolean, icon: Icon | Null,
+    chain: String[], hidden: Boolean, symlink: Boolean, multi: Boolean,
+    nameColor: String | Null, trailing: Slot | Null, error: Slot | Null
+} */
+
+// view/scene.rs `SlotView`.
+/** type Slot = { text: String, color: String | Null } */
+
+// view/scene.rs `DropZoneView`: where a dragged tab would land over a pane.
+/** type DropZone = { rect: Rect, bg: String | Null, border: String | Null } */
+
+// view/scene.rs `IconView`: a file or folder's Nerd Font icon, sent only while
+// `editor.nerd_font_icons` is on.
+/** type Icon = { glyph: String, color: String | Null } */
 
 // view/scene.rs `FileExplorerView`.
 /** type FileExplorer = {
@@ -392,7 +420,9 @@
     viewportHeight: Number,
     selected: Number | Null,
     viewportRows: Number[],
-    rows: FileRow[]
+    rows: FileRow[],
+    closeKey: TreeKey,
+    refreshKey: TreeKey | Null
 } */
 
 // ───────────────────────────── trust dialog ─────────────────────────────
@@ -516,6 +546,17 @@
     key: TreeKey
 } */
 
+// view/scene.rs `SettingsDialogView`: a dialog over the settings.
+/** type SettingsDialog = {
+    kind: "confirm" | "reset" | "entryDelete" | "entryDiscard" | "help",
+    title: String,
+    body: String,
+    changes: String[],
+    lines: { key: String, desc: String, heading: Boolean }[],
+    buttons: ConfirmButton[],
+    help: String
+} */
+
 // view/native.rs `ConfirmButtonView`. `label` is [before, accelerator, after].
 /** type ConfirmButton = {
     label: [String, String, String],
@@ -559,13 +600,13 @@
     | { kind: "hintBar", entries: HintEntry[], key?: String }
     | { kind: "toggle", checked: Boolean, label: String, focused: Boolean,
         indeterminate: Boolean, labelFirst: Boolean, labelWidth: Number,
-        mnemonic?: String, key?: String }
+        mnemonic?: String, disabled?: Boolean, key?: String }
     | { kind: "number", value: Number, min?: Number, max?: Number, step: Number,
         integer: Boolean, percent: Boolean, label?: String, focused: Boolean,
         labelWidth: Number, key?: String }
     | { kind: "dropdown", options: String[], selectedIndex: Number, label?: String,
         focused: Boolean, labelWidth: Number, open: Boolean, scrollOffset: Number,
-        key?: String }
+        placeholder?: String, key?: String }
     | { kind: "radio", options: String[], selectedIndex: Number, label?: String,
         focused: Boolean, labelWidth: Number, key?: String }
     | { kind: "dualList", options: DualListOption[], included: String[],
@@ -697,8 +738,11 @@
     x: Number,
     y: Number,
     highlighted: Number,
-    items: String[]
+    items: ContextMenuItem[]
 } */
+
+// view/scene.rs `ContextMenuItemView`.
+/** type ContextMenuItem = { label: String, id: String, destructive: Boolean } */
 
 // view/scene.rs `AuxLine`.
 /** type AuxLine = { text: String, selected: Boolean } */
@@ -849,5 +893,6 @@
     entryDialog: EntryDialog | Null,
     showingHelp: Boolean,
     showingConfirm: Boolean,
-    showingReset: Boolean
+    showingReset: Boolean,
+    dialog: SettingsDialog | Null
 } */

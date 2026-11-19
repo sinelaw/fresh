@@ -28,13 +28,37 @@ function popupRun(run){
 
 /** function popupEl(Popup) => El */
 function popupEl(p){
-  const el=div("popup"); place(el,p.rect);
+  // `popup-<kind>` lets a skin tell completion, hover, actions and lists apart.
+  const el=div("popup popup-"+p.kind); place(el,p.rect);
+  // Report pointer moves on the card (which `onChrome` forwarding skips) so
+  // the editor keeps a hover card up while the pointer is on it (#3733).
+  // Shares the document handler's de-dupe, so a move back is reported too.
+  { const c=rectCell(p.rect);
+    el.onmousemove=()=>{
+      const lm=lastMoveCell;
+      if(lm&&lm.col===c.col&&lm.row===c.row) return;
+      lastMoveCell={col:c.col,row:c.row,ctrl:false};
+      sendMouse({kind:"moved",col:c.col,row:c.row});
+    }; }
+  // Lay the popup out on the editor's cells (head = rows above the content,
+  // body = content rows); free layout overflowed the box.
   const title=p.title, desc=p.description;
-  if(title){ const t=div("popup-title"); t.textContent=title; el.appendChild(t); }
-  if(desc){ const dd=div("popup-desc"); dd.textContent=desc; el.appendChild(dd); }
-  const body=div("popup-body");
   const cr=p.contentRect, n=Math.max(0,cr.h), start=p.scrollOffset||0;
+  // Without title or description, the card is just the content in a thin frame.
+  const bare=!title&&!desc, pad=4;
+  if(bare){
+    el.style.top=`${px(cr.y,CH)-pad}px`;
+    el.style.height=`${px(n,CH)+2*pad}px`;
+    el.style.paddingTop=el.style.paddingBottom=`${pad}px`;
+    el.style.boxSizing="border-box";
+  }
+  const head=div("popup-head"); head.style.height=bare?"0px":`${px(Math.max(0,cr.y-p.rect.y),CH)}px`;
+  if(title){ const t=div("popup-title"); t.textContent=title; head.appendChild(t); }
+  if(desc){ const dd=div("popup-desc"); dd.textContent=desc; head.appendChild(dd); }
+  el.appendChild(head);
   const content=p.content;
+  // A list is a well a skin may dress; hover lines keep the editor's ink.
+  const body=div("popup-body"+(content.type==="list"?" ui-well":"")); body.style.height=`${px(n,CH)}px`;
   if(content.type==="list"){
     const items=content.items||[];
     for(let j=0;j<n;j++){

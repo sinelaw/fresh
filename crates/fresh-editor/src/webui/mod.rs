@@ -82,6 +82,7 @@
 //! harness, the Playwright request API) send no `Origin` and pass:
 //!   - `GET /`        → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
 //!   - `GET /favicon.ico` → 204
+//!   - `GET /fonts/symbols-nerd-font-mono-3.5.1.woff2` → `NERD_FONT`
 //!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
 //!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
@@ -127,6 +128,13 @@ pub const DEFAULT_SIZE: (u16, u16) = (140, 44);
 /// behaves identically wherever the binary runs. Editing the frontend
 /// therefore requires a rebuild.
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/webui-index.html"));
+
+/// Must match `web-ui/css/10-base.css` `@font-face` and the `shell.html`
+/// preload. Versioned, so it can be cached forever.
+const NERD_FONT_PATH: &str = "/fonts/symbols-nerd-font-mono-3.5.1.woff2";
+/// Symbols Nerd Font Mono, for the cells' private-use glyphs (file icons,
+/// theme glyphs). See `fonts/LICENSE-SymbolsNerdFont.md`.
+const NERD_FONT: &[u8] = include_bytes!("../../fonts/SymbolsNerdFontMono-Regular.woff2");
 
 /// Cap on the clipboard text exposed in the scene (`ClipboardSync`). Anything
 /// larger is truncated at a char boundary — a copy that big is better served
@@ -939,6 +947,24 @@ fn handle_http(
                 "text/html; charset=utf-8",
                 INDEX_HTML.as_bytes(),
             )?;
+            Ok(false)
+        }
+        ("GET", NERD_FONT_PATH) => {
+            // 1.2 MB: written from its own thread so the editor loop never
+            // waits on a slow link. The cloned handle keeps the write deadline.
+            let mut font_stream = stream.try_clone()?;
+            std::thread::Builder::new()
+                .name("webui-font".into())
+                .spawn(move || {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = respond_with(
+                        &mut font_stream,
+                        "200 OK",
+                        "font/woff2",
+                        "Cache-Control: public, max-age=31536000, immutable\r\n",
+                        NERD_FONT,
+                    );
+                })?;
             Ok(false)
         }
         ("GET", "/favicon.ico") => {
@@ -1820,12 +1846,23 @@ impl WsSession {
 }
 
 fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> Result<()> {
+    respond_with(stream, status, ctype, "", body)
+}
+
+/// `respond`, with `extra` (whole `Name: value\r\n` lines) added to the headers.
+fn respond_with(
+    stream: &mut TcpStream,
+    status: &str,
+    ctype: &str,
+    extra: &str,
+    body: &[u8],
+) -> Result<()> {
     // No CORS header: the frontend is served from this same origin, so it needs
     // none, and `Access-Control-Allow-Origin: *` would let any site the user
     // visits read `/state` (live buffer contents) cross-origin. Same-origin
     // policy is the protection here.
     let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes())?;
@@ -2058,6 +2095,12 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         })
         .map(
             |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
+                // The horizontal bar (wrap off): track and thumb, in columns.
+                let hscroll = editor.pane_hscroll_rect(*leaf).filter(|r| r.width > 0);
+                let (hthumb_s, hthumb_e) = editor
+                    .bar_thumb(*leaf, fresh_ui::Axis::Horizontal)
+                    .map(|(s, e, _)| (s, e))
+                    .unwrap_or((0, 0));
                 let (content_rect, scrollbar_rect) = (&content_rect, &scrollbar_rect);
                 // Tabs are derived once in the core (`Editor::tab_bar_view`).
                 let tb = editor.tab_bar_view(*leaf);
@@ -2092,9 +2135,15 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                     "cells": cells_json(&buf, text_rect),
                     "tabBar": serde_json::to_value(tb.bar).unwrap_or(Value::Null),
                     "tabs": serde_json::to_value(tb.tabs).unwrap_or_else(|_| json!([])),
+                    "newTab": serde_json::to_value(tb.new_tab).unwrap_or(Value::Null),
+                    // A tab drag's drop zone over this pane, while it shows one.
+                    "dropZone": serde_json::to_value(editor.drop_zone_view(*leaf)).unwrap_or(Value::Null),
                     "vscroll": rect_json(*scrollbar_rect),
                     "thumbStart": thumb_s,
                     "thumbEnd": thumb_e,
+                    "hscroll": hscroll.map(rect_json),
+                    "hthumbStart": hthumb_s,
+                    "hthumbEnd": hthumb_e,
                     // Plugin scrollbar markers. The web frontend draws its own
                     // scrollbar from `vscroll`/`thumb*` rather than reading the
                     // painted cells, so markers must travel as data too.
@@ -2190,6 +2239,19 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             "statusBg": color_css(t.status_bar_bg),
             "statusFg": color_css(t.status_bar_fg),
             "tabActiveBg": color_css(t.tab_active_bg),
+            "scrollbarThumb": color_css(t.scrollbar_thumb_fg),
+            "scrollbarThumbHover": color_css(t.scrollbar_thumb_hover_fg),
+            // `StatusSegment.tone` colours: [fg, bg] each.
+            "tones": {
+                "error": [color_css(t.status_error_indicator_fg), color_css(t.status_error_indicator_bg)],
+                "diagnosticError": [color_css(t.diagnostic_error_fg), color_css(t.diagnostic_error_bg)],
+                "warning": [color_css(t.status_warning_indicator_fg), color_css(t.status_warning_indicator_bg)],
+                "ok": [color_css(t.status_lsp_on_fg), color_css(t.status_lsp_on_bg)],
+                "actionable": [color_css(t.status_lsp_actionable_fg), color_css(t.status_lsp_actionable_bg)],
+                "info": [color_css(t.help_indicator_fg), color_css(t.help_indicator_bg)],
+                "palette": [color_css(t.status_palette_fg), color_css(t.status_palette_bg)],
+                "highlight": [color_css(t.menu_highlight_fg), color_css(t.menu_dropdown_bg)],
+            },
         })
     };
 
@@ -2497,6 +2559,18 @@ mod tests {
     use super::{
         digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
     };
+
+    /// The CSS `@font-face` and the preload name `NERD_FONT_PATH`, which serves WOFF2.
+    #[test]
+    fn nerd_font_is_served_where_the_page_loads_it() {
+        assert_eq!(&super::NERD_FONT[..4], b"wOF2", "the bundled font is WOFF2");
+        let rel = super::NERD_FONT_PATH.trim_start_matches('/');
+        assert_eq!(
+            super::INDEX_HTML.matches(rel).count(),
+            2,
+            "the @font-face src and the preload link both load {rel}"
+        );
+    }
 
     /// Whether the scene shows a confirmation card.
     fn confirm_open(editor: &mut crate::app::Editor) -> bool {

@@ -9,14 +9,16 @@
 function trustDialogEls(t){
   const out=[];
   const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
-  const el=aria(div("trustdialog"), "alertdialog", {modal:true, label:t.title}); place(el,t.dialog); hugHeight(el);
+  const el=aria(div("trustdialog"+(t.cancellable?" cancellable":"")), "alertdialog", {modal:true, label:t.title}); place(el,t.dialog); hugHeight(el);
   const title=div("td-title"); title.textContent="⚠  "+t.title; el.appendChild(title);
   const group=aria(div("td-group"), "radiogroup", {label:t.title});
   if(t.path){ const p=div("td-path"); p.textContent=t.path; el.appendChild(p); }
   if(t.triggers){ const g=div("td-triggers"); g.textContent="Detected: "+t.triggers; el.appendChild(g); }
   for(const o of t.options){
     const row=aria(div("td-opt"+(o.selected?" sel":"")), "radio", {checked:!!o.selected, label:o.label});
-    const rad=document.createElement("span"); rad.className="td-radio"; rad.textContent=o.selected?"◉":"○"; row.appendChild(rad);
+    row.dataset.level=o.data;
+    // The shared radio (47-components.css).
+    const rad=document.createElement("span"); rad.className="td-radio ui-radio"+(o.selected?" on":""); row.appendChild(rad);
     const tx=document.createElement("div"); tx.className="td-otext";
     tx.innerHTML='<div class="td-olabel">'+esc(o.label)+'</div><div class="td-odesc">'+esc(o.description)+'</div>';
     row.appendChild(tx);
@@ -26,10 +28,11 @@ function trustDialogEls(t){
   }
   el.appendChild(group);
   const btns=div("td-buttons");
-  const mk=(label,rect,primary)=>{ const b=aria(div("td-btn"+(primary?" primary":"")),"button",{}); b.textContent=label; const c=rectCell(rect);
+  const mk=(label,rect,cls)=>{ const b=aria(div("td-btn "+cls),"button",{}); b.textContent=label; const c=rectCell(rect);
     b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); }; return b; };
-  btns.appendChild(mk(t.okLabel, t.ok, true));
-  btns.appendChild(mk(t.quitLabel, t.quit, false));
+  btns.appendChild(mk(t.okLabel, t.ok, "primary td-ok"));
+  // Quit, or Cancel when cancellable; only quitting is destructive.
+  btns.appendChild(mk(t.quitLabel, t.quit, t.cancellable?"td-quit":"destructive td-quit"));
   el.appendChild(btns);
   out.push(el);
   return out;
@@ -49,8 +52,14 @@ function fileExplorerEl(fe){
   // themes keep everything else.
   const onGrid=e=>{ e.style.height=`${CH}px`; e.style.lineHeight=`${CH}px`; e.style.boxSizing="border-box";
                     e.style.marginTop=e.style.marginBottom="0"; e.style.paddingTop=e.style.paddingBottom="0"; };
-  const title=div("fx-title"); title.textContent=fe.title||"Explorer"; onGrid(title); el.appendChild(title);
-  const list=div("fx-list"); list.style.paddingTop=list.style.paddingBottom="0";
+  const title=div("fx-title"); onGrid(title);
+  const tt=document.createElement("span"); tt.className="fx-title-text"; tt.textContent=fe.title||"Explorer"; title.appendChild(tt);
+  // Header buttons (⟳ refresh, × hide) press the tree nodes they mirror.
+  const rk=fe.refreshKey;
+  if(rk){ const b=nativeButton("fx-hbtn fx-refresh ui-chip", rk); b.textContent="⟳"; b.title="Refresh"; title.appendChild(b); }
+  const cb=nativeButton("fx-hbtn fx-close ui-chip", fe.closeKey); cb.textContent="×"; cb.title="Close"; title.appendChild(cb);
+  el.appendChild(title);
+  const list=div("fx-list ui-well"); list.style.paddingTop=list.style.paddingBottom="0";
   const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
   // Newer cores provide the exact screen-row mapping, including sticky
   // ancestors. Keep the contiguous fallback for compatibility with an older
@@ -58,16 +67,30 @@ function fileExplorerEl(fe){
   const viewportRows=fe.viewportRows||Array.from({length:n},(_,j)=>start+j);
   for(let j=0;j<n;j++){
     const idx=viewportRows[j], r=fe.rows[idx]; if(!r) break;
-    const row=div("fx-row"+(idx===fe.selected?" sel":""));
+    const row=div("fx-row"+(idx===fe.selected?" sel":"")+(r.multi?" multi":"")+(r.hidden?" hidden":"")+(r.symlink?" symlink":""));
     onGrid(row);
     row.style.paddingLeft=`${6 + r.depth*10}px`;
     const chev=document.createElement("span"); chev.className="fx-chev";
     chev.textContent=r.isDir?(r.expanded?"▾":"▸"):"";
     row.appendChild(chev);
     const ic=document.createElement("span"); ic.className="fx-icon"+(r.isDir?" dir":"");
-    ic.innerHTML=fileIcon(r.name,{dir:r.isDir,expanded:r.expanded}); row.appendChild(ic);
-    const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":""); name.textContent=r.name;
+    // The editor's Nerd Font icon while `editor.nerd_font_icons` is on, else the web's line icons.
+    const icon=r.icon;
+    if(icon){ ic.classList.add("nerd"); ic.textContent=icon.glyph; const color=icon.color; if(color) ic.style.setProperty("--icon-color",color); }
+    else ic.innerHTML=fileIcon(r.name,{dir:r.isDir,expanded:r.expanded});
+    row.appendChild(ic);
+    const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":"");
+    // A compact row's folded ancestors, `a/b/`.
+    if(r.chain.length>0){ const ch=document.createElement("span"); ch.className="fx-chain"; ch.textContent=r.chain.join("/")+"/"; name.appendChild(ch); }
+    name.append(r.name);
+    const nc=r.nameColor; if(nc) name.style.setProperty("--name-color",nc);
+    if(nc) name.classList.add("tinted");
     row.appendChild(name);
+    const err=r.error;
+    if(err){ const e=document.createElement("span"); e.className="fx-err"; e.textContent=err.text; row.appendChild(e); }
+    const tr=r.trailing;
+    if(tr){ const t=document.createElement("span"); t.className="fx-slot"; t.textContent=tr.text;
+      const c=tr.color; if(c) t.style.setProperty("--slot-color",c); row.appendChild(t); }
     const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row
     // Forward the real button so a right-click opens the explorer context menu.
     row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:btn(e),col:cell.col,row:cell.row}); };

@@ -708,6 +708,9 @@ impl Editor {
 
         // Check if mouse is over a transient popup - if so, keep hover active
         if self.is_mouse_over_transient_popup(col, row) {
+            // Drop requests for cells crossed on the way: an empty answer
+            // would take the card down under the pointer.
+            self.settle_on_hover_card();
             return false;
         }
 
@@ -773,9 +776,8 @@ impl Editor {
             false, // Don't include gutter
             compose_width,
         ) else {
-            // Mouse is in the gutter — stop tracking a pending request but keep
-            // any existing popup visible. The popup is only dismissed when the
-            // mouse leaves the editor area entirely (see docstring).
+            // Mouse is in the gutter: drop the pending request and arm the
+            // dismiss grace period.
             if self
                 .active_window_mut()
                 .mouse_state
@@ -785,6 +787,7 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
+            self.arm_hover_dismiss();
             return false;
         };
 
@@ -824,10 +827,8 @@ impl Editor {
             tracing::trace!(
                 "update_lsp_hover_state: mouse past line end or empty line, clearing hover"
             );
-            // Mouse is past end of line content — stop tracking a pending
-            // request but keep any existing popup visible. The popup is only
-            // dismissed when the mouse leaves the editor area entirely
-            // (see docstring).
+            // Mouse is past end of line content: drop the pending request and
+            // arm the dismiss grace period.
             if self
                 .active_window_mut()
                 .mouse_state
@@ -837,13 +838,14 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
+            self.arm_hover_dismiss();
             return false;
         }
 
         // Check if mouse is within the hovered symbol range - if so, keep hover active
         if let Some((start, end)) = self.active_window_mut().hover.symbol_range() {
             if byte_pos >= start && byte_pos < end {
-                // Mouse is still over the hovered symbol - keep hover state
+                self.settle_on_hover_card();
                 return false;
             }
         }
@@ -859,17 +861,76 @@ impl Editor {
             // Position changed outside the hovered symbol range. Don't dismiss
             // the popup here: a new hover request will fire after the debounce
             // and replace the popup naturally if the mouse settles on another
-            // symbol. Dismissing eagerly tore the popup down whenever the
+            // symbol — or take it down if there is nothing to hover (#3733).
+            // Dismissing eagerly tore the popup down whenever the
             // mouse passed through whitespace between two words (issue #692).
         }
 
         // Start tracking new hover position (remembering which buffer the
         // pointer is over, so the request targets that buffer — not the
         // active one — see `lsp_hover_state`).
+        // That request now decides the card's fate, so drop any grace deadline.
+        self.active_window_mut().mouse_state.hover_dismiss_at = None;
         self.active_window_mut().mouse_state.lsp_hover_state =
             Some((byte_pos, std::time::Instant::now(), col, row, buffer_id));
         self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
         false
+    }
+
+    /// Pointer is on the hover card or its symbol: clear the grace deadline
+    /// and any pending request.
+    fn settle_on_hover_card(&mut self) {
+        let ms = &mut self.active_window_mut().mouse_state;
+        ms.hover_dismiss_at = None;
+        ms.lsp_hover_state = None;
+        ms.lsp_hover_request_sent = false;
+    }
+
+    /// Minimum dismiss grace, so an instant-hover setting doesn't drop the
+    /// card while the pointer crosses the gutter towards it (#692).
+    const HOVER_DISMISS_MIN_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
+    /// Pointer left the card for nothing hoverable: start the grace period
+    /// before it comes down (#3733). Only the first move arms it, so the
+    /// deadline is not pushed out.
+    fn arm_hover_dismiss(&mut self) {
+        if !self.config.editor.mouse_hover_enabled || !self.pointer_hover_card_showing() {
+            return;
+        }
+        let grace = std::time::Duration::from_millis(self.config.editor.mouse_hover_delay_ms)
+            .max(Self::HOVER_DISMISS_MIN_GRACE);
+        let now = self.time_source.now();
+        let ms = &mut self.active_window_mut().mouse_state;
+        if ms.hover_dismiss_at.is_none() {
+            ms.hover_dismiss_at = Some(now + grace);
+        }
+    }
+
+    /// Take the hover card down once its grace period has passed. Returns
+    /// whether that changed the screen.
+    pub fn check_hover_dismiss_timer(&mut self) -> bool {
+        let Some(at) = self.active_window().mouse_state.hover_dismiss_at else {
+            return false;
+        };
+        if self.time_source.now() < at {
+            return false;
+        }
+        self.active_window_mut().mouse_state.hover_dismiss_at = None;
+        if self.pointer_hover_card_showing() {
+            self.dismiss_transient_popups();
+            return true;
+        }
+        false
+    }
+
+    /// Is the popup on top a hover card the pointer opened? Only those sit at a
+    /// fixed cell; mouse motion must not close keyboard hovers or signature help.
+    pub(crate) fn pointer_hover_card_showing(&self) -> bool {
+        self.transient_popup_showing()
+            && !self.chrome_owns_transient_popup()
+            && self.active_state().popups.top().is_some_and(|p| {
+                matches!(p.position, crate::view::popup::PopupPosition::Fixed { .. })
+            })
     }
 
     /// Is the pointer over a transient popup (hover, signature help)?

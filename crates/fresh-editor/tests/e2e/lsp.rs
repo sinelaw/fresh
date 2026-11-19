@@ -4560,6 +4560,159 @@ fn test_hover_popup_persists_through_click_after_outside_move() -> anyhow::Resul
     Ok(())
 }
 
+/// Regression test for issue #3733: the hover card must come down when the
+/// pointer moves off the symbol and the card and STAYS away, even though it
+/// never leaves the editor area — while a quick pass through the gutter or a
+/// blank cell on the way back (#692) still keeps it.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_hover_popup_dismissed_after_pointer_stays_away() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn example_function() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+    let delay = std::time::Duration::from_millis(config.editor.mouse_hover_delay_ms);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.mouse_move(10, 2)?;
+    harness.render()?;
+    harness.editor_mut().force_check_mouse_hover();
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+
+    // A pass through the gutter and back to the symbol before the grace
+    // period is up keeps the card, however long it then stays on the symbol.
+    harness.mouse_move(2, 2)?;
+    harness.mouse_move(10, 2)?;
+    harness.advance_time(delay * 3);
+    harness.tick_and_render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "a quick pass through the gutter back to the symbol keeps the card (#692)"
+    );
+
+    // Off the symbol and the card, onto an empty row of the editor, and kept
+    // there: still up at once, gone once the grace period has passed.
+    harness.mouse_move(40, 10)?;
+    harness.tick_and_render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "the card survives the move itself — the grace period has just started"
+    );
+    harness.advance_time(delay * 2);
+    harness.tick_and_render()?;
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "the card comes down once the pointer has stayed away from it (#3733)"
+    );
+
+    Ok(())
+}
+
+/// The grace-period dismissal (#3733) is the pointer's, for the card the
+/// pointer opened (placed at the pointer's cell). A card at the cursor — a
+/// keyboard hover, or signature help while typing — stays however the mouse
+/// wanders; the pointer's card, given the same wandering, comes down.
+#[test]
+fn test_mouse_motion_only_dismisses_the_pointers_hover_card() -> anyhow::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
+
+    fn show_card(harness: &mut EditorTestHarness, position: PopupPositionData) {
+        harness
+            .apply_event(Event::ShowPopup {
+                popup: PopupData {
+                    kind: PopupKindHint::Text,
+                    title: Some("Hover".to_string()),
+                    description: None,
+                    transient: true,
+                    content: PopupContentData::Text(vec!["fn example() -> i32".to_string()]),
+                    position,
+                    width: 30,
+                    max_height: 5,
+                    bordered: true,
+                },
+            })
+            .unwrap();
+    }
+
+    // Mouse hover is off by default on Windows.
+    let mut config = fresh::config::Config::default();
+    config.editor.mouse_hover_enabled = true;
+    let delay = std::time::Duration::from_millis(config.editor.mouse_hover_delay_ms)
+        .max(std::time::Duration::from_millis(300));
+    let mut harness = EditorTestHarness::with_config(100, 30, config)?;
+    harness.load_buffer_from_text("fn example() {}\n")?;
+    harness.render()?;
+
+    // At the cursor: stays.
+    show_card(&mut harness, PopupPositionData::BelowCursor);
+    harness.render()?;
+    harness.mouse_move(60, 20)?; // an empty row of the editor
+    harness.advance_time(delay * 3);
+    harness.tick_and_render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "a card at the cursor is not the pointer's to take down"
+    );
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
+    assert!(!harness.editor().active_state().popups.is_visible());
+
+    // At the pointer's cell: the same wandering takes it down.
+    show_card(&mut harness, PopupPositionData::Fixed { x: 10, y: 3 });
+    harness.render()?;
+    harness.mouse_move(60, 21)?;
+    harness.tick_and_render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "the pointer's card survives the move itself"
+    );
+    harness.advance_time(delay * 3);
+    harness.tick_and_render()?;
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "the pointer's card comes down once the pointer has stayed away"
+    );
+    Ok(())
+}
+
 /// Regression test: a fresh hover response must not stack on top of an
 /// existing hover popup. Earlier the `update_lsp_hover_state` path
 /// dismissed the prior popup whenever the mouse left the symbol; once the

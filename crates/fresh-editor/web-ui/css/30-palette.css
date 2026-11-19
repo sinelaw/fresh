@@ -47,7 +47,7 @@
      hiding the tail behind a "…". */
   .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:clip}
   .palette.input-only .pinput .q{flex:1}
-  .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
+  .palette .pinput .q .caret2{display:inline-block;width:1px;background:currentColor;animation:blink 1.05s steps(1) infinite}
   .palette .pinput .status{color:var(--muted)}
   .palette .pinput .count{color:var(--muted)}
   .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}
@@ -88,10 +88,7 @@
     color:var(--muted);cursor:default;border:1px solid transparent}
   .palette.filebrowser .fbtoggle:hover{background:var(--hover)}
   .palette.filebrowser .fbtoggle.on{color:var(--fg)}
-  .palette.filebrowser .fbbox{display:inline-flex;align-items:center;justify-content:center;
-    width:14px;height:14px;border-radius:3px;border:1px solid var(--hairline-strong,var(--border));
-    font-size:10px;line-height:1}
-  .palette.filebrowser .fbtoggle.on .fbbox{background:var(--ui-accent);color:var(--on-ui-accent);border-color:transparent}
+  /* The box is the shared checkbox (.ui-check, 47-components.css). */
   .palette.filebrowser .fbkey{color:var(--muted);opacity:.8}
   /* Header and rows share one grid so the columns line up. */
   .palette.filebrowser .fbhead,.palette.filebrowser .fbrow{
@@ -102,7 +99,13 @@
   .palette.filebrowser .fbcol:hover{color:var(--fg)}
   .palette.filebrowser .fbcol.sort{color:var(--fg)}
   .palette.filebrowser .fbcol-size,.palette.filebrowser .fbcol-modified{text-align:right}
-  .palette.filebrowser .fbrows{overflow-y:auto;padding:4px 0;min-height:120px;max-height:56vh}
+  .palette.filebrowser .fbrows{overflow-y:auto;padding:4px 0;min-height:120px;max-height:56vh;position:relative}
+  /* The editor's scrollbar thumb (50-palette.js), over the list's right edge. */
+  .palette.filebrowser .fbthumb{position:absolute;right:2px;width:5px;border-radius:3px;
+    background:var(--muted);opacity:.55;pointer-events:none}
+  /* With the shortcut chips holding the keyboard, the list's selection rests. */
+  .palette.filebrowser.fb-navigation .fbrow.sel{background:var(--hover);color:var(--fg)}
+  .palette.filebrowser.fb-navigation .fbchip.sel{box-shadow:0 0 0 1px var(--ui-accent,var(--accent))}
   .palette.filebrowser .fbrow{cursor:default;color:var(--fg)}
   .palette.filebrowser .fbrow:hover{background:var(--hover)}
   /* Base selection, re-skinned with every other selected row by the polish

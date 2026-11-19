@@ -121,6 +121,7 @@ pub fn setting_control_to_widget_aligned(
             label_first: true,
             label_width: lw,
             mnemonic: None,
+            disabled: false,
             key,
         },
         // The value as the JSON carries it; the kind formats a percent as
@@ -164,6 +165,7 @@ pub fn setting_control_to_widget_aligned(
             label_width: lw,
             open: false,
             scroll_offset: 0,
+            placeholder: String::new(),
             key,
         },
         // The value is the model's; the caret and the selection, while the

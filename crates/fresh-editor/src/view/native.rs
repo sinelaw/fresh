@@ -20,16 +20,8 @@ use crate::app::Editor;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-/// A tree key in the wire form the web sends back in `node` messages:
-/// a string for `Key::Str`, `{"ns", "i"}` for `Key::Pair`, a number for
-/// `Key::Int`.
-pub fn key_json(k: &fresh_ui::Key) -> Value {
-    match k {
-        fresh_ui::Key::Str(s) => json!(&**s),
-        fresh_ui::Key::Int(i) => json!(i),
-        fresh_ui::Key::Pair(ns, i) => json!({ "ns": &**ns, "i": i }),
-    }
-}
+// Defined in the scene; the settings dialogs need them without the web too.
+pub use crate::view::scene::{key_json, ConfirmButtonView};
 
 /// Everything projected for native layout. Each field is `None`/empty when
 /// its surface is not showing.
@@ -122,23 +114,6 @@ pub struct ConfirmCardView {
     pub detail: String,
     pub buttons: Vec<ConfirmButtonView>,
     /// The tree key of the card itself (`shell::confirm::key`).
-    pub key: Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfirmButtonView {
-    /// The label split around its accelerator: `[before, letter, after]`, or
-    /// the whole label in `before` when it has none in its text.
-    pub label: [String; 3],
-    pub destructive: bool,
-    /// Holds the keyboard: what Enter takes.
-    pub selected: bool,
-    /// Under the pointer.
-    pub hovered: bool,
-    /// What Esc resolves to.
-    pub escape: bool,
-    /// The tree key of the button (`shell::confirm::button_key`).
     pub key: Value,
 }
 

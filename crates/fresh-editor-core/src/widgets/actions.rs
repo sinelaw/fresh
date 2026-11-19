@@ -344,6 +344,7 @@ mod tests {
             label_first: false,
             label_width: 0,
             mnemonic: None,
+            disabled: false,
             checked: false,
             label: "T".into(),
             focused: false,
@@ -387,6 +388,7 @@ mod tests {
             label_width: 0,
             open: false,
             scroll_offset: 0,
+            placeholder: String::new(),
             key: Some("agent_dropdown".into()),
         };
         let spec = WidgetSpec::Row {

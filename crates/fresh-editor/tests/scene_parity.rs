@@ -324,18 +324,18 @@ fn confirm_dialog_reaches_the_web_with_its_buttons() {
         .as_array()
         .is_some_and(|s| s.iter().any(|s| s["kind"] == json!("confirm")));
     assert!(!still_open, "clicking Cancel must dismiss the card");
-    let tab = scene["regions"]["panes"]
-        .as_array()
-        .and_then(|panes| {
-            panes
-                .iter()
-                .flat_map(|p| p["tabs"].as_array().into_iter().flatten())
-                .find_map(|x| x["label"].as_str())
-        })
-        .map(str::to_string);
+    let tab = scene["regions"]["panes"].as_array().and_then(|panes| {
+        panes
+            .iter()
+            .flat_map(|p| p["tabs"].as_array().into_iter().flatten())
+            .find(|x| x["label"] == json!("note.txt"))
+            .cloned()
+    });
+    // The label is the name alone; the web draws the modified mark from
+    // `modified`.
     assert_eq!(
-        tab.as_deref(),
-        Some("note.txt*"),
+        tab.as_ref().map(|t| t["modified"].clone()),
+        Some(json!(true)),
         "Cancel keeps the buffer open, and still modified"
     );
     assert_eq!(

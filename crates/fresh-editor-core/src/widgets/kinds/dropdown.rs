@@ -206,6 +206,7 @@ pub fn resolve(
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     is_focused: bool,
+    unset_ok: bool,
 ) -> Resolved {
     let (cur, state_open, hl) = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
@@ -222,15 +223,20 @@ pub fn resolve(
         true => 0,
         false => i.clamp(0, options.len() as i32 - 1),
     };
-    let selected = clamp(cur);
+    // `-1` (nothing chosen) only with a placeholder.
+    let selected = match unset_ok && cur < 0 {
+        true => -1,
+        false => clamp(cur),
+    };
     // Instance-state open only persists while the widget is focused —
     // a blur (Tab away, click elsewhere) closes it.
     let open = match state_open {
         Some(o) => o && is_focused,
         None => spec_open,
     } && !options.is_empty();
+    // The open list starts on its first option when nothing is chosen.
     let highlight = match open {
-        true => clamp(hl.unwrap_or(selected)),
+        true => clamp(hl.unwrap_or(selected).max(0)),
         false => selected,
     };
     Resolved {
@@ -398,6 +404,7 @@ pub fn open_key(
         selected_index,
         focused,
         open,
+        placeholder,
         key,
         ..
     } = spec
@@ -408,7 +415,17 @@ pub fn open_key(
             true => k == Some(focus_key),
             false => *focused,
         };
-        if resolve(options, *selected_index, *open, k, states, is_focused).open {
+        if resolve(
+            options,
+            *selected_index,
+            *open,
+            k,
+            states,
+            is_focused,
+            !placeholder.is_empty(),
+        )
+        .open
+        {
             return Some(key.clone().unwrap_or_default());
         }
     }
@@ -446,6 +463,7 @@ pub fn cycle_selection(
     let WidgetSpec::Dropdown {
         options,
         selected_index: spec_sel,
+        placeholder,
         ..
     } = spec
     else {
@@ -462,8 +480,13 @@ pub fn cycle_selection(
         }) => (*selected_index, *open, *highlight),
         _ => (*spec_sel, false, None),
     };
-    let cur = cur.clamp(0, options.len() as i32 - 1);
-    let new_sel = crate::widgets::wrap_index(cur, delta, options.len());
+    let cur = shown_index(options.len(), !placeholder.is_empty(), cur);
+    // From nothing chosen, step to the first (or last) option; never back to the placeholder.
+    let new_sel = match cur < 0 {
+        true if delta < 0 => options.len() as i32 - 1,
+        true => 0,
+        false => crate::widgets::wrap_index(cur, delta, options.len()),
+    };
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::Dropdown {
@@ -495,6 +518,7 @@ pub fn set_selection(
     let WidgetSpec::Dropdown {
         options,
         selected_index: spec_sel,
+        placeholder,
         ..
     } = spec
     else {
@@ -512,7 +536,7 @@ pub fn set_selection(
         _ => (*spec_sel, false, None),
     };
     let new_sel = index.clamp(0, options.len() as i32 - 1);
-    let changed = new_sel != cur.clamp(0, options.len() as i32 - 1);
+    let changed = new_sel != shown_index(options.len(), !placeholder.is_empty(), cur);
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::Dropdown {
@@ -584,6 +608,7 @@ fn highlight_of(
         options,
         selected_index,
         open,
+        placeholder,
         ..
     } = spec
     else {
@@ -597,6 +622,7 @@ fn highlight_of(
         Some(widget_key),
         &panel.instance_states,
         focused,
+        !placeholder.is_empty(),
     )
     .highlight
 }
@@ -641,6 +667,16 @@ pub fn commit(
     set_open(spec, widget_key, panel, false, fx);
 }
 
+/// `-1` (the placeholder) when allowed and nothing is chosen, else `i`
+/// clamped into the `len` options.
+pub fn shown_index(len: usize, unset_ok: bool, i: i32) -> i32 {
+    match (unset_ok && i < 0, len) {
+        (true, _) => -1,
+        (false, 0) => 0,
+        (false, n) => i.clamp(0, n as i32 - 1),
+    }
+}
+
 /// Kind policy for the plugin `SetDropdown` mutation: clamp the wire
 /// index into THIS spec's option set, preserving an open popup. The
 /// mutation arm in `plugin_dispatch` is a pure delegation.
@@ -649,15 +685,19 @@ pub fn set_index_state(
     prev: Option<&crate::widgets::WidgetInstanceState>,
     index: i32,
 ) -> crate::widgets::WidgetInstanceState {
-    let len = match spec {
-        WidgetSpec::Dropdown { options, .. } => options.len(),
-        _ => 0,
+    let (len, unset_ok) = match spec {
+        WidgetSpec::Dropdown {
+            options,
+            placeholder,
+            ..
+        } => (options.len(), !placeholder.is_empty()),
+        _ => (0, false),
     };
-    let clamped = if len == 0 {
-        0
-    } else {
-        index.clamp(0, len as i32 - 1)
-    };
+    // A plugin may reset to `-1` when there is a placeholder.
+    let clamped = shown_index(len, unset_ok, index).max(match unset_ok {
+        true => -1,
+        false => 0,
+    });
     let open = matches!(
         prev,
         Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
@@ -727,6 +767,7 @@ mod contract_tests {
             label_width: 0,
             open: false,
             scroll_offset: 0,
+            placeholder: String::new(),
             key: Some("d".into()),
         }
     }
@@ -752,7 +793,16 @@ mod contract_tests {
         let WidgetSpec::Dropdown { options, .. } = spec else {
             unreachable!()
         };
-        resolve(options, 1, false, Some("d"), &p.instance_states, true).selected
+        resolve(
+            options,
+            1,
+            false,
+            Some("d"),
+            &p.instance_states,
+            true,
+            false,
+        )
+        .selected
     }
 
     #[test]
@@ -833,6 +883,7 @@ mod contract_tests {
             label_width: 0,
             open: false,
             scroll_offset: 0,
+            placeholder: String::new(),
             key: Some("d".into()),
         };
         let mut p = panel(&s);
@@ -848,7 +899,16 @@ mod contract_tests {
             unreachable!()
         };
         assert_eq!(
-            resolve(options, 0, false, Some("d"), &p.instance_states, true).selected,
+            resolve(
+                options,
+                0,
+                false,
+                Some("d"),
+                &p.instance_states,
+                true,
+                false
+            )
+            .selected,
             2
         );
     }

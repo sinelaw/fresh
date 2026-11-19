@@ -11,7 +11,7 @@
 
   /* ---- menu dropdown (native, positioned at the pipeline's item rects) ---- */
   /* decorative backing panel sits BEHIND the rows and never eats clicks */
-  .dropdown{position:absolute;z-index:70;pointer-events:none;background:#2b2b2b;
+  .dropdown{position:absolute;z-index:70;pointer-events:none;background:var(--bg3);
     border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
   /* Submenu panels sit edge-to-edge with their parent; offset the drop shadow
      to the right so it doesn't darken the parent panel across the seam. */
@@ -50,7 +50,20 @@
   .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;display:none}
   .tab.modified .dot{display:inline-block}
   .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
+  /* A preview tab is italic, as in the terminal. */
+  .tab.preview .name{font-style:italic}
   .tab .x:hover{background:#5a5a5a;color:#fff}
+  /* A tab's Nerd Font file icon. */
+  .tab .ticon{flex:0 0 auto;font-family:var(--mono-family)}
+  /* A tab drag's drop zone: a bordered wash over the pane's content. z 91: above
+     pane panels (87) and the .tree layer (90), level with floating panels
+     (later in the DOM, so on top), under dialogs and scrims (110). */
+  .region.dropzone{pointer-events:none;box-sizing:border-box;border:2px solid var(--dz-border,var(--accent));
+    background:color-mix(in srgb,var(--dz-bg,var(--accent)) 35%,transparent);z-index:91}
+  /* The strip's `+` (#3754) and the pointer while a tab is held past a click. */
+  .tabbar .tab-new{display:flex;align-items:center;padding:0 10px;color:var(--muted);flex:0 0 auto;cursor:default}
+  .tabbar .tab-new:hover{color:var(--fg);background:var(--hover,rgba(255,255,255,.06))}
+  body.tabdragging,body.tabdragging *{cursor:grabbing !important}
 
   /* ---- status bar (native) ---- */
   .statusbar{display:flex;align-items:center;background:var(--status-bg);color:var(--status-fg);

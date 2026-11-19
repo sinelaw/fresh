@@ -185,9 +185,14 @@ function hugHeight(el){
   requestAnimationFrame(()=>{
     const h0=parseFloat(el.style.height), top0=parseFloat(el.style.top);
     if(!(h0>0)) return;
-    el.style.height="auto"; el.style.maxHeight=`${h0}px`;
+    // Fit the card to its content (capped by the window), centred on the
+    // editor's frame; past the window its body scrolls.
+    const room=appH(), margin=8;
+    el.style.height="auto";
+    el.style.maxHeight=room>0?`${room-2*margin}px`:"none";
     const h=el.offsetHeight;
-    if(h<h0-1) el.style.top=`${top0+(h0-h)/2}px`;
+    const top=top0+(h0-h)/2;
+    el.style.top=`${room>0?Math.max(margin,Math.min(top,room-margin-h)):top}px`;
   });
 }
 /** function place(El, Rect) => Undefined */

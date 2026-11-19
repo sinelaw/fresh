@@ -702,8 +702,6 @@ fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabRect {
     pub target: TabTarget,
-    /// The label as painted — elided against the strip's width.
-    pub label: String,
     pub name: ratatui::layout::Rect,
     pub close: ratatui::layout::Rect,
 }
@@ -753,28 +751,27 @@ pub fn rects(
                     0,
                     1,
                 ));
-            let label = ui
-                .spec()
-                .index
-                .iter()
-                .find(|(k, _)| *k == key)
-                .and_then(|(_, r)| {
-                    ui.spec().items[r.clone()]
-                        .iter()
-                        .find_map(|i| match &i.draw {
-                            fresh_ui::Draw::Lines(l) => l.first().map(|s| s.trim().to_string()),
-                            _ => None,
-                        })
-                })
-                .unwrap_or_default();
             Some(TabRect {
                 target: t,
-                label,
                 name,
                 close,
             })
         })
         .collect()
+}
+
+/// Where a pane's `+` is on screen; `None` while scrolled out of view. The web
+/// tab bar draws its own `+` from this (#3754).
+pub fn new_tab_rect(
+    ui: &fresh_ui::Ui<UiMsg>,
+    size: ratatui::layout::Rect,
+    pane: LeafId,
+) -> Option<ratatui::layout::Rect> {
+    let window = ui.rect_of(ui.find_by_key(&tab_window_key(pane))?);
+    let r = ui
+        .rect_of(ui.find_by_key(&new_tab_key(pane))?)
+        .intersect(window);
+    (r.w > 0 && r.h > 0).then(|| super::screen_rect(r, size))
 }
 
 #[cfg(test)]
@@ -1074,7 +1071,7 @@ mod tests {
             "only the tabs on screen have rectangles: {}",
             r.len()
         );
-        assert_eq!(r[0].label, "file_0.rs");
+        assert_eq!(r[0].target, buf(0));
 
         // Asking for the last tab moves the window to it — no width passed in,
         // and no offset held anywhere in the editor.
@@ -1112,6 +1109,24 @@ mod tests {
             r.iter().any(|t| t.target == buf(7)),
             "with the last tab still on screen: {r:?}"
         );
+    }
+
+    /// The web label omits the modified mark (the web draws its own dot).
+    #[test]
+    fn the_web_label_is_the_name_without_the_modified_mark() {
+        let t = Tab {
+            target: buf(0),
+            name: "a_rather_long_file_name.rs".into(),
+            modified: true,
+            preview: true,
+            binary: false,
+            title: None,
+        };
+        assert_eq!(
+            label(&t, usize::MAX, "(preview)", "").trim(),
+            "a_rather_long_file_name.rs (preview)"
+        );
+        assert!(label(&t, usize::MAX, "(preview)", "*").contains('*'));
     }
 
     /// With a control cluster the strip yields its right columns to it and

@@ -89,6 +89,9 @@ pub struct Row {
     pub chain: Vec<ChainPart>,
     /// The anchor's own name, and the cell that holds it off the status slot.
     pub name: Runs,
+    /// The name's own fg (theme key or literal colour), regardless of how
+    /// `name` is split into runs. The web reads it.
+    pub name_fg: String,
     /// The status slot pushed to the right edge, if the providers gave one.
     pub trailing: Option<Slot>,
     /// `" [Error]"` for a node that failed to load.
@@ -810,6 +813,7 @@ mod tests {
             left: vec![("  ".to_string(), Explorer::panel())],
             chain: Vec::new(),
             name: vec![(name.to_string(), Explorer::panel())],
+            name_fg: String::new(),
             trailing: None,
             error: None,
             segment: None,
@@ -856,6 +860,7 @@ mod tests {
                 })
                 .collect(),
             name: vec![(name.to_string(), Explorer::panel())],
+            name_fg: String::new(),
             trailing: None,
             error: None,
             segment: None,

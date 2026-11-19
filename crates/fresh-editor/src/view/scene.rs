@@ -276,6 +276,24 @@ impl Editor {
 
 // ─────────────────────────── tabs ───────────────────────────
 
+/// A file or folder's Nerd Font icon (`file_icons::shown`); present only while
+/// `editor.nerd_font_icons` is on.
+#[derive(Debug, Clone, Serialize)]
+pub struct IconView {
+    pub glyph: String,
+    /// CSS color; `None` for the terminal's default foreground.
+    pub color: Option<String>,
+}
+
+impl IconView {
+    fn of(icon: crate::view::file_icons::Resolved) -> Self {
+        IconView {
+            color: css_color(icon.color),
+            glyph: icon.glyph,
+        }
+    }
+}
+
 /// One tab in a pane's tab bar (semantic; geometry from the pipeline's
 /// TabLayout for click/close hit-testing).
 #[derive(Debug, Clone, Serialize)]
@@ -283,10 +301,26 @@ impl Editor {
 pub struct TabView {
     pub buffer_id: Option<usize>,
     pub label: String,
+    /// The file-type icon a buffer's tab shows before its name.
+    pub icon: Option<IconView>,
     pub active: bool,
     pub modified: bool,
+    /// A preview tab (the next file opened replaces it).
+    pub preview: bool,
+    /// The buffer is binary (`[BIN]` in the label).
+    pub binary: bool,
+    /// A group's tab rather than a buffer's.
+    pub group: bool,
     pub rect: RectView,
     pub close_rect: RectView,
+}
+
+/// Where a dragged tab would land over a pane (`splits::drop_zone_node`).
+#[derive(Debug, Clone, Serialize)]
+pub struct DropZoneView {
+    pub rect: RectView,
+    pub bg: Option<String>,
+    pub border: Option<String>,
 }
 
 /// A pane's tab bar: the bar rect (when laid out) and its tabs.
@@ -294,6 +328,8 @@ pub struct TabView {
 pub struct TabBarView {
     pub bar: Option<RectView>,
     pub tabs: Vec<TabView>,
+    /// The strip's `+` (new file / terminal), while it is on screen.
+    pub new_tab: Option<RectView>,
 }
 
 // ─────────────────────────── status bar ───────────────────────────
@@ -305,6 +341,12 @@ pub struct StatusSegment {
     /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
     /// "searchNext" | "searchPrevious" | "plugin" | "text".
     pub name: &'static str,
+    /// Colour role, matched by the web's `data-tone` rules: "error" |
+    /// "diagnosticError" | "warning" | "ok" | "actionable" | "info" |
+    /// "palette" | "highlight", or "" for the bar's own.
+    pub tone: &'static str,
+    /// The layout elided it; it gives way first.
+    pub cut: bool,
     /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
     pub text: String,
@@ -403,6 +445,23 @@ fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
 }
 
 impl Editor {
+    /// The drop zone a tab drag shows over `leaf`, while it shows one.
+    pub fn drop_zone_view(&self, leaf: LeafId) -> Option<DropZoneView> {
+        let f = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+        let rect = crate::view::shell::rect_of(
+            self.shell_ui.as_ref()?,
+            &crate::view::shell::splits::drop_zone_key(leaf),
+            size,
+        )?;
+        let theme = self.theme.read().unwrap();
+        Some(DropZoneView {
+            rect: RectView::from(rect),
+            bg: css_color(theme.tab_drop_zone_bg),
+            border: css_color(theme.tab_drop_zone_border),
+        })
+    }
+
     /// Semantic tab bar for a pane (leaf). Single derivation of tab labels /
     /// active / modified shared by the TUI tab renderer and the web bridge.
     pub fn tab_bar_view(&self, leaf: LeafId) -> TabBarView {
@@ -419,21 +478,58 @@ impl Editor {
             return TabBarView::default();
         };
         let active = self.active_buffer();
+        let new_tab = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| crate::view::shell::tabs::new_tab_rect(ui, size, leaf))
+            .map(RectView::from);
+        let rects = self.tab_rects(leaf);
+        // The strip's own tab model, which the terminal's labels come from.
+        let model: HashMap<_, _> = self
+            .active_window()
+            .pane_tabs(leaf)
+            .into_iter()
+            .map(|t| (t.target, t))
+            .collect();
+        let preview_label = fresh_i18n::t!("buffer.preview_indicator").to_string();
+        let theme = self.theme.read().unwrap();
         TabBarView {
             bar: Some(RectView::from(bar)),
-            tabs: self
-                .tab_rects(leaf)
+            new_tab,
+            tabs: rects
                 .into_iter()
-                .map(|t| {
-                    let bid = t.target.as_buffer();
-                    TabView {
+                .filter_map(|r| {
+                    let tab = model.get(&r.target)?;
+                    let bid = r.target.as_buffer();
+                    // Uncapped and without the modified mark (the web draws it),
+                    // except a group's pieced title keeps its marks (#3691).
+                    let piece_mark = match tab.title.is_some() {
+                        true => theme.chrome.glyphs().tab_modified.clone(),
+                        false => String::new(),
+                    };
+                    let label = crate::view::shell::tabs::label(
+                        tab,
+                        usize::MAX,
+                        &preview_label,
+                        &piece_mark,
+                    )
+                    .trim()
+                    .to_string();
+                    let icon = bid
+                        .and_then(|_| crate::view::file_icons::shown(&theme, &tab.name, None))
+                        .map(IconView::of);
+                    Some(TabView {
                         buffer_id: bid.map(|b| b.0),
-                        label: t.label,
+                        label,
+                        icon,
                         active: bid == Some(active),
-                        modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
-                        rect: RectView::from(t.name),
-                        close_rect: RectView::from(t.close),
-                    }
+                        modified: tab.modified,
+                        preview: tab.preview,
+                        binary: tab.binary,
+                        group: bid.is_none(),
+                        rect: RectView::from(r.name),
+                        close_rect: RectView::from(r.close),
+                    })
                 })
                 .collect(),
         }
@@ -835,6 +931,29 @@ pub struct FileRow {
     pub depth: usize,
     pub is_dir: bool,
     pub expanded: bool,
+    /// The row's file-type or folder icon.
+    pub icon: Option<IconView>,
+    /// Ancestors compact mode folded into the row, outermost first.
+    pub chain: Vec<String>,
+    pub hidden: bool,
+    pub symlink: bool,
+    /// In the multi-selection.
+    pub multi: bool,
+    /// Filled for on-screen rows only. The name's colour (git status, cut,
+    /// ignored); `None` for plain ink, which the skin chooses.
+    pub name_color: Option<String>,
+    /// The status slot at the row's right edge (a git or diagnostic mark).
+    pub trailing: Option<SlotView>,
+    /// `[Error]` for a folder that failed to load.
+    pub error: Option<SlotView>,
+}
+
+/// Text in a colour of its own: an explorer row's status slot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotView {
+    pub text: String,
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -856,6 +975,10 @@ pub struct FileExplorerView {
     /// Flattened-row indices in screen order, including sticky ancestors.
     pub viewport_rows: Vec<usize>,
     pub rows: Vec<FileRow>,
+    /// The header's `×` (hides the sidebar), as a tree key to press.
+    pub close_key: serde_json::Value,
+    /// The header's `⟳` (re-reads the tree), when the header has room for it.
+    pub refresh_key: Option<serde_json::Value>,
 }
 
 impl Editor {
@@ -882,7 +1005,9 @@ impl Editor {
         ))?;
         let tree = view.tree();
         let projection = view.projection();
-        let rows = projection
+        let theme = self.theme.read().unwrap();
+        let multi = view.multi_selection();
+        let mut rows: Vec<FileRow> = projection
             .rows
             .iter()
             .map(|r| FileRow {
@@ -890,6 +1015,19 @@ impl Editor {
                 depth: r.indent,
                 is_dir: r.is_dir(),
                 expanded: r.is_expanded(),
+                icon: crate::view::file_icons::shown(
+                    &theme,
+                    &r.entry.name,
+                    r.is_dir().then(|| r.is_expanded()),
+                )
+                .map(IconView::of),
+                chain: r.chain.iter().map(|c| c.name.clone()).collect(),
+                hidden: r.entry.metadata.as_ref().is_some_and(|m| m.is_hidden),
+                symlink: r.entry.is_symlink(),
+                multi: multi.contains(&r.id),
+                name_color: None,
+                trailing: None,
+                error: None,
             })
             .collect();
         let title = tree
@@ -914,7 +1052,35 @@ impl Editor {
                 (first, height, rows)
             })
             .unwrap_or_default();
+        // The shell's row descriptions, for the rows on screen.
+        {
+            use crate::app::shell_host::shell_theme as st;
+            let fg = |name: &str| css_color(st::resolve(name, &theme).fg?);
+            for (i, d) in self.explorer_row_descriptions(&viewport_rows) {
+                let r = &mut rows[i];
+                let plain =
+                    crate::view::shell::file_explorer::neutral_key(r.hidden, r.symlink, r.is_dir);
+                // None for the panel's plain ink, which the skin chooses.
+                r.name_color = match d.name_fg.as_str() {
+                    k if k == plain || k == "editor.fg" => None,
+                    k => fg(&st::pair(k, "ui.file_explorer_bg")),
+                };
+                r.trailing = d.trailing.as_ref().map(|s| SlotView {
+                    text: s.text.trim().to_string(),
+                    color: fg(&s.theme),
+                });
+                r.error = d.error.as_ref().map(|(text, ink)| SlotView {
+                    text: text.trim().to_string(),
+                    color: fg(ink),
+                });
+            }
+        }
+        use crate::view::shell::sidebar::{close_key, refresh_key};
         Some(FileExplorerView {
+            close_key: key_json(&close_key(0)),
+            refresh_key: self
+                .panel_rect(&refresh_key(0))
+                .map(|_| key_json(&refresh_key(0))),
             rect: RectView::from(rect),
             grip_rect: self
                 .panel_rect(&crate::view::shell::sidebar::grip_key())
@@ -1800,7 +1966,16 @@ pub struct ContextMenuView {
     pub x: u16,
     pub y: u16,
     pub highlighted: usize,
-    pub items: Vec<String>,
+    pub items: Vec<ContextMenuItemView>,
+}
+
+/// One context-menu item: label, stable `id`, and whether it is destructive.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextMenuItemView {
+    pub label: String,
+    pub id: &'static str,
+    pub destructive: bool,
 }
 
 impl Editor {
@@ -1831,7 +2006,7 @@ impl Editor {
             x,
             y,
             highlighted: core.highlighted,
-            items: w.context_menu_labels()?,
+            items: w.context_menu_items()?,
         })
     }
 }
@@ -2305,6 +2480,135 @@ pub struct SettingsView {
     pub showing_help: bool,
     pub showing_confirm: bool,
     pub showing_reset: bool,
+    /// The dialog over the settings (prompts, confirmations, shortcuts help),
+    /// from `settings_dialog_description`. `None` while none is open.
+    pub dialog: Option<SettingsDialogView>,
+}
+
+/// A tree key in the wire form the web sends back in `node` messages.
+pub fn key_json(k: &fresh_ui::Key) -> serde_json::Value {
+    match k {
+        fresh_ui::Key::Str(s) => serde_json::json!(&**s),
+        fresh_ui::Key::Int(i) => serde_json::json!(i),
+        fresh_ui::Key::Pair(ns, i) => serde_json::json!({ "ns": &**ns, "i": i }),
+    }
+}
+
+/// A dialog button: the confirmation card's and the settings' dialogs'.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmButtonView {
+    /// The label split around its accelerator: `[before, letter, after]`.
+    pub label: [String; 3],
+    pub destructive: bool,
+    /// Holds the keyboard: what Enter takes.
+    pub selected: bool,
+    /// Under the pointer.
+    pub hovered: bool,
+    /// What Esc resolves to.
+    pub escape: bool,
+    /// The tree key of the button (`shell::confirm::button_key`).
+    pub key: serde_json::Value,
+}
+
+/// A settings dialog (`shell::settings::Dialog`) as the web draws it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDialogView {
+    /// "confirm" | "reset" | "entryDelete" | "entryDiscard" | "help".
+    pub kind: &'static str,
+    pub title: String,
+    pub body: String,
+    /// The pending changes the prompt is about, one per line.
+    pub changes: Vec<String>,
+    /// The shortcuts help's lines (empty for the other kinds).
+    pub lines: Vec<SettingsHelpLineView>,
+    pub buttons: Vec<ConfirmButtonView>,
+    /// The keyboard hint the terminal shows under the buttons.
+    pub help: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsHelpLineView {
+    pub key: String,
+    pub desc: String,
+    pub heading: bool,
+}
+
+impl SettingsDialogView {
+    fn of(d: crate::view::shell::settings::Dialog) -> Self {
+        use crate::view::shell::settings::{self as st, Dialog};
+        let button = |i: usize,
+                      label: &str,
+                      selected: usize,
+                      hovered: Option<usize>,
+                      destructive: Option<usize>,
+                      cancel: usize| {
+            ConfirmButtonView {
+                label: [label.to_string(), String::new(), String::new()],
+                destructive: destructive == Some(i),
+                selected: i == selected,
+                hovered: hovered == Some(i),
+                escape: i == cancel,
+                key: key_json(&st::button_key(i)),
+            }
+        };
+        let choice = |kind: &'static str, c: st::Choice| SettingsDialogView {
+            kind,
+            title: c.title,
+            body: c.prompt,
+            changes: c.changes,
+            lines: Vec::new(),
+            buttons: c
+                .buttons
+                .iter()
+                .enumerate()
+                .map(|(i, b)| button(i, b, c.selected, c.hovered, c.destructive, c.cancel))
+                .collect(),
+            help: c.help,
+        };
+        // Esc answers with the non-destructive button.
+        let destructive = |kind: &'static str, k: st::Destructive| SettingsDialogView {
+            kind,
+            title: k.title,
+            body: k.message,
+            changes: Vec::new(),
+            lines: Vec::new(),
+            buttons: k
+                .buttons
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let cancel = usize::from(k.destructive == 0);
+                    button(i, b, k.selected, None, Some(k.destructive), cancel)
+                })
+                .collect(),
+            help: k.help,
+        };
+        match d {
+            Dialog::Confirm(c) => choice("confirm", c),
+            Dialog::Reset(c) => choice("reset", c),
+            Dialog::EntryDelete(k) => destructive("entryDelete", k),
+            Dialog::EntryDiscard(k) => destructive("entryDiscard", k),
+            Dialog::Help { title, lines } => SettingsDialogView {
+                kind: "help",
+                title,
+                body: String::new(),
+                changes: Vec::new(),
+                lines: lines
+                    .into_iter()
+                    .map(|l| SettingsHelpLineView {
+                        key: l.key,
+                        desc: l.desc,
+                        heading: l.heading,
+                    })
+                    .collect(),
+                buttons: Vec::new(),
+                help: String::new(),
+            },
+        }
+    }
 }
 
 /// `store` is the surface's — the page's or the dialog's — and says which
@@ -2604,6 +2908,9 @@ impl Editor {
             showing_help: st.showing_help,
             showing_confirm: st.showing_confirm_dialog,
             showing_reset: st.showing_reset_dialog,
+            dialog: self
+                .settings_dialog_description()
+                .map(SettingsDialogView::of),
         })
     }
 }

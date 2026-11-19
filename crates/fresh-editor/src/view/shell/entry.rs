@@ -747,6 +747,7 @@ mod tests {
             label_width: 10,
             open: true,
             scroll_offset: 0,
+            placeholder: String::new(),
             key: Some("/ui/theme".into()),
         };
         let ui = laid_out(d, 160, 50);

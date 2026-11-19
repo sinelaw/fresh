@@ -15,6 +15,18 @@ use crossterm::event::KeyModifiers as KM;
 use fresh_i18n::t;
 
 impl Editor {
+    /// Run a prompt-opening plugin action, holding typed keys for the prompt.
+    fn open_prompt_via_plugin(&mut self, name: &str) -> AnyhowResult<()> {
+        #[cfg(feature = "plugins")]
+        {
+            self.dispatch_prompt_opening_plugin_action(name)
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            self.handle_action(Action::PluginAction(name.to_string()))
+        }
+    }
+
     /// Change the current workspace's trust level, persist it, and report it.
     /// The new policy applies live at the next authority-routed spawn (the
     /// guarding spawners read the level on every spawn) — there is NO editor
@@ -582,10 +594,10 @@ impl Editor {
                 self.start_quick_open_with_prefix("");
             }
             Action::OpenLiveGrep => {
-                self.handle_action(Action::PluginAction("start_live_grep".to_string()))?;
+                self.open_prompt_via_plugin("start_live_grep")?;
             }
             Action::ResumeLiveGrep => {
-                self.handle_action(Action::PluginAction("resume_live_grep".to_string()))?;
+                self.open_prompt_via_plugin("resume_live_grep")?;
             }
             Action::ToggleUtilityDock => {
                 use crate::view::split::SplitRole;

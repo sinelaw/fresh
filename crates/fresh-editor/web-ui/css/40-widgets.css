@@ -4,19 +4,19 @@
      later files deliberately override earlier ones.) */
   /* ---- workspace-trust dialog (native modal) ---- */
   .modal-scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:95}
-  .trustdialog{position:absolute;z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;
+  .trustdialog{position:absolute;z-index:96;background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));
     border-radius:8px;box-shadow:0 20px 70px rgba(0,0,0,.6);overflow:auto;display:flex;flex-direction:column;padding:10px 14px;min-width:420px}
   .trustdialog .td-title{color:#e5c07b;font-weight:700;margin-bottom:6px}
   .trustdialog .td-path{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .trustdialog .td-triggers{color:var(--muted);margin:2px 0 8px}
   .trustdialog .td-opt{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:5px;cursor:default}
   .trustdialog .td-opt.sel{background:var(--menuhi);color:#fff}
-  .trustdialog .td-opt .td-radio{flex:0 0 auto}
+  .trustdialog .td-opt .td-radio{flex:0 0 auto;margin-top:.25em}
   .trustdialog .td-opt .td-otext .td-olabel{font-weight:600}
   .trustdialog .td-opt .td-otext .td-odesc{color:var(--muted)}
   .trustdialog .td-opt.sel .td-odesc{color:#dfe8ff}
   .trustdialog .td-buttons{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
-  .trustdialog .td-btn{padding:3px 14px;border:1px solid #5a5a5a;border-radius:5px;cursor:default;color:var(--fg)}
+  .trustdialog .td-btn{padding:3px 14px;border:1px solid var(--hairline-strong,var(--border));border-radius:5px;cursor:default;color:var(--fg)}
   .trustdialog .td-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 
   /* ---- plugin widgets (WidgetSpec) ---- */
@@ -26,16 +26,9 @@
   .w-col{display:flex;flex-direction:column;gap:4px}
   .w-toggle{display:inline-flex;align-items:center;gap:6px;cursor:default;padding:1px 4px;border-radius:4px}
   .w-toggle.on{color:var(--accent)}
-  /* Sliding switch, identical geometry to the Settings `.set-switch`.
-     On-state uses --ui-accent (the brandable teal), NOT --accent — that's
-     the cursor colour, which is white in the stock dark theme and would
-     render a white pill with an invisible white knob. */
-  .w-toggle .w-box{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;flex:0 0 auto;transition:background .1s}
-  .w-toggle .w-box::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
-  .w-toggle.on .w-box{background:var(--ui-accent,var(--accent))}
-  .w-toggle.on .w-box::after{left:14px;background:var(--on-ui-accent,#fff)}
+  /* The switch is the shared .ui-switch (47-components.css). */
   .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
-    .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
+    .w-button{cursor:default;padding:1px 10px;border:1px solid var(--hairline-strong,var(--border));border-radius:4px;color:var(--fg)}
   .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .w-button.danger{border-color:#c0392b;color:#e57373}
   .w-button.disabled{opacity:.5}
@@ -90,7 +83,7 @@
   /* Use ~80% of the viewport on large screens; keep the old 960×640-capped
      size as a floor so small windows behave exactly as before. */
   .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:max(min(960px,90vw),80vw);height:max(min(640px,86vh),80vh);
-    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
+    background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
   .settings-modal .set-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
   .settings-modal .set-body{flex:1;display:flex;overflow:hidden}
   .settings-modal .set-cats{width:210px;flex:0 0 auto;overflow:auto;border-right:1px solid var(--border);padding:4px 0}
@@ -107,20 +100,18 @@
   .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px}
   .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
   /* toggle switch */
-  .settings-modal .set-switch{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;transition:background .1s}
-  .settings-modal .set-switch::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
-  .settings-modal .set-switch.on{background:var(--accent)} .settings-modal .set-switch.on::after{left:14px;background:#fff}
+  /* .set-switch is the shared switch (.ui-switch, 47-components.css). */
   /* number stepper */
-  .settings-modal .set-step{display:inline-block;width:18px;text-align:center;border:1px solid #5a5a5a;border-radius:3px;cursor:default}
+  .settings-modal .set-step{display:inline-block;width:18px;text-align:center;border:1px solid var(--hairline-strong,var(--border));border-radius:3px;cursor:default}
   .settings-modal .set-num-v{min-width:34px;text-align:center}
   /* dropdown pill + text field */
-  .settings-modal .set-pill{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg)}
-  .settings-modal .set-field{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .settings-modal .set-pill{padding:1px 8px;border:1px solid var(--hairline-strong,var(--border));border-radius:4px;background:var(--bg)}
+  .settings-modal .set-field{padding:1px 8px;border:1px solid var(--hairline-strong,var(--border));border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* Floating option list: `position:fixed` (positioned by JS —
      positionFloatingPopover) so the Settings list's `overflow:auto` never
      clips it. The list grows to fit its widest option and shifts to stay in
      view — see the JS for the anchor/flip/shift rationale. */
-  .set-dd{position:fixed;left:0;top:0;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:200}
+  .set-dd{position:fixed;left:0;top:0;background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:200}
   .set-dd-row{padding:1px 10px} .set-dd-row.sel{background:var(--accent);color:#fff}
   /* composite list controls */
   .settings-modal .set-item-block .set-list{margin:4px 0 2px 8px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
@@ -165,7 +156,7 @@
   .settings-modal .set-entry-title{font-weight:600;margin-bottom:8px}
   /* native keybinding editor (full modal) */
   .kbedit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(900px,88vw);max-height:84vh;
-    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
+    background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
   .kbedit .kb-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
   .kbedit .kb-header{padding:4px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px}
   .kbedit .kb-cfg{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -176,7 +167,7 @@
   .kbedit .kb-count{margin-left:auto;color:var(--muted)}
   .kbedit .kb-table{overflow:auto;flex:1}
   .kbedit .kb-row{display:flex;padding:0 12px;white-space:nowrap;line-height:1.5}
-  .kbedit .kb-row.kb-head{color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:#2b2b2b}
+  .kbedit .kb-row.kb-head{color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2)}
   .kbedit .kb-row.sel{background:var(--menuhi);color:#fff}
   .kbedit .kb-row.kb-section{font-weight:600;color:var(--accent)}
   .kbedit .kb-col{overflow:hidden;text-overflow:ellipsis}
@@ -196,9 +187,9 @@
   .kbedit .kb-ac-row{padding:1px 8px} .kbedit .kb-ac-row.sel{background:var(--accent);color:#fff}
   .kbedit .kb-conflicts{margin:6px 0;color:#e5c07b}
   .kbedit .kb-dlg-btns{display:flex;gap:12px;justify-content:flex-end;margin-top:10px}
-  .kbedit .kb-btn{padding:2px 12px;border:1px solid #5a5a5a;border-radius:5px} .kbedit .kb-btn.focus{background:var(--accent);border-color:var(--accent);color:#fff}
+  .kbedit .kb-btn{padding:2px 12px;border:1px solid var(--hairline-strong,var(--border));border-radius:5px} .kbedit .kb-btn.focus{background:var(--accent);border-color:var(--accent);color:#fff}
   /* native auxiliary modals (keybindings / event-debug / theme-info) */
-  .auxmodal{z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;max-height:80vh}
+  .auxmodal{z-index:96;background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;max-height:80vh}
   .auxmodal.centered{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:520px;max-width:80vw}
   .auxmodal.anchored{position:absolute;min-width:240px}
   .auxmodal .am-title{padding:5px 12px;font-weight:600;border-bottom:1px solid var(--border);background:var(--bg3)}
@@ -207,8 +198,14 @@
   .auxmodal .am-line.sel{background:var(--menuhi);color:#fff}
   .auxmodal .am-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted)}
   /* native right-click / new-tab context menu */
-  .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;min-width:160px}
+  /* Semantic hooks (65-widgets.js, 70-panels.js): a changed setting, the
+     footer's Reset, the trust dialog's Quit. */
+  .settings-modal .set-item.modified .set-name{color:var(--ui-accent,var(--accent))}
+  .settings-modal .btn.danger:hover{color:var(--danger,#f47067)}
+  .trustdialog .td-btn.destructive:hover{color:var(--danger,#f47067);border-color:var(--danger,#f47067)}
+  .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid var(--hairline-strong,var(--border));border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;min-width:160px}
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .ctxmenu .ctxitem.destructive{color:var(--danger,#f47067)}
   .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
   /* floating / dock widget panel surfaces (native plugin UI). The surface is
      a column flex box and the LIST inside it is the scroll container (flex:1;
@@ -231,7 +228,7 @@
   /* rows/cards keep their natural height — the LIST scrolls, its items never
      squash to fit the flex-constrained track */
   .widget-surface .w-list>*,.widget-surface .w-tree>*{flex:0 0 auto}
-  .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
+  .widget-surface.w-floatingModal{border:1px solid var(--hairline-strong,var(--border));border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
   /* Anchored popup (right-click context menu): undimmed backdrop that still
      catches outside-clicks (dismiss), and a snug menu card — content-sized
      height, tighter padding, buttons as full-width menu rows. */

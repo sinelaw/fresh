@@ -47,7 +47,9 @@
     fg: String?, bg: String?, bold: String?, class: String?,
     index: String?, key: String?, section: String?, slot: String?,
     surface: String?, surfaceKind: String?, interior: String?, page: String?, layer: String?,
-    cellLeft: String?, wkey: String?
+    cellLeft: String?, wkey: String?,
+    l: String?, r: String?, row: String?, endCol: String?,
+    prompt: String?, level: String?, tone: String?, id: String?, side: String?
 } */
 
 /** type DOMRect = {

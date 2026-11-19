@@ -847,6 +847,8 @@ impl Editor {
             #[cfg(feature = "plugins")]
             dispatching_key: false,
             #[cfg(feature = "plugins")]
+            dispatching_prompt_opener: false,
+            #[cfg(feature = "plugins")]
             suppress_macro_recording: false,
             #[cfg(feature = "plugins")]
             diff_baselines: crate::app::diff_baselines::BaselineStore::default(),

@@ -1,21 +1,21 @@
 /* Natively laid-out surfaces (`regions.native`, js/73-native.js): the shell's
    surfaces as a desktop app draws them — the chrome font, real buttons, pixel
-   spacing — instead of the display list's character cells. Only while the
-   body carries `native-panels` (on for the themes in NATIVE_PANEL_THEMES).
+   spacing — instead of the display list's character cells. Every skin draws
+   them this way: one path, from the surfaces' semantic specs.
 
    The display-list items of a surface drawn here are hidden, not removed:
    the tree still lays them out, because every press is routed to the node
    where its layout put it. `visibility` keeps their boxes (and so nothing
    reflows); `pointer-events` stops a stray press reaching them through the
    native surface's gaps. */
-body.native-panels .tree-surface.confirm,
-body.native-panels .tree-item[data-surface-kind="confirm"],
-body.native-panels .tree-item[data-interior],
-body.native-panels .tree-item[data-surface-kind="dock"],
-body.native-panels .tree-item[data-surface-kind="floating"],
-body.native-panels .tree-surface.floating,
-body.native-panels .tree-scrim,
-body.native-panels .tree-item.k-scrim[data-surface-kind="floating"]{visibility:hidden;pointer-events:none}
+body .tree-surface.confirm,
+body .tree-item[data-surface-kind="confirm"],
+body .tree-item[data-interior],
+body .tree-item[data-surface-kind="dock"],
+body .tree-item[data-surface-kind="floating"],
+body .tree-surface.floating,
+body .tree-scrim,
+body .tree-item.k-scrim[data-surface-kind="floating"]{visibility:hidden;pointer-events:none}
 
 /* Over every native chrome element, as the terminal's dimming scrim is over
    the whole frame. */
@@ -39,7 +39,7 @@ body.native-panels .tree-item.k-scrim[data-surface-kind="floating"]{visibility:h
   background:var(--surface,var(--bg3));border:1px solid var(--hairline-strong,var(--border));
   border-radius:var(--r-md,6px);padding:.32em 1em;min-width:5.5em;
   transition:background-color .08s,border-color .08s}
-.native-confirm .nc-btn:hover{background:var(--hover,rgba(255,255,255,.06));border-color:var(--muted)}
+.native-confirm .nc-btn.hovered,.native-confirm .nc-btn:hover{background:var(--hover,rgba(255,255,255,.06));border-color:var(--muted)}
 /* The button that holds the keyboard — what Enter takes — is the filled one. */
 .native-confirm .nc-btn.selected{background:var(--ui-accent,var(--accent));border-color:var(--ui-accent,var(--accent));
   color:var(--on-ui-accent,var(--on-accent))}
@@ -48,6 +48,17 @@ body.native-panels .tree-item.k-scrim[data-surface-kind="floating"]{visibility:h
 .native-confirm .nc-btn.destructive.selected{background:var(--danger,#f47067);border-color:var(--danger,#f47067);color:#fff}
 .native-confirm .accel{text-decoration:none}
 body.alt-held .native-confirm .accel{text-decoration:underline;text-underline-offset:.15em}
+/* The settings' dialogs (73-native.js `settingsDialogEls`): the pending
+   changes as a list, the shortcuts help as a two-column table. */
+.native-confirm .nc-changes{margin:0;padding:.4em .6em .4em 1.6em;font-family:var(--mono-family);font-size:.88em;
+  line-height:1.4;max-height:12em;overflow:auto;background:var(--surface,rgba(0,0,0,.15));border-radius:var(--r-md,6px)}
+.native-confirm .nc-help{display:grid;grid-template-columns:max-content 1fr;gap:.15em 1.2em;
+  max-height:min(28em,calc(100vh - 12em));overflow:auto;font-size:.92em}
+.native-confirm .nc-help-head{grid-column:1/-1;font-weight:600;margin-top:.5em}
+.native-confirm .nc-help-head:first-child{margin-top:0}
+.native-confirm .nc-help-key{font-family:var(--mono-family);color:var(--ui-accent,var(--accent));white-space:nowrap}
+.native-confirm .nc-hint{color:var(--muted);font-size:.85em;text-align:right}
+.settings-dialog.sd-help{width:min(40em,calc(100% - 4em))}
 
 /* ---- plugin panels ----------------------------------------------------------
    The interior of a dock, floating panel or sidebar section, laid out from its
@@ -96,14 +107,12 @@ body.alt-held .native-confirm .accel{text-decoration:underline;text-underline-of
 .native-panel .w-heading-rule{flex:1 1 auto;border-top:1px solid var(--hairline,var(--border))}
 .w-radio{display:flex;flex-wrap:wrap;align-items:center;gap:.25em 1.1em}
 .w-radio-opt{display:inline-flex;align-items:center;gap:.45em;cursor:default}
-.w-radio-dot{width:.85em;height:.85em;border-radius:50%;border:1.5px solid var(--muted);box-sizing:border-box;flex:0 0 auto}
-.w-radio-opt.on .w-radio-dot{border-color:var(--ui-accent,var(--accent));
-  background:radial-gradient(circle,var(--ui-accent,var(--accent)) 0 38%,transparent 42%)}
+/* The dot is the shared radio (.ui-radio, 47-components.css). */
 .w-radio.focus{outline:1px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm,4px)}
 /* The display list's ground for the dock would cover the native dock, which
    now stands under that layer (so a floating panel's frame can stand over
    both). The native dock takes the ground each theme gives the dock. */
-body.native-panels .tree-surface.dock{visibility:hidden}
+body .tree-surface.dock{visibility:hidden}
 body.theme-compact .native-panel.np-dock{background:var(--shell)}
 body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 /* The dock's wall, which its (hidden) display-list items drew; the resize
@@ -135,15 +144,8 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 .native-panel .w-table .w-td{min-height:.6em}
 .native-panel .w-table .w-button{justify-self:stretch;text-align:left;padding:.22em .55em}
 .native-panel .w-table .w-dropdown{padding:.1em .5em}
-.w-mark-radio,.w-mark-check{display:inline-block;width:.8em;height:.8em;margin-right:.5em;vertical-align:-.08em;
-  border:1.5px solid var(--muted);box-sizing:border-box}
-.w-mark-radio{border-radius:50%}
-.w-mark-check{border-radius:3px}
-.w-mark-radio.on{border-color:var(--ui-accent,var(--accent));
-  background:radial-gradient(circle,var(--ui-accent,var(--accent)) 0 36%,transparent 40%)}
-.w-mark-check.on{border-color:var(--ui-accent,var(--accent));background:var(--ui-accent,var(--accent));position:relative}
-.w-mark-check.on::after{content:"";position:absolute;left:.22em;top:.04em;width:.2em;height:.42em;
-  border:solid var(--on-ui-accent,#fff);border-width:0 .12em .12em 0;transform:rotate(45deg)}
+/* A row's mark is the shared radio or checkbox (47-components.css). */
+.w-mark-radio,.w-mark-check{display:inline-block;margin-right:.5em;vertical-align:-.08em}
 /* A section in a row takes the rest of it, as the terminal's does; an
    unlabelled one around a single field is just that field. */
 .native-panel .w-row > .w-section{flex:1 1 auto;min-width:0}
@@ -212,7 +214,7 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
    heading's hint at the right edge), and the column's margins are the
    pane's: no inset of its own, or every full-width row runs over. */
 .native-panel.np-pane.paged{padding-left:0;padding-right:0}
-body.native-panels .tree-item.k-scrollbar[data-page]{visibility:visible}
+body .tree-item.k-scrollbar[data-page]{visibility:visible}
 /* A strip pane (js/73-native.js): one row of the panel per cell row, no
    inset, controls flattened to the row — a toolbar a cell tall stays one. */
 .native-panel.np-pane.strip{padding:0 .75em;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start}

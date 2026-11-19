@@ -19,7 +19,7 @@
      to --mono-family and measured against it; only native chrome follows
      --font-family. Cell-tracking is for monospace text, so it goes too. */
   body.theme-compact{
-    --font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",
+    --font-family:"Fresh Nerd Symbols",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",
       Inter,Ubuntu,Cantarell,"Noto Sans","Helvetica Neue",Arial,sans-serif;
     letter-spacing:normal}
 

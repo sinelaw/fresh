@@ -69,6 +69,15 @@ function fillPane(c,p){
   } else {
     const b=div("region pane-content"); place(b,p.content); b.innerHTML=cellsSvg(p.cells, p.content.w); c.appendChild(b);
   }
+  // Where a dragged tab would land over this pane, as the editor laid it out.
+  const dz=p.dropZone;
+  if(dz){
+    const z=div("region dropzone"); place(z,dz.rect);
+    const bg=dz.bg, border=dz.border;
+    if(bg) z.style.setProperty("--dz-bg",bg);
+    if(border) z.style.setProperty("--dz-border",border);
+    c.appendChild(z);
+  }
   if(p.vscroll && p.vscroll.w>0){
     const sb=div("region scrollbar"); place(sb,p.vscroll); c.appendChild(sb);
     const th=document.createElement("div"); th.className="thumb";
@@ -82,6 +91,14 @@ function fillPane(c,p){
       mk.style.top=`${px(m.row,CH)}px`; mk.style.height=`${CH}px`; mk.style.background=m.color;
       sb.appendChild(mk);
     }
+  }
+  // The horizontal bar, when laid out (wrap off).
+  const hs=p.hscroll;
+  if(hs && hs.w>0){
+    const sb=div("region scrollbar hscrollbar"); place(sb,hs); c.appendChild(sb);
+    const th=document.createElement("div"); th.className="thumb";
+    th.style.left=`${px(p.hthumbStart,CW)}px`; th.style.width=`${Math.max(CW, px(Math.max(1,p.hthumbEnd-p.hthumbStart),CW))}px`;
+    sb.appendChild(th);
   }
 }
 function renderPane(i){
@@ -147,9 +164,8 @@ const REGION_FILL={
   // The plugin panels, folded from the display list the tree produced for
   // them (`regions.tree`, see 72-tree.js).
   tree:(c,reg)=>{ for(const el of treeEls(reg.tree, reg.native)) c.appendChild(el); },
-  // The same surfaces laid out natively, by the themes that do
-  // (`regions.native`, see 73-native.js).
-  native:(c,reg)=>{ if(document.body.classList.contains("native-panels")) for(const el of nativeEls(reg.native)) c.appendChild(el); },
+  // Real controls from semantic specs (`regions.native`, 73-native.js).
+  native:(c,reg)=>{ for(const el of nativeEls(reg.native)) c.appendChild(el); },
   contextMenu:(c,reg)=>{ const cm=reg.contextMenu; if(cm) c.appendChild(contextMenuEl(cm)); },
   auxModal:(c,reg)=>{ const am=reg.auxModal; if(am) for(const el of auxModalEls(am)) c.appendChild(el); },
   keybindingEditor:(c,reg)=>{ const kb=reg.keybindingEditor; if(kb) for(const el of keybindingEditorEls(kb)) c.appendChild(el); },

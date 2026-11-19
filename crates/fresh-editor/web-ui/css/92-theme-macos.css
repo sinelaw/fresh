@@ -29,7 +29,7 @@
      letter-spacing:normal drops the cell-tracking that proportional text does
      not want. */
   body.macfam{
-    --font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
+    --font-family:"Fresh Nerd Symbols",-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
     letter-spacing:normal;font-size:13.5px}
 
   /* ---- title bar: traffic lights + centered document title ---- */
@@ -211,23 +211,15 @@
     background:var(--mac-btn);border-color:var(--hairline-strong);color:var(--fg)}
   body.macfam .set-dd{background:color-mix(in srgb,var(--bg2) 97%,transparent)}
   body.macfam .set-dd-row{background:transparent;border:none}
-  /* Off-state toggle track: a neutral system gray (on-state stays accent —
-     scope to :not(.on) so it doesn't out-specify the .on fill). */
-  body.macfam .settings-modal .set-switch:not(.on),
-  body.macfam .w-toggle:not(.on) .w-box{
-    background:color-mix(in srgb,var(--fg) 19%,transparent)}   /* light neutral, ~macOS #E9E9EA */
-  body.macfam .settings-modal .set-switch.on{background:var(--ui-accent)}
-  /* Switch shape — the base 26×14 with a 10px knob reads thin and the knob
-     floats; macOS System Settings switches are a chunkier ~1.75:1 pill whose
-     knob nearly fills the track (~1.5px margin) with a faint drop shadow. */
-  body.macfam .settings-modal .set-switch,
-  body.macfam .w-toggle .w-box{width:30px;height:18px;border-radius:9px}   /* ~1.7:1, full pill */
-  body.macfam .settings-modal .set-switch::after,
-  body.macfam .w-toggle .w-box::after{
-    width:15px;height:15px;top:1.5px;left:1.5px;   /* knob fills ~0.85, ~1.5px inset */
-    box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.04)}
-  body.macfam .settings-modal .set-switch.on::after,
-  body.macfam .w-toggle.on .w-box::after{left:13.5px}   /* travel = 30−15−1.5−1.5 */
+  /* The shared switch and fields (47-components.css), macOS-shaped: a gray
+     track and the chunkier System Settings pill with a near-filling knob. */
+  body.macfam{--switch-track:color-mix(in srgb,var(--fg) 19%,transparent);
+    --switch-w:30px;--switch-h:18px;--switch-knob:15px;--switch-pad:1.5px;--switch-knob-bg:#fff;
+    --switch-knob-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.04);
+    --field-bg:var(--surface);--check-radius:4px;
+    --select-bg:var(--mac-btn);--select-fg:var(--mac-btn-fg);--select-radius:6px;
+    --select-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 1px 1px rgba(0,0,0,.10);
+    --select-focus-ring:0 0 0 3px color-mix(in srgb,var(--ui-accent) 30%,transparent)}
 
   /* Buttons: a macOS push button (light or dark) + a filled-accent primary. */
   body.macfam .settings-modal .btn,body.macfam .trustdialog .td-btn,

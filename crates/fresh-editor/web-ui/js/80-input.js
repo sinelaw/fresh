@@ -191,6 +191,7 @@ document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen
 /** let lastMoveCell: {col: Number, row: Number, ctrl: Boolean} | Null */
 let lastMoveCell=null;
 document.addEventListener("mousemove",e=>{
+  if(tabDrag){ tabDragMove(e); return; }   // a held tab (45-tabs.js)
   const c=cellAt(e);
   if(dragging){
     const lc=lastCell;
@@ -209,7 +210,7 @@ document.addEventListener("mousemove",e=>{
   lastMoveCell={col:c.col,row:c.row,ctrl:e.ctrlKey};
   sendMouse({kind:"moved",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey});
 });
-document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
+document.addEventListener("mouseup",e=>{ if(tabDrag){ tabDragEnd(e); return; } dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
 document.addEventListener("contextmenu",e=>e.preventDefault());
 // Desktop: any click that isn't on chrome returns focus to the hidden text
 // sink so the next IME composition has somewhere to land (chrome divs aren't
