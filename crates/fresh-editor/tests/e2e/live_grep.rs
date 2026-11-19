@@ -1890,3 +1890,58 @@ fn live_grep_names_a_terminal_history_hit_after_its_terminal() {
         "the row names the terminal, not its backing file:\n{screen}"
     );
 }
+
+/// Keys typed straight after the key that opens Live Grep belong to its
+/// prompt. The plugin opens the prompt a round trip after Alt+/, and the
+/// first letter of a quickly typed search used to land in the buffer in
+/// between ("needle" searched for "eedle", and the file gained an "n"). They
+/// now wait for the prompt (`plugin_key_hold`).
+#[test]
+fn test_keys_typed_right_after_alt_slash_go_to_the_live_grep_prompt() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "start\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    // Wait until the plugin has registered Live Grep, then close the palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Live Grep").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(harness.editor().prompt_input().is_none());
+
+    // Alt+/ and the search, with nothing in between to let the plugin run.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::ALT)
+        .unwrap();
+    harness.type_text("needle").unwrap();
+
+    harness
+        .wait_until(|h| h.editor().prompt_input() == Some("needle"))
+        .unwrap();
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "start\n",
+        "no key typed for the search landed in the buffer"
+    );
+}

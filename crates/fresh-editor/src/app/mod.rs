@@ -1242,6 +1242,13 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     dispatching_key: bool,
 
+    /// True while dispatching a plugin action the editor knows opens a
+    /// prompt (Live Grep), so the keys typed after the one that asked for it
+    /// wait for the prompt instead of landing in the buffer; see
+    /// `dispatch_prompt_opening_plugin_action`.
+    #[cfg(feature = "plugins")]
+    dispatching_prompt_opener: bool,
+
     /// True while dispatching actions that are a plugin's doing rather than
     /// the user's (a timer tick, an `executeActions` step), so
     /// `record_macro_action` leaves them out of an in-flight recording. Set
