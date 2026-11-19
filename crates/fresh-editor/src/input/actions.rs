@@ -877,86 +877,71 @@ fn byte_is_code(state: &EditorState, pos: usize) -> bool {
     )
 }
 
-/// Resolve the per-language regex indentation rules for a buffer that has no
-/// tree-sitter grammar.
+/// The regex indentation rules for text in `language` (a config language
+/// id; `None` for none) whose syntax is `syntax`.
 ///
 /// A user-supplied `[languages.<id>.indent]` override is registered under the
-/// buffer's *config* language id (`state.language`), which the syntax-name
-/// lookup can never resolve for a config-only language with no grammar (e.g. a
-/// user-defined filetype). So those explicit overrides are consulted first, by
-/// config id. Everything else defers to the existing syntect-syntax-name path,
-/// which keeps built-in languages on their established tiering (notably letting
-/// curly-brace languages fall through to the C-style bracket scanner). Returns
-/// `None` when no rules exist either way so the caller can fall back.
+/// *config* language id, which the syntax-name lookup can never resolve for a
+/// config-only language with no grammar (e.g. a user-defined filetype). So
+/// those explicit overrides are consulted first, by config id. Everything else
+/// defers to the existing syntect-syntax-name path, which keeps built-in
+/// languages on their established tiering (notably letting curly-brace
+/// languages fall through to the C-style bracket scanner). Returns `None`
+/// when no rules exist either way so the caller can fall back.
+fn indent_rules_for(
+    language: Option<&str>,
+    syntax: Option<&str>,
+) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
+    language
+        .and_then(crate::primitives::indent_rules::user_rule_for_id)
+        .or_else(|| syntax.and_then(crate::primitives::indent_rules::rules_for_syntax_name))
+}
+
+/// [`indent_rules_for`] the buffer's own language and syntax.
 fn buffer_indent_rules(
     state: &EditorState,
 ) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
-    crate::primitives::indent_rules::user_rule_for_id(&state.language).or_else(|| {
-        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)
-    })
+    indent_rules_for(Some(&state.language), state.highlighter.syntax_name())
 }
 
-/// Indent for a new line split at `position` on a content line of an
-/// embedded region, by the region's language: its regex indentation rules
-/// (a `[languages.<id>.indent]` override, else the rules for its syntax),
-/// read off the buffer around the cursor with the highlighter's scopes —
-/// the region's own — masking comments and strings. A language with none
-/// gets the indentation of a buffer of that language with none, and a
-/// region with no language that of a buffer with no language.
-///
-/// The tree-sitter tier is not used here: it parses the whole buffer as one
-/// language, which a region's text is not part of. A language with a
-/// bundled grammar indents in a region by its regex rules, the tier that
-/// stands in for the grammar wherever it is missing.
-fn region_indent(
+/// Indent for a new line split at `position`, by the tiers below
+/// tree-sitter, for text in `language` (`None`: no language) whose syntax is
+/// `syntax`: the language's regex indentation rules, read off the buffer with
+/// the highlighter's scopes masking comments and strings; else the
+/// language-agnostic heuristic; else, for plain text or no language, the
+/// prose one that treats a blank line as a paragraph break (#3165).
+fn non_grammar_indent(
     state: &EditorState,
     position: usize,
     tab_size: usize,
-    region: &crate::input::edit_rules::RegionLanguage,
+    language: Option<&str>,
+    syntax: Option<&str>,
 ) -> usize {
-    let rules = region
-        .language
-        .as_deref()
-        .and_then(crate::primitives::indent_rules::user_rule_for_id)
-        .or_else(|| {
-            region
-                .syntax
-                .as_deref()
-                .and_then(crate::primitives::indent_rules::rules_for_syntax_name)
-        });
-    if let Some(rules) = rules {
+    if let Some(rules) = indent_rules_for(language, syntax) {
         return rules.calculate_indent(&state.buffer, position, tab_size, |b| {
             byte_is_code(state, b)
         });
     }
-    if region.language.is_some() {
-        crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
+    match language {
+        // `highlighter.language()` is not the signal for plain text, since a
+        // grammar can still be loading.
+        Some(language) if language != "text" => {
+            crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
+                &state.buffer,
+                position,
+                tab_size,
+            )
+        }
+        _ => crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
             &state.buffer,
             position,
             tab_size,
-        )
-    } else {
-        crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
-            &state.buffer,
-            position,
-            tab_size,
-        )
+        ),
     }
 }
 
-/// Try the per-language regex indentation rules for a buffer that has no
-/// tree-sitter grammar. Returns `None` when no rules exist for the language so
-/// the caller can fall back.
-fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option<usize> {
-    let rules = buffer_indent_rules(state)?;
-    Some(
-        rules.calculate_indent(&state.buffer, position, tab_size, |b| {
-            byte_is_code(state, b)
-        }),
-    )
-}
-
-/// Closing-delimiter variant of [`rules_indent`].
+/// The closing-delimiter dedent by the buffer's regex indentation rules
+/// ([`buffer_indent_rules`]); `None` when it has none.
 fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize) -> Option<usize> {
     let rules = buffer_indent_rules(state)?;
     rules.calculate_dedent_for_delimiter(&state.buffer, position, ch, tab_size, |b| {
@@ -1824,37 +1809,30 @@ fn handle_insert_newline(
             // syntaxes (.txt, …). `IndentCalculator` itself also falls back to
             // the rules tier when a language has no grammar. A cursor in an
             // embedded region indents by the region's language
-            // ([`region_indent`]).
+            // ([`non_grammar_indent`] with the region's language): the
+            // tree-sitter tier parses the whole buffer as one language, which
+            // a region's text is not part of, so a language with a bundled
+            // grammar indents in a region by its regex rules, the tier that
+            // stands in for the grammar wherever it is missing.
             let indent_width_opt = match (region, state.highlighter.language()) {
-                (Some(region), _) => Some(region_indent(state, indent_position, tab_size, region)),
+                (Some(region), _) => Some(non_grammar_indent(
+                    state,
+                    indent_position,
+                    tab_size,
+                    region.language.as_deref(),
+                    region.syntax.as_deref(),
+                )),
                 (None, Some(language)) if language.ts_language().is_some() => state
                     .indent_calculator
                     .borrow_mut()
                     .calculate_indent(&state.buffer, indent_position, language, tab_size),
-                _ => {
-                    if let Some(w) = rules_indent(state, indent_position, tab_size) {
-                        Some(w)
-                    } else if state.language != "text" {
-                        // Only plain text treats a blank line as prose
-                        // (#3165); `highlighter.language()` is not the
-                        // signal, since a grammar can still be loading.
-                        Some(
-                            crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
-                                &state.buffer,
-                                indent_position,
-                                tab_size,
-                            ),
-                        )
-                    } else {
-                        Some(
-                            crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
-                                &state.buffer,
-                                indent_position,
-                                tab_size,
-                            ),
-                        )
-                    }
-                }
+                _ => Some(non_grammar_indent(
+                    state,
+                    indent_position,
+                    tab_size,
+                    Some(&state.language),
+                    state.highlighter.syntax_name(),
+                )),
             };
             if let Some(indent_width) = indent_width_opt {
                 let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
