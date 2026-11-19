@@ -92,10 +92,10 @@ def sh(line):
 script_shell = [("key", "ctrl+p"), ("text", "Docs: Script Shell"), ("wait", "may script the editor"),
                 ("settle",), ("key", "Return"), ("wait", "fresh$"), ("settle",)]
 
-# The dock's layout, for the pull request that introduced it (written with
-# `--out docs/internal/screenshots/orchestrator-dock-ux`): each workspace's
-# state in the right-hand column, Pinned and By date, the card view, and the
-# ⋯ a hovered row shows. Cropped to the dock.
+# The dock's layout up close — each workspace's state in the right-hand
+# column, Pinned and By date, the card view, and the ⋯ a hovered row shows —
+# cropped to the dock. Not docs images: take them with `--out` pointed
+# somewhere outside the repository.
 DOCK = (0, 0, 40, 18)
 dock_menu = lambda pick: [("click_text", "Menu ▾"), ("wait", pick), ("click_text", pick),
                           ("key", "Escape"), ("settle",)]
