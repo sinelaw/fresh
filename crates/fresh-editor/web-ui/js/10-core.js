@@ -185,9 +185,16 @@ function hugHeight(el){
   requestAnimationFrame(()=>{
     const h0=parseFloat(el.style.height), top0=parseFloat(el.style.top);
     if(!(h0>0)) return;
-    el.style.height="auto"; el.style.maxHeight=`${h0}px`;
+    // The card takes the height of what it holds — less than the terminal's
+    // cells or more, since real controls are not cells — up to the window it
+    // stands in, and stays centred on the frame the editor gave it, kept
+    // inside that window. Past the window, its body scrolls.
+    const room=appH(), margin=8;
+    el.style.height="auto";
+    el.style.maxHeight=room>0?`${room-2*margin}px`:"none";
     const h=el.offsetHeight;
-    if(h<h0-1) el.style.top=`${top0+(h0-h)/2}px`;
+    const top=top0+(h0-h)/2;
+    el.style.top=`${room>0?Math.max(margin,Math.min(top,room-margin-h)):top}px`;
   });
 }
 /** function place(El, Rect) => Undefined */
