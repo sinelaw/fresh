@@ -109,7 +109,10 @@ day=86400000
 now=$(($(date +%s) * 1000))
 entries=""
 for spec in "feat/bulk-import:1" "fix/negative-stock:3" "perf/warehouse-index:8" \
-            "spike/graphql:35" "chore/node-20:330"; do
+            "spike/graphql:35" "chore/node-20:330" \
+            "feat/import-items-from-supplier-csv-with-dry-run:0" \
+            "fix/negative-stock-after-concurrent-warehouse-transfers:2" \
+            "refactor/split-inventory-service-into-read-and-write-paths:40"; do
   branch=${spec%%:*}; days=${spec##*:}
   dir="$(cd .. && pwd)/inventory-api-$(echo "$branch" | tr / -)"
   git worktree add -q "$dir" -b "$branch"
@@ -123,8 +126,8 @@ dock_menu = lambda pick: [("click_text", "Menu ▾"), ("wait", pick), ("click_te
 SHOTS = [
     {
         "id": "dock-ux-by-date", **INV, **WIDE, "args": ["src/routes/items.js"],
-        # Older work beside today's: worktrees last worked in yesterday, earlier
-        # this week, last week, last month and last year, dated through the
+        # Older work beside today's: worktrees last worked in over the past
+        # year, three of them named too long for the dock, dated through the
         # orchestrator's saved state (read at startup) and listed by All
         # worktrees.
         "prepare": [OLDER_WORK],
@@ -133,7 +136,7 @@ SHOTS = [
             ("click_text", "All worktrees"), ("key", "Escape"), ("settle",),
             ("rclick_text", "low-stock-alerts"), ("wait", "Pin to top"), ("click_text", "Pin to top"),
             ("wait", "Pinned"), ("wait", "Older"), ("settle",),
-            ("crop", (0, 0, 40, 24)), ("shot", "dock-ux-by-date")],
+            ("crop", (0, 0, 40, 27)), ("shot", "dock-ux-by-date")],
     },
     {
         "id": "dock-ux-cards", **INV, **WIDE, "args": ["src/routes/items.js"],
