@@ -137,6 +137,8 @@ impl fresh_winterm::RelayConnection for ClientConnection {
                 }
                 ServerControl::SuspendClient => {
                     // Windows has no SIGTSTP; surface the limitation and keep running.
+                    // This client's Hello says it cannot suspend, so the daemon
+                    // keeps sending it frames and does not wait for `Resumed`.
                     tracing::warn!("SuspendClient received on Windows — suspend is not supported");
                     None
                 }
