@@ -978,6 +978,15 @@ fn blend_rgb(fg: (u8, u8, u8), bg: (u8, u8, u8), alpha: f32) -> Color {
     Color::Rgb(mix(fg.0, bg.0), mix(fg.1, bg.1), mix(fg.2, bg.2))
 }
 
+/// `fg` faded toward `bg`, keeping `level` of it (0.0 = `bg`, 1.0 = `fg`).
+///
+/// The one blend behind every fade the editor draws — a scrolled pane's edge
+/// rows here, a cut row's tail in a panel (`Paint::Mix`). `None` when either
+/// colour has no RGB value to mix (a 256-palette index, `Reset`).
+pub fn fade_color_toward(fg: Color, bg: Color, level: f32) -> Option<Color> {
+    Some(blend_rgb(color_to_rgb(fg)?, color_to_rgb(bg)?, level))
+}
+
 /// Shade one row of `area` toward its own background: `level` is how
 /// much of each cell's painted foreground survives, 0.0 leaving it on
 /// the background and 1.0 leaving it untouched.

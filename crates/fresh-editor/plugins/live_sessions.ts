@@ -44,14 +44,18 @@ editor.defineConfigBoolean("enabled", {
   description:
     "Show Claude and Codex sessions that are open outside this editor (another terminal, a background job, the cloud) in the orchestrator dock, grouped as Claude and Codex.",
 });
+// Both Claude sources start off: they run the user's Claude CLI on a timer
+// (and the cloud one reads its sign-in), which nobody should get without
+// asking. Each is a checkbox in the dock's Menu, saved like any setting.
 editor.defineConfigBoolean("claude_local", {
-  default: true,
-  description: "List Claude sessions running on this machine, from `claude agents --json`.",
+  default: false,
+  description:
+    "List Claude sessions running on this machine, from `claude agents --json`. Off by default; also a checkbox in the dock's Menu.",
 });
 editor.defineConfigBoolean("claude_cloud", {
-  default: true,
+  default: false,
   description:
-    "List your Claude Code cloud and Remote Control sessions (claude.ai/code). Reads the Claude CLI's sign-in (~/.claude/.credentials.json, or the macOS Keychain, which may ask once) and calls the session list `claude --teleport` uses — not a published API, so it may change with any Claude Code release. Also a checkbox in the dock's Menu.",
+    "List your Claude Code cloud and Remote Control sessions (claude.ai/code). Reads the Claude CLI's sign-in (~/.claude/.credentials.json, or the macOS Keychain, which may ask once) and calls the session list `claude --teleport` uses — not a published API, so it may change with any Claude Code release. Off by default; also a checkbox in the dock's Menu.",
 });
 editor.defineConfigBoolean("codex_local", {
   default: true,
@@ -114,8 +118,8 @@ function settings(): Settings {
   const s = (editor.getPluginConfig() ?? {}) as RawSettings;
   return {
     enabled: s.enabled ?? true,
-    claudeLocal: s.claude_local ?? true,
-    claudeCloud: s.claude_cloud ?? true,
+    claudeLocal: s.claude_local ?? false,
+    claudeCloud: s.claude_cloud ?? false,
     codexLocal: s.codex_local ?? true,
     codexCloud: s.codex_cloud ?? true,
     claudeCommand: s.claude_command?.trim() || "claude",
@@ -150,6 +154,10 @@ export interface LiveSessionsApi {
   /** Turn it on or off: saved to the user's config (as the Settings UI
    *  would), then re-listed, so the dock's Menu can own the setting. */
   setClaudeCloud(on: boolean): Promise<void>;
+  /** Whether the source for Claude sessions on this machine is on. */
+  claudeLocalEnabled(): boolean;
+  /** The same for that source. */
+  setClaudeLocal(on: boolean): Promise<void>;
 }
 
 declare global {
@@ -521,17 +529,24 @@ registerHandler("live_sessions_refresh", async () => {
 });
 editor.registerCommand("%cmd.refresh", "%cmd.refresh_desc", "live_sessions_refresh");
 
-async function setClaudeCloud(on: boolean): Promise<void> {
-  editor.saveSetting("plugins.live_sessions.settings.claude_cloud", on);
-  // The write is applied asynchronously; the source is switched by the
-  // re-read in `settings()`, so wait for it before re-listing.
-  for (let i = 0; i < 20 && settings().claudeCloud !== on; i++) await editor.delay(50);
+// Save one source's switch to the user's config (as the Settings UI would)
+// and re-list. The write is applied asynchronously; the source is switched by
+// the re-read in `settings()`, so wait for it before re-listing.
+async function setSource(key: "claude_cloud" | "claude_local", on: boolean): Promise<void> {
+  editor.saveSetting(`plugins.live_sessions.settings.${key}`, on);
+  const now = (): boolean => (key === "claude_cloud" ? settings().claudeCloud : settings().claudeLocal);
+  for (let i = 0; i < 20 && now() !== on; i++) await editor.delay(50);
   await poll(true);
 }
+
+const setClaudeCloud = (on: boolean): Promise<void> => setSource("claude_cloud", on);
+const setClaudeLocal = (on: boolean): Promise<void> => setSource("claude_local", on);
 
 editor.exportPluginApi("live-sessions", {
   refresh: () => poll(true),
   snapshot,
   claudeCloudEnabled: () => settings().claudeCloud,
   setClaudeCloud,
+  claudeLocalEnabled: () => settings().claudeLocal,
+  setClaudeLocal,
 } satisfies LiveSessionsApi);

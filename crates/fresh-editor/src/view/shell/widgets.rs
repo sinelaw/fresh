@@ -1149,6 +1149,10 @@ struct TreeRows {
     visible_rows: Option<u32>,
     /// The surface fills (`Ctx::fill`): a table takes the width it is given.
     fill: bool,
+    /// The row the pointer is over, selected or not: `RowState` says `Hover`
+    /// only for an unselected row, and a selected row shows its
+    /// `hoverAction` under the pointer too.
+    hovered_item_key: String,
 }
 
 /// The key a memoised rows subtree reconciles under among its siblings.
@@ -1195,8 +1199,10 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
             u16,
         ) -> Node<UiMsg>,
     >;
+    let hovered_item_key = Rc::new(p.hovered_item_key.clone());
     let build_row: BuildRow = {
         let keys = keys.clone();
+        let hovered_item_key = hovered_item_key.clone();
         let tree_key = tree_key.clone();
         let table = table.clone();
         Rc::new(
@@ -1210,6 +1216,13 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                 let mut node = node.clone();
                 node.text.normalize_widths();
                 let item_key = keys[abs].clone();
+                // The pointer is over this row: it shows what can be done
+                // with it (its `hoverAction`) where its status was.
+                if matches!(st, fresh_ui::widgets::RowState::Hover)
+                    || (!hovered_item_key.is_empty() && *hovered_item_key == item_key)
+                {
+                    crate::widgets::render::with_hover_action(&mut node);
+                }
                 let table = table.as_ref().filter(|_| !node.cells.is_empty());
                 let r = match table {
                     // A cell row's body is its cells, which are nodes
@@ -2965,6 +2978,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 reveal: cx.scrollbar_reveal,
                 visible_rows: *visible_rows,
                 fill: cx.fill,
+                // Only a tree whose rows change under the pointer carries
+                // it: the memo compares this, and a pointer moving over any
+                // other tree must not rebuild its rows.
+                hovered_item_key: if nodes.iter().any(|n| {
+                    n.text
+                        .properties
+                        .contains_key(crate::widgets::render::HOVER_ACTION_PROPERTY)
+                }) {
+                    cx.hovered_item_key.clone()
+                } else {
+                    String::new()
+                },
             };
             let rows = keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key));
             // **The memo is what the enclosing column sizes**, not the window
@@ -5128,11 +5153,25 @@ fn entry_runs(
         // renderer relies on it — a placeholder sets fg + italic and the
         // focused overlay sets bg only, and replacing would clear the italic.
         let mut ink = base.clone();
+        let mut fade = None;
         for o in &normalized.inline_overlays {
             let (os, oe) = (o.start.min(text.len()), o.end.min(text.len()));
             if a >= os && b <= oe && oe > os {
                 ink = ink_of(&o.style, &ink);
+                if let Some(keep) = o
+                    .properties
+                    .get(crate::widgets::render::FADE_PROPERTY)
+                    .and_then(|v| v.as_u64())
+                {
+                    fade = Some(keep.min(100) as u8);
+                }
             }
+        }
+        // A cut row's tail fades into the run's own ground rather than ending
+        // in `…` (see `widgets::render::FADE_KEEP`). Applied
+        // after every other overlay, so it fades the colour actually drawn.
+        if let Some(keep) = fade {
+            ink = ink.clone().with_fg(Paint::mix(ink.fg, ink.bg, keep));
         }
         out.push((a..b, Run::themed(&text[a..b], ink.to_string())));
     }

@@ -1415,6 +1415,12 @@ pub struct UiColors {
     /// without also recoloring code keywords.
     #[serde(default)]
     pub file_explorer_directory_fg: Option<StyledColorDef>,
+    /// Heading text in the Orchestrator dock: Pinned, the By date headings
+    /// and folder names. Falls back to `editor.line_number_fg`, so headings
+    /// sit back as the gutter does and leave the workspace names to carry
+    /// the eye.
+    #[serde(default)]
+    pub dock_heading_fg: Option<StyledColorDef>,
     /// Background of the file explorer panel: its rows, title row and
     /// border. Falls back to `editor.bg`.
     #[serde(default)]
@@ -1773,6 +1779,8 @@ pub struct Theme {
     pub file_explorer_pinned_bg: Color,
     /// Name color of an ordinary directory in the file explorer.
     pub file_explorer_directory_fg: Color,
+    /// Heading text in the Orchestrator dock.
+    pub dock_heading_fg: Color,
     /// The file explorer panel's ground and default text color.
     pub file_explorer_bg: Color,
     pub file_explorer_fg: Color,
@@ -2036,6 +2044,7 @@ impl From<ThemeFile> for Theme {
             file_status_conflicted_fg: styled_color(&file.ui.file_status_conflicted_fg),
             file_explorer_pinned_bg: styled_color(&file.ui.file_explorer_pinned_bg),
             file_explorer_directory_fg: styled_color(&file.ui.file_explorer_directory_fg),
+            dock_heading_fg: styled_color(&file.ui.dock_heading_fg),
             file_explorer_bg: styled_color(&file.ui.file_explorer_bg),
             file_explorer_fg: styled_color(&file.ui.file_explorer_fg),
             file_explorer_border_fg: styled_color(&file.ui.file_explorer_border_fg),
@@ -2252,6 +2261,7 @@ impl From<Theme> for ThemeFile {
                 file_status_conflicted_fg: styled(&theme, "ui.file_status_conflicted_fg"),
                 file_explorer_pinned_bg: styled(&theme, "ui.file_explorer_pinned_bg"),
                 file_explorer_directory_fg: styled(&theme, "ui.file_explorer_directory_fg"),
+                dock_heading_fg: styled(&theme, "ui.dock_heading_fg"),
                 file_explorer_bg: styled(&theme, "ui.file_explorer_bg"),
                 file_explorer_fg: styled(&theme, "ui.file_explorer_fg"),
                 file_explorer_border_fg: styled(&theme, "ui.file_explorer_border_fg"),
@@ -2535,6 +2545,7 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
 /// an `extends` override when the base theme gave them no color of their own.
 const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &[
     "ui.file_explorer_directory_fg",
+    "ui.dock_heading_fg",
     "editor.line_number_bg",
     "editor.gutter_separator_fg",
     "ui.file_explorer_bg",
@@ -3143,6 +3154,7 @@ theme_color_keys! {
         "blame_header_bg" => color blame_header_bg fallback "ui.menu_bg",
         "blame_header_fg" => color blame_header_fg fallback "ui.menu_fg",
         "compose_margin_bg" => color compose_margin_bg fallback "editor.after_eof_bg",
+        "dock_heading_fg" => color dock_heading_fg fallback "editor.line_number_fg",
         "file_explorer_bg" => color file_explorer_bg fallback "editor.bg",
         "file_explorer_border_fg" => color file_explorer_border_fg fallback "ui.split_separator_fg",
         "file_explorer_border_focused_fg" => color file_explorer_border_focused_fg fallback "editor.cursor",
@@ -4604,6 +4616,37 @@ mod tests {
             styled.resolve_modifier_key("editor.current_line_number_fg"),
             Modifier::BOLD
         );
+    }
+
+    /// The dock's headings have a key of their own: a theme that leaves it
+    /// out gets the gutter's subdued grey (`editor.line_number_fg`), and one
+    /// that sets it recolors headings alone.
+    #[test]
+    fn dock_heading_fg_falls_back_to_the_gutter() {
+        for builtin in BUILTIN_THEMES {
+            let raw: serde_json::Value = serde_json::from_str(builtin.json).unwrap();
+            if names_key(&raw, "ui.dock_heading_fg") {
+                continue;
+            }
+            let theme = Theme::from_json(builtin.json).unwrap();
+            assert_eq!(
+                theme.dock_heading_fg, theme.line_number_fg,
+                "Theme '{}' dock heading color",
+                builtin.name
+            );
+        }
+        let theme = Theme::from_json(
+            r#"{"name": "headings", "extends": "builtin://dark",
+                "ui": {"dock_heading_fg": [150, 160, 170]}}"#,
+        )
+        .unwrap();
+        assert_eq!(theme.dock_heading_fg, Color::Rgb(150, 160, 170));
+        let theme = Theme::from_json(
+            r#"{"name": "gutter", "extends": "builtin://dark",
+                "editor": {"line_number_fg": [90, 91, 92]}}"#,
+        )
+        .unwrap();
+        assert_eq!(theme.dock_heading_fg, Color::Rgb(90, 91, 92));
     }
 
     /// Explorer folder names have a key of their own (#3697): a theme that

@@ -968,10 +968,7 @@ fn dock_click_attaches_discovered_worktree() {
         .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
         .unwrap();
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("· on-disk")
-        })
+        .wait_until(|h| h.screen_to_string().contains("feature-x"))
         .unwrap_or_else(|_| {
             panic!(
                 "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
@@ -983,21 +980,21 @@ fn dock_click_attaches_discovered_worktree() {
     // A single click on the discovered row opens it — no Enter needed.
     // (Row looked up with retry: a rescan refresh can transiently drop
     // the discovered row between the wait above and this snapshot.)
-    let row = wait_dock_row_of(&mut harness, "· on-disk") as u16;
+    let row = wait_dock_row_of(&mut harness, "feature-x") as u16;
     harness.mouse_click(3, row).unwrap();
 
     // Attach is async (`createWindowWithTerminal`). It opens a live
-    // session rooted at the worktree, so the dock's discovered row turns
-    // into a live `feature-x` row (no longer `· on-disk`).
+    // session rooted at the worktree: a second window, still listed as
+    // `feature-x`. (The dock marks neither an on-disk nor an idle row with a
+    // glyph, so the window count is what says it went live.)
     harness
         .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("feature-x") && !s.contains("· on-disk")
+            h.screen_to_string().contains("feature-x") && h.editor().session_count() >= 2
         })
         .unwrap_or_else(|_| {
             panic!(
                 "Clicking the dock's discovered worktree row should attach a live \
-                 session (row loses `· on-disk`).\nScreen:\n{}",
+                 session.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
@@ -1027,10 +1024,7 @@ fn dock_arrow_nav_opens_discovered_worktree() {
         .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
         .unwrap();
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("· on-disk")
-        })
+        .wait_until(|h| h.screen_to_string().contains("feature-x"))
         .unwrap_or_else(|_| {
             panic!(
                 "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
@@ -1045,13 +1039,12 @@ fn dock_arrow_nav_opens_discovered_worktree() {
 
     harness
         .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("feature-x") && !s.contains("· on-disk")
+            h.screen_to_string().contains("feature-x") && h.editor().session_count() >= 2
         })
         .unwrap_or_else(|_| {
             panic!(
                 "Arrowing onto the dock's discovered worktree row should open it \
-                 (row loses `· on-disk`).\nScreen:\n{}",
+                 (a second, live window).\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
@@ -1082,7 +1075,7 @@ fn dock_opening_worktree_keeps_its_row_position() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
+            s.contains("feature-x") && s.contains("feature-y")
         })
         .unwrap();
 
@@ -1104,14 +1097,13 @@ fn dock_opening_worktree_keeps_its_row_position() {
     harness.mouse_click(3, fx_click as u16).unwrap();
     harness
         .wait_until(|h| {
-            // feature-x is now live (its on-disk tag is gone) while feature-y
-            // is still discovered.
-            let s = h.screen_to_string();
-            s.matches("· on-disk").count() == 1 && s.contains("feature-y")
+            // feature-x is now live (a second window) while feature-y is
+            // still discovered.
+            h.editor().session_count() >= 2 && h.screen_to_string().contains("feature-y")
         })
         .unwrap_or_else(|_| {
             panic!(
-                "clicking feature-x should open it (one on-disk row left).\n\
+                "clicking feature-x should open it (a second, live window).\n\
                  Screen:\n{}",
                 harness.screen_to_string()
             )
@@ -1268,11 +1260,10 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
     harness
         .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
         .unwrap();
+    // (The dock marks an on-disk row by a blank state cell, not a tag, so
+    // the row's name is what shows it was revealed.)
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("· on-disk")
-        })
+        .wait_until(|h| h.screen_to_string().contains("feature-x"))
         .unwrap_or_else(|_| {
             panic!(
                 "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
@@ -1283,17 +1274,16 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
 
     // Arrow the highlight onto the on-disk row: the debounced live-switch
     // attaches a managed session there (keeping the dock focused), so the
-    // row turns from `· on-disk` into a live, active `feature-x` session.
+    // row becomes a live, active `feature-x` session.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("feature-x") && !s.contains("· on-disk")
+            h.screen_to_string().contains("feature-x") && h.editor().session_count() >= 2
         })
         .unwrap_or_else(|_| {
             panic!(
                 "arrowing onto the dock's discovered worktree should open a live \
-                 session (row loses `· on-disk`).\nScreen:\n{}",
+                 session.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
@@ -1303,8 +1293,8 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
         .unwrap();
 
     // Open the row's right-click context menu (F2 is its keyboard
-    // equivalent), then pick Delete: Visit / Rename / Move / Refresh /
-    // Archive / Delete, so five Downs land on Delete.
+    // equivalent), then pick Delete: Visit / Rename / Move / Pin / Refresh /
+    // Archive / Delete, so six Downs land on Delete.
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Delete"))
@@ -1315,7 +1305,7 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
                 harness.screen_to_string()
             )
         });
-    for _ in 0..5 {
+    for _ in 0..6 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness

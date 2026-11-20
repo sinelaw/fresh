@@ -1098,11 +1098,23 @@ impl crate::app::window::Window {
         // The resume argv runs as the PTY child through the authority's
         // wrapper, exactly like a launch command (mirrors
         // `spawn_terminal_session`).
+        // An agent that quit before its conversation began has nothing to
+        // rejoin (`AgentResume::requires` is not there): it comes back from
+        // its launch command, as a restart of it would.
+        let nothing_to_resume = terminal
+            .agent_resume
+            .as_ref()
+            .and_then(|r| r.requires.as_deref())
+            .is_some_and(|p| self.resume_target_missing(p));
         let resume_argv = terminal
             .agent_resume
             .as_ref()
             .map(|r| &r.argv)
-            .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
+            .filter(|argv| {
+                !argv.is_empty()
+                    && self.resources.config.terminal.resume_agents
+                    && !nothing_to_resume
+            });
         let spawn_argv =
             resume_argv.or_else(|| terminal.command.as_ref().filter(|argv| !argv.is_empty()));
         // Run the resume/launch argv through the workspace's backend (local →
@@ -1175,6 +1187,10 @@ impl crate::app::window::Window {
             self.terminal_commands.insert(terminal_id, argv.clone());
         }
         if let Some(resume) = terminal.agent_resume.as_ref() {
+            if let Some(path) = resume.requires.as_ref() {
+                self.terminal_resume_requires
+                    .insert(terminal_id, path.clone());
+            }
             if !resume.argv.is_empty() {
                 self.terminal_resume_commands
                     .insert(terminal_id, resume.argv.clone());
@@ -1225,6 +1241,14 @@ impl crate::app::window::Window {
             self.terminal_resume_commands
                 .insert(terminal_id, argv.clone());
         }
+        let resume_requires = terminal
+            .agent_resume
+            .as_ref()
+            .and_then(|r| r.requires.clone());
+        if let Some(path) = resume_requires.as_ref() {
+            self.terminal_resume_requires
+                .insert(terminal_id, path.clone());
+        }
 
         // Build the buffer the normal way, then drop the live binding the way
         // the exit path does — the PTY this id names no longer exists.
@@ -1269,6 +1293,11 @@ impl crate::app::window::Window {
                 // the launch/resume argv above do.
                 auto_title: terminal.auto_title.clone(),
                 held_by_trust,
+                // Nothing to rejoin when the conversation it needs isn't there.
+                nothing_to_resume: resume_requires
+                    .as_deref()
+                    .is_some_and(|p| self.resume_target_missing(p)),
+                resume_requires,
             },
         );
         Some(buffer_id)
@@ -2833,7 +2862,10 @@ impl crate::app::window::Window {
                     .terminal_resume_commands
                     .get(&terminal_id)
                     .filter(|argv| !argv.is_empty())
-                    .map(|argv| crate::workspace::AgentResume { argv: argv.clone() });
+                    .map(|argv| crate::workspace::AgentResume {
+                        argv: argv.clone(),
+                        requires: self.terminal_resume_requires.get(&terminal_id).cloned(),
+                    });
                 // Only an *explicit* title is worth persisting; auto-named
                 // tabs re-derive theirs from the live process after restore.
                 let title = self
@@ -2902,7 +2934,10 @@ impl crate::app::window::Window {
                     .resume
                     .as_ref()
                     .filter(|argv| !argv.is_empty())
-                    .map(|argv| crate::workspace::AgentResume { argv: argv.clone() }),
+                    .map(|argv| crate::workspace::AgentResume {
+                        argv: argv.clone(),
+                        requires: exited.resume_requires.clone(),
+                    }),
                 // One held back only by a Blocked folder (#3778) is saved as
                 // the live terminal it was, so it runs again once trusted.
                 exited: (!exited.held_by_trust).then_some(crate::workspace::ExitedTerminalState {

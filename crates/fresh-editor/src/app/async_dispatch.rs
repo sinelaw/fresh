@@ -1558,6 +1558,14 @@ impl Editor {
             title: None,
             auto_title: None,
             held_by_trust: false,
+            resume_requires: window.terminal_resume_requires.get(&terminal_id).cloned(),
+            // The launcher named what a conversation leaves behind: the
+            // window's own machine says whether it is there. Named nothing,
+            // or where it pointed can't be read: a resume, as ever.
+            nothing_to_resume: window
+                .terminal_resume_requires
+                .get(&terminal_id)
+                .is_some_and(|path| window.resume_target_missing(path)),
         }
     }
 

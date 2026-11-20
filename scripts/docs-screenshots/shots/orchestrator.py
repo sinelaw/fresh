@@ -92,7 +92,77 @@ def sh(line):
 script_shell = [("key", "ctrl+p"), ("text", "Docs: Script Shell"), ("wait", "may script the editor"),
                 ("settle",), ("key", "Return"), ("wait", "fresh$"), ("settle",)]
 
+# The dock's layout up close — each workspace's state in the right-hand
+# column, Pinned and By date, the card view, and the ⋯ a hovered row shows —
+# cropped to the dock. Not docs images: take them with `--out` pointed
+# somewhere outside the repository.
+DOCK = (0, 0, 40, 18)
+
+# The By date shot's workspaces under titles that say what each is for, the
+# way a person or an agent names a task, rather than under their branches;
+# three are too long for the dock. The worktrees of older work are added
+# beside the project, each dated and titled in the orchestrator's saved
+# state (which Fresh reads only at startup); the workspaces the docs builder
+# makes are titled by it, from ~/docs-titles.json.
+OLDER_WORK = r"""
+set -e
+state="$DOCSHOT_HOME/.local/share/fresh/orchestrator/state"
+mkdir -p "$state"
+cat > "$DOCSHOT_HOME/docs-titles.json" <<'JSON'
+{"low-stock-alerts": "Alert when stock falls below the reorder level",
+ "query-perf": "Speed up item queries",
+ "readme-endpoints": "Document the endpoints in the README",
+ "csv-export": "Export items as CSV",
+ "adjust-validation": "Reject bad stock adjustments"}
+JSON
+day=86400000
+now=$(($(date +%s) * 1000))
+dates=""
+names=""
+while IFS='|' read -r branch days title; do
+  dir="$(cd .. && pwd)/inventory-api-$(echo "$branch" | tr / -)"
+  git worktree add -q "$dir" -b "$branch"
+  dates="$dates\"$dir\": $((now - days * day)),"
+  names="$names\"$dir\": \"$title\","
+done <<'WORK'
+feat/supplier-import|0|Import supplier price lists from CSV with a dry-run preview of every change
+feat/bulk-import|1|Bulk-import items from a spreadsheet
+fix/transfer-race|2|Find why concurrent warehouse transfers leave stock negative after a retry
+fix/negative-stock|3|Stop stock going negative
+perf/warehouse-index|8|Index warehouse lookups
+spike/graphql|35|Try a GraphQL API beside REST
+refactor/read-write-split|40|Split the inventory service into separate read and write paths for reports
+chore/node-20|330|Upgrade to Node 20
+WORK
+echo "{\"orchestrator.dock.last_interaction\": {${dates%,}}, \"orchestrator.dock.names\": {${names%,}}}" \
+  > "$state/orchestrator.json"
+"""
+dock_menu = lambda pick: [("click_text", "Menu ▾"), ("wait", pick), ("click_text", pick),
+                          ("key", "Escape"), ("settle",)]
+
 SHOTS = [
+    {
+        "id": "dock-ux-by-date", **INV, **WIDE, "args": ["src/routes/items.js"],
+        # Older work beside today's, every workspace under a title (see
+        # OLDER_WORK); the older worktrees are listed by All worktrees.
+        "prepare": [OLDER_WORK],
+        "steps": [("wait", "itemsRouter")] + build + [
+            ("click_text", "Menu ▾"), ("wait", "By date"), ("click_text", "By date"),
+            ("click_text", "All worktrees"), ("key", "Escape"), ("settle",),
+            ("wait", "Alert when stock"), ("rclick_text", "Alert when stock"), ("wait", "Pin to top"), ("click_text", "Pin to top"),
+            ("wait", "Pinned"), ("wait", "Older"), ("settle",),
+            ("crop", (0, 0, 40, 27)), ("shot", "dock-ux-by-date")],
+    },
+    {
+        "id": "dock-ux-cards", **INV, **WIDE, "args": ["src/routes/items.js"],
+        "steps": [("wait", "itemsRouter")] + build + dock_menu("Cards") + [
+            ("crop", (0, 0, 40, 34)), ("shot", "dock-ux-cards")],
+    },
+    {
+        "id": "dock-ux-hover", **INV, **WIDE, "args": ["src/routes/items.js"],
+        "steps": [("wait", "itemsRouter")] + build + [
+            ("hover_text", "query-perf"), ("wait", "⋯"), ("settle",), ("crop", DOCK), ("shot", "dock-ux-hover")],
+    },
     {
         "id": "orchestrator-dock", **INV, **WIDE, "args": ["src/routes/items.js"],
         "steps": [("wait", "itemsRouter")] + build + [("shot", "orchestrator-dock")],

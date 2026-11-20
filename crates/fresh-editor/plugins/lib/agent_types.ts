@@ -31,6 +31,13 @@ export interface AgentResumeSpec {
     resumeArgs: string[];
     idFlags?: string[];
     sessionFlags?: string[];
+    // Where the agent writes the conversation for a minted id, once there is
+    // one. Its absence after the agent exits means it quit before the
+    // conversation began, so there is nothing to resume (the editor offers a
+    // restart instead). `configDir` is the agent's own config folder.
+    transcriptFor?: (cwd: string, id: string, configDir: string) => string;
+    // That config folder, from the environment and the home folder.
+    configDir?: (env: (name: string) => string, home: string) => string;
   };
   continue?: { resumeArgs: string[] };
 }

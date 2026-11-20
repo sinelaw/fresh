@@ -896,6 +896,12 @@ pub struct AgentResume {
     /// its own array slot (never a shell string). Run through the active
     /// authority's terminal wrapper, exactly like a launch command.
     pub argv: Vec<String>,
+    /// The path whose existence means `argv` has a conversation to rejoin
+    /// (`CreateWindowWithTerminalOptions::resume_requires`), carried so a
+    /// restore can tell a conversation from none: a terminal whose agent
+    /// quit before one began is restored from its launch command instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<PathBuf>,
 }
 
 // ============================================================================

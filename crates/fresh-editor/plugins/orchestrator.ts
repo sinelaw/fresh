@@ -159,6 +159,13 @@ interface AgentSession {
   // first (capped at RECENT_LINES). `sessionState` matches these against
   // BLOCKED_PATTERNS to tell a "waiting on you" prompt from plain idle.
   recentLines?: string[];
+  // The bottom of the agent terminal's visible screen (its last
+  // RECENT_LINES non-blank rows), read once it has gone quiet. A full-screen
+  // TUI parks its cursor at the top of its own UI after drawing, so the
+  // cursor row `recentLines` is built from never holds its prompt — this
+  // does. Cleared by new output; `screenTailPending` while a read waits.
+  screenTail?: string[];
+  screenTailPending?: boolean;
   // `true` once the agent has produced a sustained burst of output
   // (≥ WORK_MIN_MS) while its window was NOT the active one — i.e.
   // there is something the user hasn't seen yet. Cleared on activation.
@@ -1812,11 +1819,188 @@ function setExternalCollapsed(group: ExternalGroup, collapsed: boolean): void {
 }
 
 // Every expansion the dock's tree is drawn with: the user's open folders,
-// plus the external sessions group unless they folded it.
+// plus the external sessions group and the dock's own groups (Pinned, the
+// date headings) unless they folded them.
 function dockExpandedKeys(): string[] {
   const keys = Array.from(loadExpanded());
   for (const g of EXTERNAL_GROUPS) if (!externalCollapsed(g)) keys.push(externalGroupKey(g));
+  const collapsedViews = viewCollapsedSet();
+  for (const id of VIEW_FOLDER_IDS) if (!collapsedViews.has(id)) keys.push(folderNodeKey(id));
   return keys;
+}
+
+// ── The dock's own groups: Pinned, and the date headings ─────────────────
+//
+// Headings the dock draws itself, not folders a user made: they fold like
+// one (a `folder` node under a reserved `__view:` id, the way the external
+// sessions groups use `__external:`) but have no menu, cannot be renamed or
+// deleted, and are no place to drop a row. Open by default; a fold is
+// remembered per heading.
+const VIEW_FOLDER_PREFIX = "__view:";
+const PINNED_VIEW_ID = VIEW_FOLDER_PREFIX + "pinned";
+const VIEW_COLLAPSED_KEY = "orchestrator.dock.view_collapsed";
+// Every heading the dock can draw, so the expansion set can name them all
+// before the tree that holds them is built.
+const VIEW_FOLDER_IDS: string[] = [PINNED_VIEW_ID];
+
+function isViewFolder(id: string | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith(VIEW_FOLDER_PREFIX);
+}
+
+// A heading the user can't reorganise: an external group or a dock heading.
+function isSyntheticFolder(id: string | null | undefined): boolean {
+  return isExternalFolder(id) || isViewFolder(id);
+}
+
+function viewCollapsedSet(): Set<string> {
+  const v = editor.getGlobalState(VIEW_COLLAPSED_KEY);
+  return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+}
+
+// Open or fold any folder row by its node key — a user folder, an external
+// group or a dock heading, each remembered where it belongs. The one place
+// both the click path and the host's own fold event go through.
+function setFolderKeyExpanded(folderKey: string, expanded: boolean): void {
+  const group = externalGroupOfKey(folderKey);
+  if (group) {
+    setExternalCollapsed(group, !expanded);
+    return;
+  }
+  const id = folderKey.slice(FOLDER_NODE_PREFIX.length);
+  if (isViewFolder(id)) {
+    const set = viewCollapsedSet();
+    if (expanded) set.delete(id);
+    else set.add(id);
+    editor.setGlobalState(VIEW_COLLAPSED_KEY, [...set]);
+    return;
+  }
+  const set = loadExpanded();
+  if (expanded) set.add(folderKey);
+  else set.delete(folderKey);
+  saveExpanded();
+}
+
+function folderKeyExpanded(folderKey: string): boolean {
+  return dockExpandedKeys().includes(folderKey);
+}
+
+// Pinned workspaces: listed under a Pinned heading at the top of the dock,
+// out of whatever folder they are filed in (the filing is kept, and an
+// unpinned row goes back to it). Keyed like a folder assignment — the
+// stable id where there is one, else the root — and a pin made on an
+// on-disk worktree (root only) still holds once it is opened.
+const PINNED_KEY = "orchestrator.dock.pinned";
+let dockPinned: Set<string> | null = null;
+
+function loadPinned(): Set<string> {
+  if (dockPinned) return dockPinned;
+  const raw = editor.getGlobalState(PINNED_KEY);
+  dockPinned = new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  return dockPinned;
+}
+
+function isPinned(s: AgentSession): boolean {
+  const set = loadPinned();
+  return (!!s.stableId && set.has(stableIdKey(s.stableId))) || set.has(normRoot(s.root));
+}
+
+function setPinned(s: AgentSession, on: boolean): void {
+  const set = loadPinned();
+  if (on) {
+    set.add(s.stableId ? stableIdKey(s.stableId) : normRoot(s.root));
+  } else {
+    if (s.stableId) set.delete(stableIdKey(s.stableId));
+    set.delete(normRoot(s.root));
+  }
+  editor.setGlobalState(PINNED_KEY, [...set] as unknown as object);
+}
+
+// ── Last interaction, and the dock's "By date" grouping ──────────────────
+//
+// When the user last *did* something in a workspace: typed into one of its
+// buffers or its terminal (the host's `window_interaction`), or created it.
+// Switching to a workspace, or an agent printing in it, is not an
+// interaction — a workspace you only glanced at is no more recent for it.
+// Keyed like a pin (stable id, else root), in ms, persisted.
+const INTERACTED_KEY = "orchestrator.dock.last_interaction";
+let dockInteracted: Record<string, number> | null = null;
+
+function loadInteracted(): Record<string, number> {
+  if (dockInteracted) return dockInteracted;
+  const raw = editor.getGlobalState(INTERACTED_KEY);
+  const out: Record<string, number> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+  }
+  dockInteracted = out;
+  return out;
+}
+
+// Written under the root as well as the stable id: a window that is not
+// restored but re-made (the launch window of a fresh editor) comes back with
+// a new stable id, and the root is what still says it is the same workspace.
+// The stable id's own entry wins where both exist, so co-tenants sharing a
+// root keep their own dates.
+// Entries kept: the most recent, so a store that outlives deleted workspaces
+// can't grow without bound. Far more than a dock lists.
+const INTERACTED_MAX = 400;
+
+function recordInteraction(stableId: string | undefined, root: string, at = Date.now()): void {
+  const store = loadInteracted();
+  if (stableId) store[stableIdKey(stableId)] = at;
+  store[normRoot(root)] = at;
+  const keys = Object.keys(store);
+  if (keys.length > INTERACTED_MAX) {
+    keys.sort((a, b) => store[a] - store[b]);
+    for (const k of keys.slice(0, keys.length - INTERACTED_MAX)) delete store[k];
+  }
+  editor.setGlobalState(INTERACTED_KEY, store as unknown as object);
+}
+
+function lastInteractionMs(s: AgentSession): number | null {
+  const store = loadInteracted();
+  const own = s.stableId ? store[stableIdKey(s.stableId)] : undefined;
+  return own ?? store[normRoot(s.root)] ?? null;
+}
+
+// How the dock arranges workspaces: the user's folders, or headings by
+// when each was last interacted with. Persisted.
+const GROUP_BY_KEY = "orchestrator.dock.group_by";
+type DockGroupBy = "folders" | "date";
+
+function dockGroupBy(): DockGroupBy {
+  return editor.getGlobalState(GROUP_BY_KEY) === "date" ? "date" : "folders";
+}
+
+function setDockGroupBy(g: DockGroupBy): void {
+  editor.setGlobalState(GROUP_BY_KEY, g as unknown as object);
+}
+
+// The date headings, nearest first: Today, This week (since Monday, before
+// today) and Older. Few on purpose — the point is "what am I on now", not a
+// calendar. A heading with no rows (This week, on a Monday) is not drawn.
+const DATE_BUCKETS = ["today", "this_week", "older"] as const;
+type DateBucket = typeof DATE_BUCKETS[number];
+
+function dateViewId(b: DateBucket): string {
+  return VIEW_FOLDER_PREFIX + "date:" + b;
+}
+for (const b of DATE_BUCKETS) VIEW_FOLDER_IDS.push(dateViewId(b));
+
+// Which heading `at` (ms) falls under, on the local calendar as of `now`.
+// Weeks start on Monday. A workspace never worked in is Older (listed after
+// every dated one, see `buildDockTree`).
+function dateBucketOf(at: number | null, now: Date = new Date()): DateBucket {
+  if (at === null) return "older";
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const d = now.getDate();
+  const sinceMonday = (now.getDay() + 6) % 7;
+  if (at >= new Date(y, m, d).getTime()) return "today";
+  if (at >= new Date(y, m, d - sinceMonday).getTime()) return "this_week";
+  return "older";
 }
 
 // The last answer drawn, so a poll that changed nothing costs no repaint.
@@ -1848,6 +2032,8 @@ interface ExternalFeed {
   snapshot(): ExternalUpdate;
   claudeCloudEnabled(): boolean;
   setClaudeCloud(on: boolean): Promise<void>;
+  claudeLocalEnabled(): boolean;
+  setClaudeLocal(on: boolean): Promise<void>;
 }
 
 function externalFeed(): ExternalFeed | null {
@@ -1980,21 +2166,20 @@ function liveStateEntry(s: LiveSession): Entry {
   return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
 }
 
-// Compact: the state and the title. Where it runs is in its menu (a tail
-// here would only be cut off at the dock's edge).
+// Compact: the title, and the state in the dock's indicator column. Where it
+// runs is in its menu (a tail here would only be cut off at the dock's edge).
 function liveNodeEntry(s: LiveSession): TextPropertyEntry {
-  const segs: Entry[] = [
-    liveStateEntry(s),
-    { text: s.title, style: { bold: true } },
-  ];
-  return styledRow(segs as Parameters<typeof styledRow>[0]);
+  return withRowMenuOnHover(cardSplitRow(
+    [{ text: s.title, style: { bold: true } }],
+    indicatorColumn([], liveStateEntry(s)),
+  ));
 }
 
 // Card: the same two rows a workspace card has — name and agent, then where.
 function liveCardPrimary(s: LiveSession): TextPropertyEntry {
   return cardSplitRow(
-    [liveStateEntry(s), { text: s.title, style: { bold: true } }],
-    [{ text: s.agent, style: { fg: "ui.menu_disabled_fg" } }],
+    [{ text: s.title, style: { bold: true } }],
+    indicatorColumn([{ text: s.agent, style: { fg: "ui.menu_disabled_fg" } }], liveStateEntry(s)),
   );
 }
 
@@ -2231,12 +2416,31 @@ interface DockTree {
 // matching descendant are dropped so results aren't buried under empty
 // folders.
 function buildDockTree(filtered: number[]): DockTree {
+  dockRemoteThisBuild = null;
+  dockRemoteThisBuild = dockHasRemote();
+  try {
+    return buildDockTreeRows(filtered);
+  } finally {
+    dockRemoteThisBuild = null;
+  }
+}
+
+function buildDockTreeRows(filtered: number[]): DockTree {
   const nodes: TreeNode[] = [];
   const keys: string[] = [];
   const model: DockNode[] = [];
 
+  // Pinned workspaces leave their folder for the Pinned heading at the top.
+  const pinned = dockMode
+    ? filtered.filter((id) => {
+      const s = orchestratorSessions.get(id);
+      return !!s && isPinned(s);
+    })
+    : [];
+  const pinnedSet = new Set(pinned);
   const membersByFolder = new Map<string | null, number[]>();
   for (const id of filtered) {
+    if (pinnedSet.has(id)) continue;
     const fid = folderOfSession(id);
     const arr = membersByFolder.get(fid) ?? [];
     arr.push(id);
@@ -2246,10 +2450,13 @@ function buildDockTree(filtered: number[]): DockTree {
   // still external: filing forks nothing); the rest stay in their
   // product's group, emitted last.
   const allLive = dockMode ? externalVisible() : [];
+  // By date, folders are not drawn: an external session filed into one goes
+  // back to its product's group.
+  const byDate = dockMode && dockGroupBy() === "date";
   const liveByFolder = new Map<string, LiveSession[]>();
   const liveUnfiled: LiveSession[] = [];
   for (const s of allLive) {
-    const fid = externalFolderOf(s.key);
+    const fid = byDate ? null : externalFolderOf(s.key);
     if (fid) liveByFolder.set(fid, [...(liveByFolder.get(fid) ?? []), s]);
     else liveUnfiled.push(s);
   }
@@ -2353,9 +2560,48 @@ function buildDockTree(filtered: number[]): DockTree {
       for (const s of liveByFolder.get(f.id) ?? []) emitLive(s, depth + 1);
     }
   };
-  // Workspaces in no folder first, then the folders.
-  for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
-  walk(null, 0);
+  // Pinned first, then workspaces in no folder, then the folders.
+  if (pinned.length > 0) {
+    const heading: DockFolder = { id: PINNED_VIEW_ID, name: editor.t("dock.group_pinned"), parent: null };
+    nodes.push(treeNode(folderNodeEntry(heading, pinned.length, attentionCounts(pinned)), {
+      depth: 0,
+      hasChildren: true,
+    }));
+    keys.push(folderNodeKey(PINNED_VIEW_ID));
+    model.push({ kind: "folder", folderId: PINNED_VIEW_ID });
+    for (const sid of pinned) emitSession(sid, 1);
+  }
+  if (byDate) {
+    // One heading per stretch of time, nearest first; under each, the most
+    // recently interacted-with first, and never-used rows last, in their
+    // own order.
+    const byBucket = new Map<DateBucket, { id: number; at: number | null }[]>();
+    const now = new Date();
+    for (const id of filtered) {
+      if (pinnedSet.has(id)) continue;
+      const s = orchestratorSessions.get(id);
+      if (!s) continue;
+      const at = lastInteractionMs(s);
+      const b = dateBucketOf(at, now);
+      byBucket.set(b, [...(byBucket.get(b) ?? []), { id, at }]);
+    }
+    for (const b of DATE_BUCKETS) {
+      const rows = (byBucket.get(b) ?? []).sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
+      if (rows.length === 0) continue;
+      const ids = rows.map((r) => r.id);
+      const heading: DockFolder = { id: dateViewId(b), name: editor.t("dock.date_" + b), parent: null };
+      nodes.push(treeNode(folderNodeEntry(heading, ids.length, attentionCounts(ids)), {
+        depth: 0,
+        hasChildren: true,
+      }));
+      keys.push(folderNodeKey(heading.id));
+      model.push({ kind: "folder", folderId: heading.id });
+      for (const sid of ids) emitSession(sid, 1);
+    }
+  } else {
+    for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
+    walk(null, 0);
+  }
 
   // The external sessions groups, last: the dock's own workspaces come first.
   // Absent while there is nothing in them (or the feed plugin is not loaded).
@@ -2390,8 +2636,12 @@ function folderNodeEntry(
   count: number,
   rollup: { blocked: number; done: number } = { blocked: 0, done: 0 },
 ): TextPropertyEntry {
+  // Headings in a subdued colour of their own (`ui.dock_heading_fg`, which
+  // falls back to the gutter's grey): they organise the list rather than
+  // being entries in it, and leave the workspace names and the state column
+  // to carry the eye.
   const segs: Entry[] = [
-    { text: f.name, style: { bold: true } },
+    { text: f.name, style: { bold: true, fg: "ui.dock_heading_fg" } },
   ];
   if (count > 0) {
     segs.push({ text: `  (${count})`, style: { fg: "ui.menu_disabled_fg" } });
@@ -2473,13 +2723,8 @@ function remoteDetailSegs(s: AgentSession): Entry[] {
 function sessionNodeEntry(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const segs: Entry[] = [stateGlyphEntry(s)];
-  if (s.remote) {
-    segs.push({
-      text: REMOTE_GLYPH[s.remote.kind] + " ",
-      style: { fg: remoteStateFg(s.remote.state), bold: true },
-    });
-  }
+  // The state and location are on the right (see `indicatorColumn`).
+  const segs: Entry[] = [];
   // No "active" styling here, deliberately. The dock has exactly one
   // highlight — the tree's — and `buildDockSpec` keeps it on the active
   // session whenever the dock is blurred, so the highlight *is* the
@@ -2490,14 +2735,9 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
   // by the connection state — the same detail the pill shows on the right,
   // and skipped when the label already names it (see `remoteDetailSegs`).
   segs.push(...remoteDetailSegs(s));
-  // A discovered on-disk worktree keeps its "· on-disk" tag — the "this
-  // row isn't an open session yet" indicator the pill also shows.
-  if (s.discovered) {
-    segs.push({
-      text: "  " + editor.t("pill.on_disk_worktree"),
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    });
-  }
+  // No "· on-disk worktree" tag: the hollow `○` in the status column
+  // already says "a worktree with no workspace open yet", and the tag only
+  // pushed the name off a narrow dock.
   // A being-created placeholder trails its status on the single compact line
   // (there's no second row to put it on).
   if (s.pending) {
@@ -2505,8 +2745,71 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
       text: "  " + s.pending.message,
       style: { fg: pendingMsgFg(s.pending), italic: true },
     });
+    return cardSplitRow(segs, indicatorColumn([], stateGlyphEntry(s), s.remote));
   }
-  return styledRow(segs as Parameters<typeof styledRow>[0]);
+  // The git summary (↑ahead ↓behind +added −deleted) to the left of the
+  // indicator column: the host reserves the whole group before fitting the
+  // name, so it stands in one column down the dock and a long name is what
+  // gets cut.
+  return withRowMenuOnHover(
+    cardSplitRow(segs, indicatorColumn(gitLineParts(s).right, stateGlyphEntry(s), s.remote)),
+  );
+}
+
+// The row's menu, offered where its status is while the pointer is over it
+// (the host draws `hoverAction` in place of the right-hand group). A click
+// fires the tree's `action` event, which opens the same menu as a
+// right-click or F2 — the mouse's way to it without knowing either.
+const ROW_MENU_GLYPH = "⋯";
+function withRowMenuOnHover(row: TextPropertyEntry): TextPropertyEntry {
+  row.properties = { ...(row.properties ?? {}), hoverAction: ROW_MENU_GLYPH };
+  return row;
+}
+
+// ── The indicator column ──────────────────────────────────────────────────
+//
+// A dock row's state and location stand at its right edge, in one constant
+// column down the dock: the state symbol is always the row's last cell, the
+// location (a remote backend's glyph, coloured by its connection) the one
+// two to its left. A workspace on this computer leaves the location cell
+// blank rather than giving it up, so the state column never shifts — and
+// the location column is only there at all while some workspace in the dock
+// is remote. Whatever else a row reports (the git summary, a retry hint)
+// stands to the left of the column, and the name gets what remains: the
+// host reserves the whole right group before fitting the name.
+
+// Whether any workspace is remote, settled once per tree build (see
+// `buildDockTree`) rather than walked again for every row.
+let dockRemoteThisBuild: boolean | null = null;
+function dockHasRemote(): boolean {
+  if (dockRemoteThisBuild !== null) return dockRemoteThisBuild;
+  for (const s of orchestratorSessions.values()) if (s.remote) return true;
+  return false;
+}
+
+function indicatorColumn(
+  lead: Entry[],
+  state: Entry,
+  remote?: AgentSession["remote"],
+): Entry[] {
+  const out: Entry[] = [...lead];
+  if (out.length > 0) out.push({ text: " " });
+  if (dockHasRemote()) {
+    out.push(
+      remote
+        ? { text: REMOTE_GLYPH[remote.kind], style: { fg: remoteStateFg(remote.state), bold: true } }
+        : { text: " " },
+      { text: " " },
+    );
+  }
+  // Nothing to indicate — an idle workspace, or a worktree on disk with no
+  // workspace open yet — is a blank cell, not a `·` or a hollow `○`: the
+  // column keeps its width, so the rows that do say something (needs you,
+  // done, working, failed) still line up and are all the eye finds there.
+  const glyph = state.text.trimEnd();
+  const quiet = glyph === ON_DISK_GLYPH || glyph === STATE_SYMBOL.idle.glyph;
+  out.push(quiet ? { text: " " } : { ...state, text: glyph });
+  return out;
 }
 
 // The dock's "card" density renders each session leaf as a fixed
@@ -2516,8 +2819,8 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
 // right, so the status columns line up down the dock:
 //
 //   ╭──────────────────────────────╮
-//   │ * fresh-27            ↑2 +14 │   name              git
-//   │ ▸ fix/wrapped-nav   PR #2784 │   branch / project  PR
+//   │fresh-27            ↑2 +14 ⇅ *│   name     git · location · state
+//   │▸ fix/wrapped-nav     PR #2784│   branch / project            PR
 //   ╰──────────────────────────────╯
 //
 // It was three rows: the third held the PR badge and stood empty on
@@ -2537,35 +2840,21 @@ const DOCK_CARD_HEIGHT = 2;
 // — which knows the card's *actual* inner width, responsive or dragged
 // — inserts the gap. Plugin-side padding could only estimate that width
 // and drifted at every other one.
+//
+// `fadeTail` asks the host to fade a name that runs out of room into the
+// row's ground rather than end it in `…` (the pane edge fade's blend).
 function cardSplitRow(left: Entry[], right: Entry[]): TextPropertyEntry {
   const row = styledRow([...left, ...right] as Parameters<typeof styledRow>[0]);
-  if (right.length === 0) return row;
+  if (right.length === 0) {
+    row.properties = { fadeTail: true };
+    return row;
+  }
   row.properties = {
     align: "between",
     splitByte: left.reduce((n, e) => n + utf8Len(e.text), 0),
+    fadeTail: true,
   };
   return row;
-}
-
-// Truncate to `cols` display columns, ellipsising when it doesn't fit.
-// Code-point aware (`Array.from`), so a multi-byte name can't be cut
-// mid-character.
-function capText(s: string, cols: number): string {
-  const chars = Array.from(s);
-  if (chars.length <= cols) return s;
-  return chars.slice(0, Math.max(1, cols - 1)).join("") + "…";
-}
-
-// Columns a group of entries occupies, for the left-group cap below.
-function entriesWidth(entries: Entry[]): number {
-  return entries.reduce((n, e) => n + Array.from(e.text).length, 0);
-}
-
-// Inner width of a card at the dock's default width — an estimate (the
-// dock can be dragged), used only to cap the branch so it doesn't shove
-// the right-hand group off the row. The host does the exact alignment.
-function cardInnerColsEstimate(): number {
-  return Math.max(12, dockContentCols(dockWidth()) - 2);
 }
 
 // Card line 1 (the tree node's primary text): state glyph, optional
@@ -2576,13 +2865,8 @@ function cardInnerColsEstimate(): number {
 function sessionCardPrimary(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const segs: Entry[] = [stateGlyphEntry(s)];
-  if (s.remote) {
-    segs.push({
-      text: REMOTE_GLYPH[s.remote.kind] + " ",
-      style: { fg: remoteStateFg(s.remote.state), bold: true },
-    });
-  }
+  // The state and location are on the right (see `indicatorColumn`).
+  const segs: Entry[] = [];
   // See `sessionNodeEntry`: the tree's highlight is the only one.
   segs.push({ text: s.label, style: { bold: true } });
   // A remote session surfaces its backend target (host / ns·pod) coloured
@@ -2595,15 +2879,19 @@ function sessionCardPrimary(id: number): TextPropertyEntry {
   if (s.pending) {
     return cardSplitRow(
       segs,
-      pendingActionable(s.pending)
-        ? [{
-          text: "↵ " + editor.t("dock.ctx_retry"),
-          style: { fg: "ui.menu_disabled_fg", italic: true },
-        }]
-        : [],
+      indicatorColumn(
+        pendingActionable(s.pending)
+          ? [{
+            text: "↵ " + editor.t("dock.ctx_retry"),
+            style: { fg: "ui.menu_disabled_fg", italic: true },
+          }]
+          : [],
+        stateGlyphEntry(s),
+        s.remote,
+      ),
     );
   }
-  return cardSplitRow(segs, gitLineParts(s).right);
+  return cardSplitRow(segs, indicatorColumn(gitLineParts(s).right, stateGlyphEntry(s), s.remote));
 }
 
 // Card line 2 (the continuation row): what this workspace *is* on the
@@ -2625,7 +2913,9 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
     ];
   }
   const dim = "ui.menu_disabled_fg";
-  const right = prLineEntries(s);
+  // The PR badge, but not the picker's "· on-disk worktree" tag: in the
+  // dock the hollow `○` in the status column already says it.
+  const right = s.discovered ? [] : prLineEntries(s);
   // The branch earns the row only when it differs from the workspace
   // name — a worktree's branch is usually named after it, and printing
   // it twice was pure noise. Otherwise the project takes the slot: it's
@@ -2647,17 +2937,13 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   if (text === s.label) {
     return [cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right)];
   }
-  // Cap the branch/project so the badge keeps its columns: the host
-  // truncates the row's *end*, which is the badge. Budget = the card's
-  // inner width less this row's icon (2 cols), the badge, and the one
-  // column that always separates the two groups.
-  const cap = cardInnerColsEstimate() - 2 - entriesWidth(right) -
-    (right.length > 0 ? 1 : 0);
+  // No cap here: the host fits a split row to the card's real width,
+  // cutting the branch and keeping the badge whole (`fit_between_row`).
   return [
     cardSplitRow(
       [
         { text: icon + " ", style: { fg: dim } },
-        { text: capText(text, Math.max(8, cap)), style: { fg: dim, italic: !showBranch } },
+        { text, style: { fg: dim, italic: !showBranch } },
       ],
       right,
     ),
@@ -3054,8 +3340,17 @@ const BUILTIN_BLOCKED_SOURCES: string[] = [
   "\\bdon'?t ask again\\b",
   "\\bwaiting for (your )?(input|approval|confirmation)\\b",
   "\\besc(ape)? to cancel\\b",
+  // A selection menu's footer — Claude Code's and Codex's first-run screens
+  // and their pickers end in one ("Enter to confirm · Esc to cancel").
+  "\\benter to (confirm|select|continue)\\b",
+  // Claude Code's first-run screens that end in nothing the rules above
+  // read as a question, though an agent sitting on one waits on the user as
+  // surely as on a permission prompt: the theme picker (its last line is the
+  // syntax-theme hint) and the sign-in method picker.
+  "\\bsyntax theme: .*\\(ctrl\\+t to (disable|enable)\\)",
+  "\\bselect login method\\b",
 ];
-const BUILTIN_RULES_VERSION = 1;
+const BUILTIN_RULES_VERSION = 2;
 
 // The rule set in force: where it came from and its version, for
 // `explainState` and the CLI's `agent explain`.
@@ -3289,7 +3584,9 @@ async function loadDetectionRules(): Promise<DetectionRules> {
 // The most recent line of the agent terminal that reads as a question for
 // the user, with the rule that matched it — or null when none does.
 function agentQuestionMatch(s: AgentSession): { line: string; rule: string; index: number } | null {
-  const lines = s.recentLines ?? [];
+  // The bottom of the screen last, so it is read first: it is where a TUI's
+  // prompt actually is.
+  const lines = [...(s.recentLines ?? []), ...(s.screenTail ?? [])];
   for (let i = lines.length - 1; i >= 0; i--) {
     const idx = BLOCKED_PATTERNS.findIndex((re) => re.test(lines[i]));
     if (idx >= 0) {
@@ -3362,7 +3659,7 @@ function explainState(s: AgentSession): StateExplanation {
     outputAgeMs: age,
     osc: s.oscRunning ?? null,
     unseenWork: s.workedSinceSeen === true,
-    recentLines: [...(s.recentLines ?? [])],
+    recentLines: [...(s.recentLines ?? []), ...(s.screenTail ?? [])],
     rules: { version: detectionRules.version, source: detectionRules.source },
   };
 }
@@ -3424,6 +3721,48 @@ function attentionCounts(ids: Iterable<number>): { blocked: number; done: number
 // These rows are shown verbatim in the Explain popup, so a line that is only
 // cursor-parking and a bell has to read as empty rather than as the question
 // that blocked the agent.
+// Read the bottom of the agent's screen once it has gone quiet (see
+// `AgentSession.screenTail`). One read in flight per session: a chatty
+// terminal calls this on every output batch, and each call only clears the
+// stale tail; the waiting read re-arms itself until the output stops.
+function scheduleScreenTail(s: AgentSession): void {
+  s.screenTail = undefined;
+  if (s.screenTailPending) return;
+  s.screenTailPending = true;
+  const quietFor = (): number => (s.lastOutputAt === null ? Infinity : Date.now() - s.lastOutputAt);
+  const run = async (): Promise<void> => {
+    let screens: TerminalScreen[] = [];
+    // Wait for quiet, read, and — when output arrived during the read (its
+    // own call found this read pending and left it to us) — wait again.
+    for (;;) {
+      while (quietFor() < IDLE_AFTER_MS) {
+        await editor.delay(Math.max(50, IDLE_AFTER_MS - quietFor() + 50));
+      }
+      screens = await editor.getTerminalScreens(s.id);
+      if (quietFor() >= IDLE_AFTER_MS) break;
+    }
+    s.screenTailPending = false;
+    if (orchestratorSessions.get(s.id) !== s) return;
+    // The agent's own terminal: the window's only one, or the one its tab
+    // names after the agent. With several and none named for it, there is no
+    // telling which is the agent's, and a side shell's `[y/N]` must not mark
+    // the agent as needing you — so no tail, as the cursor-row history
+    // already keeps to the agent's own terminal.
+    const own = screens.length <= 1
+      ? screens
+      : screens.filter((sc) => s.terminalTitle && sc.name === s.terminalTitle);
+    const tail: string[] = [];
+    for (const sc of own) {
+      tail.push(...sc.lines.map((l) => l.trim()).filter((l) => l !== "").slice(-RECENT_LINES));
+    }
+    s.screenTail = tail;
+    if (agentQuestionMatch(s) && openPanel && dockMode) refreshOpenDialog();
+  };
+  void run().catch(() => {
+    s.screenTailPending = false;
+  });
+}
+
 function noteRecentLine(s: AgentSession, line: string): void {
   const clean = line
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
@@ -4039,9 +4378,9 @@ function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
   if (g.deleted) {
     right.push({ text: `${sep()}−${g.deleted}`, style: { fg: "ui.file_status_deleted_fg" } });
   }
-  if (right.length === 0) {
-    right.push({ text: editor.t("pill.clean"), style: { fg: dim, italic: true } });
-  }
+  // Nothing ahead, behind or changed says nothing: the right column stays
+  // empty rather than print "clean" on every row that has no news, so the
+  // rows that *do* carry a summary are the ones the eye lands on.
   return { left, right };
 }
 
@@ -4081,11 +4420,10 @@ function prLineEntries(s: AgentSession): Entry[] {
     }
     return out;
   }
-  // A discovered on-disk worktree keeps its "· on-disk worktree" tag —
-  // it's a useful "this row isn't an open session yet" indicator, not a
-  // PR placeholder. A live session with no PR returns nothing here; the
-  // caller renders a blank spacer line in its place (keeping the card a
-  // uniform three lines) rather than a "no PR yet" placeholder.
+  // A discovered on-disk worktree keeps its "· on-disk worktree" tag in the
+  // picker's pill — there it is the row's only "not open yet" marker. The
+  // dock leaves it out (see `sessionCardExtraLines`): its hollow `○` says it.
+  // A live session with no PR returns nothing here.
   if (s.discovered) {
     return [{ text: editor.t("pill.on_disk_worktree"), style: { fg: dim, italic: true } }];
   }
@@ -6231,16 +6569,23 @@ function buildDockSpec(): WidgetSpec {
           { keys: "Enter", label: editor.t("dock.hint_select") },
           { keys: "Esc", label: editor.t("dock.hint_cancel") },
         ])]
-      : [
-        centered([
-          { keys: "↑↓", label: editor.t("dock.hint_switch") },
-          { keys: "→←", label: editor.t("dock.hint_fold") },
-        ]),
-        centered([
-          { keys: "Enter", label: editor.t("dock.hint_edit") },
-          { keys: "F2", label: editor.t("dock.hint_menu") },
-        ]),
-      ];
+      // One line, not two: the dock is the switcher, and the tree it
+      // leaves room for is worth more than spelling out every key. Folding
+      // is said by the ▼/▶ on each heading; the row menu is also the `⋯` a
+      // hovered row shows. `Enter` is dropped before `↑↓` when the dock is
+      // too narrow for all three.
+      : [centered(
+        dockCols >= 30
+          ? [
+            { keys: "↑↓", label: editor.t("dock.hint_switch") },
+            { keys: "Enter", label: editor.t("dock.hint_edit") },
+            { keys: "F2", label: editor.t("dock.hint_menu") },
+          ]
+          : [
+            { keys: "↑↓", label: editor.t("dock.hint_switch") },
+            { keys: "F2", label: editor.t("dock.hint_menu") },
+          ],
+      )];
   const bottomRows = bottom.length;
 
   // Size the tree to fill the dock. Top chrome is the action row, the
@@ -6322,10 +6667,11 @@ function buildDockSpec(): WidgetSpec {
       // scroll/selection in node units either way.
       itemHeight: dockView === "card" ? DOCK_CARD_HEIGHT : 1,
       cardBorders: dockView === "card",
-      // One column per level, not two: the dock is narrow, a row's first
-      // columns are already the ▼/▶ gutter and its state glyph, and a
-      // folder's rows read as its own at one column in from its name.
-      indentCols: 1,
+      // Two columns per level: a heading's name starts two in (after its
+      // ▼/▶), and the rows under it start in line with that name, so they
+      // read as its own. (It was one column while every row began with a
+      // two-column state glyph; the state now sits at the row's right edge.)
+      indentCols: 2,
       // In the dock (unlike the modal, where Up/Down forward from the
       // filter) the tree itself is the default focus — trees are always
       // focusable — so ↑↓ drive live-switch, →← fold, and Enter dives /
@@ -6422,6 +6768,14 @@ function dockMainGroups(): DockMenuGroup[] {
       ],
     },
     {
+      heading: editor.t("dock.menu_h_group"),
+      side: "right",
+      opts: [
+        { key: "main:group:folders", label: radio(dockGroupBy() === "folders") + editor.t("dock.menu_group_folders") },
+        { key: "main:group:date", label: radio(dockGroupBy() === "date") + editor.t("dock.menu_group_date") },
+      ],
+    },
+    {
       heading: editor.t("dock.menu_h_show"),
       side: "right",
       opts: [
@@ -6429,11 +6783,19 @@ function dockMainGroups(): DockMenuGroup[] {
         { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
         // The external sessions source that reads the Claude CLI's sign-in and a
         // private API, switchable here rather than only in Settings.
+        // The Claude sources, off until asked for: each runs the user's Claude
+        // CLI, and the cloud one reads its sign-in and a private API.
         ...(externalFeed()
-          ? [{
-            key: "main:claude-cloud",
-            label: check(externalFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
-          }]
+          ? [
+            {
+              key: "main:claude-local",
+              label: check(externalFeed()!.claudeLocalEnabled()) + editor.t("dock.claude_local"),
+            },
+            {
+              key: "main:claude-cloud",
+              label: check(externalFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
+            },
+          ]
           : []),
       ],
     },
@@ -6603,9 +6965,20 @@ function runDockMenuOption(optKey: string): void {
     renderMainMenu();
     return;
   }
+  if (optKey === "main:group:folders" || optKey === "main:group:date") {
+    setDockGroupBy(optKey === "main:group:date" ? "date" : "folders");
+    refreshOpenDialog();
+    renderMainMenu();
+    return;
+  }
   if (optKey === "main:empty") {
     toggleHideTrivial();
     renderMainMenu();
+    return;
+  }
+  if (optKey === "main:claude-local") {
+    const feed = externalFeed();
+    if (feed) void feed.setClaudeLocal(!feed.claudeLocalEnabled()).then(renderMainMenu);
     return;
   }
   if (optKey === "main:claude-cloud") {
@@ -6880,15 +7253,7 @@ function closeCreateFolderDialog(): void {
 // host-owned tree state.
 function toggleDockFolderExpansion(folderKey: string): void {
   if (!openPanel) return;
-  const group = externalGroupOfKey(folderKey);
-  if (group) {
-    setExternalCollapsed(group, !externalCollapsed(group));
-  } else {
-    const set = loadExpanded();
-    if (set.has(folderKey)) set.delete(folderKey);
-    else set.add(folderKey);
-    saveExpanded();
-  }
+  setFolderKeyExpanded(folderKey, !folderKeyExpanded(folderKey));
   // Through the reconciler: while a search holds every folder open, the
   // flip is remembered for later rather than drawn.
   applyDockExpansion();
@@ -6997,7 +7362,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     if (s?.url && plan?.kind !== "teleport") {
       items.push({ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser", ...(items.length ? {} : { intent: "primary" as const }) });
     }
-    items.push({ label: editor.t("dock.ctx_move"), key: "ctx-live-move" });
+    if (dockGroupBy() !== "date") items.push({ label: editor.t("dock.ctx_move"), key: "ctx-live-move" });
     return contextMenuSpec(s ? s.title : state.target.key, items, [], s ? liveInfoLines(s) : []);
   }
   // A folder's context menu: organise actions (Rename / New Subfolder /
@@ -7040,7 +7405,9 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     [
       { label: editor.t("dock.ctx_visit"), key: "ctx-visit", intent: "primary" },
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename-session" },
-      { label: editor.t("dock.ctx_move"), key: "ctx-move" },
+      // By date there are no folders on screen to pick from.
+      ...(dockGroupBy() === "date" ? [] : [{ label: editor.t("dock.ctx_move"), key: "ctx-move" }]),
+      { label: editor.t(s && isPinned(s) ? "dock.ctx_unpin" : "dock.ctx_pin"), key: "ctx-pin" },
       // Re-scans the whole list, not just this row: a worktree added or
       // removed outside the editor shows up (or goes) without reopening the
       // dock.
@@ -7131,6 +7498,8 @@ function openDockContextMenu(index: number, col: number, row: number): void {
   if (!openDialog) return;
   const node = openDialog.dockNodes[index];
   if (!node) return;
+  // A dock heading (Pinned, a date) has nothing to organise.
+  if (node.kind === "folder" && isViewFolder(node.folderId)) return;
   const target: DockMenuTarget = node.kind === "folder"
     ? { kind: "folder", id: node.folderId }
     : node.kind === "live"
@@ -7235,8 +7604,18 @@ function fileDockRow(row: DockNode, folderId: string | null): void {
  *  that is only in one. */
 function dropFolderFor(row: DockNode, to: DockNode): string | null | undefined {
   const external = row.kind === "live";
+  // By date there are no folders on screen to drop into, and a pinned row
+  // stands outside its folder: dropping on either would file the row into
+  // a folder the user can't see.
+  if (to.kind !== "folder" && dockGroupBy() === "date") return undefined;
+  if (to.kind === "session") {
+    const target = orchestratorSessions.get(to.sessionId);
+    if (target && isPinned(target)) return undefined;
+  }
   switch (to.kind) {
     case "folder":
+      // A dock heading is no place to file a row.
+      if (isViewFolder(to.folderId)) return undefined;
       if (!isExternalFolder(to.folderId)) return to.folderId;
       return external ? null : undefined;
     case "session":
@@ -8929,7 +9308,7 @@ function agentSessionUuid(): string {
 function resolveAgentLaunch(
   argv: string[],
   opts?: { auto?: boolean; prompt?: string; systemPrompt?: string },
-): { launch: string[]; resume?: string[] } {
+): { launch: string[]; resume?: string[]; transcript?: (cwd: string) => string } {
   if (argv.length === 0) return { launch: argv };
   const argv0 = argv[0];
   const base = editor.pathBasename(argv0) || argv0;
@@ -8978,9 +9357,14 @@ function resolveAgentLaunch(
       return { launch: [...withAuto, ...promptArgs], resume };
     }
     const id = agentSessionUuid();
+    const { transcriptFor, configDir } = entry.spec.provision;
     return {
       launch: [...withAuto, idFlag, id, ...promptArgs],
       resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id)), ...autoArgs],
+      // Where the conversation for `id` will be, for the cwd it runs in.
+      transcript: transcriptFor && configDir
+        ? (cwd) => transcriptFor(cwd, id, configDir((n) => editor.getEnv(n) || "", homeDir()))
+        : undefined,
     };
   }
   if (entry.spec.continue) {
@@ -15927,7 +16311,7 @@ async function runLocalCreate(id: number): Promise<void> {
   const teach = teachEntry?.systemPrompt ?? null;
 
   const argv = splitAgentCmd(cmd);
-  const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv, {
+  const { launch: launchArgv, resume: resumeArgv, transcript } = resolveAgentLaunch(argv, {
     auto: spec.auto,
     prompt: spec.startPrompt,
     systemPrompt: teach ? FRESH_CLI_SYSTEM_PROMPT : undefined,
@@ -15950,6 +16334,9 @@ async function runLocalCreate(id: number): Promise<void> {
       command: launchArgv.length > 0 ? launchArgv : undefined,
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
+      // Only on this computer: the agent's config folder (and so its
+      // transcript) is read from here, and a remote one's is elsewhere.
+      resumeRequires: transcript && isLocalDir(root) ? transcript(root) : undefined,
       // Grow the placeholder the user has been looking at (and may have
       // renamed or filed away) into the live session, keeping its window id
       // and durable workspace id.
@@ -15979,6 +16366,8 @@ async function runLocalCreate(id: number): Promise<void> {
       settleCreateOutcome(id, { ok: false, error: "workspace creation was dismissed" });
       return;
     }
+    // Creating it is the user's doing: it is dated today until they type in it.
+    recordInteraction(result.stableId || undefined, root);
     // Tag the new window by id: a background or scripted create leaves
     // another window active, and the tag must not land there (#3786).
     editor.setWindowState("project_path", effectiveProjectPath, winId);
@@ -17680,7 +18069,7 @@ function dockActivate(): void {
   const node = dockSelectedNode();
   // Choosing a folder: Enter on one picks it; nothing else is a target.
   if (movePick) {
-    if (node?.kind === "folder" && !isExternalFolder(node.folderId)) applyMovePick(node.folderId);
+    if (node?.kind === "folder" && !isSyntheticFolder(node.folderId)) applyMovePick(node.folderId);
     return;
   }
   if (node && node.kind === "folder") {
@@ -18208,6 +18597,13 @@ editor.on("widget_event", (e) => {
         openRenameWorkspaceDialog(id);
         return;
       }
+      if (e.widget_key === "ctx-pin") {
+        closeDockContextMenu();
+        const s = orchestratorSessions.get(id);
+        if (s) setPinned(s, !isPinned(s));
+        if (openPanel && dockMode) refreshOpenDialog();
+        return;
+      }
       if (e.widget_key === "ctx-move") {
         // The dock asks for the target: the user clicks a folder.
         closeDockContextMenu();
@@ -18670,6 +19066,19 @@ editor.on("widget_event", (e) => {
       dropOnDockRow(payload.key, toKey);
       return;
     }
+    // The `⋯` a hovered row shows (see `withRowMenuOnHover`) → that row's
+    // menu, anchored at the row the way the keyboard's is.
+    if (e.event_type === "action" && dockMode && e.widget_key === "sessions") {
+      // Choosing a folder to move into: a row's menu is not a target.
+      if (movePick) return;
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const key = typeof payload.key === "string" ? payload.key : null;
+      if (openDialog && key && openDialog.dockKeys.includes(key)) {
+        openDialog.dockSelKey = key;
+        openDockContextMenuFromKeyboard();
+      }
+      return;
+    }
     // Right-click on a tree node → open its context menu. Only the dock
     // wires this up (the host fires `context` for right-clicks in the dock
     // column); the modal picker has its own action buttons. For the tree
@@ -18733,7 +19142,7 @@ editor.on("widget_event", (e) => {
           // Choosing a folder: a click on one picks it; a click anywhere
           // else in the tree only moves the highlight.
           if (movePick) {
-            if (payload.via === "click" && node?.kind === "folder" && !isExternalFolder(node.folderId)) {
+            if (payload.via === "click" && node?.kind === "folder" && !isSyntheticFolder(node.folderId)) {
               applyMovePick(node.folderId);
             }
             return;
@@ -18906,15 +19315,7 @@ editor.on("widget_event", (e) => {
       const key = payload.key;
       const expanded = payload.expanded;
       if (typeof key === "string" && key.startsWith(FOLDER_NODE_PREFIX)) {
-        const group = externalGroupOfKey(key);
-        if (group) {
-          setExternalCollapsed(group, expanded !== true);
-        } else {
-          const set = loadExpanded();
-          if (expanded === true) set.add(key);
-          else set.delete(key);
-          saveExpanded();
-        }
+        setFolderKeyExpanded(key, expanded === true);
         // A fold changes how many rows the tree occupies; re-render so
         // the blank padding between the tree and the bottom hint bar
         // re-balances and the hints stay pinned to the dock's bottom.
@@ -19089,6 +19490,16 @@ editor.on("window_created", () => {
   // host actions creating windows just need the picker to
   // refresh.
   refreshOpenDialog();
+});
+
+// The user typed into a workspace (throttled by the host): it is now the
+// most recent, and By date may have to move it up to Today.
+editor.on("window_interaction", (args) => {
+  const s = orchestratorSessions.get(args.window_id);
+  if (!s) return;
+  const before = dateBucketOf(lastInteractionMs(s));
+  recordInteraction(s.stableId, s.root);
+  if (dockMode && dockGroupBy() === "date" && before !== "today") refreshOpenDialog();
 });
 
 editor.on("window_closed", (args) => {
@@ -19298,6 +19709,7 @@ editor.on("terminal_output", (payload) => {
       typeof payload.last_line === "string"
     ) {
       noteRecentLine(s, payload.last_line);
+      scheduleScreenTail(s);
     }
     // Terminal output is activity — feed the dock's day-granularity recency
     // order (persists at most once per session per day).

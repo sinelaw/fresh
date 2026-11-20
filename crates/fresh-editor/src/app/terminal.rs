@@ -1197,6 +1197,12 @@ impl Window {
                 .cloned();
             let ephemeral = self.ephemeral_terminals.contains(&old_id);
             let script_access = self.terminal_has_script_access(old_id);
+            // An agent with no conversation to rejoin is re-run from its
+            // launch command here too, as on restore and on restart.
+            let relaunch = self
+                .terminal_resume_requires
+                .get(&old_id)
+                .is_some_and(|p| self.resume_target_missing(p));
 
             let spawn = RespawnSpec {
                 old_id,
@@ -1209,6 +1215,7 @@ impl Window {
                 launch_argv,
                 ephemeral,
                 script_access,
+                relaunch,
             };
             match self.respawn_terminal_pty(buffer_id, spawn) {
                 Some(_) => revived += 1,
@@ -1248,7 +1255,13 @@ impl Window {
             return None;
         }
 
-        let spawn_argv = spec.resume_argv.as_ref().or(spec.launch_argv.as_ref());
+        // An agent with no conversation to resume is run again from its
+        // launch command, while its resume argv is kept for once there is one.
+        let spawn_argv = if spec.relaunch {
+            spec.launch_argv.as_ref().or(spec.resume_argv.as_ref())
+        } else {
+            spec.resume_argv.as_ref().or(spec.launch_argv.as_ref())
+        };
         let wrapper = match spawn_argv {
             Some(argv) => self.authority().terminal_command(argv),
             None => self.resolved_terminal_wrapper(),
@@ -1298,6 +1311,10 @@ impl Window {
         // values come from the caller's spec rather than the maps, so this is
         // correct even when the exit path already dropped the old entries.
         self.rekey_terminal_script_token(spec.old_id, new_id);
+        // What a resume needs carries over to the reborn terminal.
+        if let Some(path) = self.terminal_resume_requires.remove(&spec.old_id) {
+            self.terminal_resume_requires.insert(new_id, path);
+        }
         if new_id != spec.old_id {
             self.terminal_backing_files.remove(&spec.old_id);
             self.terminal_log_files.remove(&spec.old_id);
@@ -1408,6 +1425,7 @@ impl Window {
             .clone()
             .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
         let launch_argv = exited.command.clone().filter(|argv| !argv.is_empty());
+        let relaunch = exited.nothing_to_resume;
 
         let spec = RespawnSpec {
             old_id: exited.terminal_id,
@@ -1420,6 +1438,7 @@ impl Window {
             launch_argv,
             ephemeral: exited.ephemeral,
             script_access: exited.script_access,
+            relaunch,
         };
         let Some(new_id) = self.respawn_terminal_pty(buffer_id, spec) else {
             // Put the record back so the user can retry the restart.
@@ -1473,6 +1492,11 @@ struct RespawnSpec {
     /// [`Window::remint_terminal_script_env`]) rather than inheriting the dead
     /// one's, which it could not see anyway.
     script_access: bool,
+    /// Run the launch argv even though a resume argv is held: the agent has
+    /// no conversation to rejoin (see `ExitedTerminal::nothing_to_resume`).
+    /// The resume argv is still registered for the reborn terminal, for once
+    /// there is one.
+    relaunch: bool,
 }
 
 impl Editor {

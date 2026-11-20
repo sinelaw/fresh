@@ -12,6 +12,12 @@ export const CLAUDE: AgentEntry = {
       resumeArgs: ["--resume", "{id}"],
       idFlags: ["--resume", "-r"],
       sessionFlags: ["--continue", "-c", "--from-pr", "--teleport"],
+      // `<config>/projects/<cwd, encoded>/<id>.jsonl`, written at the first
+      // message — so a run that quit at the trust prompt leaves none. The
+      // folder is matched as `*`: Claude shortens a long cwd's name and adds
+      // a hash, and the session id alone is unique.
+      transcriptFor: (_cwd, id, configDir) => `${configDir}/projects/*/${id}.jsonl`,
+      configDir: (env, home) => env("CLAUDE_CONFIG_DIR") || `${home}/.claude`,
     },
     continue: { resumeArgs: ["--continue"] },
   },

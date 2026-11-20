@@ -69,6 +69,7 @@ a `SHOTS` list, and `shots/_common.py` holds step helpers such as
 | `config` | merged into the base user `config.json` |
 | `config_files` | extra files to write into the project, e.g. `.fresh/config.json` |
 | `args` | arguments to `fresh` |
+| `prepare` | shell commands run in the project after its `setup.sh` and before Fresh starts, with `DOCSHOT_HOME` set (for state Fresh only reads at startup) |
 | `steps` | what to do, in order |
 
 Steps:
@@ -78,6 +79,8 @@ Steps:
 | `("key", "ctrl+p", ...)` | press keys (xdotool names: `Return`, `Escape`, `Down`, `ctrl+comma`, `slash`, ...) |
 | `("text", "open settings")` | type text |
 | `("click", col, row)` | click a cell (0-based) |
+| `("rclick_text", "low-stock")` | right-click where this text is on screen |
+| `("hover_text", "query-perf")` | put the pointer where this text is, without clicking |
 | `("click_text", "[ User ]")` | click where this text is on screen |
 | `("shell", "git stash")` | run a shell command in the project directory |
 | `("wait", "Settings")` | wait until the text is on screen |

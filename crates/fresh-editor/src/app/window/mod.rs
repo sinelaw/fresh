@@ -156,6 +156,16 @@ pub struct ExitedTerminal {
     /// (#3778), not because it exited: a save keeps it as the live terminal
     /// it was, so it runs again once the folder is trusted.
     pub held_by_trust: bool,
+    /// There is no conversation to resume: the path its launcher named
+    /// (`resume_requires`) is known not to be there — it quit before a
+    /// conversation began (a declined trust prompt, a failed start) — so a
+    /// restart re-runs the launch command instead. Never set for an agent
+    /// that named no such path: without one there is no telling, and it is
+    /// offered a resume as it always was.
+    pub nothing_to_resume: bool,
+    /// The terminal's `resume_requires` path, carried so a workspace save
+    /// keeps it for the next restore.
+    pub resume_requires: Option<std::path::PathBuf>,
 }
 
 impl ExitedTerminal {
@@ -182,8 +192,11 @@ impl ExitedTerminal {
 
     /// Whether restarting this terminal rejoins an agent conversation (as
     /// opposed to re-running the launch command or opening a plain shell).
+    /// Not when its first run died before there was one: `claude --resume
+    /// <id>` then fails with "No conversation found", and offering it is
+    /// offering a second failure.
     pub fn resumes_agent(&self) -> bool {
-        self.resume.as_ref().is_some_and(|argv| !argv.is_empty())
+        self.resume.as_ref().is_some_and(|argv| !argv.is_empty()) && !self.nothing_to_resume
     }
 }
 
@@ -1148,6 +1161,13 @@ pub struct Window {
     /// just re-run their launch command.
     pub terminal_resume_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
+
+    /// For an agent terminal whose launcher said so, the path whose
+    /// existence means its resume argv has a conversation to rejoin
+    /// (`CreateWindowWithTerminalOptions::resume_requires`). Checked on exit,
+    /// through this window's own filesystem.
+    pub terminal_resume_requires:
+        std::collections::HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
 
     /// Terminals whose child was handed a `FRESH_CMD_TOKEN` capability token
     /// (`allowScript`), mapped to the token that terminal's *current*
@@ -2741,6 +2761,7 @@ impl Window {
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
+            terminal_resume_requires: std::collections::HashMap::new(),
             terminal_script_tokens: std::collections::HashMap::new(),
             exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
@@ -2811,6 +2832,39 @@ impl Window {
     }
 
     /// This window's backend (local / devcontainer / remote).
+    /// Whether a terminal's `resume_requires` path is there, on this
+    /// window's own machine. One `*` component matches any directory at that
+    /// level (`~/.claude/projects/*/<id>.jsonl`): the agent names the folder
+    /// after the cwd in ways not worth re-deriving, and the id alone is
+    /// unique.
+    ///
+    /// `None` — can't tell — when the folder the path would be in is not
+    /// there at all. That is what a launcher that guessed the agent's
+    /// storage wrong (another config dir, a changed layout) looks like, and a
+    /// wrong "no conversation" would turn a working Resume into a re-launch
+    /// for good; callers fall back to their pre-check behaviour instead.
+    pub fn resume_target_exists(&self, path: &std::path::Path) -> Option<bool> {
+        use crate::model::host_path::HostPath;
+        let fs = &self.authority().filesystem;
+        let exists = |p: &std::path::Path| fs.exists(HostPath::from_os_str(p.as_os_str()));
+        let spelled = path.to_string_lossy();
+        let Some((dir, rest)) = spelled.split_once("/*/") else {
+            if exists(path) {
+                return Some(true);
+            }
+            return path.parent().filter(|d| exists(d)).map(|_| false);
+        };
+        let entries = fs
+            .read_dir(HostPath::from_os_str(std::ffi::OsStr::new(dir)))
+            .ok()?;
+        Some(entries.iter().any(|e| exists(&e.path.as_path().join(rest))))
+    }
+
+    /// The conversation a terminal's resume needs is known not to be there.
+    pub fn resume_target_missing(&self, path: &std::path::Path) -> bool {
+        self.resume_target_exists(path) == Some(false)
+    }
+
     pub fn authority(&self) -> &crate::services::authority::Authority {
         &self.connection.authority
     }
@@ -5836,7 +5890,23 @@ mod exited_terminal_tests {
             title: None,
             auto_title: None,
             held_by_trust: false,
+            nothing_to_resume: false,
+            resume_requires: None,
         }
+    }
+
+    /// An agent that quit before it had a conversation is offered a
+    /// restart, not a resume that could only fail.
+    #[test]
+    fn an_agent_with_no_conversation_has_nothing_to_resume() {
+        let mut e = record(
+            Some(&["claude", "--session-id", "x"]),
+            Some(&["claude", "--resume", "x"]),
+        );
+        assert!(e.resumes_agent());
+        e.nothing_to_resume = true;
+        assert!(!e.resumes_agent());
+        assert_eq!(e.program_name(), Some("claude"));
     }
 
     /// The status-bar indicator names the program that died. The resume argv

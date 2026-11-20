@@ -12,22 +12,23 @@ The **dock** is the column on the left that lists your workspaces. Pick one to s
 
 Open or close it from **View → Orchestrator Dock**, with **Orchestrator: Toggle Dock**, or with the dock's `×`. `Alt+O` moves the keyboard into the dock and back out again, opening it if it is hidden. In the dock, `↑` and `↓` switch workspaces as you move.
 
-Each row shows the workspace's state, so you can tell at a glance where you are needed:
+Each row shows the workspace's state at its right edge, in one column down the dock, so you can tell at a glance where you are needed. A remote workspace's machine (`⇅` SSH, `⎈` Kubernetes, `⬢` dev container) is shown just to its left, with the git summary (`↑2 +14`) before both:
 
 | Mark | Meaning |
 | --- | --- |
 | **●** | The agent is waiting on you (a question or a permission prompt) |
 | **✓** | It finished work you haven't looked at yet |
 | **\*** | It is working |
-| **·** | Idle |
+| *(blank)* | Idle |
 | **!** | Creating it failed; the row says why and offers **Retry** |
-| **○** | A worktree on disk with no workspace open yet (shown with **All worktrees**) |
+| *(blank)* | A worktree on disk with no workspace open yet (shown with **All worktrees**) |
 
 When a background workspace needs you, the status bar says so. **Orchestrator: Jump to Attention** takes you to it, and **Orchestrator: Jump Back** returns you to where you were.
 
 The dock's **Menu ▾** holds the rest:
 
 - **View:** **Compact** (the default) shows one line per workspace; **Cards** shows a few lines each, with branch, changes and pull request status.
+- **Group:** **Folders** (the default) lists workspaces in your folders. **By date** lists them under **Today**, **This week** (since Monday) and **Older**, by when you last *worked in* each: typed into one of its files or its terminal, or created it. Switching to a workspace or reading in it doesn't count, and neither does an agent working there. Workspaces you have never typed in come last, under **Older**. Pinned workspaces stay on top either way.
 - **Show:** **Empty workspaces** and **All worktrees** (worktrees on disk that have no workspace open yet) can be shown or hidden.
 - **Project:** limit the dock to one project.
 - **Create** and **Manage:** new folders, Machines and Import sessions, described below.
@@ -38,7 +39,9 @@ Click **/ search** (or press `/`) to filter the dock by name.
 
 Folders group workspaces however you like: by feature, by customer, by "done, to review". Create one from **Menu ▾ → New folder…**, then file workspaces into it by dragging them, with **Move to Folder…** from a row's menu (right-click it, or press `F2` on the highlighted row), or with the **Orchestrator: Move to Folder…** command. Folders can be nested, renamed and deleted from their own right-click menu. The arrangement is saved and survives restarts.
 
-The same row menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
+Hovering a row shows **⋯** where its status was; click it for the same menu. The same row menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
+
+**Pin to top** in a row's menu lists the workspace under a **Pinned** heading at the top of the dock, wherever it is filed; **Unpin** puts it back. Pins survive restarts.
 
 ## Starting a task
 
@@ -76,7 +79,7 @@ If a project's folder was moved, renamed or deleted, the New Workspace dialog sa
 
 ## Agents started outside Fresh
 
-Claude Code and Codex sessions you started elsewhere (in another terminal, in Claude Desktop or an editor extension, or in the cloud) are listed in the dock under their own groups. From a session's right-click menu you can open it as a workspace, open it where it runs (in the browser or Claude Desktop), fork a cloud session into a workspace here, or file it into a folder.
+Claude Code and Codex sessions you started elsewhere (in another terminal, in Claude Desktop or an editor extension, or in the cloud) are listed in the dock under their own groups. The Claude ones are off until you ask for them: tick **Claude sessions on this machine** and **Claude cloud sessions** under **Menu ▾ → Show** (the choice is saved). From a session's right-click menu you can open it as a workspace, open it where it runs (in the browser or Claude Desktop), fork a cloud session into a workspace here, or file it into a folder.
 
 **Menu ▾ → Import sessions…** goes further back: pick a machine and choose **Scan** to find sessions other tools have run there, such as Claude Code and Codex transcripts and tmux panes, grouped by project. Choose one and **Import** opens the New Workspace dialog filled in to resume it.
 
