@@ -170,6 +170,26 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Unregister all commands registered by a specific plugin
     fn unregister_commands_by_plugin(&self, plugin_name: &str);
 
+    /// Register `plugin_name`'s file opener. Synchronous, unlike the command
+    /// queue: a file opened right after the registration must see it.
+    /// Defaults to refusing, so a bridge that has not opted in opens
+    /// nothing with plugins.
+    fn register_file_opener(
+        &self,
+        _plugin_name: &str,
+        _options: crate::api::FileOpenerOptions,
+    ) -> Result<(), String> {
+        Err("file openers are not supported here".to_string())
+    }
+
+    /// Drop `plugin_name`'s file opener `id`; whether there was one.
+    fn unregister_file_opener(&self, _plugin_name: &str, _id: &str) -> bool {
+        false
+    }
+
+    /// Drop every file opener `plugin_name` registered.
+    fn unregister_file_openers_by_plugin(&self, _plugin_name: &str) {}
+
     /// Get the plugins directory path
     fn plugins_dir(&self) -> std::path::PathBuf;
 

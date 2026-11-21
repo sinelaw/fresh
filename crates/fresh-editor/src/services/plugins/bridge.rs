@@ -184,6 +184,8 @@ impl PluginFilesystem for RoutedFilesystem {
 
 pub struct EditorServiceBridge {
     pub command_registry: Arc<RwLock<CommandRegistry>>,
+    /// Shared with the editor; see `PluginManager::file_openers`.
+    pub file_openers: Arc<RwLock<fresh_core::file_openers::FileOpenerRegistry>>,
     pub dir_context: DirectoryContext,
     pub theme_cache: Arc<RwLock<std::collections::HashMap<String, serde_json::Value>>>,
     /// Local-host plugin filesystem — always the editor host, regardless of
@@ -294,6 +296,32 @@ impl PluginServiceBridge for EditorServiceBridge {
             .read()
             .unwrap()
             .unregister_by_plugin(plugin_name);
+    }
+
+    fn register_file_opener(
+        &self,
+        plugin_name: &str,
+        options: fresh_core::api::FileOpenerOptions,
+    ) -> Result<(), String> {
+        self.file_openers
+            .write()
+            .unwrap()
+            .register(plugin_name, options)
+            .map_err(|e| e.to_string())
+    }
+
+    fn unregister_file_opener(&self, plugin_name: &str, id: &str) -> bool {
+        self.file_openers
+            .write()
+            .unwrap()
+            .unregister(plugin_name, id)
+    }
+
+    fn unregister_file_openers_by_plugin(&self, plugin_name: &str) {
+        self.file_openers
+            .write()
+            .unwrap()
+            .unregister_plugin(plugin_name);
     }
 
     fn plugins_dir(&self) -> PathBuf {

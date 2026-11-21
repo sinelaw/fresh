@@ -89,7 +89,7 @@
 use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditRuleSet,
-    EditorStateSnapshot, GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig,
+    EditorStateSnapshot, FileOpenerOptions, GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig,
     LspServerPackConfig, OverlayOptions, PluginCommand, PluginMarker, PluginResponse,
     ScrollbarMarker, SearchHandleRegistry, SearchHandleState, SearchTakeResult, SplitWindowOptions,
     SyntaxRegion,
@@ -2491,6 +2491,78 @@ impl JsEditorApi {
                 });
         }
         had
+    }
+
+    #[plugin_api(section = "File Openers")]
+    /// Open some file types with this plugin instead of as text: an image
+    /// or PDF viewer, say.
+    ///
+    /// When a file with one of `extensions` opens — from the command line,
+    /// the file explorer, Quick Open or `openFile` — the editor does not read
+    /// it. It puts a read-only virtual buffer named after the file in the
+    /// file's tab, and calls `handler` with a `FileOpenRequest`. The handler
+    /// fills the buffer with `setVirtualBufferContent`, typically from the
+    /// output of an external program. Opening the same file again shows the
+    /// same tab.
+    ///
+    /// With `priority: "option"` the opener is used only for file types the
+    /// user assigns it in the `file_openers` setting. That setting always
+    /// wins: `"text"` there opens a file type as text whatever opener claims
+    /// it. When two default openers claim an extension, the last one
+    /// registered is used.
+    ///
+    /// Registering the same `id` again replaces the opener. A plugin's
+    /// openers are dropped when it is unloaded, reloaded or disabled. Throws
+    /// when another plugin already uses `id`, or when `id`, `label`,
+    /// `handler` or `extensions` is empty.
+    ///
+    /// @param options - The opener
+    ///
+    /// @example
+    /// globalThis.showPdf = async (req: FileOpenRequest) => {
+    ///   const { stdout } = await editor.runOnTarget("pdftotext", [req.path, "-"]);
+    ///   editor.setVirtualBufferContent(req.bufferId, [{ text: stdout }]);
+    /// };
+    /// editor.registerFileOpener({
+    ///   id: "pdf-text",
+    ///   label: "PDF as text",
+    ///   extensions: ["pdf"],
+    ///   handler: "showPdf",
+    /// });
+    pub fn register_file_opener<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        options: FileOpenerOptions,
+    ) -> fresh_js::Result<bool> {
+        let handler_name = options.handler.clone();
+        if let Err(e) = self
+            .services
+            .register_file_opener(&self.plugin_name, options)
+        {
+            let msg = format!("registerFileOpener: {e}");
+            return Err(ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value()));
+        }
+        // The editor calls the handler by its bare name; this map is what
+        // tells the runtime which plugin's realm to look the name up in (see
+        // `register_timer`).
+        self.registered_actions.borrow_mut().insert(
+            handler_name.clone(),
+            PluginHandler {
+                plugin_name: self.plugin_name.clone(),
+                handler_name,
+            },
+        );
+        Ok(true)
+    }
+
+    #[plugin_api(section = "File Openers")]
+    /// Drop this plugin's file opener `id` (see `registerFileOpener`), so
+    /// its file types open as before. Returns whether the plugin had
+    /// registered one under that id.
+    ///
+    /// @param id - The opener's `id`
+    pub fn unregister_file_opener(&self, id: String) -> bool {
+        self.services.unregister_file_opener(&self.plugin_name, &id)
     }
 
     #[plugin_api(section = "Text Editing")]
@@ -14645,6 +14717,7 @@ mod tests {
                     modified: false,
                     length: 100,
                     is_virtual: false,
+                    viewing: None,
                     is_terminal: false,
                     line_count: Some(1),
                     editing_disabled: false,
@@ -14668,6 +14741,7 @@ mod tests {
                     modified: true,
                     length: 200,
                     is_virtual: false,
+                    viewing: None,
                     is_terminal: false,
                     line_count: Some(1),
                     editing_disabled: false,

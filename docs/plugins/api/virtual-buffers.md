@@ -2,7 +2,7 @@
 
 # Virtual Buffers & Panels
 
-Buffers whose content a plugin writes, such as result lists and side panels, and groups of them shown as one tab.
+Buffers whose content a plugin writes, such as result lists, side panels and viewers for file types, and groups of them shown as one tab.
 
 ::: v-pre
 
@@ -157,6 +157,67 @@ getTextPropertiesAtCursor(bufferId: number): TextPropertiesAtCursor;
 | Parameter | Description |
 |-----------|-------------|
 | `bufferId` | ID of the buffer to query |
+
+## File Openers
+
+### `registerFileOpener`
+
+Open some file types with this plugin instead of as text: an image
+or PDF viewer, say.
+
+When a file with one of `extensions` opens — from the command line,
+the file explorer, Quick Open or `openFile` — the editor does not read
+it. It puts a read-only virtual buffer named after the file in the
+file's tab, and calls `handler` with a `FileOpenRequest`. The handler
+fills the buffer with `setVirtualBufferContent`, typically from the
+output of an external program. Opening the same file again shows the
+same tab.
+
+With `priority: "option"` the opener is used only for file types the
+user assigns it in the `file_openers` setting. That setting always
+wins: `"text"` there opens a file type as text whatever opener claims
+it. When two default openers claim an extension, the last one
+registered is used.
+
+Registering the same `id` again replaces the opener. A plugin's
+openers are dropped when it is unloaded, reloaded or disabled. Throws
+when another plugin already uses `id`, or when `id`, `label`,
+`handler` or `extensions` is empty.
+
+
+@example
+globalThis.showPdf = async (req: FileOpenRequest) => &#123;
+  const &#123; stdout } = await editor.runOnTarget("pdftotext", [req.path, "-"]);
+  editor.setVirtualBufferContent(req.bufferId, [&#123; text: stdout }]);
+};
+editor.registerFileOpener(&#123;
+  id: "pdf-text",
+  label: "PDF as text",
+  extensions: ["pdf"],
+  handler: "showPdf",
+});
+
+```typescript
+registerFileOpener(options: FileOpenerOptions): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `options` | The opener |
+
+### `unregisterFileOpener`
+
+Drop this plugin's file opener `id` (see `registerFileOpener`), so
+its file types open as before. Returns whether the plugin had
+registered one under that id.
+
+```typescript
+unregisterFileOpener(id: string): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | The opener's `id` |
 
 ## Buffer Groups
 

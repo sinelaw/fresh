@@ -439,6 +439,7 @@
   "buffer.open_in_other_workspace": "เปิดอยู่แล้วในพื้นที่ทำงาน '%{workspace}'",
   "buffer.opened": "เปิด %{name} แล้ว",
   "buffer.opened_binary": "เปิด %{name} แล้ว [ไฟล์ไบนารี, อ่านอย่างเดียว]",
+  "buffer.opened_with": "เปิด %{name} ด้วย %{opener} แล้ว",
   "buffer.overwrite_confirm": "'%{name}' มีอยู่แล้ว.",
   "buffer.preview_indicator": "(แสดงตัวอย่าง)",
   "buffer.revert_cancelled": "ยกเลิกการย้อนกลับ",

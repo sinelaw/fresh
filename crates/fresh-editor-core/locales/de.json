@@ -439,6 +439,7 @@
   "buffer.open_in_other_workspace": "Bereits im Arbeitsbereich '%{workspace}' geöffnet",
   "buffer.opened": "%{name} geöffnet",
   "buffer.opened_binary": "%{name} geöffnet [Binärdatei, schreibgeschützt]",
+  "buffer.opened_with": "%{name} mit %{opener} geöffnet",
   "buffer.overwrite_confirm": "'%{name}' existiert.",
   "buffer.preview_indicator": "(Vorschau)",
   "buffer.revert_cancelled": "Zurücksetzen abgebrochen",

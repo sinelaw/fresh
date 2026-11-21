@@ -439,6 +439,7 @@
   "buffer.open_in_other_workspace": "Уже открыт в рабочем пространстве '%{workspace}'",
   "buffer.opened": "Открыт %{name}",
   "buffer.opened_binary": "Открыт %{name} [бинарный файл, только чтение]",
+  "buffer.opened_with": "Открыт %{name} с помощью %{opener}",
   "buffer.overwrite_confirm": "'%{name}' существует.",
   "buffer.preview_indicator": "(предпросмотр)",
   "buffer.revert_cancelled": "Откат отменён",

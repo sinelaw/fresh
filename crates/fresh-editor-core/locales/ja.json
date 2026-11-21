@@ -439,6 +439,7 @@
   "buffer.open_in_other_workspace": "ワークスペース '%{workspace}' で既に開かれています",
   "buffer.opened": "%{name}を開きました",
   "buffer.opened_binary": "%{name}を開きました [バイナリファイル、読み取り専用]",
+  "buffer.opened_with": "%{name}を%{opener}で開きました",
   "buffer.overwrite_confirm": "'%{name}' は存在します。",
   "buffer.preview_indicator": "(プレビュー)",
   "buffer.revert_cancelled": "元に戻すをキャンセル",

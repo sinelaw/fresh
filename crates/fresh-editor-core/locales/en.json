@@ -455,6 +455,7 @@
   "buffer.open_in_other_workspace": "Already open in workspace '%{workspace}'",
   "buffer.opened": "Opened %{name}",
   "buffer.opened_binary": "Opened %{name} [binary file, read-only]",
+  "buffer.opened_with": "Opened %{name} with %{opener}",
   "buffer.preview_indicator": "(preview)",
   "buffer.switched": "Switched to %{name}",
   "buffer.create_directory_confirm": "Directory '%{name}' does not exist.",

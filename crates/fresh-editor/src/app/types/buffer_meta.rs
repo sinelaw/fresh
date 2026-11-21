@@ -82,6 +82,22 @@ pub struct BufferMetadata {
     /// before, which is what it goes back to once that editor lets go. Not a
     /// read-only the layout keeps.
     pub open_elsewhere: Option<bool>,
+
+    /// The file this buffer shows, when a plugin's file opener shows it
+    /// (`registerFileOpener`). The buffer itself is virtual, so nothing
+    /// saves, reverts or sends it to a language server as that file; this
+    /// is what lets opening the file again find the tab, and lets the tab
+    /// be restored as the file.
+    pub viewer: Option<FileViewer>,
+}
+
+/// A file a plugin's file opener shows in a virtual buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileViewer {
+    /// The file, as opened (canonical, host-side).
+    pub path: PathBuf,
+    /// The opener's id.
+    pub opener_id: String,
 }
 
 impl BufferMetadata {
@@ -154,6 +170,7 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewer: None,
         }
     }
 
@@ -176,6 +193,7 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewer: None,
         }
     }
 
@@ -238,6 +256,7 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewer: None,
         }
     }
 
@@ -278,6 +297,7 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewer: None,
         }
     }
 
@@ -398,6 +418,7 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewer: None,
         }
     }
 
