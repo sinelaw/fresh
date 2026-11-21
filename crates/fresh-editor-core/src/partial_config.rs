@@ -83,6 +83,7 @@ pub struct PartialConfig {
     pub editor: Option<PartialEditorConfig>,
     pub file_explorer: Option<PartialFileExplorerConfig>,
     pub file_browser: Option<PartialFileBrowserConfig>,
+    pub file_openers: Option<HashMap<String, String>>,
     pub clipboard: Option<PartialClipboardConfig>,
     pub sidebar: Option<PartialSidebarConfig>,
     pub terminal: Option<PartialTerminalConfig>,
@@ -139,6 +140,7 @@ impl Merge for PartialConfig {
 
         // HashMaps: merge entries, higher precedence wins on key collision
         merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
+        merge_hashmap(&mut self.file_openers, &other.file_openers);
         merge_hashmap_recursive(&mut self.languages, &other.languages);
         self.default_language.merge_from(&other.default_language);
         self.lsp_enabled.merge_from(&other.lsp_enabled);
@@ -1357,6 +1359,7 @@ impl From<&crate::config::Config> for PartialConfig {
             terminal: Some(PartialTerminalConfig::from(&cfg.terminal)),
             keybindings: Some(cfg.keybindings.clone()),
             keybinding_maps: Some(cfg.keybinding_maps.clone()),
+            file_openers: Some(cfg.file_openers.clone()),
             active_keybinding_map: Some(cfg.active_keybinding_map.clone()),
             languages: Some(
                 cfg.languages
@@ -1573,6 +1576,13 @@ impl PartialConfig {
             result
         };
 
+        // Resolve file_openers HashMap - entries override the defaults (none)
+        let file_openers = {
+            let mut result = defaults.file_openers.clone();
+            result.extend(self.file_openers.unwrap_or_default());
+            result
+        };
+
         // Resolve plugins HashMap - merge with defaults
         let plugins = {
             let mut result = defaults.plugins.clone();
@@ -1625,6 +1635,7 @@ impl PartialConfig {
                 .keybindings
                 .unwrap_or_else(|| defaults.keybindings.clone()),
             keybinding_maps,
+            file_openers,
             active_keybinding_map: self
                 .active_keybinding_map
                 .unwrap_or_else(|| defaults.active_keybinding_map.clone()),

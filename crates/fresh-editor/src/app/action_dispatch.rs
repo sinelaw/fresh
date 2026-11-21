@@ -1067,6 +1067,9 @@ impl Editor {
                     current,
                 );
             }
+            Action::OpenWith => {
+                self.open_with_active_file();
+            }
             Action::SetLineEnding => {
                 self.start_set_line_ending_prompt();
             }

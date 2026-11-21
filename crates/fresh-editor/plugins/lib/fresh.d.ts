@@ -903,6 +903,12 @@ type BufferInfo = {
 	*/
 	is_virtual: boolean;
 	/**
+	* The file a plugin's file opener shows in this buffer (see
+	* `registerFileOpener`), or `null`. Such a buffer is virtual, with an
+	* empty `path`: its text is the viewer's, not the file's.
+	*/
+	viewing: string | null;
+	/**
 	* Whether this buffer is a live terminal (a PTY, not text). Terminal
 	* buffers are also `is_virtual`; this distinguishes "a shell is
 	* running here" from a plugin-owned scratch buffer, which is what
@@ -1428,6 +1434,32 @@ type EditRule = {
 * `"dedent"` (Shift+Tab).
 */
 type EditRuleTrigger = "newline" | "indent" | "dedent";
+/**
+* Whether a file opener takes over its file types; see `registerFileOpener`.
+*/
+type FileOpenerPriority = "default" | "option";
+/**
+* What a file opener's handler is called with; see `registerFileOpener`.
+*/
+type FileOpenRequest = {
+	/**
+	* The read-only buffer the editor made for the file, already in its
+	* tab. Fill it with `setVirtualBufferContent`.
+	*/
+	bufferId: bigint;
+	/**
+	* The window the buffer belongs to.
+	*/
+	windowId: bigint;
+	/**
+	* The file to show.
+	*/
+	path: string;
+	/**
+	* The opener's `id`.
+	*/
+	openerId: string;
+};
 /**
 * Process resource limits for LSP servers
 */
@@ -3580,6 +3612,35 @@ type EditRuleSet = {
 	rules: Array<EditRule>;
 };
 /**
+* A plugin's opener for some file types; see `registerFileOpener`.
+*/
+type FileOpenerOptions = {
+	/**
+	* Name of the opener, unique across plugins (e.g. `"pdf-viewer"`). The
+	* user's `file_openers` setting refers to it by this name.
+	*/
+	id: string;
+	/**
+	* Name shown to the user, e.g. in status messages.
+	*/
+	label: string;
+	/**
+	* File extensions it opens, without the dot (e.g. `["pdf"]`). Matched
+	* ignoring case.
+	*/
+	extensions: Array<string>;
+	/**
+	* `"default"` (when omitted) opens these file types with this opener;
+	* `"option"` only when the user picks it in the `file_openers` setting.
+	*/
+	priority?: FileOpenerPriority;
+	/**
+	* Name of the `globalThis` function called with a `FileOpenRequest`
+	* when a file opens with this opener.
+	*/
+	handler: string;
+};
+/**
 * A single match from project-wide grep
 */
 type GrepMatch = {
@@ -4006,6 +4067,12 @@ interface FreshConfig {
 	* Default: `{"show_hidden":false}`
 	*/
 	file_browser?: FreshConfig.FileBrowserConfig;
+	/**
+	* How files open, by extension (without the dot, e.g. "pdf"): "text" for
+	* the editor's own view, or the id of a plugin's file opener. Overrides
+	* the opener a plugin installs as the default for that extension.
+	*/
+	file_openers?: Record<string, string>;
 	/**
 	* Clipboard settings (which clipboard methods to use)
 	*
@@ -5956,6 +6023,52 @@ interface EditorAPI {
 	* Returns whether the plugin had registered one under that id.
 	*/
 	unregisterEditRules(id: string): boolean;
+	/**
+	* Open some file types with this plugin instead of as text: an image
+	* or PDF viewer, say.
+	* 
+	* When a file with one of `extensions` opens — from the command line,
+	* the file explorer, Quick Open or `openFile` — the editor does not read
+	* it. It puts a read-only virtual buffer named after the file in the
+	* file's tab, and calls `handler` with a `FileOpenRequest`. The handler
+	* fills the buffer with `setVirtualBufferContent`, typically from the
+	* output of an external program. Opening the same file again shows the
+	* same tab.
+	* 
+	* With `priority: "option"` the opener is used only for file types the
+	* user assigns it in the `file_openers` setting. That setting always
+	* wins: `"text"` there opens a file type as text whatever opener claims
+	* it. When two default openers claim an extension, the last one
+	* registered is used.
+	* 
+	* Registering the same `id` again replaces the opener. A plugin's
+	* openers are dropped when it is unloaded, reloaded or disabled. Throws
+	* when another plugin already uses `id`, or when `id`, `label`,
+	* `handler` or `extensions` is empty.
+	* 
+	* @param options - The opener
+	* 
+	* @example
+	* globalThis.showPdf = async (req: FileOpenRequest) => {
+	*   const { stdout } = await editor.runOnTarget("pdftotext", [req.path, "-"]);
+	*   editor.setVirtualBufferContent(req.bufferId, [{ text: stdout }]);
+	* };
+	* editor.registerFileOpener({
+	*   id: "pdf-text",
+	*   label: "PDF as text",
+	*   extensions: ["pdf"],
+	*   handler: "showPdf",
+	* });
+	*/
+	registerFileOpener(options: FileOpenerOptions): boolean;
+	/**
+	* Drop this plugin's file opener `id` (see `registerFileOpener`), so
+	* its file types open as before. Returns whether the plugin had
+	* registered one under that id.
+	* 
+	* @param id - The opener's `id`
+	*/
+	unregisterFileOpener(id: string): boolean;
 	/**
 	* Insert text at a byte position in a buffer.
 	* 

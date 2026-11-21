@@ -7234,6 +7234,7 @@ impl Window {
                     length: state.buffer.len(),
                     line_count: state.buffer.line_count(),
                     is_virtual: meta.is_some_and(|m| m.is_virtual()),
+                    viewing: meta.and_then(|m| m.viewer.as_ref()).map(|v| v.path.clone()),
                     is_terminal: self.is_terminal_buffer(*buffer_id),
                     editing_disabled: state.editing_disabled,
                     view_mode: "source".to_string(),
@@ -7393,6 +7394,11 @@ impl Window {
                 length: state.buffer.len(),
                 line_count: state.buffer.line_count(),
                 is_virtual,
+                viewing: self
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .and_then(|m| m.viewer.as_ref())
+                    .map(|v| v.path.clone()),
                 is_terminal,
                 editing_disabled: state.editing_disabled,
                 view_mode: view_mode.to_string(),

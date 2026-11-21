@@ -532,6 +532,12 @@ pub enum AsyncMessage {
     /// plugin runtime. Triggers `init_script::write_plugin_declarations`.
     PluginDeclarationsReady { declarations: Vec<(String, String)> },
 
+    /// Startup-async: the plugin thread is done with every directory in the
+    /// startup batch, whether each loaded or not. Releases the files the
+    /// launch queued, held until now so the plugins' file openers apply to
+    /// them (see `PluginManager::startup_load_pending`).
+    StartupPluginsLoaded,
+
     /// Startup-async: `init.ts` (auto-loaded source plugin) finished
     /// running its top level and has either succeeded, failed, or was
     /// skipped/fused. The handler logs and applies the corresponding

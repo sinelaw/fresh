@@ -746,6 +746,9 @@ impl Editor {
             PromptType::SetLineEnding => {
                 self.handle_set_line_ending(&input);
             }
+            PromptType::OpenWith { path } => {
+                self.handle_open_with(path, &input);
+            }
             PromptType::SetEncoding => {
                 self.handle_set_encoding(&input);
             }

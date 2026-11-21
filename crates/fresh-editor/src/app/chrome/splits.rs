@@ -991,6 +991,10 @@ impl Editor {
             TabContextMenuItem::ExtractToNewWorkspace => {
                 self.extract_tab_to_new_workspace(buffer_id);
             }
+            TabContextMenuItem::OpenWith => match self.file_of_buffer(buffer_id) {
+                Some(path) => self.start_open_with_prompt(path),
+                None => self.set_status_message(t!("open_with.no_file").to_string()),
+            },
         }
 
         Ok(())

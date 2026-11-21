@@ -502,6 +502,12 @@ pub struct Config {
     #[serde(default)]
     pub file_browser: FileBrowserConfig,
 
+    /// How files open, by extension (without the dot, e.g. "pdf"): "text" for
+    /// the editor's own view, or the id of a plugin's file opener. Overrides
+    /// the opener a plugin installs as the default for that extension.
+    #[serde(default)]
+    pub file_openers: HashMap<String, String>,
+
     /// Clipboard settings (which clipboard methods to use)
     #[serde(default)]
     pub clipboard: ClipboardConfig,
@@ -3104,6 +3110,7 @@ impl Default for Config {
             file_explorer: FileExplorerConfig::default(),
             sidebar: SidebarConfig::default(),
             file_browser: FileBrowserConfig::default(),
+            file_openers: HashMap::new(),
             clipboard: ClipboardConfig::default(),
             terminal: TerminalConfig::default(),
             keybindings: vec![], // User customizations only; defaults come from active_keybinding_map

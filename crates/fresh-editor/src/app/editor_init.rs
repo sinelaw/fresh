@@ -337,7 +337,7 @@ fn load_startup_plugins(
             };
             if !dir_receivers.is_empty() {
                 let sender = bridge.sender();
-                std::thread::Builder::new()
+                if std::thread::Builder::new()
                     .name("plugin-load-forwarder".to_string())
                     .spawn(move || {
                         for (dir, rx) in dir_receivers {
@@ -366,6 +366,11 @@ fn load_startup_plugins(
                                 }
                             }
                         }
+                        // Whatever each directory's outcome, the batch is
+                        // over: release the files the launch queued.
+                        drop(sender.send(
+                            crate::services::async_bridge::AsyncMessage::StartupPluginsLoaded,
+                        ));
                         if let Some(rx) = declarations_rx {
                             match rx.recv() {
                                 Ok(plugin_infos) => {
@@ -390,7 +395,13 @@ fn load_startup_plugins(
                             }
                         }
                     })
-                    .ok();
+                    .is_ok()
+                {
+                    plugin_manager
+                        .write()
+                        .unwrap()
+                        .set_startup_load_pending(true);
+                }
             }
         }
     } else {
@@ -827,6 +838,8 @@ impl Editor {
             line_targets: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
+            ready_hook_held: false,
+            system_opener: crate::app::open_with::default_system_opener(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
             frame_requested: false,
@@ -2408,6 +2421,19 @@ impl Editor {
     /// Apply the declarations harvested at the end of the async startup
     /// batch. Mirrors the synchronous `plugin_declarations` +
     /// `write_plugin_declarations` pair in `with_options`.
+    /// The startup batch of plugins is done: open the files the launch
+    /// queued, then fire the `ready` hook if it was held for them.
+    pub(crate) fn handle_startup_plugins_loaded(&mut self) {
+        self.plugin_manager
+            .write()
+            .unwrap()
+            .set_startup_load_pending(false);
+        self.process_pending_file_opens();
+        if std::mem::take(&mut self.ready_hook_held) {
+            self.fire_ready_hook();
+        }
+    }
+
     pub(crate) fn handle_plugin_declarations_ready(&self, declarations: Vec<(String, String)>) {
         crate::init_script::write_plugin_declarations(&self.dir_context.config_dir, &declarations);
     }
@@ -2455,6 +2481,14 @@ impl Editor {
 
     /// Fire the `ready` hook (design M2, §3.3 phase 3).
     pub fn fire_ready_hook(&mut self) {
+        // The launch's files are held for the startup plugins: `ready` waits
+        // for them, as handlers branch on whether a file is open.
+        if self.plugin_manager.read().unwrap().startup_load_pending()
+            && !self.active_window().pending_file_opens.is_empty()
+        {
+            self.ready_hook_held = true;
+            return;
+        }
         #[cfg(feature = "plugins")]
         if self.plugin_manager.read().unwrap().is_active() {
             // Refresh the snapshot first so `ready` handlers see launch facts

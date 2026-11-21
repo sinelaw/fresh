@@ -480,6 +480,13 @@ pub struct Window {
     /// `AsyncMessage::RemoteBufferContentLoaded`. Always empty for local windows.
     pub(crate) pending_content_load: Vec<(BufferId, PathBuf)>,
 
+    /// Files opened into a plugin file opener's buffer whose handler has
+    /// not been called yet: `(handler, request)`. The editor drains this each
+    /// tick (`Editor::drive_pending_file_opener_calls`), which is where it can
+    /// refresh the plugin's view of the editor first, so the handler sees the
+    /// buffer it is handed.
+    pub(crate) pending_file_opener_calls: Vec<(String, fresh_core::api::FileOpenRequest)>,
+
     /// Status message (shown in this window's status bar). Per-window
     /// because each window has its own context — a save in window A
     /// shouldn't flash a status message into window B's UI. Only the
@@ -2623,6 +2630,7 @@ impl Window {
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
             pending_content_load: Vec::new(),
+            pending_file_opener_calls: Vec::new(),
             terminal_manager: crate::services::terminal::TerminalManager::new(
                 id,
                 resources.terminal_id_alloc.clone(),

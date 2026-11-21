@@ -318,6 +318,12 @@ type BufferInfo = {
   */
   is_virtual: boolean;
   /**
+  * The file a plugin's file opener shows in this buffer (see
+  * `registerFileOpener`), or `null`. Such a buffer is virtual, with an
+  * empty `path`: its text is the viewer's, not the file's.
+  */
+  viewing: string | null;
+  /**
   * Whether this buffer is a live terminal (a PTY, not text). Terminal
   * buffers are also `is_virtual`; this distinguishes "a shell is
   * running here" from a plugin-owned scratch buffer, which is what
@@ -1359,6 +1365,73 @@ type FileExplorerTrailingSlot = {
 };
 ```
 
+### `FileOpenerOptions`
+
+A plugin's opener for some file types; see `registerFileOpener`.
+
+```typescript
+type FileOpenerOptions = {
+  /**
+  * Name of the opener, unique across plugins (e.g. `"pdf-viewer"`). The
+  * user's `file_openers` setting refers to it by this name.
+  */
+  id: string;
+  /**
+  * Name shown to the user, e.g. in status messages.
+  */
+  label: string;
+  /**
+  * File extensions it opens, without the dot (e.g. `["pdf"]`). Matched
+  * ignoring case.
+  */
+  extensions: Array<string>;
+  /**
+  * `"default"` (when omitted) opens these file types with this opener;
+  * `"option"` only when the user picks it in the `file_openers` setting.
+  */
+  priority?: FileOpenerPriority;
+  /**
+  * Name of the `globalThis` function called with a `FileOpenRequest`
+  * when a file opens with this opener.
+  */
+  handler: string;
+};
+```
+
+### `FileOpenerPriority`
+
+Whether a file opener takes over its file types; see `registerFileOpener`.
+
+```typescript
+type FileOpenerPriority = "default" | "option";
+```
+
+### `FileOpenRequest`
+
+What a file opener's handler is called with; see `registerFileOpener`.
+
+```typescript
+type FileOpenRequest = {
+  /**
+  * The read-only buffer the editor made for the file, already in its
+  * tab. Fill it with `setVirtualBufferContent`.
+  */
+  bufferId: bigint;
+  /**
+  * The window the buffer belongs to.
+  */
+  windowId: bigint;
+  /**
+  * The file to show.
+  */
+  path: string;
+  /**
+  * The opener's `id`.
+  */
+  openerId: string;
+};
+```
+
 ### `FilePrefix`
 
 One result from `readFilePrefixes`: `text` on success, else `error`.
@@ -1465,6 +1538,12 @@ interface FreshConfig {
   * Default: `{"show_hidden":false}`
   */
   file_browser?: FreshConfig.FileBrowserConfig;
+  /**
+  * How files open, by extension (without the dot, e.g. "pdf"): "text" for
+  * the editor's own view, or the id of a plugin's file opener. Overrides
+  * the opener a plugin installs as the default for that extension.
+  */
+  file_openers?: Record<string, string>;
   /**
   * Clipboard settings (which clipboard methods to use)
   *

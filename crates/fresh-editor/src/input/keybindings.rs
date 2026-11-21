@@ -795,6 +795,9 @@ pub enum Action {
     SetTabSize,
     SetLineEnding,
     SetEncoding,
+    /// Open the active tab's file as text, with a plugin file opener, or in
+    /// the system's default app
+    OpenWith,
     ReloadWithEncoding,
     SetLanguage,
     ToggleIndentationStyle,
@@ -1310,6 +1313,7 @@ impl Action {
 
             "set_tab_size" => SetTabSize,
             "set_line_ending" => SetLineEnding,
+            "open_with" => OpenWith,
             "set_encoding" => SetEncoding,
             "reload_with_encoding" => ReloadWithEncoding,
             "set_language" => SetLanguage,
@@ -3367,6 +3371,7 @@ impl KeybindingResolver {
             Action::RemoveRuler => t!("action.remove_ruler"),
             Action::SetTabSize => t!("action.set_tab_size"),
             Action::SetLineEnding => t!("action.set_line_ending"),
+            Action::OpenWith => t!("action.open_with"),
             Action::SetEncoding => t!("action.set_encoding"),
             Action::ReloadWithEncoding => t!("action.reload_with_encoding"),
             Action::SetLanguage => t!("action.set_language"),

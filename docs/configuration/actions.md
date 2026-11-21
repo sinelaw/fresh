@@ -211,6 +211,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `open_terminal_in_dock` | Open terminal in Utility Dock |
 | `open_terminal_right` | Open terminal to the right |
 | `open_update_log` | Show update output |
+| `open_with` | Open the current file with a chosen viewer |
 | `paste` | Paste |
 | `play_last_macro` | Play last recorded macro |
 | `play_macro` | Play macro 'x' (args: `{ char: "x" }`) |

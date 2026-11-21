@@ -4319,6 +4319,7 @@ pub fn action_to_events_with_edit_rules(
         | Action::SettingsInherit
         | Action::SetTabSize
         | Action::SetLineEnding
+        | Action::OpenWith
         | Action::SetEncoding
         | Action::ReloadWithEncoding
         | Action::SetLanguage

@@ -1858,6 +1858,12 @@ fn unload_plugin_internal(
             .services
             .unregister_commands_by_plugin(name);
 
+        // And its file openers, so its file types open as before
+        runtime
+            .borrow()
+            .services
+            .unregister_file_openers_by_plugin(name);
+
         // Clean up plugin runtime state (context, event handlers, actions, callbacks)
         runtime.borrow().cleanup_plugin(name);
 

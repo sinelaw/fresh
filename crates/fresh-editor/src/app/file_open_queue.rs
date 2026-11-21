@@ -58,6 +58,11 @@ impl Editor {
         if self.active_window_mut().pending_file_opens.is_empty() {
             return false;
         }
+        // Held until the startup plugins have loaded, so the file types
+        // their file openers claim open with them rather than as text.
+        if self.plugin_manager.read().unwrap().startup_load_pending() {
+            return false;
+        }
         self.mark_plugin_snapshot_dirty();
 
         // Take all pending files to process

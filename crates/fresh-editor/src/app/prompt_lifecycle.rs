@@ -1057,6 +1057,7 @@ impl Editor {
                     | PromptType::SetLanguage
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
+                    | PromptType::OpenWith { .. }
                     | PromptType::Plugin { .. }
                     // Resume re-opens Live Grep as a core-driven
                     // PromptType::LiveGrep whose suggestions carry the
@@ -1367,7 +1368,8 @@ impl Editor {
             | PromptType::RestartLspServer
             | PromptType::SetLanguage
             | PromptType::SetEncoding
-            | PromptType::SetLineEnding => {
+            | PromptType::SetLineEnding
+            | PromptType::OpenWith { .. } => {
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.filter_suggestions(false);
                 }

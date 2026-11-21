@@ -119,10 +119,12 @@ const METHOD_PAGES: &[PageSpec] = &[
     PageSpec {
         file: "virtual-buffers.md",
         title: "Virtual Buffers & Panels",
-        intro: "Buffers whose content a plugin writes, such as result lists and \
-                side panels, and groups of them shown as one tab.",
+        intro: "Buffers whose content a plugin writes, such as result lists, \
+                side panels and viewers for file types, and groups of them shown as \
+                one tab.",
         sections: &[
             "Virtual Buffers",
+            "File Openers",
             "Buffer Groups",
             "Composite Buffers",
             "Scroll Sync",

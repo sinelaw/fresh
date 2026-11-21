@@ -62,6 +62,7 @@ pub(crate) mod native_panels;
 mod navigation;
 mod on_save_actions;
 mod open_buffer_search;
+pub mod open_with;
 mod orchestrator_persistence;
 mod overlay;
 mod pane_mirror;
@@ -1182,6 +1183,15 @@ pub struct Editor {
     /// still open their targets long after it has exited.
     #[cfg(feature = "plugins")]
     line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
+
+    /// The `ready` hook was due while the launch's files were held for the
+    /// startup plugins (see `PluginManager::startup_load_pending`); it fires
+    /// once they open, so `ready` handlers still see them open.
+    ready_hook_held: bool,
+
+    /// Opens a file in the system's default app ("Open With…"); replaced
+    /// in tests so they launch nothing.
+    system_opener: open_with::SystemOpener,
 
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
