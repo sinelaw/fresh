@@ -439,6 +439,7 @@
   "buffer.open_in_other_workspace": "Вже відкрито в робочому просторі '%{workspace}'",
   "buffer.opened": "Відкрито %{name}",
   "buffer.opened_binary": "Відкрито %{name} [двійковий файл, лише читання]",
+  "buffer.opened_with": "Відкрито %{name} за допомогою %{opener}",
   "buffer.overwrite_confirm": "'%{name}' існує.",
   "buffer.preview_indicator": "(попередній перегляд)",
   "buffer.revert_cancelled": "Відновлення скасовано",

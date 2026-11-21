@@ -384,6 +384,7 @@
   "buffer.open_in_other_workspace": "Вече е отворен в работното пространство '%{workspace}'",
   "buffer.opened": "Отворен %{name}",
   "buffer.opened_binary": "Отворен %{name} [двоичен файл, само за четене]",
+  "buffer.opened_with": "Отворен %{name} с %{opener}",
   "buffer.overwrite_confirm": "'%{name}' съществува.",
   "buffer.preview_indicator": "(преглед)",
   "buffer.revert_cancelled": "Възстановяването е отменено",

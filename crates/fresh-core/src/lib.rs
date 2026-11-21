@@ -139,6 +139,7 @@ pub mod display_width;
 pub mod edit_rules;
 pub mod escapes;
 pub mod file_explorer;
+pub mod file_openers;
 pub mod file_uri;
 pub mod menu;
 pub mod overlay;

@@ -202,6 +202,14 @@
         "show_hidden": false
       }
     },
+    "file_openers": {
+      "description": "How files open, by extension (without the dot, e.g. \"pdf\"): \"text\" for\nthe editor's own view, or the id of a plugin's file opener. Overrides\nthe opener a plugin installs as the default for that extension.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
     "clipboard": {
       "description": "Clipboard settings (which clipboard methods to use)",
       "$ref": "#/$defs/ClipboardConfig",

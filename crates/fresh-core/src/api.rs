@@ -6886,6 +6886,57 @@ pub struct EditRuleSet {
     pub rules: Vec<EditRule>,
 }
 
+/// Whether a file opener takes over its file types; see `registerFileOpener`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum FileOpenerPriority {
+    /// Files of these types open with this opener.
+    #[default]
+    Default,
+    /// The opener is only used when the user picks it for a file type.
+    Option,
+}
+
+/// A plugin's opener for some file types; see `registerFileOpener`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, rename_all = "camelCase")]
+pub struct FileOpenerOptions {
+    /// Name of the opener, unique across plugins (e.g. `"pdf-viewer"`). The
+    /// user's `file_openers` setting refers to it by this name.
+    pub id: String,
+    /// Name shown to the user, e.g. in status messages.
+    pub label: String,
+    /// File extensions it opens, without the dot (e.g. `["pdf"]`). Matched
+    /// ignoring case.
+    pub extensions: Vec<String>,
+    /// `"default"` (when omitted) opens these file types with this opener;
+    /// `"option"` only when the user picks it in the `file_openers` setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub priority: Option<FileOpenerPriority>,
+    /// Name of the `globalThis` function called with a `FileOpenRequest`
+    /// when a file opens with this opener.
+    pub handler: String,
+}
+
+/// What a file opener's handler is called with; see `registerFileOpener`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct FileOpenRequest {
+    /// The read-only buffer the editor made for the file, already in its
+    /// tab. Fill it with `setVirtualBufferContent`.
+    pub buffer_id: u64,
+    /// The window the buffer belongs to.
+    pub window_id: u64,
+    /// The file to show.
+    pub path: String,
+    /// The opener's `id`.
+    pub opener_id: String,
+}
+
 // =============================================================================
 // Language Pack Configuration Types
 // =============================================================================
@@ -8054,6 +8105,7 @@ mod fromjs_impls {
         LspServerPackConfig,
         ProcessLimitsPackConfig,
         EditRuleSet,
+        FileOpenerOptions,
         CreateTerminalOptions,
         CreateWindowWithTerminalOptions,
         CreatePreparingWindowOptions,

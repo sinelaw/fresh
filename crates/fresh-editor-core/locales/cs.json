@@ -439,6 +439,7 @@
   "buffer.open_in_other_workspace": "Již otevřeno v pracovním prostoru '%{workspace}'",
   "buffer.opened": "Otevřeno %{name}",
   "buffer.opened_binary": "Otevřeno %{name} [binární soubor, pouze pro čtení]",
+  "buffer.opened_with": "Otevřeno %{name} pomocí %{opener}",
   "buffer.overwrite_confirm": "'%{name}' existuje.",
   "buffer.preview_indicator": "(náhled)",
   "buffer.revert_cancelled": "Obnovení zrušeno",

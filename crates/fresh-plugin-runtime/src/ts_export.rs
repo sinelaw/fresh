@@ -21,13 +21,14 @@ use fresh_core::api::{
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, EditRule, EditRuleSet,
-    EditRuleTrigger, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
-    JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
-    LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
-    PluginAnimationKind, ProcessLimitsPackConfig, ReleaseNotes, RemoteBackendInfo, ReplaceResult,
-    ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
-    TerminalScreen, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    EditRuleTrigger, FileOpenRequest, FileOpenerOptions, FileOpenerPriority, FormatterPackConfig,
+    GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
+    KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
+    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
+    ProcessLimitsPackConfig, ReleaseNotes, RemoteBackendInfo, ReplaceResult, ScreenSize,
+    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
+    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -179,6 +180,11 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "EditRuleSet" => Some(decl_with_docs::<EditRuleSet>(&cfg)),
         "EditRule" => Some(decl_with_docs::<EditRule>(&cfg)),
         "EditRuleTrigger" => Some(decl_with_docs::<EditRuleTrigger>(&cfg)),
+
+        // File opener types
+        "FileOpenerOptions" => Some(decl_with_docs::<FileOpenerOptions>(&cfg)),
+        "FileOpenerPriority" => Some(decl_with_docs::<FileOpenerPriority>(&cfg)),
+        "FileOpenRequest" => Some(decl_with_docs::<FileOpenRequest>(&cfg)),
 
         // Overlay/inline styling types
         "OverlayOptions" => Some(decl_with_docs::<OverlayOptions>(&cfg)),
@@ -419,6 +425,8 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "FormatterPackConfig",             // Used by LanguagePackConfig.formatter
     "EditRule",                        // Used by EditRuleSet.rules
     "EditRuleTrigger",                 // Used by EditRule.on
+    "FileOpenerPriority",              // Used by FileOpenerOptions.priority
+    "FileOpenRequest",                 // Passed to a file opener's handler
     "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
     "TerminalResult",                  // Used by createTerminal return type
     "TerminalScreen",                  // Used by getTerminalScreens return type

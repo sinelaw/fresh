@@ -30,6 +30,11 @@ pub struct PluginManager {
     window_registry: Option<Arc<super::bridge::WindowFsRegistry>>,
     #[cfg(not(feature = "plugins"))]
     _phantom: std::marker::PhantomData<()>,
+    /// The file openers plugins registered (`registerFileOpener`). Shared
+    /// with the plugin thread's service bridge, which writes it as the
+    /// plugin calls; the editor reads it when a file opens. Present without
+    /// the plugins feature too, empty, so the open path needs no `cfg`.
+    file_openers: Arc<RwLock<fresh_core::file_openers::FileOpenerRegistry>>,
     /// Test-only side channel: commands pushed via
     /// [`Self::test_inject_command`] are returned by the next
     /// `process_commands()` call as if they had come from the plugin
@@ -72,8 +77,12 @@ impl PluginManager {
                     dir_context.config_dir.clone(),
                     dir_context.data_dir.clone(),
                 ));
+                let file_openers = Arc::new(RwLock::new(
+                    fresh_core::file_openers::FileOpenerRegistry::new(),
+                ));
                 let services = Arc::new(EditorServiceBridge {
                     command_registry: command_registry.clone(),
+                    file_openers: Arc::clone(&file_openers),
                     dir_context,
                     theme_cache,
                     local_plugin_fs,
@@ -85,6 +94,7 @@ impl PluginManager {
                         return Self {
                             inner: Some(handle),
                             window_registry: Some(window_registry),
+                            file_openers,
                             pending_injected_commands: Vec::new(),
                         }
                     }
@@ -100,6 +110,7 @@ impl PluginManager {
             Self {
                 inner: None,
                 window_registry: None,
+                file_openers: Default::default(),
                 pending_injected_commands: Vec::new(),
             }
         }
@@ -116,9 +127,15 @@ impl PluginManager {
             }
             Self {
                 _phantom: std::marker::PhantomData,
+                file_openers: Default::default(),
                 pending_injected_commands: Vec::new(),
             }
         }
+    }
+
+    /// The file openers plugins registered; see the field.
+    pub fn file_openers(&self) -> Arc<RwLock<fresh_core::file_openers::FileOpenerRegistry>> {
+        Arc::clone(&self.file_openers)
     }
 
     /// The per-window filesystem registry, if plugins are active.

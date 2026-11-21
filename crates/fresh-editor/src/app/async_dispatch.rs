@@ -171,6 +171,9 @@ impl Editor {
         // reading them on the editor loop.
         self.drive_pending_content_loads();
 
+        // Call the plugin file openers for files that just opened in one.
+        self.drive_pending_file_opener_calls();
+
         let Some(bridge) = &self.async_bridge else {
             return false;
         };
@@ -1346,6 +1349,48 @@ impl Editor {
     /// is scheduled exactly once. Runs the blocking `read_file` on a plain
     /// thread (never a runtime worker — the remote read uses `block_on`), so a
     /// slow link never touches the editor loop.
+    /// Call each plugin file opener's handler for the files opened into its
+    /// buffer since the last tick (see `Window::pending_file_opener_calls`).
+    /// The plugin's snapshot is refreshed first, as for a command from the
+    /// palette, so `getBufferInfo` and the like see the new buffer.
+    fn drive_pending_file_opener_calls(&mut self) {
+        let calls: Vec<(String, fresh_core::api::FileOpenRequest)> = self
+            .windows
+            .values_mut()
+            .flat_map(|w| w.pending_file_opener_calls.drain(..))
+            .collect();
+        if calls.is_empty() {
+            return;
+        }
+        #[cfg(feature = "plugins")]
+        {
+            self.refresh_plugin_state_snapshot();
+            for (handler, request) in calls {
+                let args = match serde_json::to_string(&request) {
+                    Ok(args) => args,
+                    Err(e) => {
+                        tracing::error!("file opener request for {}: {e}", request.path);
+                        continue;
+                    }
+                };
+                let result = self.plugin_manager.read().unwrap().execute_action_async(
+                    &handler,
+                    Some(args),
+                    None,
+                );
+                match result {
+                    // Kept like a palette command's, so a handler that throws
+                    // is reported rather than lost.
+                    Some(Ok(receiver)) => self.pending_plugin_actions.push((handler, receiver)),
+                    Some(Err(e)) => tracing::error!("file opener {handler}: {e}"),
+                    None => {}
+                }
+            }
+        }
+        #[cfg(not(feature = "plugins"))]
+        drop(calls);
+    }
+
     fn drive_pending_content_loads(&mut self) {
         if self.async_bridge.is_none() {
             return;
