@@ -40,7 +40,7 @@ contexts:
     - match: '^\s*(import|mod)\b'
       scope: keyword.control.justfile
   recipes:
-    - match: '^\s*(@)?(\w[\w-]*)\s*([^:=].*)?:'
+    - match: '^(@)?(\w[\w-]*)\s*([^:=].*)?:'
       captures:
         1: keyword.operator.justfile
         2: entity.name.function.justfile
