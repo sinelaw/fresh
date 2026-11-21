@@ -41,6 +41,18 @@ pub(crate) enum OpenKind {
     Preview,
 }
 
+/// How a file is to be shown: as the settings and registered openers say,
+/// or as the user picked it in "Open With…".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OpenerRequest {
+    /// The `file_openers` setting, else the default opener, else text.
+    Configured,
+    /// The editor's own text (or byte) view.
+    Text,
+    /// The plugin file opener with this id.
+    Plugin(String),
+}
+
 /// Where opening a path in a window lands: see
 /// [`Window::resolve_open_path`](crate::app::window::Window::resolve_open_path).
 pub(crate) struct ResolvedOpenPath {
@@ -298,6 +310,16 @@ impl Editor {
         path: &Path,
         kind: OpenKind,
     ) -> anyhow::Result<BufferId> {
+        self.open_file_as(path, kind, &OpenerRequest::Configured)
+    }
+
+    /// `open_file_with_kind`, showing the file as `opener` asks.
+    pub(crate) fn open_file_as(
+        &mut self,
+        path: &Path,
+        kind: OpenKind,
+        opener: &OpenerRequest,
+    ) -> anyhow::Result<BufferId> {
         // If the active leaf is a utility-dock pane (Search/Replace,
         // Quickfix, terminal-in-dock), the user almost never wants the
         // newly-opened file to land there — the dock hosts panel-style
@@ -335,7 +357,7 @@ impl Editor {
 
         let buffer_id = self
             .active_window_mut()
-            .open_file_no_focus_with_kind(path, kind)?;
+            .open_file_no_focus_with_opener(path, kind, opener)?;
 
         // Check if this was an already-open buffer or a new one
         // For already-open buffers, just switch to them
@@ -1147,20 +1169,27 @@ impl crate::app::window::Window {
     /// flip. If the file doesn't exist, creates an unsaved buffer with
     /// that filename.
     pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        let buffer_id = self.open_file_no_focus_inner(path, true, OpenKind::Commit)?;
+        let buffer_id = self.open_file_no_focus_inner(
+            path,
+            true,
+            OpenKind::Commit,
+            &OpenerRequest::Configured,
+        )?;
         self.forget_unopened_file(path);
         Ok(buffer_id)
     }
 
     /// `open_file_no_focus` with an explicit [`OpenKind`], so the Editor-side
     /// `open_file_with_kind` can route a preview open through the same core
-    /// while deferring `after_file_open`.
-    pub(crate) fn open_file_no_focus_with_kind(
+    /// while deferring `after_file_open`, and showing the file as `opener`
+    /// asks.
+    pub(crate) fn open_file_no_focus_with_opener(
         &mut self,
         path: &Path,
         kind: OpenKind,
+        opener: &OpenerRequest,
     ) -> anyhow::Result<BufferId> {
-        let buffer_id = self.open_file_no_focus_inner(path, true, kind)?;
+        let buffer_id = self.open_file_no_focus_inner(path, true, kind, opener)?;
         self.forget_unopened_file(path);
         Ok(buffer_id)
     }
@@ -1193,7 +1222,7 @@ impl crate::app::window::Window {
         // Live-grep preview is a browse, not a deliberate open: defer the
         // `after_file_open` hook so plugins don't pop UI / run side effects
         // over each result the user cycles through.
-        self.open_file_no_focus_inner(path, false, OpenKind::Preview)
+        self.open_file_no_focus_inner(path, false, OpenKind::Preview, &OpenerRequest::Configured)
     }
 
     /// True if `path` is an internal app artifact (terminal scrollback,
@@ -1445,6 +1474,7 @@ impl crate::app::window::Window {
         path: &Path,
         allow_replace_empty: bool,
         kind: OpenKind,
+        opener: &OpenerRequest,
     ) -> anyhow::Result<BufferId> {
         // Fail fast if the remote connection is down — don't attempt I/O that
         // would either timeout or return confusing errors.
@@ -1511,7 +1541,7 @@ impl crate::app::window::Window {
         // read the file, and the plugin fills the buffer. A file that does
         // not exist yet has nothing to show, so it is created as text.
         if file_exists {
-            if let Some(opener) = self.file_opener_for(&display_path) {
+            if let Some(opener) = self.file_opener_for(&display_path, opener) {
                 self.open_file_in_viewer(buffer_id, path, &display_path, &opener);
                 return Ok(buffer_id);
             }
@@ -1682,9 +1712,17 @@ impl crate::app::window::Window {
     /// The plugin file opener `display_path` opens with, if any: the user's
     /// `file_openers` setting for its extension, else the default opener a
     /// plugin registered for it.
-    fn file_opener_for(&self, display_path: &Path) -> Option<fresh_core::file_openers::FileOpener> {
-        let choice = fresh_core::file_openers::extension_key(display_path)
-            .and_then(|ext| self.resources.config.file_openers.get(&ext).cloned());
+    fn file_opener_for(
+        &self,
+        display_path: &Path,
+        request: &OpenerRequest,
+    ) -> Option<fresh_core::file_openers::FileOpener> {
+        let choice = match request {
+            OpenerRequest::Text => return None,
+            OpenerRequest::Plugin(id) => Some(id.clone()),
+            OpenerRequest::Configured => fresh_core::file_openers::extension_key(display_path)
+                .and_then(|ext| self.resources.config.file_openers.get(&ext).cloned()),
+        };
         let registry = self.resources.plugin_manager.read().unwrap().file_openers();
         let registry = registry.read().unwrap();
         registry.resolve(display_path, choice.as_deref()).cloned()

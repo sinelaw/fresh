@@ -58,6 +58,7 @@ pub mod live_diff;
 pub mod load_from_buffer;
 pub mod lsp_find_references;
 pub mod lsp_navigation;
+pub mod open_with;
 pub mod orchestrator_attach_worktree;
 pub mod orchestrator_discover_sessions;
 pub mod orchestrator_machines;

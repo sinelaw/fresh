@@ -839,6 +839,7 @@ impl Editor {
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
             ready_hook_held: false,
+            system_opener: crate::app::open_with::default_system_opener(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
             frame_requested: false,

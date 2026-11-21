@@ -131,6 +131,18 @@ impl FileOpenerRegistry {
         len - self.openers.len()
     }
 
+    /// Every opener that lists `path`'s extension, defaults and options
+    /// alike, in registration order: the choices "Open With…" offers.
+    pub fn openers_for(&self, path: &Path) -> Vec<&FileOpener> {
+        let Some(extension) = extension_key(path) else {
+            return Vec::new();
+        };
+        self.openers
+            .iter()
+            .filter(|o| o.handles(&extension))
+            .collect()
+    }
+
     /// The opener named `id`.
     pub fn get(&self, id: &str) -> Option<&FileOpener> {
         self.openers.iter().find(|o| o.id == id)
@@ -283,6 +295,30 @@ mod tests {
             registry.register("a", options("", &["png"], None)),
             Err(RegisterError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn openers_for_lists_defaults_and_options_for_the_extension() {
+        let mut registry = FileOpenerRegistry::new();
+        registry
+            .register("a", options("image", &["png"], None))
+            .unwrap();
+        registry
+            .register(
+                "b",
+                options("hex", &["png", "bin"], Some(FileOpenerPriority::Option)),
+            )
+            .unwrap();
+        registry
+            .register("c", options("pdf", &["pdf"], None))
+            .unwrap();
+        let ids: Vec<&str> = registry
+            .openers_for(Path::new("x.PNG"))
+            .iter()
+            .map(|o| o.id.as_str())
+            .collect();
+        assert_eq!(ids, ["image", "hex"]);
+        assert!(registry.openers_for(Path::new("Makefile")).is_empty());
     }
 
     #[test]

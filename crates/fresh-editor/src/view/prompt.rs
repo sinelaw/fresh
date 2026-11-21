@@ -86,6 +86,9 @@ pub enum PromptType {
     SetTabSize,
     /// Set line ending format for current buffer
     SetLineEnding,
+    /// Pick how to open a file: as text, with a plugin file opener, or in
+    /// the system's default app
+    OpenWith { path: std::path::PathBuf },
     /// Set text encoding format for current buffer
     SetEncoding,
     /// Set language/syntax highlighting for current buffer

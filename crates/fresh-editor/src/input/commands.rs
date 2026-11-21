@@ -860,6 +860,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.open_with",
+        desc_key: "cmd.open_with_desc",
+        action: || Action::OpenWith,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.set_encoding",
         desc_key: "cmd.set_encoding_desc",
         action: || Action::SetEncoding,

@@ -114,6 +114,9 @@ pub enum TabContextMenuItem {
     /// Move the tab into its own new orchestrator workspace over the same
     /// project root (a co-tenant window)
     ExtractToNewWorkspace,
+    /// Open the tab's file another way: as text, with a plugin file opener,
+    /// or in the system's default app
+    OpenWith,
 }
 
 impl TabContextMenuItem {
@@ -130,6 +133,7 @@ impl TabContextMenuItem {
             Self::CopyRelativePath,
             Self::CopyFullPath,
             Self::ExtractToNewWorkspace,
+            Self::OpenWith,
         ]
     }
 
@@ -144,6 +148,7 @@ impl TabContextMenuItem {
             Self::CopyRelativePath => t!("tab.copy_relative_path").to_string(),
             Self::CopyFullPath => t!("tab.copy_full_path").to_string(),
             Self::ExtractToNewWorkspace => t!("tab.extract_to_new_workspace").to_string(),
+            Self::OpenWith => t!("tab.open_with").to_string(),
         }
     }
 
@@ -158,6 +163,7 @@ impl TabContextMenuItem {
             Self::CopyRelativePath => "copyRelativePath",
             Self::CopyFullPath => "copyFullPath",
             Self::ExtractToNewWorkspace => "extractToNewWorkspace",
+            Self::OpenWith => "openWith",
         }
     }
 
@@ -360,6 +366,9 @@ pub enum FileExplorerContextMenuItem {
     Delete,
     CopyFullPath,
     CopyRelativePath,
+    /// Open the file another way: as text, with a plugin file opener, or in
+    /// the system's default app. Offered for a single file.
+    OpenWith,
 }
 
 impl FileExplorerContextMenuItem {
@@ -395,6 +404,23 @@ impl FileExplorerContextMenuItem {
         ]
     }
 
+    /// A single file: everything [`Self::all`] offers, then "Open With…".
+    pub fn file_single_selection() -> &'static [Self] {
+        &[
+            Self::NewFile,
+            Self::NewDirectory,
+            Self::Rename,
+            Self::Cut,
+            Self::Copy,
+            Self::Paste,
+            Self::Delete,
+            Self::Duplicate,
+            Self::CopyFullPath,
+            Self::CopyRelativePath,
+            Self::OpenWith,
+        ]
+    }
+
     pub fn root_single_selection() -> &'static [Self] {
         // The root menu is intentionally narrow (VS Code parity): only
         // creation + paste actions. Copy-path on the project root is left
@@ -416,6 +442,7 @@ impl FileExplorerContextMenuItem {
             Self::Delete => t!("explorer.context.delete").to_string(),
             Self::CopyFullPath => t!("explorer.context.copy_full_path").to_string(),
             Self::CopyRelativePath => t!("explorer.context.copy_relative_path").to_string(),
+            Self::OpenWith => t!("explorer.context.open_with").to_string(),
         }
     }
 
@@ -432,6 +459,7 @@ impl FileExplorerContextMenuItem {
             Self::Delete => "delete",
             Self::CopyFullPath => "copyFullPath",
             Self::CopyRelativePath => "copyRelativePath",
+            Self::OpenWith => "openWith",
         }
     }
 
@@ -448,16 +476,26 @@ pub struct FileExplorerContextMenu {
     pub is_multi_selection: bool,
     /// Whether the sole selected node is the project root
     pub is_root_selected: bool,
+    /// Whether the sole selected node is a file
+    pub is_file_selected: bool,
     /// Shared geometry + navigation core (position, highlight, width, items).
     pub menu: ContextMenu,
 }
 
 impl FileExplorerContextMenu {
-    pub fn new(x: u16, y: u16, is_multi_selection: bool, is_root_selected: bool) -> Self {
-        let item_count = Self::items_for(is_multi_selection, is_root_selected).len();
+    pub fn new(
+        x: u16,
+        y: u16,
+        is_multi_selection: bool,
+        is_root_selected: bool,
+        is_file_selected: bool,
+    ) -> Self {
+        let item_count =
+            Self::items_for(is_multi_selection, is_root_selected, is_file_selected).len();
         Self {
             is_multi_selection,
             is_root_selected,
+            is_file_selected,
             menu: ContextMenu::new(x, y, FILE_EXPLORER_CONTEXT_MENU_WIDTH, item_count),
         }
     }
@@ -467,18 +505,25 @@ impl FileExplorerContextMenu {
     fn items_for(
         is_multi_selection: bool,
         is_root_selected: bool,
+        is_file_selected: bool,
     ) -> &'static [FileExplorerContextMenuItem] {
         if is_multi_selection {
             FileExplorerContextMenuItem::multi_selection()
         } else if is_root_selected {
             FileExplorerContextMenuItem::root_single_selection()
+        } else if is_file_selected {
+            FileExplorerContextMenuItem::file_single_selection()
         } else {
             FileExplorerContextMenuItem::all()
         }
     }
 
     pub fn items(&self) -> &'static [FileExplorerContextMenuItem] {
-        Self::items_for(self.is_multi_selection, self.is_root_selected)
+        Self::items_for(
+            self.is_multi_selection,
+            self.is_root_selected,
+            self.is_file_selected,
+        )
     }
 
     /// Get the currently highlighted item.

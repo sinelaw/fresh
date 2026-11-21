@@ -170,31 +170,40 @@ impl Editor {
     /// entry. The multi-selection is left alone, as a press on a row leaves it
     /// alone — it is the reader's set, not this menu's.
     fn explorer_context_for(&mut self, target: ExplorerContextTarget, x: u16, y: u16) {
-        let (is_multi, is_root_selected) = if let Some(explorer) = self.file_explorer_mut().as_mut()
-        {
-            let root_id = explorer.tree().root_id();
-            let named = match target {
-                ExplorerContextTarget::Body => None,
-                ExplorerContextTarget::Row { index, segment } => {
-                    explorer.press_target(index, segment.as_deref())
-                }
+        let (is_multi, is_root_selected, is_file_selected) =
+            if let Some(explorer) = self.file_explorer_mut().as_mut() {
+                let root_id = explorer.tree().root_id();
+                let named = match target {
+                    ExplorerContextTarget::Body => None,
+                    ExplorerContextTarget::Row { index, segment } => {
+                        explorer.press_target(index, segment.as_deref())
+                    }
+                };
+                // Nothing named: the blank area, or a row index the tree no longer
+                // has — the press carries the index of the frame it was drawn in,
+                // and a reload can shorten the tree in between. Both are the root's.
+                let picked = named.unwrap_or(root_id);
+                // `set_selected_exact`, not `set_selected`: the latter promotes a
+                // segment to its chain anchor, which is the bug.
+                explorer.set_selected_exact(Some(picked));
+                let is_file = explorer
+                    .tree()
+                    .get_node(picked)
+                    .is_some_and(|n| !n.entry.is_dir());
+                (explorer.has_multi_selection(), picked == root_id, is_file)
+            } else {
+                (false, false, false)
             };
-            // Nothing named: the blank area, or a row index the tree no longer
-            // has — the press carries the index of the frame it was drawn in,
-            // and a reload can shorten the tree in between. Both are the root's.
-            let picked = named.unwrap_or(root_id);
-            // `set_selected_exact`, not `set_selected`: the latter promotes a
-            // segment to its chain anchor, which is the bug.
-            explorer.set_selected_exact(Some(picked));
-            (explorer.has_multi_selection(), picked == root_id)
-        } else {
-            (false, false)
-        };
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::FileExplorer;
         self.active_window_mut().tab_context_menu = None;
-        self.active_window_mut().file_explorer_context_menu = Some(
-            crate::app::types::FileExplorerContextMenu::new(x, y + 1, is_multi, is_root_selected),
-        );
+        self.active_window_mut().file_explorer_context_menu =
+            Some(crate::app::types::FileExplorerContextMenu::new(
+                x,
+                y + 1,
+                is_multi,
+                is_root_selected,
+                is_file_selected,
+            ));
     }
 
     /// A right-press on the panel that no row claimed — the empty space under
@@ -487,6 +496,7 @@ impl Editor {
             FileExplorerContextMenuItem::Delete => self.file_explorer_delete(),
             FileExplorerContextMenuItem::CopyFullPath => self.file_explorer_copy_path(false),
             FileExplorerContextMenuItem::CopyRelativePath => self.file_explorer_copy_path(true),
+            FileExplorerContextMenuItem::OpenWith => self.file_explorer_open_with(),
         }
     }
 
