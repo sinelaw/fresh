@@ -1988,8 +1988,10 @@ function shouldShowDashboard(): boolean {
     if (dashboardBufferId !== null) return false;
     if (!autoOpenEnabled()) return false;
     const all = editor.listBuffers();
+    // A file shown by a plugin's file opener (an image or PDF viewer) is
+    // a real file too, though its buffer is virtual.
     const realFiles = all.filter(
-        (b) => !b.is_virtual && b.path && b.path.length > 0,
+        (b) => (!b.is_virtual && b.path && b.path.length > 0) || b.viewing,
     );
     return realFiles.length === 0;
 }

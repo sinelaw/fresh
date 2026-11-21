@@ -35,6 +35,11 @@ pub struct PluginManager {
     /// plugin calls; the editor reads it when a file opens. Present without
     /// the plugins feature too, empty, so the open path needs no `cfg`.
     file_openers: Arc<RwLock<fresh_core::file_openers::FileOpenerRegistry>>,
+    /// The startup batch of plugins is still loading on the plugin thread
+    /// (async startup only). Until it is done, the files the launch queued
+    /// stay queued: opened now, a file type a plugin's file opener claims
+    /// would open as text, its opener not registered yet.
+    startup_load_pending: bool,
     /// Test-only side channel: commands pushed via
     /// [`Self::test_inject_command`] are returned by the next
     /// `process_commands()` call as if they had come from the plugin
@@ -95,6 +100,7 @@ impl PluginManager {
                             inner: Some(handle),
                             window_registry: Some(window_registry),
                             file_openers,
+                            startup_load_pending: false,
                             pending_injected_commands: Vec::new(),
                         }
                     }
@@ -111,6 +117,7 @@ impl PluginManager {
                 inner: None,
                 window_registry: None,
                 file_openers: Default::default(),
+                startup_load_pending: false,
                 pending_injected_commands: Vec::new(),
             }
         }
@@ -128,9 +135,20 @@ impl PluginManager {
             Self {
                 _phantom: std::marker::PhantomData,
                 file_openers: Default::default(),
+                startup_load_pending: false,
                 pending_injected_commands: Vec::new(),
             }
         }
+    }
+
+    /// Whether the startup batch of plugins is still loading; see the field.
+    pub fn startup_load_pending(&self) -> bool {
+        self.startup_load_pending
+    }
+
+    /// Mark the startup batch of plugins as loading, or done.
+    pub fn set_startup_load_pending(&mut self, pending: bool) {
+        self.startup_load_pending = pending;
     }
 
     /// The file openers plugins registered; see the field.

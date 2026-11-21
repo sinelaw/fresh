@@ -1183,6 +1183,11 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
 
+    /// The `ready` hook was due while the launch's files were held for the
+    /// startup plugins (see `PluginManager::startup_load_pending`); it fires
+    /// once they open, so `ready` handlers still see them open.
+    ready_hook_held: bool,
+
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(

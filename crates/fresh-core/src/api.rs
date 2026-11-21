@@ -588,6 +588,12 @@ pub struct BufferInfo {
     pub line_count: Option<usize>,
     /// Whether this is a virtual buffer (not backed by a file)
     pub is_virtual: bool,
+    /// The file a plugin's file opener shows in this buffer (see
+    /// `registerFileOpener`), or `null`. Such a buffer is virtual, with an
+    /// empty `path`: its text is the viewer's, not the file's.
+    #[serde(default, serialize_with = "serialize_path")]
+    #[ts(type = "string | null")]
+    pub viewing: Option<PathBuf>,
     /// Whether this buffer is a live terminal (a PTY, not text). Terminal
     /// buffers are also `is_virtual`; this distinguishes "a shell is
     /// running here" from a plugin-owned scratch buffer, which is what
@@ -9219,6 +9225,7 @@ mod tests {
                 line_count: Some(1),
                 is_terminal: false,
                 is_virtual: false,
+                viewing: None,
                 editing_disabled: false,
                 view_mode: "source".to_string(),
                 is_composing_in_any_split: false,
@@ -9272,6 +9279,7 @@ mod tests {
                     line_count: Some(1),
                     is_terminal: false,
                     is_virtual: false,
+                    viewing: None,
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
@@ -9295,6 +9303,7 @@ mod tests {
                     line_count: Some(1),
                     is_terminal: false,
                     is_virtual: false,
+                    viewing: None,
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
@@ -9320,6 +9329,7 @@ mod tests {
                     line_count: Some(1),
                     is_terminal: false,
                     is_virtual: true,
+                    viewing: None,
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,

@@ -601,6 +601,9 @@ impl Editor {
                 AsyncMessage::PluginDeclarationsReady { declarations } => {
                     self.handle_plugin_declarations_ready(declarations);
                 }
+                AsyncMessage::StartupPluginsLoaded => {
+                    self.handle_startup_plugins_loaded();
+                }
                 AsyncMessage::PluginInitScriptLoaded(outcome) => {
                     self.handle_plugin_init_script_loaded(outcome);
                 }
