@@ -635,6 +635,12 @@ pub struct BufferInfo {
     #[serde(default)]
     #[ts(type = "number[]")]
     pub splits: Vec<SplitId>,
+    /// The file this buffer shows in a plugin's viewer (`openFileView`), or
+    /// `null`. Such a buffer is virtual, with an empty `path`, and it is
+    /// the file's tab: opening the file goes to it.
+    #[serde(default)]
+    #[ts(type = "FileViewing | null")]
+    pub viewing: Option<FileViewing>,
 }
 
 fn default_buffer_tab_size() -> usize {
@@ -5158,6 +5164,14 @@ pub enum PluginCommand {
     /// `request_id` with an `OpenInSystemAppResult`.
     OpenInSystemApp { path: FileLocation, request_id: u64 },
 
+    /// Show the file at `path` as `view` in its tab, and resolve
+    /// `request_id` with an `OpenFileViewResult`.
+    OpenFileView {
+        path: WindowPath,
+        view: FileView,
+        request_id: u64,
+    },
+
     /// Create a new virtual buffer (not backed by a file)
     CreateVirtualBuffer {
         /// Display name (e.g., "*Diagnostics*")
@@ -7329,6 +7343,63 @@ pub enum OpenInSystemAppResult {
     Failed { error: String },
 }
 
+/// How a file's tab shows it (see `openFileView`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[ts(export, rename_all = "camelCase")]
+pub enum FileView {
+    /// The editor's own view of the file's text.
+    Text,
+    /// A plugin's viewer: a read-only buffer the plugin fills, which is the
+    /// file's tab.
+    Viewer {
+        /// The plugin's name for the viewer, reported back as
+        /// `BufferInfo.viewing.viewer_id`.
+        #[ts(rename = "viewerId")]
+        viewer_id: String,
+        /// Mode for the viewer's keys (define it with `defineMode` first).
+        #[serde(default)]
+        #[ts(optional)]
+        mode: Option<String>,
+    },
+}
+
+/// How `openFileView` went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export, rename_all = "camelCase")]
+pub enum OpenFileViewResult {
+    /// The file's tab shows it this way now: `bufferId` is that tab's
+    /// buffer, which a viewer fills.
+    Opened {
+        #[ts(type = "number", rename = "bufferId")]
+        buffer_id: BufferId,
+    },
+    /// The file's tab is its text with unsaved changes; nothing changed.
+    UnsavedChanges,
+    /// It could not be shown so; `error` says why.
+    Failed { error: String },
+}
+
+/// The file a buffer shows in a plugin's viewer (see `openFileView`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileViewing {
+    /// The viewer, as `openFileView` named it.
+    pub viewer_id: String,
+    /// The file, as opening it would spell it.
+    pub path: String,
+}
+
 /// Options for showActionPopup
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -8236,6 +8307,7 @@ mod fromjs_impls {
         ActionPopupAction,
         ActionPopupOptions,
         AddMenuItemOptions,
+        FileView,
         FileExplorerMenuItemOptions,
         TabMenuItemOptions,
         LspMenuItem,
@@ -9369,6 +9441,7 @@ mod tests {
                 use_tabs: false,
                 is_preview: false,
                 splits: Vec::new(),
+                viewing: None,
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -9422,6 +9495,7 @@ mod tests {
                     use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
+                    viewing: None,
                 },
             );
             snapshot.buffers.insert(
@@ -9445,6 +9519,7 @@ mod tests {
                     use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
+                    viewing: None,
                 },
             );
             snapshot.buffers.insert(
@@ -9470,6 +9545,7 @@ mod tests {
                     use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
+                    viewing: None,
                 },
             );
         }

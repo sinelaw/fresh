@@ -377,6 +377,12 @@ type BufferInfo = {
   * snapshot at the last `update_plugin_state_snapshot` tick.
   */
   splits: number[];
+  /**
+  * The file this buffer shows in a plugin's viewer (`openFileView`), or
+  * `null`. Such a buffer is virtual, with an empty `path`, and it is
+  * the file's tab: opening the file goes to it.
+  */
+  viewing: FileViewing | null;
 };
 ```
 
@@ -1428,6 +1434,44 @@ interface FilePrefix {
   text?: string;
   error?: string;
 }
+```
+
+### `FileView`
+
+How a file's tab shows it (see `openFileView`).
+
+```typescript
+type FileView = {
+  "kind": "text";
+} | {
+  "kind": "viewer";
+  /**
+  * The plugin's name for the viewer, reported back as
+  * `BufferInfo.viewing.viewer_id`.
+  */
+  viewerId: string;
+  /**
+  * Mode for the viewer's keys (define it with `defineMode` first).
+  */
+  mode?: string;
+};
+```
+
+### `FileViewing`
+
+The file a buffer shows in a plugin's viewer (see `openFileView`).
+
+```typescript
+type FileViewing = {
+  /**
+  * The viewer, as `openFileView` named it.
+  */
+  viewer_id: string;
+  /**
+  * The file, as opening it would spell it.
+  */
+  path: string;
+};
 ```
 
 ### `FormatterPackConfig`
@@ -3730,6 +3774,22 @@ final text.
 
 ```typescript
 type OffsetUnit = "byte" | "char";
+```
+
+### `OpenFileViewResult`
+
+How `openFileView` went.
+
+```typescript
+type OpenFileViewResult = {
+  "kind": "opened";
+  bufferId: number;
+} | {
+  "kind": "unsavedChanges";
+} | {
+  "kind": "failed";
+  error: string;
+};
 ```
 
 ### `OpenInSystemAppResult`

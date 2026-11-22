@@ -299,8 +299,9 @@ impl Editor {
         let root = window.root.clone();
         let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
         // A file another editor has open is that editor's to restore into
+        // The buffers that can take the file's unsaved work: not a viewer's.
         let open_here: HashSet<PathBuf> = window
-            .tab_file_buffers()
+            .file_buffers(false)
             .filter(|(buffer_id, _)| {
                 window
                     .buffer_metadata
@@ -314,7 +315,7 @@ impl Editor {
             .windows
             .iter()
             .filter(|(wid, w)| **wid != self.active_window && w.host_key() == host)
-            .flat_map(|(_, w)| w.tab_file_buffers().map(|(_, file)| file.to_path_buf()))
+            .flat_map(|(_, w)| w.file_buffers(false).map(|(_, file)| file.to_path_buf()))
             .collect();
         // The unnamed buffers other saved workspaces on this root place:
         // theirs to come back with

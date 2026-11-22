@@ -1336,11 +1336,21 @@ impl crate::app::window::Window {
         })
     }
 
-    /// This window's file buffers that have a tab, with their files: what a
-    /// file being "open" here means. A plugin's hidden or virtual buffer,
-    /// and a composite view, are not.
+    /// This window's tabs that are files, with their files: what a file
+    /// being "open" here means. A file's own buffer, or a plugin's viewer of
+    /// it (`openFileView`); not a plugin's other hidden or virtual buffers,
+    /// nor a composite view. For the buffers that can write their file, see
+    /// [`Self::file_buffers`].
     pub(crate) fn tab_file_buffers(&self) -> impl Iterator<Item = (BufferId, &Path)> {
-        self.file_buffers(false)
+        self.file_buffers(false).chain(self.viewer_tabs())
+    }
+
+    /// This window's viewer tabs (`openFileView`), with the files they show.
+    pub(crate) fn viewer_tabs(&self) -> impl Iterator<Item = (BufferId, &Path)> {
+        self.buffer_metadata.iter().filter_map(|(buffer_id, meta)| {
+            let viewing = meta.viewing.as_ref().filter(|_| !meta.hidden_from_tabs)?;
+            Some((*buffer_id, viewing.path.as_path()))
+        })
     }
 
     /// This window's file buffers, with their files: those with a tab, and
@@ -1472,12 +1482,18 @@ impl crate::app::window::Window {
             anyhow::bail!(t!("buffer.cannot_open_directory"));
         }
 
-        // Check if file is already open - return existing buffer without switching
+        // Check if file is already open - return existing buffer without switching.
+        // A plugin's viewer of it is its tab too (`openFileView`).
         let already_open = self
             .buffers
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(path))
-            .map(|(id, _)| *id);
+            .map(|(id, _)| *id)
+            .or_else(|| {
+                self.viewer_tabs()
+                    .find(|(_, file)| *file == path)
+                    .map(|(id, _)| id)
+            });
 
         if let Some(id) = already_open {
             return Ok(id);

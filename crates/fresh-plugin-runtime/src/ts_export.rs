@@ -143,6 +143,9 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TabMenuScope" => Some(decl_with_docs::<fresh_core::api::TabMenuScope>(&cfg)),
         "TabMenuTarget" => Some(decl_with_docs::<fresh_core::api::TabMenuTarget>(&cfg)),
         "OpenInSystemAppResult" => Some(decl_with_docs::<fresh_core::api::OpenInSystemAppResult>(&cfg)),
+        "FileView" => Some(decl_with_docs::<fresh_core::api::FileView>(&cfg)),
+        "OpenFileViewResult" => Some(decl_with_docs::<fresh_core::api::OpenFileViewResult>(&cfg)),
+        "FileViewing" => Some(decl_with_docs::<fresh_core::api::FileViewing>(&cfg)),
         "TsLspMenuItem" | "LspMenuItem" => Some(decl_with_docs::<fresh_core::api::LspMenuItem>(&cfg)),
         "TsHighlightSpan" => Some(decl_with_docs::<TsHighlightSpan>(&cfg)),
         "FileExplorerDecoration" => Some(decl_with_docs::<FileExplorerDecoration>(&cfg)),
@@ -426,6 +429,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TabMenuScope",                    // Used by TabMenuItemOptions
     "TabMenuTarget",                   // Passed to a tab menu item's handler
     "OpenInSystemAppResult",           // Returned by openInSystemApp
+    "FileView",                        // Used by openFileView
+    "OpenFileViewResult",              // Returned by openFileView
+    "FileViewing",                     // Used by BufferInfo.viewing
     "TsLspMenuItem",                   // Used by setLspMenuContributions
     "FileExplorerDecoration",          // Used by setFileExplorerDecorations
     "FileExplorerSlotEntry",           // Used by setFileExplorerSlots

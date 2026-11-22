@@ -8197,6 +8197,63 @@ impl JsEditorApi {
         id
     }
 
+    #[plugin_api(section = "Virtual Buffers")]
+    /// Show a file in its tab as text or in a viewer of yours, keeping the
+    /// file to one tab.
+    ///
+    /// With `{ kind: "viewer", viewerId }` the tab becomes a read-only
+    /// buffer you fill with `setVirtualBufferContent`; `viewerId` is your
+    /// name for the viewer. That buffer is the file's tab: opening the file
+    /// any way (the explorer, Quick Open, `openFile`) goes to it, its
+    /// `BufferInfo.viewing` names the viewer and the file, and nothing ever
+    /// saves it as the file. With `{ kind: "text" }` the tab shows the
+    /// file's text again.
+    ///
+    /// If the file already has a tab in its window, the new view takes that
+    /// tab's place and the old buffer closes; showing it the way it already
+    /// is just goes to the tab. A text tab with unsaved changes is never
+    /// replaced: that resolves with `{ kind: "unsavedChanges" }`.
+    ///
+    /// Acts in the active window, the one the path must belong to. A file
+    /// open in another window resolves with `{ kind: "failed" }`.
+    ///
+    /// @param path - The file: a `WindowPath`, or a path of the active
+    /// window, relative to its folder or absolute
+    /// @param view - How to show it
+    #[plugin_api(
+        async_promise,
+        js_name = "openFileView",
+        ts_return = "OpenFileViewResult"
+    )]
+    #[qjs(rename = "_openFileViewStart")]
+    pub fn open_file_view_start<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        #[plugin_api(ts_type = "string | WindowPath | AuthorityPath")]
+        path: fresh_core::api::PluginPath,
+        view: fresh_core::api::FileView,
+    ) -> fresh_js::Result<u64> {
+        use fresh_core::api::{PluginPath, WindowPath};
+        let path = match path {
+            PluginPath::Authority { window, path } => WindowPath {
+                window: fresh_core::WindowId(window.unwrap_or_else(|| self.active_window())),
+                value: path,
+            },
+            // A file shown in a tab is a window's.
+            PluginPath::Local(_) => {
+                let msg = "openFileView: the path must be a window's, not a LocalPath";
+                return Err(ctx.throw(fresh_js::String::from_str(ctx.clone(), msg)?.into_value()));
+            }
+        };
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::OpenFileView {
+            path,
+            view,
+            request_id: id,
+        });
+        Ok(id)
+    }
+
     // See `PluginCommand::SetLspMenuContributions`.
     #[plugin_api(section = "Languages & LSP")]
     /// Contribute (or replace, or clear) menu rows for the LSP-Servers
@@ -14830,6 +14887,7 @@ mod tests {
                     use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
+                    viewing: None,
                 },
             );
             state.buffers.insert(
@@ -14853,6 +14911,7 @@ mod tests {
                     use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
+                    viewing: None,
                 },
             );
         }

@@ -498,6 +498,7 @@ impl Editor {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewing: None,
         };
         self.active_window_mut()
             .buffer_metadata
@@ -584,6 +585,7 @@ impl Editor {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
+            viewing: None,
         };
         self.active_window_mut()
             .buffer_metadata

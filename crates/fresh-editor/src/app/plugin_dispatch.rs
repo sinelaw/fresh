@@ -936,6 +936,14 @@ impl Editor {
             PluginCommand::OpenInSystemApp { path, request_id } => {
                 self.handle_open_in_system_app(path, request_id);
             }
+            PluginCommand::OpenFileView {
+                path,
+                view,
+                request_id,
+            } => {
+                let result = self.open_file_view(&path, view);
+                self.resolve_json_callback(request_id, result);
+            }
 
             // ==================== Split Commands ====================
             PluginCommand::FocusSplit { split_id } => {
@@ -2791,7 +2799,7 @@ impl Editor {
     /// Apply the three display flags (line numbers, cursor visibility,
     /// editing lock) that every `create_virtual_buffer_*` command sets
     /// on the newly-created buffer's state.
-    fn configure_vbuf_display(
+    pub(crate) fn configure_vbuf_display(
         &mut self,
         buffer_id: crate::model::event::BufferId,
         show_line_numbers: bool,
@@ -7287,6 +7295,18 @@ impl Editor {
 /// behaviour — the plugin recomputes on the next change event — so clamp
 /// instead of rejecting. `start` is pinned to `end` so an over-large start
 /// yields an empty range rather than `start > end`.
+/// A buffer's `BufferInfo.viewing`: the file a plugin's viewer shows in it.
+fn file_viewing_info(
+    meta: &crate::app::types::BufferMetadata,
+) -> Option<fresh_core::api::FileViewing> {
+    meta.viewing
+        .as_ref()
+        .map(|viewing| fresh_core::api::FileViewing {
+            viewer_id: viewing.viewer_id.clone(),
+            path: viewing.path.to_string_lossy().into_owned(),
+        })
+}
+
 fn clamp_buffer_text_range(start: usize, end: usize, len: usize) -> (usize, usize) {
     let end = end.min(len);
     let start = start.min(end);
@@ -7321,6 +7341,7 @@ impl Window {
                     use_tabs: state.buffer_settings.use_tabs,
                     is_preview: self.is_buffer_preview(*buffer_id),
                     splits: Vec::new(),
+                    viewing: meta.and_then(file_viewing_info),
                 }
             })
             .collect()
@@ -7480,6 +7501,10 @@ impl Window {
                 use_tabs: state.buffer_settings.use_tabs,
                 is_preview,
                 splits,
+                viewing: self
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .and_then(file_viewing_info),
             };
             snapshot.buffers.insert(*buffer_id, buffer_info);
 

@@ -16,7 +16,7 @@ pub const DEFAULT_BACKGROUND_FILE: &str = "scripts/landscape-wide.txt";
 pub use buffer_group::{BufferGroup, BufferGroupId, GroupLayoutNode};
 
 // buffer_meta re-exports
-pub use buffer_meta::{BufferKind, BufferMetadata};
+pub use buffer_meta::{BufferKind, BufferMetadata, FileViewing};
 
 // context_menu re-exports
 pub use context_menu::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
