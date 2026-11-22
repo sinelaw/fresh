@@ -1,7 +1,7 @@
 //! E2E tests for the bundled `welcome_screen` plugin.
 //!
-//! The page: a Nerd Font icons checkbox, the essentials, and the latest
-//! release's notes as written (compiled in from `CHANGELOG.md`). These
+//! The page: the latest release's notes as written (compiled in from
+//! `CHANGELOG.md`), a Nerd Font icons checkbox, and the essentials. These
 //! drive the real plugin with keys and the mouse and assert on the screen
 //! and on the saved config, plus the one lifecycle rule the plugin has:
 //! open at startup as a tab behind whatever is there, and touch nothing
@@ -16,8 +16,8 @@ use std::fs;
 
 const TAB_BAR_ROW: u16 = 1;
 
-/// A heading the page always has, whatever the changelog holds.
-const PAGE_MARKER: &str = "Essentials";
+/// The page's title, on its first screen whatever the changelog holds.
+const PAGE_MARKER: &str = "Welcome to Fresh";
 
 /// The Nerd Font glyph the file icons use for a `.rs` file (dev-rust).
 const RUST_NERD_GLYPH: char = '\u{e7a8}';
@@ -132,6 +132,24 @@ fn page_rows(harness: &mut EditorTestHarness) -> Vec<String> {
         settle(harness);
     }
     panic!("the welcome page never reached its end");
+}
+
+/// Page down until `needle` is on screen: the essentials and the
+/// checkboxes come after the release notes, below the first screen.
+fn scroll_into_view(harness: &mut EditorTestHarness, needle: &str) {
+    for _ in 0..40 {
+        if harness.screen_to_string().contains(needle) {
+            return;
+        }
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        settle(harness);
+    }
+    panic!(
+        "{needle:?} never came into view:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// **The reopen loop.** The page used to read `buffer_closed` on an
@@ -296,7 +314,8 @@ fn piped_input_gets_no_welcome_tab() {
 fn the_startup_checkbox_saves_the_show_on_startup_setting() {
     let (mut harness, tmp) = harness_with_welcome();
     open_welcome(&mut harness);
-    // The checkbox is with the essentials, above the release notes.
+    // The checkbox is at the foot of the page.
+    scroll_into_view(&mut harness, "Show this screen on startup");
     let (col, row) = harness
         .find_text_on_screen("[v] Show this screen on startup")
         .unwrap_or_else(|| {
@@ -572,7 +591,7 @@ fn settle(harness: &mut EditorTestHarness) {
 /// and each bullet whole — its bold lead and its credit. The page used to
 /// cut the release to eight shortened bullets, run the sections together,
 /// and count the rest as "…and N more", which said nothing about what they
-/// were. The notes run long, so they come after the essentials.
+/// were. They open the page, ahead of the checkbox and the essentials.
 #[test]
 fn whats_new_shows_the_changelogs_latest_release_as_written() {
     let Some(latest) = changelog_latest() else {
@@ -588,9 +607,11 @@ fn whats_new_shows_the_changelogs_latest_release_as_written() {
             .unwrap_or_else(|| panic!("{needle:?} is not on the page:\n{page}"))
     };
     let news = row_of(&format!("What's new in {}", latest.version));
+    // The checkbox, not a bullet that names the setting.
+    let checkbox = row_of("] Nerd Font icons");
     assert!(
-        row_of(PAGE_MARKER) < news,
-        "the notes come after the essentials:\n{page}"
+        news < checkbox,
+        "the notes come before the checkbox:\n{page}"
     );
     let mut last = news;
     for heading in &latest.headings {
@@ -598,7 +619,10 @@ fn whats_new_shows_the_changelogs_latest_release_as_written() {
             .iter()
             .position(|r| r == heading)
             .unwrap_or_else(|| panic!("no {heading:?} heading on the page:\n{page}"));
-        assert!(at > last, "{heading:?} is out of order:\n{page}");
+        assert!(
+            at > last && at < checkbox,
+            "{heading:?} is out of order:\n{page}"
+        );
         last = at;
     }
     row_of(&latest.first_lead);
@@ -650,14 +674,15 @@ fn the_nerd_font_checkbox_saves_the_setting_and_shows_the_icons() {
         !tab_glyph(&harness),
         "no Nerd Font glyph in the tabs while off"
     );
+    // The checkbox is the page's first control: Tab reaches it (and brings
+    // it into view, below the release notes), Space ticks it.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
     assert!(
         harness.screen_to_string().contains("[ ] Nerd Font icons"),
         "the checkbox starts unticked. Screen:\n{}",
         harness.screen_to_string()
     );
-
-    // The checkbox is the page's first control: Tab reaches it, Space ticks it.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
         .unwrap();
@@ -712,6 +737,7 @@ fn walk_for_config(dir: &std::path::Path) -> std::io::Result<String> {
 fn the_file_explorer_essential_opens_the_explorer() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
+    scroll_into_view(&mut harness, "File explorer");
     let (col, row) = harness
         .find_text_on_screen("File explorer")
         .expect("the essentials list the explorer");
@@ -734,6 +760,7 @@ fn the_essentials_show_their_keybindings() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
     let palette_key = "Ctrl+P";
+    scroll_into_view(&mut harness, "Command palette");
     let (_, row) = harness
         .find_text_on_screen("Command palette")
         .expect("the palette is the first essential");
@@ -750,13 +777,6 @@ fn the_essentials_show_their_keybindings() {
 /// empty line, and holding Down scrolled the page away into blank space.
 #[test]
 fn holding_down_does_not_scroll_past_the_end_of_the_page() {
-    // The page ends with the release notes' link, or, in a build without
-    // the changelog, with the line that says how to close it.
-    let last_row = if changelog_latest().is_some() {
-        "Full release notes"
-    } else {
-        "closes this page"
-    };
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
     for _ in 0..400 {
@@ -765,7 +785,7 @@ fn holding_down_does_not_scroll_past_the_end_of_the_page() {
     harness.wait_for_async_quiescence(4).unwrap();
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(last_row),
+        screen.contains("closes this page"),
         "Down scrolled the page's end off the screen:\n{screen}"
     );
 }

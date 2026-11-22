@@ -20,19 +20,18 @@ const editor = getEditor();
 //
 //   One page, in this order:
 //
-//   1. Nerd Font icons — a checkbox for `editor.nerd_font_icons`, with
+//   1. What's new — the latest release's notes as written, compiled in
+//      from CHANGELOG.md at build time (`editor.releaseNotes()`), so every
+//      release's page is current with no manual step: the same headings
+//      and bullets as the published release notes, nothing shortened. A
+//      build without the changelog has no such section.
+//   2. Nerd Font icons — a checkbox for `editor.nerd_font_icons`, with
 //      sample glyphs beside it so the reader can tell whether their
 //      terminal's font has them. It saves the setting the way Settings
 //      does and takes effect on the next frame.
-//   2. The essentials — the palette, opening files, the explorer,
+//   3. The essentials — the palette, opening files, the explorer,
 //      settings, a terminal, help, and how to quit — each with the
 //      reader's own keybinding — and the startup checkboxes.
-//   3. What's new — the latest release's notes as written, compiled in
-//      from CHANGELOG.md at build time (`editor.releaseNotes()`), so every
-//      release's page is current with no manual step: the same headings
-//      and bullets as the published release notes, nothing shortened. It
-//      runs as long as the release, so it comes last. A build without the
-//      changelog has no such section.
 //
 //   Lifecycle, unchanged from the page this replaces: when Fresh
 //   launches, the page opens as a tab *behind* whatever is already
@@ -483,11 +482,11 @@ function footer(): WidgetSpec[] {
 function buildSpec(): WidgetSpec {
   return col(
     ...title(),
+    ...whatsNew(),
     ...nerdFont(),
     ...essentials(),
     ...familiar(),
     ...footer(),
-    ...whatsNew(),
   );
 }
 
