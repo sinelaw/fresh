@@ -225,10 +225,17 @@ fn unsaved_text_is_not_replaced_by_a_viewer() {
 #[test]
 fn the_system_app_is_asked_to_open_the_file() {
     let (_temp, root, mut harness) = setup();
-    // Stands in for the system: launches nothing, and succeeds.
+    // Stands in for the system: launches nothing, and succeeds only for the
+    // file it should be asked to open.
     harness
         .editor_mut()
-        .set_system_opener(Arc::new(|_path: &Path| -> Result<(), String> { Ok(()) }));
+        .set_system_opener(Arc::new(|path: &Path| -> Result<(), String> {
+            if path.ends_with("photo.fakeimg") {
+                Ok(())
+            } else {
+                Err(format!("asked for {}", path.display()))
+            }
+        }));
     open_file(&mut harness, &root.join("photo.fakeimg"));
 
     palette_open_with(&mut harness);
@@ -255,5 +262,30 @@ fn a_failing_system_app_is_reported() {
     // The status bar cuts the reason off at this width.
     harness
         .wait_for_screen_contains("Could not open photo.fakeimg in the system's default")
+        .unwrap();
+}
+
+#[test]
+fn picking_an_open_viewer_closes_the_text_tab() {
+    let (_temp, root, mut harness) = setup();
+    let photo = root.join("photo.fakeimg");
+    open_file(&mut harness, &photo);
+    palette_open_with(&mut harness);
+    pick(&mut harness, "Fake Viewer");
+    harness.wait_for_screen_contains(VIEWED).unwrap();
+
+    // Opening the file the usual way gives it a text tab beside the viewer.
+    open_file(&mut harness, &photo);
+    harness.wait_for_screen_contains(TEXT).unwrap();
+    harness
+        .wait_until(|h| tabs_named(h, "photo.fakeimg") == 2)
+        .unwrap();
+
+    // Back to the viewer it already has: the text tab goes.
+    palette_open_with(&mut harness);
+    pick(&mut harness, "Fake Viewer");
+    harness.wait_for_screen_contains(VIEWED).unwrap();
+    harness
+        .wait_until(|h| tabs_named(h, "photo.fakeimg") == 1 && !h.screen_to_string().contains(TEXT))
         .unwrap();
 }

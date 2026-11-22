@@ -17,9 +17,10 @@ const editor = getEditor();
  * window it came from. A file is a `WindowPath` throughout: the same path in
  * two windows (one local, one over SSH) can be two different files.
  *
- * Viewers come from other plugins, through the API exported below:
+ * Viewers come from other plugins, through the API exported below. This
+ * plugin ships with the editor and loads before the user's plugins, so a
+ * viewer registers when it loads:
  *
- *     import type { OpenWithApi } from "fresh:plugin/open_with";
  *     editor.getPluginApi("open-with")?.registerViewer({
  *       id: "pdf-text",
  *       label: "PDF as Text",
@@ -32,9 +33,6 @@ const editor = getEditor();
  *         editor.setVirtualBufferContent(req.bufferId, [{ text: stdout }]);
  *       },
  *     });
- *
- * The `import type` line makes this plugin load first, so the API is there
- * when the viewer registers.
  */
 
 // =============================================================================
@@ -43,15 +41,15 @@ const editor = getEditor();
 
 /** What a viewer's `open` is called with. */
 export type ViewerRequest = {
-  /** The read-only buffer made for the file, already in its tab. Fill it
-   *  with `setVirtualBufferContent`. */
+  /** A read-only buffer in a new tab for the file, which replaces the
+   *  file's other tab. Fill it with `setVirtualBufferContent`. */
   bufferId: number;
   /** The file to show, on its window's filesystem: the file APIs take it as
    *  is, and `openMachine({ kind: "window", window: path.window })` runs
    *  commands where it is. */
   path: WindowPath;
   /** The viewer's `id`. */
-  openerId: string;
+  viewerId: string;
 };
 
 /** A way to show some file types, from another plugin. */
@@ -144,6 +142,14 @@ function viewerTabOf(path: WindowPath): [number, ViewerTab] | null {
   return null;
 }
 
+/** Whether the files of window `windowId` are this computer's, so its apps
+ *  can open them: a window with no remote machine (a local one, or a
+ *  container's, which shares this computer's files). */
+function isOnThisComputer(windowId: number): boolean {
+  const window = editor.listWindows().find((w) => w.id === windowId);
+  return window !== undefined && !window.remote;
+}
+
 /** The file a tab of window `windowId` shows: its own, or its viewer's. */
 function fileOfTab(
   windowId: number,
@@ -166,18 +172,22 @@ function fileOfTab(
 async function openAsText(path: WindowPath): Promise<void> {
   const viewer = viewerTabOf(path);
   editor.openFile(path.value);
-  if (viewer) editor.closeBuffer(viewer[0]);
+  if (!viewer) return;
+  // Close the viewer only once the text is open: an open can fail.
+  await editor.flush();
+  if (textTabOf(path)) editor.closeBuffer(viewer[0], true);
 }
 
 async function openInViewer(path: WindowPath, viewer: Viewer): Promise<void> {
   const existing = viewerTabOf(path);
-  if (existing && existing[1].viewerId === viewer.id) {
-    editor.showBuffer(existing[0]);
-    return;
-  }
   const text = textTabOf(path);
   if (text?.modified) {
     editor.setStatus(editor.t("status.unsaved", { name: fileName(path) }));
+    return;
+  }
+  if (existing && existing[1].viewerId === viewer.id) {
+    editor.showBuffer(existing[0]);
+    if (text) editor.closeBuffer(text.id);
     return;
   }
   const { bufferId } = await editor.createVirtualBuffer({
@@ -186,11 +196,12 @@ async function openInViewer(path: WindowPath, viewer: Viewer): Promise<void> {
     editingDisabled: true,
   });
   viewerTabs.set(bufferId, { path, viewerId: viewer.id });
-  // The new tab is in place; now the file's other tab can go.
-  if (existing) editor.closeBuffer(existing[0]);
+  // The new tab is in place; now the file's other tab can go. This
+  // plugin's own viewer tabs go whatever their viewer wrote in them.
+  if (existing) editor.closeBuffer(existing[0], true);
   if (text) editor.closeBuffer(text.id);
   try {
-    await viewer.open({ bufferId, path, openerId: viewer.id });
+    await viewer.open({ bufferId, path, viewerId: viewer.id });
   } catch (e) {
     editor.setStatus(
       editor.t("status.viewer_failed", {
@@ -238,22 +249,26 @@ async function open(path: WindowPath, choice: Choice): Promise<void> {
 
 function openWith(path: WindowPath): void {
   if (path.window !== editor.activeWindow()) return;
-  const shownIn = viewerTabOf(path)?.[1].viewerId ?? (textTabOf(path) ? "" : null);
-  const entries: Array<{ choice: Choice; label: string; current: boolean }> = [
+  // Every way the file is open now is marked: text, a viewer, or both.
+  const viewerShown = viewerTabOf(path)?.[1].viewerId ?? null;
+  const textShown = textTabOf(path) !== null;
+  const entries: Array<{ value: string; choice: Choice; label: string; current: boolean }> = [
     {
+      value: "text",
       choice: { kind: "text" },
       label: editor.t("choice.text"),
-      current: shownIn === "",
+      current: textShown,
     },
     ...viewersFor(path).map((viewer) => ({
+      value: `viewer:${viewer.id}`,
       choice: { kind: "viewer", viewer } as Choice,
       label: viewer.label,
-      current: shownIn === viewer.id,
+      current: viewerShown === viewer.id,
     })),
   ];
-  // The system's apps reach only this computer's files.
-  if (editor.getAuthorityLabel() === "") {
+  if (isOnThisComputer(path.window)) {
     entries.push({
+      value: "system",
       choice: { kind: "systemApp" },
       label: editor.t("choice.system_app"),
       current: false,
@@ -261,14 +276,13 @@ function openWith(path: WindowPath): void {
   }
 
   const choices = new Map<string, Choice>();
-  const suggestions: PromptSuggestion[] = entries.map((entry, i) => {
-    const value = String(i);
-    choices.set(value, entry.choice);
+  const suggestions: PromptSuggestion[] = entries.map((entry) => {
+    choices.set(entry.value, entry.choice);
     return {
-      id: value,
+      id: entry.value,
       text: entry.label,
       description: entry.current ? editor.t("choice.current") : undefined,
-      value,
+      value: entry.value,
     };
   });
   picker = { path, choices };
