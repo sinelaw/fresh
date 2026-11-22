@@ -26,6 +26,14 @@ const RUST_NERD_GLYPH: char = '\u{e7a8}';
 /// the caller's config, with its config directory inside the same scratch
 /// directory so a test can read what the page saved.
 fn harness_with_welcome_config(config: Config) -> (EditorTestHarness, tempfile::TempDir) {
+    harness_with_welcome_sized(config, 120, 40)
+}
+
+fn harness_with_welcome_sized(
+    config: Config,
+    width: u16,
+    height: u16,
+) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let working_dir = temp.path().join("work");
     fs::create_dir_all(&working_dir).unwrap();
@@ -36,8 +44,8 @@ fn harness_with_welcome_config(config: Config) -> (EditorTestHarness, tempfile::
 
     let dir_context = DirectoryContext::for_testing(&temp.path().join("state"));
     let harness = EditorTestHarness::create(
-        120,
-        40,
+        width,
+        height,
         HarnessOptions::new()
             .with_config(config)
             .with_working_dir(working_dir)
@@ -596,6 +604,28 @@ fn whats_new_shows_the_changelogs_latest_release_as_written() {
     row_of(&latest.first_lead);
     row_of(&latest.first_credit);
     assert!(!page.contains("…and "), "the notes are cut short:\n{page}");
+}
+
+/// **A narrow pane wraps the page's lines rather than cutting them.** The
+/// tagline, the line that says how to close the page and the release
+/// notes' link were drawn as single rows, so a pane narrower than they are
+/// lost their ends ("run Welcome from the pal").
+#[test]
+fn a_narrow_pane_wraps_rather_than_cuts() {
+    let (mut harness, _tmp) = harness_with_welcome_sized(Config::default(), 52, 40);
+    open_welcome(&mut harness);
+    let rows = page_rows(&mut harness);
+    let page = rows.join("\n");
+    let mut ends = vec!["grows into an IDE.", "to bring it back"];
+    if changelog_latest().is_some() {
+        ends.push("github.com/sinelaw/fresh/releases");
+    }
+    for end in ends {
+        assert!(
+            rows.iter().any(|r| r.ends_with(end)),
+            "{end:?} is cut off:\n{page}"
+        );
+    }
 }
 
 /// **The Nerd Font checkbox owns the real setting.** Ticking it writes

@@ -150,10 +150,6 @@ function line(segments: StyledSegment[]): WidgetSpec {
   return raw([styledRow(segments)]);
 }
 
-function plain(t: string, fg: string = C.body): WidgetSpec {
-  return line([{ text: t, style: { fg } }]);
-}
-
 function blank(): WidgetSpec {
   return line([{ text: "" }]);
 }
@@ -235,7 +231,7 @@ function title(): WidgetSpec[] {
   return [
     blank(),
     line([{ text: t, style: { fg: C.title, bold: true } }]),
-    plain(editor.t("tagline"), C.muted),
+    ...para(editor.t("tagline"), C.muted),
   ];
 }
 
@@ -264,7 +260,7 @@ function whatsNew(): WidgetSpec[] {
     }
   }
   out.push(blank());
-  out.push(plain("  " + editor.t("news.full", { url: RELEASES_URL }), C.muted));
+  out.push(...para(editor.t("news.full", { url: RELEASES_URL }), C.muted, "  ", "  "));
   return out;
 }
 
@@ -475,7 +471,8 @@ function footer(): WidgetSpec[] {
     segs.push(keySeg(k), { text: " " + editor.t("close.closes") + " · ", style: { fg: C.muted } });
   }
   segs.push({ text: editor.t("close.reopen"), style: { fg: C.muted } });
-  out.push(line(segs), blank());
+  // Wrapped, not cut: on a narrow pane it is longer than the measure.
+  out.push(...richPara(segs.slice(1), "  ", "  "), blank());
   return out;
 }
 
