@@ -44,6 +44,10 @@ pub struct DaemonSpawn<'a> {
     /// to. Set by the bare-`fresh` launch (see `config.auto_attach`);
     /// never inferred by the daemon, which has no way to know how it was started.
     pub orchestrator_mode: bool,
+    /// `--inherit-env`, as typed on the client's command line. Without it the
+    /// daemon's env capture builds its children's environment from a login
+    /// shell; the daemon cannot see what the client was told.
+    pub inherit_env: bool,
 }
 
 /// The argv a detached daemon is exec'd with, for the platform spawners.
@@ -75,6 +79,10 @@ pub(crate) fn server_args(spawn: &DaemonSpawn<'_>) -> Vec<String> {
 
     if spawn.orchestrator_mode {
         args.push("--orchestrator-mode".to_string());
+    }
+
+    if spawn.inherit_env {
+        args.push("--inherit-env".to_string());
     }
 
     args
@@ -207,6 +215,34 @@ mod tests {
         assert!(
             !args.iter().any(|a| a == "--orchestrator-mode"),
             "unexpected --orchestrator-mode in {args:?}"
+        );
+    }
+
+    /// `--inherit-env` decides how the daemon captures the activated env
+    /// (whose environment the capture shell starts from), and the daemon
+    /// cannot see what the client was told.
+    #[test]
+    fn server_args_forwards_inherit_env() {
+        let args = server_args(&DaemonSpawn {
+            session_name: Some("mysession"),
+            inherit_env: true,
+            ..Default::default()
+        });
+        assert!(
+            args.contains(&"--inherit-env".to_string()),
+            "missing --inherit-env in {args:?}"
+        );
+    }
+
+    #[test]
+    fn server_args_omits_inherit_env_by_default() {
+        let args = server_args(&DaemonSpawn {
+            session_name: Some("mysession"),
+            ..Default::default()
+        });
+        assert!(
+            !args.iter().any(|a| a == "--inherit-env"),
+            "unexpected --inherit-env in {args:?}"
         );
     }
 

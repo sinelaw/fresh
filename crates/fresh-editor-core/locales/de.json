@@ -24,6 +24,7 @@
   "cli.arg.simple": "Nur das Angegebene oder einen leeren Puffer in diesem Terminal öffnen: keine Sitzung wiederhergestellt oder gespeichert, kein Dock, kein Daemon (wie `fresh FILE`, nur ohne Datei)",
   "cli.arg.diff": "Zwei Dateien nebeneinander vergleichen, beide bearbeitbar, Unterschiede ausgerichtet und hervorgehoben (ein Diff-Werkzeug für `git difftool`)",
   "cli.arg.no_upgrade_check": "Update-Prüfung und anonyme Telemetrie deaktivieren",
+  "cli.arg.inherit_env": "Terminals und Sprachserver mit der Umgebung starten, in der fresh selbst läuft, plus den Änderungen eines aktivierten venv/direnv/mise. Ohne diesen Schalter wird die Umgebung, die sie erhalten, von einer Login-Shell neu aufgebaut, die die in der startenden Shell eingerichtete Umgebung verwirft (z. B. eine Projekt-Toolchain).",
   "cli.arg.locale": "Sprache überschreiben (z. B. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Im GUI-Modus starten (eigenes Fenster mit GPU-Rendering)",
   "cli.section.commands": "Befehle (mit --cmd verwenden):",

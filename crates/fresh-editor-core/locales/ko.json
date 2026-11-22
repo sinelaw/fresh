@@ -24,6 +24,7 @@
   "cli.arg.simple": "지정한 것만(없으면 빈 버퍼) 이 터미널에서 엽니다. 세션 복원·저장, 독, 데몬이 없습니다(파일 없이 `fresh FILE` 과 같은 동작)",
   "cli.arg.diff": "두 파일을 나란히 비교합니다. 둘 다 편집할 수 있으며 차이는 정렬되어 강조 표시됩니다(`git difftool`용 비교 도구)",
   "cli.arg.no_upgrade_check": "업그레이드 확인과 익명 텔레메트리를 비활성화합니다",
+  "cli.arg.inherit_env": "터미널과 언어 서버를 fresh 자신이 실행되는 환경에 활성화된 venv/direnv/mise의 변경 사항을 더한 환경으로 실행합니다. 이 플래그가 없으면 프로세스가 받는 환경은 로그인 셸에서 다시 구성되어, 시작한 셸에서 설정한 환경(예: 프로젝트 툴체인)이 사라집니다.",
   "cli.arg.locale": "로케일을 덮어씁니다 (예: 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "GUI 모드로 시작합니다 (GPU 렌더링을 사용하는 네이티브 창)",
   "cli.section.commands": "명령 (--cmd 사용):",

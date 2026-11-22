@@ -24,6 +24,7 @@
   "cli.arg.simple": "Otevře jen to, co je zadáno, nebo prázdný buffer v tomto terminálu: bez obnovení či uložení relace, bez panelu, bez démona (jako `fresh FILE`, jen bez souboru)",
   "cli.arg.diff": "Porovnat dva soubory vedle sebe, oba upravitelné, s zarovnanými a zvýrazněnými rozdíly (nástroj pro `git difftool`)",
   "cli.arg.no_upgrade_check": "Zakázat kontrolu aktualizací a anonymní telemetrii",
+  "cli.arg.inherit_env": "Spustit terminály a jazykové servery s prostředím, ve kterém běží samotný fresh, plus změny z aktivovaného venv/direnv/mise. Bez tohoto přepínače se prostředí, které dostanou, znovu sestaví z login shellu, který zahodí prostředí nastavené ve spouštěcím shellu (např. toolchain projektu).",
   "cli.arg.locale": "Přepsat jazyk (např. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Spustit v režimu GUI (nativní okno s GPU vykreslováním)",
   "cli.section.commands": "Příkazy (použijte --cmd):",

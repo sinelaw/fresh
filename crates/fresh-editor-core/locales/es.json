@@ -24,6 +24,7 @@
   "cli.arg.simple": "Abre solo lo indicado, o un búfer vacío, en esta terminal: sin restaurar ni guardar la sesión, sin panel, sin demonio (lo que hace `fresh FILE`, sin necesitar un archivo)",
   "cli.arg.diff": "Comparar dos archivos lado a lado, ambos editables, con las diferencias alineadas y resaltadas (una herramienta para `git difftool`)",
   "cli.arg.no_upgrade_check": "Desactivar la comprobación de actualizaciones y la telemetría anónima",
+  "cli.arg.inherit_env": "Lanzar terminales y servidores de lenguaje con el entorno en el que corre el propio fresh, más los cambios de un venv/direnv/mise activado. Sin este indicador, el entorno que reciben se reconstruye desde un login shell, que descarta el entorno preparado en el shell de lanzamiento (p. ej. un toolchain del proyecto).",
   "cli.arg.locale": "Sobrescribir el idioma (p. ej. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Iniciar en modo GUI (ventana nativa con renderizado por GPU)",
   "cli.section.commands": "Comandos (use --cmd):",

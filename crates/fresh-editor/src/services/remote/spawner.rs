@@ -23,25 +23,6 @@ use crate::services::remote::protocol::{decode_base64, exec_params};
 use crate::services::workspace_trust::{gate, WorkspaceTrust};
 use crate::types::ProcessLimits;
 
-/// Capture the active environment for a *local* host: run the provider's
-/// capture script through `$SHELL -lc …` as a raw subprocess (no env applied —
-/// this is how the env is established, so it must not recurse). Returns the
-/// captured `KEY=VALUE` pairs, or empty when inactive / on failure.
-async fn local_captured_env(provider: &EnvProvider) -> Vec<(String, String)> {
-    provider
-        .current(|script| async move {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            let output = tokio::process::Command::new(&shell)
-                .arg("-lc")
-                .arg(&script)
-                .hide_window()
-                .output()
-                .await
-                .ok()?;
-            Some(String::from_utf8_lossy(&output.stdout).into_owned())
-        })
-        .await
-}
 use std::borrow::Cow;
 use std::path::Path;
 use std::process::ExitStatus;
@@ -206,10 +187,10 @@ pub trait ProcessSpawner: Send + Sync {
 
 /// Local process spawner using tokio.
 ///
-/// Used for local file editing (the default). The optional `env` is layered
-/// onto every child's environment (under the inherited process env) — this is
-/// how an activated environment manager (venv / direnv / mise) injects its
-/// captured variables into one-shot spawns. Empty for the plain default.
+/// Used for local file editing (the default). The active env provider's
+/// activation delta is layered onto every child's environment (under the
+/// inherited process env) — this is how an activated environment manager
+/// (venv / direnv / mise) reaches one-shot spawns. Empty for the plain default.
 pub struct LocalProcessSpawner {
     env: Arc<EnvProvider>,
     trust: Arc<WorkspaceTrust>,
@@ -223,9 +204,14 @@ impl LocalProcessSpawner {
     }
 
     async fn apply_env(&self, cmd: &mut tokio::process::Command) {
-        let env = local_captured_env(&self.env).await;
-        if !env.is_empty() {
-            cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        // The same delta the integrated terminal applies, so a spawned
+        // process sees the same activated env a terminal does.
+        let delta = self.env.current_local_delta_blocking();
+        for (k, v) in &delta.set {
+            cmd.env(k, v);
+        }
+        for k in &delta.unset {
+            cmd.env_remove(k);
         }
     }
 }
@@ -854,7 +840,7 @@ pub struct LocalLongRunningSpawner {
 
 impl LocalLongRunningSpawner {
     /// Local long-running spawner gated by `trust`, applying the live `env`
-    /// provider's captured environment under each child's environment.
+    /// provider's activation delta under each child's environment.
     pub fn new(env: Arc<EnvProvider>, trust: Arc<WorkspaceTrust>) -> Self {
         Self { env, trust }
     }
@@ -875,12 +861,18 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
             command,
             cwd.map(|p| p.to_string_lossy()).as_deref(),
         )?;
-        let captured = local_captured_env(&self.env).await;
         let mut cmd = tokio::process::Command::new(resolve_program(command).as_ref());
-        cmd.args(args)
-            // Provider env first, then the per-call env so the caller wins.
-            .envs(captured.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .envs(env)
+        cmd.args(args);
+        // The same delta the integrated terminal applies, so a spawned
+        // process sees the same activated env a terminal does.
+        let delta = self.env.current_local_delta_blocking();
+        for (k, v) in &delta.set {
+            cmd.env(k, v);
+        }
+        for k in &delta.unset {
+            cmd.env_remove(k);
+        }
+        cmd.envs(env) // Per-call env last, so the caller wins.
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -912,8 +904,8 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
         // probe searches the same place `spawn_stdio` will — otherwise a
         // repo-local `pyright`/`ruff` looks missing and the server never
         // starts. Falls back to the process PATH when no env is active.
-        let captured = local_captured_env(&self.env).await;
-        if let Some((_, path)) = captured.iter().find(|(k, _)| k == "PATH") {
+        let delta = self.env.current_local_delta_blocking();
+        if let Some((_, path)) = delta.set.iter().find(|(k, _)| k == "PATH") {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             return which::which_in(command, Some(path), &cwd).is_ok();
         }
@@ -1398,6 +1390,7 @@ impl LongRunningSpawner for RemoteLongRunningSpawner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::env_provider::test_support::ActivatedVenv;
     use tokio::io::AsyncReadExt;
 
     // On non-Windows, `resolve_program` is a pure pass-through: PATH lookup
@@ -1613,14 +1606,15 @@ mod tests {
         );
     }
 
-    // Unix-only: the local env capture runs the recipe through a POSIX login
-    // shell (`$SHELL -lc`, falling back to `/bin/sh`). On Windows there is no
-    // such shell, so capture intentionally no-ops — there's nothing to assert.
+    // Unix-only: the local env capture runs the snippet through a POSIX
+    // shell (`$SHELL -c`, falling back to `/bin/sh`). On Windows there is
+    // no such shell, so capture intentionally no-ops — there's nothing to
+    // assert.
     #[cfg(unix)]
     #[tokio::test]
     async fn local_spawner_applies_active_env_provider() {
         // Full local path: an active provider whose snippet exports a var →
-        // captured via the login shell → injected into the spawned child.
+        // captured via the shell → injected into the spawned child.
         let env = Arc::new(EnvProvider::inactive());
         env.set("export FRESH_ENV_TEST=hi-from-provider".into(), None);
         let spawner = LocalProcessSpawner::new(env, Arc::new(WorkspaceTrust::permissive()));
@@ -1634,6 +1628,47 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "hi-from-provider");
+    }
+
+    /// The one-shot spawner's children see the venv's env.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn one_shot_spawner_children_env() {
+        let fixture = ActivatedVenv::new();
+        let result = LocalProcessSpawner::new(
+            fixture.provider.clone(),
+            Arc::new(WorkspaceTrust::permissive()),
+        )
+        .spawn("sh".into(), vec!["-c".into(), "env".into()], None)
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        fixture.assert_env(
+            "one-shot spawner",
+            &ActivatedVenv::parse_env(&result.stdout),
+        );
+    }
+
+    /// The stdio spawner's children see the venv's env.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_spawner_children_env() {
+        let fixture = ActivatedVenv::new();
+        let spawner = LocalLongRunningSpawner::new(
+            fixture.provider.clone(),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
+        let mut child = spawner
+            .spawn_stdio("sh", &["-c".into(), "env".into()], Vec::new(), None, None)
+            .await
+            .unwrap();
+        use tokio::io::AsyncReadExt as _;
+        let mut stdout = child.take_stdout().unwrap();
+        let mut out = String::new();
+        stdout.read_to_string(&mut out).await.unwrap();
+        drop(stdout);
+        let _ = child.wait().await;
+        fixture.assert_env("stdio spawner", &ActivatedVenv::parse_env(&out));
     }
 
     #[tokio::test]

@@ -158,6 +158,13 @@ struct Cli {
     #[arg(long)]
     no_upgrade_check: bool,
 
+    /// Spawn terminals and language servers with the environment fresh itself
+    /// runs in, plus any activated venv/direnv/mise changes. Without it, the
+    /// environment they get is rebuilt from a login shell, which drops the
+    /// environment set up in the launching shell (e.g. a project toolchain).
+    #[arg(long)]
+    inherit_env: bool,
+
     /// Override the locale (e.g., 'en', 'ja', 'zh-CN')
     #[arg(long, value_name = "LOCALE")]
     locale: Option<String>,
@@ -247,6 +254,10 @@ struct Args {
     /// is disabled in the config.
     force_restore: bool,
     no_upgrade_check: bool,
+    /// `--inherit-env`: spawn terminals and language servers with the
+    /// environment fresh runs in, not a rebuilt login-shell environment
+    /// (see `Cli::inherit_env`).
+    inherit_env: bool,
     dump_config: bool,
     show_paths: bool,
     list_grammars: bool,
@@ -614,6 +625,7 @@ impl From<Cli> for Args {
             }),
             force_restore: cli.restore,
             no_upgrade_check: cli.no_upgrade_check,
+            inherit_env: cli.inherit_env,
             dump_config,
             show_paths,
             list_grammars,
@@ -1800,6 +1812,10 @@ fn resolve_locale_override<'a>(args: &'a Args, config: &'a config::Config) -> Op
 }
 
 fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
+    // `--inherit-env` changes how every env capture on this host builds its
+    // shell; record it before anything can capture.
+    fresh::services::env_provider::set_inherit_env(args.inherit_env);
+
     let log_file = args
         .log_file
         .clone()
@@ -3428,6 +3444,10 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         args.session_name
     );
 
+    // `--inherit-env` changes how every env capture on this host builds its
+    // shell; record it before anything can capture.
+    fresh::services::env_provider::set_inherit_env(args.inherit_env);
+
     // Parse the optional `--ssh-url` the client forwarded via
     // `spawn_server_detached`.  If present, we connect here — before
     // building any editor config — so config loading can key off the
@@ -3672,6 +3692,7 @@ fn run_open_files_command(
     wait: bool,
     locale: Option<&str>,
     config: Option<&Path>,
+    inherit_env: bool,
 ) -> AnyhowResult<()> {
     use fresh::server::protocol::{ClientControl, ServerControl};
     use fresh::server::spawn_server_detached;
@@ -3722,6 +3743,7 @@ fn run_open_files_command(
             ssh_url: ssh_url.as_deref(),
             locale,
             config,
+            inherit_env,
             ..Default::default()
         })?;
         log_spawned_daemon(pid);
@@ -3754,7 +3776,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config, false, false);
+            return run_attach(session_name, &[], locale, config, false, false, inherit_env);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -3786,6 +3808,7 @@ fn run_open_files_command(
                                         config,
                                         false,
                                         false,
+                                        inherit_env,
                                     );
                                 }
                                 anyhow::bail!(
@@ -5721,6 +5744,7 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
                 &args.files,
                 args.locale.as_deref(),
                 args.config.as_deref(),
+                args.inherit_env,
             );
         }
     }
@@ -5731,6 +5755,7 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         args.config.as_deref(),
         false,
         false,
+        args.inherit_env,
     )
 }
 
@@ -5779,6 +5804,7 @@ fn run_orchestrator_launch(
     files: &[String],
     locale: Option<&str>,
     config_path: Option<&Path>,
+    inherit_env: bool,
 ) -> AnyhowResult<()> {
     run_attach(
         Some(fresh::server::ORCHESTRATOR_DAEMON),
@@ -5787,6 +5813,7 @@ fn run_orchestrator_launch(
         config_path,
         true,
         !config.open_last_workspace,
+        inherit_env,
     )
 }
 
@@ -5957,6 +5984,7 @@ fn run_attach(
     config: Option<&Path>,
     orchestrator_mode: bool,
     open_cwd: bool,
+    inherit_env: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -6011,6 +6039,7 @@ fn run_attach(
             locale,
             config,
             orchestrator_mode,
+            inherit_env,
         })?;
         log_spawned_daemon(pid);
         Some(pid)
@@ -6382,6 +6411,7 @@ fn run_if_subcommand(
             *wait,
             args.locale.as_deref(),
             args.config.as_deref(),
+            args.inherit_env,
         ));
     }
     if args.attach {
@@ -6666,6 +6696,7 @@ fn build_localized_cli_command() -> clap::Command {
         .mut_arg("no_upgrade_check", |a| {
             a.help(t("cli.arg.no_upgrade_check"))
         })
+        .mut_arg("inherit_env", |a| a.help(t("cli.arg.inherit_env")))
         .mut_arg("locale", |a| a.help(t("cli.arg.locale")));
 
     #[cfg(feature = "gui")]
@@ -6708,7 +6739,7 @@ fn real_main() -> AnyhowResult<()> {
     // clap, so `--help` and `--version` still answer for themselves — both
     // put something on the command line, so neither reaches this.
     if let Some(config) = wants_orchestrator_launch() {
-        return run_orchestrator_launch(&config, &[], None, None);
+        return run_orchestrator_launch(&config, &[], None, None, cli.inherit_env);
     }
 
     // `--skill` is the shortcut an agent is told to run first: one short,
