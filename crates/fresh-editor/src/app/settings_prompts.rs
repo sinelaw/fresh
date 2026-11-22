@@ -436,7 +436,7 @@ impl Editor {
     }
 
     /// Apply a theme by key (or name for backward compat) and persist to config
-    pub(super) fn apply_theme(&mut self, key_or_name: &str) {
+    pub(crate) fn apply_theme(&mut self, key_or_name: &str) {
         if !key_or_name.is_empty() {
             if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
                 *self.theme.write().unwrap() = theme;

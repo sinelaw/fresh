@@ -49,6 +49,14 @@
   .ts-tool{padding:2px 6px;border-radius:var(--r-sm);color:var(--muted);font-size:.85em}
   .ts-tool:hover{background:var(--hover);color:var(--fg)}
   .ts-tool.ts-danger{color:var(--on-accent,#fff);background:var(--danger,#d73a49)}
+  .ts-opt{display:flex;align-items:center;gap:8px;margin:-2px 0 4px;padding:4px 10px 6px 32px;cursor:pointer;
+    color:var(--muted);font-size:.84em;border-radius:var(--r-sm)}
+  .ts-opt:hover{background:var(--hover);color:var(--fg)}
+  .ts-opt b{color:var(--fg);font-weight:600}
+  .ts-box{width:13px;height:13px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+    font-size:10px;line-height:1;border-radius:3px;border:1px solid var(--hairline-strong);
+    color:var(--on-ui-accent,#fff);background:transparent}
+  .ts-opt[aria-checked="true"] .ts-box{background:var(--ui-accent,var(--accent));border-color:transparent}
   .ts-sep{height:1px;margin:6px 4px;background:var(--hairline)}
   .ts-act{display:block;width:100%;text-align:left;padding:6px 10px 6px 32px;border-radius:var(--r-sm);
     color:var(--fg);font-size:.92em}

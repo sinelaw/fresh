@@ -9,6 +9,7 @@ A skin is a folder of ordinary web files, so you write it with ordinary tools. Y
 ```
 my-skin/
   skin.css          the skin (required)
+  theme.json        an editor theme to go with it (optional)
   furniture.html    decorative markup for the window frame (optional)
   img/metal.png     any images or fonts the CSS uses (optional)
 ```
@@ -74,6 +75,7 @@ The stylesheet starts with a comment block that names the skin:
 | `@scale` | Density, from `0.5` to `1.5`, applied under the user's own zoom (Compact uses `0.92`). |
 | `@menu` | `cells`: menu titles sit at the terminal's columns. `flow`: they are evenly spaced. |
 | `@furniture` | The HTML file whose markup is built inside `#device`. |
+| `@editor-theme` | The editor theme that goes with the skin: a `.json` file in the folder (a folder's `theme.json` is found even without this line; URL installs need it), or the name of an installed theme such as `builtin://nord` or `nord`. See [The editor theme](#the-editor-theme). |
 
 ### Colours: CSS custom properties
 
@@ -134,6 +136,27 @@ body.theme-neon-night:not(.mobile) { background: url(img/wallpaper.jpg) center/c
 - The built-in skins in `crates/fresh-editor/web-ui/skins/` are complete examples. Winamp restyles nearly every surface.
 
 The skin's stylesheet is inserted after the page's base rules and before a few rules that must win over every skin (status-bar tone pills, popup row geometry, file-icon colours). Override those with a more specific selector.
+
+## The editor theme
+
+A skin dresses the chrome; the buffer's syntax colours, selection and cursor come from the editor's [theme](./themes.md). To ship both as one look, put a `theme.json` next to `skin.css`. It is an ordinary Fresh theme file, the same format the theme editor saves:
+
+```json
+{
+  "name": "neon-night",
+  "extends": "builtin://dark",
+  "editor": { "bg": [18, 8, 31], "selection_bg": [74, 20, 90] },
+  "syntax": { "keyword": [255, 47, 160], "string": [35, 229, 255] }
+}
+```
+
+Use another file name with `@editor-theme my-theme.json`, or pair the skin with an installed theme instead of bundling one: `@editor-theme builtin://nord`. A skin that `@extends` another inherits its editor theme unless it brings its own.
+
+When you **pick** the skin, its editor theme is applied as well, exactly as if you had chosen it in the editor. This happens on a pick, not on every page load. A bundled theme is saved as `<config dir>/themes/web-skins/<skin id>.json`, so it also appears in the editor's theme list (in the terminal too).
+
+The editor theme is not per-browser the way a skin is. It is the editor's own setting: every window attached to the session, including the terminal, uses it, and it is saved in `config.json`. To keep your editor theme, untick **Also use its editor theme** under the skin in the picker. That choice is remembered for that skin, and picking the skin then leaves the theme alone. Switching to a skin without an editor theme never changes it.
+
+In the skins folder, saving `theme.json` re-applies it live, like `skin.css`. A folder (served or picked) finds `theme.json` by itself; a URL has no folder listing, so a skin meant to be installed from a URL declares it with `@editor-theme theme.json`. Adding that line always is the simplest habit, since it works for every install route.
 
 ## `furniture.html`
 

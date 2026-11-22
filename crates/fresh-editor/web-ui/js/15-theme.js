@@ -16,6 +16,13 @@
 //                   `:root.theme-<id>`; structure is any CSS scoped under
 //                   `.theme-<id>`. Images and fonts by relative url(…).
 //   furniture.html  optional decorative markup for the #device bezel host.
+//   theme.json      optional EDITOR theme, in Fresh's ordinary theme format
+//                   (or `@editor-theme <name>` for an installed one). Picking
+//                   the skin applies it too — opt-out per skin in the picker.
+//                   It goes through the editor's own theme switch (a
+//                   `skinTheme` message, src/webui/skins.rs), because the
+//                   editor theme is shared, saved state: every client and the
+//                   terminal see it, and config.json records it.
 // Skins come from three places, read the same way:
 //   • built-in — web-ui/skins/NN-id/, bundled by build.rs;
 //   • folder   — the server's skins directory (`$FRESH_WEB_SKINS`, else
@@ -36,10 +43,14 @@
 /** type Skin = {
     id: String, name: String, description: String, author: String, version: String,
     parent: String, frame: String, scale: Number, menu: String, furnitureFile: String,
-    css: String, furniture: String, origin: String, source: String, stamp: String
+    css: String, furniture: String, editorTheme: String, editorThemeName: String,
+    origin: String, source: String, stamp: String
 } */
-/** type ResolvedSkin = {id: String, chain: String[], frame: String, scale: Number, menu: String, furniture: String, css: String} */
-/** type SkinFiles = {css: String, furniture: String} */
+/** type ResolvedSkin = {
+    id: String, chain: String[], frame: String, scale: Number, menu: String, furniture: String, css: String,
+    themeOwner: String, editorTheme: String, editorThemeName: String
+} */
+/** type SkinFiles = {css: String, furniture: String, theme: String} */
 /** type InstallResult = {ok: Boolean, id: String, error: String} */
 
 const SKIN_ID_RE = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
@@ -64,7 +75,7 @@ function skinHeader(css) {
   /** const meta: Dict<String> */
   const meta = {};
   for (const line of m[1].split("\n")) {
-    const kv = /^\s*@([a-z]+)\s+(.*?)\s*$/.exec(line);
+    const kv = /^\s*@([a-z-]+)\s+(.*?)\s*$/.exec(line);
     if (kv) meta[kv[1]] = kv[2];
   }
   return meta;
@@ -73,6 +84,15 @@ function skinHeader(css) {
 /** function plainSkinPath(String) => Boolean */
 function plainSkinPath(p) {
   return p.split("/").every(s => /^[A-Za-z0-9._-]+$/.test(s) && s !== "." && s !== "..");
+}
+// The file a skin's editor theme is in: `@editor-theme <file>.json`, else the
+// conventional `theme.json` (optional — "" when the header names an
+// installed theme instead).
+/** function skinThemeFile(Dict<String> | Null) => String */
+function skinThemeFile(meta) {
+  const v = meta ? (meta["editor-theme"] ?? "").trim() : "";
+  if (!v) return "theme.json";
+  return /\.json$/i.test(v) && plainSkinPath(v) ? v : "";
 }
 /** function parseSkin(SkinFiles, String, String) => {skin: Skin | Null, error: String} */
 function parseSkin(files, fallbackId, origin) {
@@ -99,10 +119,19 @@ function parseSkin(files, fallbackId, origin) {
   if (scale !== 0 && !(scale >= 0.5 && scale <= 1.5)) return fail("@scale must be a number from 0.5 to 1.5");
   const furnitureFile = get("furniture");
   if (furnitureFile && !plainSkinPath(furnitureFile)) return fail("@furniture must be a relative path inside the skin folder");
+  const themeRef = get("editor-theme");
+  const editorThemeName = themeRef && !/\.json$/i.test(themeRef) ? themeRef : "";
+  const editorTheme = files.theme.trim();
+  if (editorTheme) {
+    if (editorTheme.length > 512000) return fail("the editor theme is larger than 500 KB");
+    let kind = "";
+    try { kind = jsonKind(jsonParse(editorTheme)); } catch (e) { return fail(`the editor theme is not valid JSON (${String(e).replace(/^SyntaxError: /, "")})`); }
+    if (kind !== "object") return fail("the editor theme must be a JSON object (Fresh's theme format)");
+  }
   return { skin: {
     id, name, description: get("description"), author: get("author"), version: get("version"),
     parent, frame, scale, menu, furnitureFile, css, furniture: files.furniture.slice(0, 200000),
-    origin, source: "", stamp: "",
+    editorTheme, editorThemeName, origin, source: "", stamp: "",
   }, error: "" };
 }
 
@@ -156,7 +185,8 @@ function storedSkins(key) {
     const text = localStorage.getItem(key);
     if (text === null) return out;
     for (const e of jsonItems(jsonGet(jsonParse(text), "skins"))) {
-      const r = parseSkin({ css: jsonStr(jsonGet(e, "css")) ?? "", furniture: jsonStr(jsonGet(e, "furniture")) ?? "" },
+      const r = parseSkin({ css: jsonStr(jsonGet(e, "css")) ?? "", furniture: jsonStr(jsonGet(e, "furniture")) ?? "",
+        theme: jsonStr(jsonGet(e, "theme")) ?? "" },
         jsonStr(jsonGet(e, "id")) ?? "", key === SKIN_STORE_KEY ? "browser" : "folder");
       const sk = r.skin;
       if (!sk) { console.warn(`fresh: a stored skin was skipped: ${r.error}`); continue; }
@@ -169,7 +199,7 @@ function storedSkins(key) {
 }
 /** function storeSkins(String, Skin[]) => String */
 function storeSkins(key, list) {
-  const rows = list.map(s => ({ id: s.id, css: s.css, furniture: s.furniture, source: s.source, stamp: s.stamp }));
+  const rows = list.map(s => ({ id: s.id, css: s.css, furniture: s.furniture, theme: s.editorTheme, source: s.source, stamp: s.stamp }));
   try { localStorage.setItem(key, JSON.stringify({ v: 1, skins: rows })); return ""; }
   catch (_) { return "the browser refused to store the skin (storage full or disabled; browser storage holds about 5 MB)"; }
 }
@@ -177,7 +207,9 @@ function rebuildSkins() {
   /** const out: Skin[] */
   const out = [];
   for (const d of BUILTIN_SKIN_DIRS) {
-    const r = parseSkin({ css: d.files["skin.css"] ?? "", furniture: "" }, d.dir.replace(/^[0-9]+-/, ""), "builtin");
+    const bcss = d.files["skin.css"] ?? "";
+    const tf = skinThemeFile(skinHeader(bcss));
+    const r = parseSkin({ css: bcss, furniture: "", theme: tf ? (d.files[tf] ?? "") : "" }, d.dir.replace(/^[0-9]+-/, ""), "builtin");
     const sk = r.skin;
     if (!sk) { console.error(`fresh: built-in skin ${d.dir} rejected: ${r.error}`); continue; }
     if (sk.furnitureFile) sk.furniture = d.files[sk.furnitureFile] ?? "";
@@ -211,13 +243,17 @@ function resolveSkin(id) {
     cur = c.parent ? skinById(c.parent) : null;
   }
   /** const res: ResolvedSkin */
-  const res = { id, chain: [], frame: "full", scale: 1, menu: "cells", furniture: "", css: "" };
+  const res = { id, chain: [], frame: "full", scale: 1, menu: "cells", furniture: "", css: "",
+    themeOwner: "", editorTheme: "", editorThemeName: "" };
   for (const s of chain) {
     res.chain.push(s.id);
     if (s.frame) res.frame = s.frame;
     if (s.scale) res.scale = s.scale;
     if (s.menu) res.menu = s.menu;
     if (s.furniture) res.furniture = s.furniture;
+    if (s.editorTheme || s.editorThemeName) {
+      res.themeOwner = s.id; res.editorTheme = s.editorTheme; res.editorThemeName = s.editorThemeName;
+    }
     res.css += `\n/* ==== skin: ${s.id} ==== */\n${s.css}\n`;
   }
   return res;
@@ -356,6 +392,43 @@ function setWebTheme(name) {
   webTheme = name;
   try { localStorage.setItem("fresh.webtheme", name); } catch (_) {}
   refreshSkin();
+  applySkinEditorTheme();
+}
+
+// ---- a skin's editor theme ---------------------------------------------------
+// Picking a skin that carries an editor theme applies that theme too, unless
+// the user opted out for that skin (the toggle under it in the picker). Only
+// on a pick — never at page load, when the editor already has whatever theme
+// was last chosen (it is saved in config.json).
+const SKIN_KEEP_THEME_KEY = "fresh.skins.keepEditorTheme";
+/** function skinThemeOptOuts() => String[] */
+function skinThemeOptOuts() {
+  try {
+    const t = localStorage.getItem(SKIN_KEEP_THEME_KEY);
+    return t === null ? [] : jsonItems(jsonParse(t)).map(v => jsonStr(v) ?? "").filter(v => v !== "");
+  } catch (_) { return []; }
+}
+/** function setSkinThemeOptOut(String, Boolean) => Undefined */
+function setSkinThemeOptOut(id, out) {
+  const list = skinThemeOptOuts().filter(v => v !== id);
+  if (out) list.push(id);
+  try { localStorage.setItem(SKIN_KEEP_THEME_KEY, JSON.stringify(list)); } catch (_) {}
+}
+// The display name of the active skin's editor theme ("" when it has none).
+/** function skinEditorThemeName(ResolvedSkin) => String */
+function skinEditorThemeName(sk) {
+  if (sk.editorThemeName) return sk.editorThemeName.replace(/^builtin:\/\//, "");
+  if (!sk.editorTheme) return "";
+  try { return jsonStr(jsonGet(jsonParse(sk.editorTheme), "name")) ?? "its theme"; } catch (_) { return "its theme"; }
+}
+function applySkinEditorTheme() {
+  const sk = activeSkin();
+  if (!sk.themeOwner || skinThemeOptOuts().includes(sk.id)) return;
+  if (sk.editorTheme) {
+    try { wsSend({ type: "skinTheme", skin: sk.themeOwner, theme: jsonParse(sk.editorTheme), name: undefined }); } catch (_) {}
+  } else {
+    wsSend({ type: "skinTheme", skin: sk.themeOwner, theme: undefined, name: sk.editorThemeName });
+  }
 }
 function refreshSkin() {
   resolvedSkin = null;
@@ -427,7 +500,12 @@ async function pollSkinFolders() {
         const meta = skinHeader(css);
         const ff = meta ? (meta.furniture ?? "") : "";
         const furniture = ff && plainSkinPath(ff) ? await fetchText(base + ff).catch(() => "") : "";
-        const r = parseSkin({ css, furniture }, id, "folder");
+        // The index says whether the conventional theme.json is there, so an
+        // absent one costs no failed request.
+        const tf = skinThemeFile(meta);
+        const hasTheme = tf !== "" && (tf !== "theme.json" || jsonStr(jsonGet(e, "theme")) === "theme.json");
+        const theme = hasTheme ? await fetchText(base + tf).catch(() => "") : "";
+        const r = parseSkin({ css, furniture, theme }, id, "folder");
         const sk = r.skin;
         if (sk) { sk.source = base; sk.stamp = stamp; next.push(sk); }
         else console.warn(`fresh: skins folder "${id}": ${r.error}`);
@@ -438,10 +516,13 @@ async function pollSkinFolders() {
       folderSkins = next;
       storeSkins(SKIN_FOLDER_CACHE_KEY, next);
       const before = activeSkin().css;
+      const beforeTheme = activeSkin().editorTheme;
       rebuildSkins();
       if (!skinById(webTheme)) webTheme = skins.length ? skins[0].id : "cosmos";
       if (webTheme !== wantedSkin && skinById(wantedSkin) && !skinPickedSinceBoot) webTheme = wantedSkin;
       if (activeSkin().css !== before || resolvedSkin === null) refreshSkin(); else renderThemeSwitch();
+      // An author saving theme.json sees the buffer follow, like the chrome.
+      if (activeSkin().editorTheme !== beforeTheme) applySkinEditorTheme();
     }
   } catch (_) {
     // No server route (an older bridge) or offline: keep the cached folders.
@@ -518,9 +599,15 @@ async function installSkinFromUrl(input) {
     const meta = skinHeader(css);
     const ff = meta ? (meta.furniture ?? "") : "";
     const furniture = ff && plainSkinPath(ff) ? await fetchText(new URL(ff, url).href) : "";
+    // A URL has no directory listing, so only a DECLARED theme file is
+    // fetched (`@editor-theme theme.json`), and it must load. Guessing at a
+    // theme.json would cost every theme-less skin a failed request.
+    const declared = !!meta && !!(meta["editor-theme"] ?? "");
+    const tf = declared ? skinThemeFile(meta) : "";
+    const theme = tf ? await fetchText(new URL(tf, url).href) : "";
     const segs = new URL(url).pathname.split("/").filter(s => s !== "");
     const fallback = segs.length >= 2 ? segs[segs.length - 2].toLowerCase() : "";
-    return installSkin({ css, furniture }, fallback, url);
+    return installSkin({ css, furniture, theme }, fallback, url);
   } catch (e) {
     return { ok: false, id: "", error: String(e).replace(/^Error: /, "") };
   }
@@ -545,7 +632,7 @@ async function installSkinFromFiles(list) {
   /** const assets: Dict<String> */
   const assets = {};
   for (const [p, f] of Object.entries(rel)) {
-    if (f === main || /\.(css|html?)$/i.test(p)) continue;
+    if (f === main || /\.(css|html?|json)$/i.test(p)) continue;
     if (f.size > SKIN_MAX_ASSET) return fail(`${p} is larger than 2 MB`);
     assets[p] = await fileDataUrl(f);
   }
@@ -555,8 +642,12 @@ async function installSkinFromFiles(list) {
   const ffile = ff ? rel[ff] : undefined;
   if (ff && !ffile) return fail(`the header names @furniture ${ff}, but that file was not picked`);
   const furniture = ffile ? await ffile.text() : "";
+  const tf = skinThemeFile(meta);
+  const tfile = tf ? rel[tf] : undefined;
+  if (tf && tf !== "theme.json" && !tfile) return fail(`the header names @editor-theme ${tf}, but that file was not picked`);
+  const theme = tfile ? await tfile.text() : "";
   const folder = dir.split("/").filter(s => s !== "").pop() ?? main.name.replace(/\.css$/i, "");
-  return installSkin({ css, furniture }, folder.toLowerCase(), "");
+  return installSkin({ css, furniture, theme }, folder.toLowerCase(), "");
 }
 
 // ---- the desktop skin picker (a frontend-owned floating control) -----------
@@ -580,7 +671,7 @@ function reportInstall(r) {
     skinNote = { text: `Installed “${sk ? sk.name : r.id}”.`, error: false };
     skinUrlOpen = false; skinUrlDraft = "";
     skinPickedSinceBoot = true;
-    if (webTheme === r.id) refreshSkin(); else setWebTheme(r.id);
+    if (webTheme === r.id) { refreshSkin(); applySkinEditorTheme(); } else setWebTheme(r.id);
   } else {
     skinNote = { text: `Couldn’t install: ${r.error}`, error: true };
     renderThemeSwitch();
@@ -686,6 +777,26 @@ function renderThemeSwitch() {
       row.appendChild(tools);
     }
     menu.appendChild(row);
+    // The active skin's editor theme: applied on a pick unless switched off here.
+    const themeName = on ? skinEditorThemeName(activeSkin()) : "";
+    if (themeName) {
+      const keep = skinThemeOptOuts().includes(sk.id);
+      const opt = div("ts-opt");
+      opt.setAttribute("role", "menuitemcheckbox");
+      opt.setAttribute("aria-checked", keep ? "false" : "true");
+      opt.innerHTML = '<span class="ts-box">' + (keep ? "" : "✓") + '</span><span>Also use its editor theme <b>'
+        + esc(themeName) + "</b></span>";
+      opt.title = keep ? "Apply this skin's editor theme now, and whenever you pick the skin"
+        : "Leave the editor theme alone when picking this skin (the current theme stays)";
+      opt.onclick = e => {
+        e.stopPropagation();
+        setSkinThemeOptOut(sk.id, !keep);
+        if (keep) applySkinEditorTheme();
+        skinNote = { text: keep ? `Editor theme set to “${themeName}”.` : "The editor theme now stays as it is when you pick this skin.", error: false };
+        renderThemeSwitch();
+      };
+      menu.appendChild(opt);
+    }
   }
   menu.appendChild(div("ts-sep"));
   const folderPick = filePicker(true);

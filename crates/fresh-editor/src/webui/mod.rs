@@ -1018,7 +1018,7 @@ fn handle_http(
         (
             "POST",
             p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
-            | "/resize" | "/quit" | "/node" | "/open"),
+            | "/resize" | "/quit" | "/node" | "/open" | "/skinTheme"),
         ) => {
             apply_message(editor, &p[1..], &body_json(), cols, rows);
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
@@ -1096,6 +1096,7 @@ fn apply_message(
         "quit" => apply_quit(editor),
         "node" => apply_node(editor, v),
         "open" => apply_open(editor, v),
+        "skinTheme" => skins::apply_skin_theme(editor, v),
         _ => return false,
     }
     true

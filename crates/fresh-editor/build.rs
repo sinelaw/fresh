@@ -537,8 +537,8 @@ fn assemble_webui() {
                 .unwrap_or_default()
                 .to_string();
             assert!(
-                name.ends_with(".css") || name.ends_with(".html"),
-                "web-ui/skins/{dname}/{name}: a built-in skin bundles only .css/.html (inline images as data: URLs)"
+                name.ends_with(".css") || name.ends_with(".html") || name.ends_with(".json"),
+                "web-ui/skins/{dname}/{name}: a built-in skin bundles only .css/.html/.json (inline images as data: URLs)"
             );
             println!("cargo::rerun-if-changed={}", f.display());
             let text = fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));

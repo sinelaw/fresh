@@ -6,7 +6,8 @@
 //! directory — `$FRESH_WEB_SKINS` if set, else `<config dir>/web-skins/` — are
 //! offered by the page's skin picker alongside the built-in ones:
 //!
-//! - `GET /skins/index.json` → `[{"id": "<folder>", "stamp": "<hex>"}, …]`, one
+//! - `GET /skins/index.json` → `[{"id": "<folder>", "stamp": "<hex>",
+//!   "theme"?: "theme.json"}, …]`, one
 //!   entry per folder holding a `skin.css`. `stamp` changes whenever any file
 //!   of the folder does (name, size, mtime), so the page polls it and reloads
 //!   a skin the author just saved.
@@ -14,6 +15,13 @@
 //!
 //! Only plain names are served: every path segment is `[A-Za-z0-9._-]`, never
 //! `.`/`..`, so a request cannot leave the skins directory.
+//!
+//! A skin may also carry an editor theme (`theme.json` in the ordinary Fresh
+//! theme format, or the name of an installed theme). The page asks for it to
+//! be applied with a `skinTheme` message, handled by [`apply_skin_theme`]: a
+//! bundled theme is validated by the theme loader, saved as
+//! `<themes dir>/web-skins/<skin id>.json` (so the TUI's theme picker lists it
+//! too) and applied exactly as choosing it in the editor would.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -65,7 +73,12 @@ pub(super) fn index_json(dir: &Path) -> String {
         names.sort();
         for name in names {
             let stamp = folder_stamp(&dir.join(&name));
-            out.push(serde_json::json!({ "id": name, "stamp": format!("{stamp:016x}") }));
+            let mut entry = serde_json::json!({ "id": name, "stamp": format!("{stamp:016x}") });
+            // The conventional editor theme, so the page asks for it only when present.
+            if dir.join(&name).join("theme.json").is_file() {
+                entry["theme"] = "theme.json".into();
+            }
+            out.push(entry);
         }
     }
     serde_json::Value::Array(out).to_string()
@@ -158,6 +171,54 @@ fn content_type(name: &str) -> &'static str {
         "txt" | "md" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
+}
+
+/// The largest bundled theme accepted (a full theme file is a few KB).
+const MAX_THEME: usize = 512 * 1024;
+
+/// `skinTheme` message: `{"skin": "<id>", "theme": {…}}` (a bundled theme) or
+/// `{"name": "<theme key or name>"}` (an installed one). Applies it through
+/// the editor's own theme switch, which also persists it to `config.json` —
+/// the editor theme is shared, saved state, unlike the skin.
+pub(super) fn apply_skin_theme(editor: &mut crate::app::Editor, v: &serde_json::Value) {
+    if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+        editor.apply_theme(name);
+        return;
+    }
+    let (Some(id), Some(theme)) = (v.get("skin").and_then(|s| s.as_str()), v.get("theme")) else {
+        return;
+    };
+    if !is_skin_id(id) {
+        return;
+    }
+    let text = match serde_json::to_string_pretty(theme) {
+        Ok(t) if t.len() <= MAX_THEME => t,
+        _ => return,
+    };
+    if let Err(e) = crate::view::theme::Theme::from_json(&text) {
+        editor.set_status_message(format!("Skin \"{id}\": its editor theme is invalid: {e}"));
+        return;
+    }
+    let path = theme_path(&editor.dir_context().themes_dir(), id);
+    if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        let written = path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::write(&path, &text));
+        if let Err(e) = written {
+            editor.set_status_message(format!(
+                "Skin \"{id}\": could not save its editor theme: {e}"
+            ));
+            return;
+        }
+        editor.reload_themes();
+    }
+    editor.apply_theme(&format!("file://{}", path.display()));
+}
+
+/// Where a skin's bundled editor theme is saved.
+fn theme_path(themes_dir: &Path, id: &str) -> PathBuf {
+    themes_dir.join("web-skins").join(format!("{id}.json"))
 }
 
 #[cfg(test)]

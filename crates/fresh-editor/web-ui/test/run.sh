@@ -56,11 +56,14 @@ fi
 
 # 3) Start the bridge and always tear it down on exit. It serves web skins
 #    from a fresh, empty folder the suite writes into (the dev-loop tests).
+#    Its config lives in a throwaway folder too: the skin tests apply editor
+#    themes, which the editor saves to config.json and the themes folder.
 SKINS_DIR="$(mktemp -d)"
+CONFIG_HOME="$(mktemp -d)"
 export SKINS_DIR
-(cd "$REPO_ROOT" && FRESH_WEB_SKINS="$SKINS_DIR" "./target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
+(cd "$REPO_ROOT" && XDG_CONFIG_HOME="$CONFIG_HOME" FRESH_WEB_SKINS="$SKINS_DIR" "./target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
 SERVER_PID=$!
-trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$SKINS_DIR"' EXIT
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$SKINS_DIR" "$CONFIG_HOME"' EXIT
 
 echo "Waiting for $UI_URL/state ..."
 ready=""

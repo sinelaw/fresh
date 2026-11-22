@@ -1370,16 +1370,54 @@ if (process.env.SKINS_DIR) {
     null, { timeout: 5000 }).catch(() => {});
   check('saving skin.css re-applies it live', await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim() === '#abcdef'));
+  wr(dir + '/theme.json', JSON.stringify({ name: 'dev-skin-theme', extends: 'builtin://dark', editor: { bg: [33, 17, 51] } }));
+  await page.waitForFunction(() => window.fresh.scene.theme.name === 'dev-skin-theme', null, { timeout: 6000 }).catch(() => {});
+  check('dropping a theme.json into the skin folder applies it to the editor live', await page.evaluate(() =>
+    window.fresh.scene.theme.name === 'dev-skin-theme' && window.fresh.scene.theme.bg === '#211133'));
 } else skip('skins folder (run via run.sh, which sets SKINS_DIR / FRESH_WEB_SKINS)');
+// A skin may bundle an EDITOR theme (theme.json, Fresh's ordinary theme
+// format). Picking the skin applies it through the editor's own theme switch,
+// unless the user opted out for that skin in the picker.
+const origTheme = (await scene(page)).theme.name;
+const themedCss = '/* ==FreshSkin==\n@id test-themed\n@name Test Themed\n@extends compact\n==/FreshSkin== */';
+const themeJson = JSON.stringify({ name: 'test-skin-theme', extends: 'builtin://dark', editor: { bg: [18, 52, 86] } });
+const themedOk = await page.evaluate(([c, t]) => window.fresh.installSkin(c, '', t), [themedCss, themeJson]);
+await page.waitForFunction(() => window.fresh.scene.theme.name === 'test-skin-theme', null, { timeout: 5000 }).catch(() => {});
+check('a skin\'s bundled theme.json becomes the editor theme when the skin is picked', themedOk.ok && await page.evaluate(() =>
+  window.fresh.scene.theme.name === 'test-skin-theme' && window.fresh.scene.theme.bg === '#123456'
+  && document.documentElement.classList.contains('editor-dark')));
+check('bad theme JSON is refused at install', await page.evaluate(() => {
+  const r = window.fresh.installSkin('/* ==FreshSkin==\n@id test-badtheme\n@name B\n==/FreshSkin== */', '', '{nope');
+  return !r.ok && /editor theme is not valid JSON/.test(r.error);
+}));
+// The opt-out: untick it under the active skin, put the editor theme back, and
+// re-picking the skin leaves the editor theme alone.
+if (!(await page.locator('#thememenu.open').count())) await page.locator('#themebtn').click();
+await page.waitForTimeout(150);
+const optRow = page.locator('#thememenu .ts-opt');
+check('the picker shows the skin\'s editor theme as a ticked option', (await optRow.count()) === 1
+  && (await optRow.getAttribute('aria-checked')) === 'true' && (await optRow.textContent()).includes('test-skin-theme'));
+await optRow.click();
+await page.waitForTimeout(150);
+check('unticking it is remembered for that skin', (await page.locator('#thememenu .ts-opt').getAttribute('aria-checked')) === 'false');
+await page.keyboard.press('Escape');
+await page.request.post(URL + '/skinTheme', { data: { name: origTheme } });
+await page.evaluate(() => window.fresh.setWebTheme('compact'));
+await page.waitForTimeout(300);
+await page.evaluate(() => window.fresh.setWebTheme('test-themed'));
+await page.waitForTimeout(500);
+check('with the opt-out, picking the skin keeps the editor theme', (await scene(page)).theme.name === origTheme);
 // `?skin=` picks a skin at load (and is the way out of one that hid the picker).
 await page.goto(URL + '/?skin=macos', { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 check('?skin=<id> selects a skin at load', await page.evaluate(() => window.fresh.webTheme === 'macos'));
 // Leave the browser as the rest of the suite expects it: Cosmos, nothing installed.
-await page.evaluate(() => { localStorage.removeItem('fresh.skins'); localStorage.setItem('fresh.webtheme', 'cosmos'); });
+await page.evaluate(() => { localStorage.removeItem('fresh.skins'); localStorage.removeItem('fresh.skins.keepEditorTheme'); localStorage.setItem('fresh.webtheme', 'cosmos'); });
+await page.request.post(URL + '/skinTheme', { data: { name: origTheme } });
 await page.goto(URL + '/', { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 await page.waitForTimeout(300);
+check('the editor theme is back to what it was before the skin tests', (await scene(page)).theme.name === origTheme);
 
 console.log('\n[embedded terminal: Ctrl+hover carries the modifier and underlines a path link]');
 // Regression: the frontend used to send `moved` events WITHOUT the ctrl flag,

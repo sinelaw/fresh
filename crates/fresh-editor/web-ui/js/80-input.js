@@ -297,7 +297,7 @@ mqMobile.addEventListener("change", () => resize());
 exposeTestHook({ get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   setPaletteCentered, setNatselEnabled, setWebTheme, cycleWebTheme,
   get webTheme(){return webTheme;}, get webThemes(){return skinIds();},
-  installSkin:(css,furniture)=>{ const r=installSkin({css,furniture:furniture??""},"",""); if(r.ok) setWebTheme(r.id); return r; }, installSkinFromUrl, removeSkin, pollSkinFolders,
+  installSkin:(css,furniture,theme)=>{ const r=installSkin({css,furniture:furniture??"",theme:theme??""},"",""); if(r.ok){ if(webTheme===r.id){ refreshSkin(); applySkinEditorTheme(); } else setWebTheme(r.id); } return r; }, installSkinFromUrl, removeSkin, pollSkinFolders,
   get skins(){return skins.map(s=>({id:s.id,name:s.name,origin:s.origin,parent:s.parent}));},
   get frames(){return frameCount;}, get seq(){return lastSeq;},
   get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;},
