@@ -21,6 +21,15 @@ impl Editor {
         use crate::app::types::{ContextMenuKind, FileExplorerMenuChoice, TabMenuChoice};
         match kind {
             ContextMenuKind::Tab => {
+                // A disabled row is not a choice: the menu stays open.
+                if self
+                    .active_window()
+                    .tab_context_menu
+                    .as_ref()
+                    .is_some_and(|m| m.highlighted_is_disabled())
+                {
+                    return Ok(());
+                }
                 let selected = self
                     .active_window()
                     .tab_context_menu
@@ -63,6 +72,15 @@ impl Editor {
                 }
             }
             ContextMenuKind::FileExplorer => {
+                // A disabled row is not a choice: the menu stays open.
+                if self
+                    .active_window()
+                    .file_explorer_context_menu
+                    .as_ref()
+                    .is_some_and(|m| m.highlighted_is_disabled())
+                {
+                    return Ok(());
+                }
                 let selected = self
                     .active_window()
                     .file_explorer_context_menu
@@ -108,17 +126,23 @@ impl Editor {
     }
 
     /// Plugins' right-click menu items whose placement `offered` accepts,
-    /// in the order the plugins added them.
+    /// in the order the plugins added them, each enabled or not by the
+    /// active window's contexts as the menu opens.
     pub(crate) fn plugin_menu_entries(
         &self,
         offered: impl Fn(&fresh_core::api::PluginContextMenuPlacement) -> bool,
     ) -> Vec<crate::app::types::PluginMenuEntry> {
+        let contexts = &self.active_window().active_custom_contexts;
         self.plugin_context_menu_items
             .iter()
             .filter(|item| offered(&item.placement))
             .map(|item| crate::app::types::PluginMenuEntry {
                 label: item.label.clone(),
                 handler: item.handler.clone(),
+                enabled: item
+                    .when
+                    .as_ref()
+                    .is_none_or(|when| contexts.contains(when)),
             })
             .collect()
     }

@@ -8074,6 +8074,7 @@ impl JsEditorApi {
             opts.label,
             fresh_core::api::PluginContextMenuPlacement::FileExplorer(opts.scope),
             opts.handler,
+            opts.when,
         )
     }
 
@@ -8102,6 +8103,7 @@ impl JsEditorApi {
             opts.label,
             fresh_core::api::PluginContextMenuPlacement::Tab(opts.scope),
             opts.handler,
+            opts.when,
         )
     }
 
@@ -8114,6 +8116,7 @@ impl JsEditorApi {
         label: String,
         placement: fresh_core::api::PluginContextMenuPlacement,
         handler_name: String,
+        when: Option<String>,
     ) -> fresh_js::Result<bool> {
         // The host calls the handler by name when the item is chosen, and a
         // name resolves to one plugin (as for `registerCommand` and timers):
@@ -8147,6 +8150,7 @@ impl JsEditorApi {
                     label,
                     handler: handler_name,
                     placement,
+                    when,
                 },
             })
             .is_ok())

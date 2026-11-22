@@ -7222,6 +7222,12 @@ pub struct FileExplorerMenuItemOptions {
     /// Name of the handler (see `registerHandler`) called with a
     /// `FileExplorerMenuTarget` when the item is chosen.
     pub handler: String,
+    /// A context (see `setContext`) the item depends on: while it is not
+    /// set in the window, the item is shown greyed out and cannot be chosen.
+    /// Omit for an item that is always available.
+    #[serde(default)]
+    #[ts(optional)]
+    pub when: Option<String>,
 }
 
 /// Options for `editor.addTabMenuItem`: one plugin item in the tabs'
@@ -7237,6 +7243,12 @@ pub struct TabMenuItemOptions {
     /// Name of the handler (see `registerHandler`) called with a
     /// `TabMenuTarget` when the item is chosen.
     pub handler: String,
+    /// A context (see `setContext`) the item depends on: while it is not
+    /// set in the window, the item is shown greyed out and cannot be chosen.
+    /// Omit for an item that is always available.
+    #[serde(default)]
+    #[ts(optional)]
+    pub when: Option<String>,
 }
 
 /// A path on a window's filesystem: the value `editor.windowPath(window,
@@ -7313,6 +7325,8 @@ pub struct PluginContextMenuItem {
     /// The plugin's handler, called with the menu's target.
     pub handler: String,
     pub placement: PluginContextMenuPlacement,
+    /// The context the item depends on; see the options' `when`.
+    pub when: Option<String>,
 }
 
 /// How `openInSystemApp` went.

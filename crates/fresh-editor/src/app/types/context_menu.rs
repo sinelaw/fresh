@@ -101,6 +101,9 @@ pub enum ContextMenuKind {
 pub struct PluginMenuEntry {
     pub label: String,
     pub handler: String,
+    /// Whether it can be chosen: the context its `when` names is set in the
+    /// window (or it names none). A disabled item is shown greyed out.
+    pub enabled: bool,
 }
 
 /// One row of a menu, as both frontends draw it.
@@ -110,6 +113,8 @@ pub struct ContextMenuRow {
     /// A stable name for the row, for the web (`data-id`).
     pub id: String,
     pub destructive: bool,
+    /// Shown greyed out, and choosing it does nothing.
+    pub disabled: bool,
 }
 
 impl ContextMenuRow {
@@ -120,6 +125,7 @@ impl ContextMenuRow {
             // another's), so this names one row.
             id: format!("plugin:{}", entry.handler),
             destructive: false,
+            disabled: !entry.enabled,
         }
     }
 }
@@ -265,6 +271,7 @@ impl TabContextMenu {
                 label: i.label(),
                 id: i.id().to_string(),
                 destructive: i.destructive(),
+                disabled: false,
             })
             .chain(self.plugin_items.iter().map(ContextMenuRow::plugin))
             .collect()
@@ -278,10 +285,21 @@ impl TabContextMenu {
         }
         let entry = self
             .plugin_items
-            .get(self.menu.highlighted - builtin.len())?;
+            .get(self.menu.highlighted - builtin.len())
+            .filter(|entry| entry.enabled)?;
         Some(TabMenuChoice::Plugin {
             handler: entry.handler.clone(),
         })
+    }
+
+    /// Whether the highlighted row is a disabled one, which choosing
+    /// leaves the menu open.
+    pub fn highlighted_is_disabled(&self) -> bool {
+        self.menu
+            .highlighted
+            .checked_sub(self.items().len())
+            .and_then(|i| self.plugin_items.get(i))
+            .is_some_and(|entry| !entry.enabled)
     }
 }
 
@@ -606,6 +624,7 @@ impl FileExplorerContextMenu {
                 label: i.label(),
                 id: i.id().to_string(),
                 destructive: i.destructive(),
+                disabled: false,
             })
             .chain(self.plugin_entries().iter().map(ContextMenuRow::plugin))
             .collect()
@@ -618,11 +637,24 @@ impl FileExplorerContextMenu {
             return Some(FileExplorerMenuChoice::Builtin(*item));
         }
         let plugin = self.plugin_items.as_ref()?;
-        let entry = plugin.items.get(self.menu.highlighted - builtin.len())?;
+        let entry = plugin
+            .items
+            .get(self.menu.highlighted - builtin.len())
+            .filter(|entry| entry.enabled)?;
         Some(FileExplorerMenuChoice::Plugin {
             handler: entry.handler.clone(),
             target: plugin.target.clone(),
         })
+    }
+
+    /// Whether the highlighted row is a disabled one, which choosing
+    /// leaves the menu open.
+    pub fn highlighted_is_disabled(&self) -> bool {
+        self.menu
+            .highlighted
+            .checked_sub(self.items().len())
+            .and_then(|i| self.plugin_entries().get(i))
+            .is_some_and(|entry| !entry.enabled)
     }
 }
 
@@ -656,6 +688,7 @@ mod tests {
         PluginMenuEntry {
             label: label.to_string(),
             handler: handler.to_string(),
+            enabled: true,
         }
     }
 
@@ -717,6 +750,27 @@ mod tests {
                 target,
             })
         );
+    }
+
+    #[test]
+    fn a_disabled_plugin_item_is_shown_but_not_chosen() {
+        let mut menu = TabContextMenu::new(
+            BufferId(1),
+            LeafId(SplitId(1)),
+            0,
+            0,
+            vec![PluginMenuEntry {
+                enabled: false,
+                ..entry("Plugin Item", "plugin_tab_item")
+            }],
+        );
+        let own = TabContextMenuItem::all().len();
+        assert!(menu.rows()[own].disabled);
+        menu.menu.highlighted = own;
+        assert!(menu.highlighted_is_disabled());
+        assert_eq!(menu.highlighted_item(), None);
+        menu.menu.highlighted = 0;
+        assert!(!menu.highlighted_is_disabled());
     }
 
     #[test]

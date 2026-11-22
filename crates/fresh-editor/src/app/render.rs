@@ -4455,12 +4455,19 @@ impl Editor {
     fn open_context_menu_for_shell(&self) -> Option<crate::view::shell::context_menu::Menu> {
         let (_, core) = self.active_window().open_context_menu()?;
         let items = self.active_window().context_menu_labels()?;
+        let disabled = self
+            .active_window()
+            .context_menu_items()?
+            .into_iter()
+            .map(|item| item.disabled)
+            .collect();
         Some(crate::view::shell::context_menu::Menu {
             x: core.position.0,
             y: core.position.1,
             width: core.width,
             highlighted: core.highlighted,
             items,
+            disabled,
         })
     }
 

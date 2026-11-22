@@ -1592,6 +1592,7 @@ impl Window {
                         label: i.label(),
                         id: i.id().to_string(),
                         destructive: i.destructive(),
+                        disabled: false,
                     })
                     .collect()
             };
@@ -1602,6 +1603,7 @@ impl Window {
                     label: r.label,
                     id: r.id,
                     destructive: r.destructive,
+                    disabled: r.disabled,
                 })
                 .collect()
         };

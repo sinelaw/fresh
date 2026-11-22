@@ -1218,6 +1218,12 @@ type FileExplorerMenuItemOptions = {
 	* `FileExplorerMenuTarget` when the item is chosen.
 	*/
 	handler: string;
+	/**
+	* A context (see `setContext`) the item depends on: while it is not
+	* set in the window, the item is shown greyed out and cannot be chosen.
+	* Omit for an item that is always available.
+	*/
+	when?: string;
 };
 /**
 * Which file explorer entries a plugin's right-click menu item is offered
@@ -1261,6 +1267,12 @@ type TabMenuItemOptions = {
 	* `TabMenuTarget` when the item is chosen.
 	*/
 	handler: string;
+	/**
+	* A context (see `setContext`) the item depends on: while it is not
+	* set in the window, the item is shown greyed out and cannot be chosen.
+	* Omit for an item that is always available.
+	*/
+	when?: string;
 };
 /**
 * Which tabs a plugin's right-click menu item is offered for (see
