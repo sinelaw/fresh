@@ -116,8 +116,8 @@ impl ContextMenuRow {
     fn plugin(entry: &PluginMenuEntry) -> Self {
         Self {
             label: entry.label.clone(),
-            // Handler names are unique across plugins (the runtime looks
-            // them up by name), so this names one row.
+            // A handler name belongs to one plugin (the runtime refuses
+            // another's), so this names one row.
             id: format!("plugin:{}", entry.handler),
             destructive: false,
         }
@@ -693,7 +693,6 @@ mod tests {
     #[test]
     fn explorer_menu_hands_its_entry_to_plugin_items() {
         let target = fresh_core::api::FileExplorerMenuTarget {
-            window_id: fresh_core::WindowId(1),
             kind: fresh_core::api::FileExplorerEntryKind::File,
             path: fresh_core::api::WindowPath {
                 window: fresh_core::WindowId(1),

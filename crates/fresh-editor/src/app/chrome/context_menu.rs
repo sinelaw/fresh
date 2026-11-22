@@ -94,17 +94,17 @@ impl Editor {
         Ok(())
     }
 
-    /// The file from disk a tab shows, as plugins see it in
-    /// `BufferInfo.path`; `None` for a tab that shows no file.
+    /// The file backing a tab of the active window, as plugins see it in
+    /// `BufferInfo.path`; `None` for a tab no file backs (a terminal, a
+    /// plugin's panel).
     pub(crate) fn tab_file(
         &self,
         buffer_id: crate::model::event::BufferId,
     ) -> Option<std::path::PathBuf> {
-        self.buffers()
-            .get(&buffer_id)
-            .and_then(|state| state.buffer.file_path())
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.to_path_buf())
+        self.active_window()
+            .tab_file_buffers()
+            .find(|(id, _)| *id == buffer_id)
+            .map(|(_, path)| path.to_path_buf())
     }
 
     /// Plugins' right-click menu items whose placement `offered` accepts,
@@ -125,7 +125,7 @@ impl Editor {
 
     /// Call the plugin handler of a right-click menu item with what the menu
     /// was opened on. Runs like a palette command: the plugin sees state as
-    /// of now, and a handler that throws is reported.
+    /// of now, and a handler that throws is logged.
     fn run_plugin_menu_handler<T: serde::Serialize>(&mut self, handler: &str, target: &T) {
         #[cfg(feature = "plugins")]
         {

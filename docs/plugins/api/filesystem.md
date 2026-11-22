@@ -108,13 +108,14 @@ fileStat(path: string | LocalPath | WindowPath | AuthorityPath): unknown;
 
 Open a file in the app this computer uses for its type, as a file
 manager's double click would: an image viewer for a picture, a PDF
-reader for a PDF.
+reader for a PDF. Resolves as soon as the system's launcher has been
+started; `{ kind: "failed" }` means none could be.
 
 Only for files on this computer: a `LocalPath`, or a path of a
-window whose files are here. A path of a window on another machine
-(SSH, a container) opens nothing and resolves with
-`{ kind: "notLocal" }`; `getAuthorityLabel()` is empty for a window
-whose files are here.
+window whose files are here (a local window, or a container's, which
+shares this computer's files). A path of a window on another machine
+opens nothing and resolves with `{ kind: "notLocal" }`; such a window
+has a `remote` entry in `listWindows()`.
 
 ```typescript
 openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<OpenInSystemAppResult>;
@@ -122,7 +123,7 @@ openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<
 
 | Parameter | Description |
 |-----------|-------------|
-| `path` | The file: a `WindowPath` (as a file explorer or tab menu item's handler receives), a `LocalPath`, or a string for one of the active window's files |
+| `path` | The file: a `WindowPath` (as a file explorer or tab menu item's handler receives), a `LocalPath`, or a path of the active window, relative to its folder or absolute |
 
 ## Paths
 

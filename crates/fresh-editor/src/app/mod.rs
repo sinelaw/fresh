@@ -546,18 +546,19 @@ impl OpenMachine {
     }
 }
 
-/// The main editor struct - manages multiple buffers, clipboard, and rendering
 /// Opens a file in the app the system uses for its type. The editor's is
 /// [`default_system_opener`]; tests substitute one that launches nothing.
 pub type SystemOpener =
     std::sync::Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>;
 
-/// `open::that`, in builds that have it.
+/// Starts the system's launcher for `path` and returns without waiting for
+/// it: some launchers stay until the app they started exits. An error means
+/// no launcher could be started.
 pub fn default_system_opener() -> SystemOpener {
     std::sync::Arc::new(|path: &std::path::Path| {
         #[cfg(feature = "runtime")]
         {
-            open::that(path).map_err(|e| e.to_string())
+            open::that_detached(path).map_err(|e| e.to_string())
         }
         #[cfg(not(feature = "runtime"))]
         {
@@ -567,6 +568,7 @@ pub fn default_system_opener() -> SystemOpener {
     })
 }
 
+/// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
     /// Every connection this editor has open, and the only owner of any of
     /// them. See [`crate::services::authority::ConnectionRegistry`].

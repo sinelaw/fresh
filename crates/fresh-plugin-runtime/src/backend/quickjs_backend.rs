@@ -8049,7 +8049,8 @@ impl JsEditorApi {
     ///
     /// The options are checked when the call is made; options that don't
     /// match the type (for example a misspelled field name or an unknown
-    /// `scope`) make the call throw.
+    /// `scope`) make the call throw, as does a `handler` name another plugin
+    /// already uses.
     ///
     /// @param opts - The item
     ///
@@ -8062,11 +8063,14 @@ impl JsEditorApi {
     ///   scope: "file",
     ///   handler: "myPluginReveal",
     /// });
-    pub fn add_file_explorer_menu_item(
+    #[plugin_api(ts_return = "boolean")]
+    pub fn add_file_explorer_menu_item<'js>(
         &self,
+        ctx: fresh_js::Ctx<'js>,
         opts: fresh_core::api::FileExplorerMenuItemOptions,
-    ) -> bool {
+    ) -> fresh_js::Result<bool> {
         self.add_context_menu_item(
+            &ctx,
             opts.label,
             fresh_core::api::PluginContextMenuPlacement::FileExplorer(opts.scope),
             opts.handler,
@@ -8083,11 +8087,18 @@ impl JsEditorApi {
     /// plugin is unloaded.
     ///
     /// The options are checked when the call is made; options that don't
-    /// match the type make the call throw.
+    /// match the type make the call throw, as does a `handler` name another
+    /// plugin already uses.
     ///
     /// @param opts - The item
-    pub fn add_tab_menu_item(&self, opts: fresh_core::api::TabMenuItemOptions) -> bool {
+    #[plugin_api(ts_return = "boolean")]
+    pub fn add_tab_menu_item<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        opts: fresh_core::api::TabMenuItemOptions,
+    ) -> fresh_js::Result<bool> {
         self.add_context_menu_item(
+            &ctx,
             opts.label,
             fresh_core::api::PluginContextMenuPlacement::Tab(opts.scope),
             opts.handler,
@@ -8097,15 +8108,25 @@ impl JsEditorApi {
     /// Shared body of the two menu-item methods above.
     #[plugin_api(skip)]
     #[qjs(skip)]
-    fn add_context_menu_item(
+    fn add_context_menu_item<'js>(
         &self,
+        ctx: &fresh_js::Ctx<'js>,
         label: String,
         placement: fresh_core::api::PluginContextMenuPlacement,
         handler_name: String,
-    ) -> bool {
-        // The host calls the handler by name when the item is chosen; this
-        // map tells the runtime which plugin's realm holds that name (as for
-        // `registerCommand` and timers).
+    ) -> fresh_js::Result<bool> {
+        // The host calls the handler by name when the item is chosen, and a
+        // name resolves to one plugin (as for `registerCommand` and timers):
+        // another plugin's is refused rather than taken over.
+        let owner = self
+            .registered_actions
+            .borrow()
+            .get(&handler_name)
+            .map(|h| h.plugin_name.clone());
+        if let Some(owner) = owner.filter(|owner| *owner != self.plugin_name) {
+            let msg = format!("handler '{handler_name}' is already registered by plugin '{owner}'");
+            return Err(ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value()));
+        }
         self.registered_actions.borrow_mut().insert(
             handler_name.clone(),
             PluginHandler {
@@ -8118,7 +8139,8 @@ impl JsEditorApi {
             .entry(self.plugin_name.clone())
             .or_default()
             .has_context_menu_items = true;
-        self.command_sender
+        Ok(self
+            .command_sender
             .send(PluginCommand::AddContextMenuItem {
                 item: fresh_core::api::PluginContextMenuItem {
                     plugin_name: self.plugin_name.clone(),
@@ -8127,23 +8149,24 @@ impl JsEditorApi {
                     placement,
                 },
             })
-            .is_ok()
+            .is_ok())
     }
 
     #[plugin_api(section = "Files")]
     /// Open a file in the app this computer uses for its type, as a file
     /// manager's double click would: an image viewer for a picture, a PDF
-    /// reader for a PDF.
+    /// reader for a PDF. Resolves as soon as the system's launcher has been
+    /// started; `{ kind: "failed" }` means none could be.
     ///
     /// Only for files on this computer: a `LocalPath`, or a path of a
-    /// window whose files are here. A path of a window on another machine
-    /// (SSH, a container) opens nothing and resolves with
-    /// `{ kind: "notLocal" }`; `getAuthorityLabel()` is empty for a window
-    /// whose files are here.
+    /// window whose files are here (a local window, or a container's, which
+    /// shares this computer's files). A path of a window on another machine
+    /// opens nothing and resolves with `{ kind: "notLocal" }`; such a window
+    /// has a `remote` entry in `listWindows()`.
     ///
     /// @param path - The file: a `WindowPath` (as a file explorer or tab
-    /// menu item's handler receives), a `LocalPath`, or a string for one of
-    /// the active window's files
+    /// menu item's handler receives), a `LocalPath`, or a path of the active
+    /// window, relative to its folder or absolute
     #[plugin_api(
         async_promise,
         js_name = "openInSystemApp",
@@ -8156,6 +8179,14 @@ impl JsEditorApi {
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> u64 {
+        use fresh_core::api::{FileLocation, PluginPath, WindowPath};
+        let path = match path {
+            PluginPath::Local(path) => FileLocation::ThisComputer(path),
+            PluginPath::Authority { window, path } => FileLocation::InWindow(WindowPath {
+                window: fresh_core::WindowId(window.unwrap_or_else(|| self.active_window())),
+                value: path,
+            }),
+        };
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::OpenInSystemApp {
             path,

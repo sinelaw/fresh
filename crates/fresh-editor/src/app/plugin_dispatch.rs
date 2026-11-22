@@ -934,8 +934,7 @@ impl Editor {
                     .retain(|item| item.plugin_name != plugin_name);
             }
             PluginCommand::OpenInSystemApp { path, request_id } => {
-                let result = self.open_in_system_app(path);
-                self.resolve_json_callback(request_id, result);
+                self.handle_open_in_system_app(path, request_id);
             }
 
             // ==================== Split Commands ====================
@@ -3511,38 +3510,32 @@ impl Editor {
         }
     }
 
-    /// Serialize `value` as JSON and resolve `request_id` as a JS Promise callback.
     /// Open `path` in the app the system uses for its type, when it is a file
-    /// on this computer: a local path, or one of a window whose files are
-    /// here.
-    fn open_in_system_app(
-        &mut self,
-        path: fresh_core::api::PluginPath,
-    ) -> fresh_core::api::OpenInSystemAppResult {
-        use fresh_core::api::{OpenInSystemAppResult, PluginPath};
+    /// on this computer, and resolve `request_id` with how that went.
+    fn handle_open_in_system_app(&mut self, path: fresh_core::api::FileLocation, request_id: u64) {
+        use fresh_core::api::{FileLocation, OpenInSystemAppResult};
         let path = match path {
-            PluginPath::Local(path) => path,
-            PluginPath::Authority { window, path } => {
-                let window = window.map_or_else(|| self.active_window_id(), fresh_core::WindowId);
-                // A window keyed by a host is another machine's (SSH, or one
-                // not connected yet); a plugin-installed backend such as a
-                // container has a host key too. Only a plain local window's
-                // paths name files here.
-                let local = self
+            FileLocation::ThisComputer(path) => std::path::PathBuf::from(path),
+            FileLocation::InWindow(path) => {
+                let Some(window) = self
                     .windows
-                    .get(&window)
-                    .is_some_and(|w| w.host_key().is_none());
-                if !local {
-                    return OpenInSystemAppResult::NotLocal;
-                }
-                path
+                    .get(&path.window)
+                    .filter(|w| w.files_are_on_this_computer())
+                else {
+                    self.resolve_json_callback(request_id, OpenInSystemAppResult::NotLocal);
+                    return;
+                };
+                // A relative path is the window's, as for every file API.
+                window
+                    .resolve_open_path(std::path::Path::new(&path.value))
+                    .canonical_path
             }
         };
-        let opener = std::sync::Arc::clone(&self.system_opener);
-        match opener(std::path::Path::new(&path)) {
+        let result = match (self.system_opener)(&path) {
             Ok(()) => OpenInSystemAppResult::Opened,
             Err(error) => OpenInSystemAppResult::Failed { error },
-        }
+        };
+        self.resolve_json_callback(request_id, result);
     }
 
     /// Replace the function that opens files in the system's apps, so a
@@ -3552,6 +3545,7 @@ impl Editor {
         self.system_opener = opener;
     }
 
+    /// Serialize `value` as JSON and resolve `request_id` as a JS Promise callback.
     fn resolve_json_callback<T: serde::Serialize>(&mut self, request_id: u64, value: T) {
         let callback_id = fresh_core::api::JsCallbackId::from(request_id);
         let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());

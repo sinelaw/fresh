@@ -806,7 +806,8 @@ unloaded.
 
 The options are checked when the call is made; options that don't
 match the type (for example a misspelled field name or an unknown
-`scope`) make the call throw.
+`scope`) make the call throw, as does a `handler` name another plugin
+already uses.
 
 
 @example
@@ -838,7 +839,8 @@ and the `WindowPath` of the file it shows. Items are dropped when the
 plugin is unloaded.
 
 The options are checked when the call is made; options that don't
-match the type make the call throw.
+match the type make the call throw, as does a `handler` name another
+plugin already uses.
 
 ```typescript
 addTabMenuItem(opts: TabMenuItemOptions): boolean;

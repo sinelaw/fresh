@@ -1235,14 +1235,11 @@ type FileExplorerEntryKind = "file" | "directory";
 * was chosen on.
 */
 type FileExplorerMenuTarget = {
-	/**
-	* The window whose explorer the menu was opened in. Act there: read
-	* its buffers with `listBuffers(windowId)`.
-	*/
-	windowId: number;
 	kind: FileExplorerEntryKind;
 	/**
-	* The entry, on its window's filesystem.
+	* The entry, on the filesystem of the window whose explorer it is
+	* (`path.window`), spelled as the editor opens it: a symbolic link
+	* resolved, so it matches the `path` of the entry's buffer if it is open.
 	*/
 	path: WindowPath;
 };
@@ -1285,9 +1282,8 @@ type TabMenuTarget = {
 	*/
 	bufferId: number;
 	/**
-	* The file the tab shows, on its window's filesystem, or `null` for a
-	* tab that shows no file from disk. Never `null` for a `"fileTab"`
-	* item.
+	* The file backing the tab, on its window's filesystem, or `null` for
+	* a tab no file backs. Never `null` for a `"fileTab"` item.
 	*/
 	path: WindowPath | null;
 };
@@ -8308,7 +8304,8 @@ interface EditorAPI {
 	* 
 	* The options are checked when the call is made; options that don't
 	* match the type (for example a misspelled field name or an unknown
-	* `scope`) make the call throw.
+	* `scope`) make the call throw, as does a `handler` name another plugin
+	* already uses.
 	* 
 	* @param opts - The item
 	* 
@@ -8333,7 +8330,8 @@ interface EditorAPI {
 	* plugin is unloaded.
 	* 
 	* The options are checked when the call is made; options that don't
-	* match the type make the call throw.
+	* match the type make the call throw, as does a `handler` name another
+	* plugin already uses.
 	* 
 	* @param opts - The item
 	*/
@@ -8341,17 +8339,18 @@ interface EditorAPI {
 	/**
 	* Open a file in the app this computer uses for its type, as a file
 	* manager's double click would: an image viewer for a picture, a PDF
-	* reader for a PDF.
+	* reader for a PDF. Resolves as soon as the system's launcher has been
+	* started; `{ kind: "failed" }` means none could be.
 	* 
 	* Only for files on this computer: a `LocalPath`, or a path of a
-	* window whose files are here. A path of a window on another machine
-	* (SSH, a container) opens nothing and resolves with
-	* `{ kind: "notLocal" }`; `getAuthorityLabel()` is empty for a window
-	* whose files are here.
+	* window whose files are here (a local window, or a container's, which
+	* shares this computer's files). A path of a window on another machine
+	* opens nothing and resolves with `{ kind: "notLocal" }`; such a window
+	* has a `remote` entry in `listWindows()`.
 	* 
 	* @param path - The file: a `WindowPath` (as a file explorer or tab
-	* menu item's handler receives), a `LocalPath`, or a string for one of
-	* the active window's files
+	* menu item's handler receives), a `LocalPath`, or a path of the active
+	* window, relative to its folder or absolute
 	*/
 	openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<OpenInSystemAppResult>;
 	/**

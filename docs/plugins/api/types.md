@@ -1326,14 +1326,11 @@ was chosen on.
 
 ```typescript
 type FileExplorerMenuTarget = {
-  /**
-  * The window whose explorer the menu was opened in. Act there: read
-  * its buffers with `listBuffers(windowId)`.
-  */
-  windowId: number;
   kind: FileExplorerEntryKind;
   /**
-  * The entry, on its window's filesystem.
+  * The entry, on the filesystem of the window whose explorer it is
+  * (`path.window`), spelled as the editor opens it: a symbolic link
+  * resolved, so it matches the `path` of the entry's buffer if it is open.
   */
   path: WindowPath;
 };
@@ -4573,9 +4570,8 @@ type TabMenuTarget = {
   */
   bufferId: number;
   /**
-  * The file the tab shows, on its window's filesystem, or `null` for a
-  * tab that shows no file from disk. Never `null` for a `"fileTab"`
-  * item.
+  * The file backing the tab, on its window's filesystem, or `null` for
+  * a tab no file backs. Never `null` for a `"fileTab"` item.
   */
   path: WindowPath | null;
 };

@@ -5156,7 +5156,7 @@ pub enum PluginCommand {
 
     /// Open `path` with the app the system uses for its type, and resolve
     /// `request_id` with an `OpenInSystemAppResult`.
-    OpenInSystemApp { path: PluginPath, request_id: u64 },
+    OpenInSystemApp { path: FileLocation, request_id: u64 },
 
     /// Create a new virtual buffer (not backed by a file)
     CreateVirtualBuffer {
@@ -7172,7 +7172,7 @@ pub enum FileExplorerMenuScope {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum TabMenuScope {
-    /// Tabs that show a file from disk.
+    /// Tabs backed by a file: not a terminal, nor a plugin's panel.
     FileTab,
     /// Every tab: files, plugin panels, terminals.
     AnyTab,
@@ -7199,8 +7199,8 @@ impl FileExplorerMenuScope {
 }
 
 impl TabMenuScope {
-    /// Whether a tab gets an item of this scope; `has_file` says whether
-    /// the tab shows a file from disk.
+    /// Whether a tab gets an item of this scope; `has_file` says whether a
+    /// file backs the tab.
     pub fn offers(self, has_file: bool) -> bool {
         match self {
             Self::FileTab => has_file,
@@ -7242,21 +7242,24 @@ pub struct TabMenuItemOptions {
 /// A path on a window's filesystem: the value `editor.windowPath(window,
 /// value)` builds, which every file API resolves on that window's machine
 /// whichever window is active.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// The one Rust form of the `WindowPath` the plugin API declares by hand in
+// `ts_export.rs`; the serde tag gives it that shape both ways.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename = "authority")]
 pub struct WindowPath {
+    #[ts(type = "number")]
     pub window: crate::WindowId,
     pub value: String,
 }
 
-impl Serialize for WindowPath {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("WindowPath", 3)?;
-        s.serialize_field("kind", "authority")?;
-        s.serialize_field("window", &self.window)?;
-        s.serialize_field("value", &self.value)?;
-        s.end()
-    }
+/// Where a file is: on this computer, or on a window's machine. What a
+/// plugin's path argument names once the plugin runtime has resolved it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub enum FileLocation {
+    /// A file on this computer (`editor.localPath`).
+    ThisComputer(String),
+    /// A file of a window.
+    InWindow(WindowPath),
 }
 
 /// What a file explorer menu item's handler is called with: the entry it
@@ -7265,12 +7268,10 @@ impl Serialize for WindowPath {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FileExplorerMenuTarget {
-    /// The window whose explorer the menu was opened in. Act there: read
-    /// its buffers with `listBuffers(windowId)`.
-    #[ts(type = "number")]
-    pub window_id: crate::WindowId,
     pub kind: FileExplorerEntryKind,
-    /// The entry, on its window's filesystem.
+    /// The entry, on the filesystem of the window whose explorer it is
+    /// (`path.window`), spelled as the editor opens it: a symbolic link
+    /// resolved, so it matches the `path` of the entry's buffer if it is open.
     #[ts(type = "WindowPath")]
     pub path: WindowPath,
 }
@@ -7288,9 +7289,8 @@ pub struct TabMenuTarget {
     /// The buffer the tab shows.
     #[ts(type = "number")]
     pub buffer_id: BufferId,
-    /// The file the tab shows, on its window's filesystem, or `null` for a
-    /// tab that shows no file from disk. Never `null` for a `"fileTab"`
-    /// item.
+    /// The file backing the tab, on its window's filesystem, or `null` for
+    /// a tab no file backs. Never `null` for a `"fileTab"` item.
     #[ts(type = "WindowPath | null")]
     pub path: Option<WindowPath>,
 }
@@ -7322,8 +7322,8 @@ pub struct PluginContextMenuItem {
 pub enum OpenInSystemAppResult {
     /// The system was asked to open it.
     Opened,
-    /// The path is on another machine (an SSH host, a container), or its
-    /// window has closed, so the system's apps cannot open it.
+    /// The path is on another machine (an SSH or Kubernetes host), or its
+    /// window has closed, so this computer's apps cannot open it.
     NotLocal,
     /// The system could not open it; `error` says why.
     Failed { error: String },
@@ -8176,7 +8176,7 @@ pub struct TextPropertiesAtCursor(pub Vec<HashMap<String, JsonValue>>);
 ///
 /// The TypeScript surface renders this as `string | LocalPath | WindowPath`
 /// (see the hand-written declarations in `ts_export.rs`).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone)]
 pub enum PluginPath {
     /// A path on a window's authority filesystem. `window` selects which
     /// window; `None` means the active window.
