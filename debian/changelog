@@ -1,5 +1,5 @@
-fresh-editor (0.5.8-1) unstable; urgency=medium
+fresh-editor (0.5.9+ds-1) unstable; urgency=medium
 
   * Initial release. (Closes: #1124035)
 
- -- Noam Lewis <jones.noamle@gmail.com>  Tue, 10 Nov 2026 08:41:45 +0200
+ -- Damian Daniel <damian@danielovci.net>  Thu, 19 Nov 2026 22:24:12 +0100

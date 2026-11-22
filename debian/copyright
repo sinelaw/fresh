@@ -2,6 +2,104 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: fresh-editor
 Upstream-Contact: Noam Lewis <jones.noamle@gmail.com>
 Source: https://github.com/sinelaw/fresh
+Files-Excluded:
+ .envrc
+ .fresh-tour.json
+ .gitattributes
+ .gitignore
+ .github
+ CONTRIBUTING.md
+ bun.lock
+ debian
+ default.nix
+ deny.toml
+ desktop
+ dist-workspace.toml
+ flake.lock
+ flake.nix
+ homepage
+ package-lock.json
+ package.json
+ packaging
+ shell.nix
+ spikes
+ tests
+ docs/.vitepress/genFeed.ts
+ docs/.vitepress/theme
+ docs/architecture.md
+ docs/blog
+ docs/configuration/index.md
+ docs/configuration/init.md
+ docs/development
+ docs/features
+ docs/fresh-demo2.gif
+ docs/fresh.txt
+ docs/getting-started
+ docs/i18n.md
+ docs/icons/macos
+ docs/icons/menu_bar
+ docs/icons/windows
+ docs/index.md
+ docs/internal
+ docs/logo.png
+ docs/plugins
+ docs/privacy.md
+ docs/process
+ docs/public
+ docs/quickjs.md
+ docs/theme-screenshot-diff.md
+ docs/troubleshooting.md
+ docs/visual-regression
+ docs/wasm.md
+ docs/wave-animation-wireframe.txt
+ scripts/Containerfile.arm64-test
+ scripts/ad
+ scripts/build-site.sh
+ scripts/bump-version.py
+ scripts/check-semantic-migration-conventions.sh
+ scripts/check-semantic-test-isolation.sh
+ scripts/clips
+ scripts/coverage-analyze.py
+ scripts/coverage-full
+ scripts/coverage-html.py
+ scripts/debian-salsa-update.py
+ scripts/docs-screenshots
+ scripts/frames-to-gif.sh
+ scripts/gen-orchestrator-wireframes.py
+ scripts/gen-single-line-bench.py
+ scripts/gen_schema.sh
+ scripts/generate-theme-diff.sh
+ scripts/generate-theme-screenshots.sh
+ scripts/interactive
+ scripts/memory-profile.py
+ scripts/mutants-fast.sh
+ scripts/rehearse-self-update.sh
+ scripts/repro_plugin_hang.sh
+ scripts/run-coverage
+ scripts/serial_lag_bench.py
+ scripts/serial_lag_diagnose.py
+ scripts/stress-extract-race.sh
+ scripts/test-arm64.sh
+ scripts/test-install-e2e.sh
+ scripts/test-install-failure-modes.sh
+ scripts/try-self-update.sh
+ scripts/update-debian-changelog.sh
+ scripts/update-showcases.sh
+ scripts/validate-package.sh
+ scripts/validate-theme.sh
+ scripts/validation-notice.py
+ scripts/verify-release-assets.sh
+ scripts/verify-shipped-updater.sh
+ scripts/verify-staged-artifacts.sh
+ scripts/winget-publish.py
+ scripts/workboard-scenario
+ crates/fresh-gui
+ crates/fresh-editor/flatpak
+ crates/fresh-editor/winget
+ crates/fresh-editor/npm-package
+ crates/fresh-editor/packaging
+ crates/fresh-editor/scripts
+ crates/fresh-editor/web-ui/test
 Comment:
  Audited against the whole source tree (licensecheck, plus the history of
  every file that could be third-party); see debian/README.source. Besides
@@ -15,9 +113,8 @@ Comment:
   * the themes under crates/fresh-editor-core/themes/; the Dracula, Nord,
     Solarized, Gruvbox and Tokyo Night ones take their colour values from
     those palettes and contain nothing else from those projects;
-  * screenshots, recordings, icons and other images (including
-    crates/fresh-editor/scripts/landscape*.png and
-    docs/public/images/nostalgia.jpeg), all created by Noam Lewis.
+  * screenshots, recordings, icons and other images, all created by
+    Noam Lewis.
 
 Files: *
 Copyright: 2024-2026 Noam Lewis <jones.noamle@gmail.com> and the Fresh contributors
@@ -98,22 +195,8 @@ Comment: Derived from tools/support/typst.tmLanguage.json in
  applies to this file.
 
 Files: crates/fresh-editor/fonts/*
-       crates/fresh-gui/fonts/*
 Copyright: 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
 License: OFL-1.1
-
-Files: homepage/public/fonts/inter-*
-Copyright: 2016 The Inter Project Authors (https://github.com/rsms/inter)
-License: OFL-1.1
-
-Files: homepage/public/fonts/instrument-serif-*
-Copyright: 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)
-License: OFL-1.1
-
-Files: crates/fresh-editor/flatpak/io.github.sinelaw.fresh.metainfo.xml
-Copyright: 2024-2026 Noam Lewis <jones.noamle@gmail.com>
-License: CC0-1.0
-Comment: AppStream metadata, under the metadata license AppStream asks for.
 
 Files: debian/*
 Copyright: 2026 Noam Lewis <jones.noamle@gmail.com>,
@@ -184,11 +267,3 @@ License: OFL-1.1
  On Debian systems, the complete text of the SIL Open Font License,
  Version 1.1 can be found in "/usr/share/common-licenses/OFL-1.1"; it is
  also in crates/fresh-editor/fonts/LICENSE-OFL.txt.
-
-License: CC0-1.0
- To the extent possible under law, the author(s) have dedicated all
- copyright and related and neighboring rights to this software to the public
- domain worldwide. This software is distributed without any warranty.
- .
- On Debian systems, the complete text of the CC0 1.0 Universal license can be
- found in "/usr/share/common-licenses/CC0-1.0".

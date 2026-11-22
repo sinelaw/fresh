@@ -33,8 +33,9 @@ build. Run it from the workspace root; see docs/internal/debian-quickjs-spike.md
       (Windows, macOS, the rquickjs backend); optional and dev-dependencies
       the registry lacks, with the feature entries naming them; and workspace
       members that cannot build from it and that nothing needs except
-      optionally (fresh-gui). A required dependency the registry lacks is an
-      error. Needs python3-tomlkit.
+      optionally (fresh-gui), or that the source leaves out (a repacked orig
+      tarball), with the dependencies on them. A required dependency the
+      registry or the source lacks is an error. Needs python3-tomlkit.
 """
 
 import argparse
@@ -454,12 +455,20 @@ def cmd_patch_manifests(args):
     root_path = ws / "Cargo.toml"
     root = tomlkit.parse(root_path.read_text())
     workspace_deps = root["workspace"].get("dependencies", {})
-    members = {}
+    members, absent = {}, set()
     for pattern in root["workspace"]["members"]:
-        for d in sorted(ws.glob(pattern)):
-            if (d / "Cargo.toml").exists():
-                doc = tomlkit.parse((d / "Cargo.toml").read_text())
-                members[doc["package"]["name"]] = (pattern, d, doc)
+        dirs = [d for d in sorted(ws.glob(pattern)) if (d / "Cargo.toml").exists()]
+        if not dirs:
+            absent.add(pattern)
+        for d in dirs:
+            doc = tomlkit.parse((d / "Cargo.toml").read_text())
+            members[doc["package"]["name"]] = (pattern, d, doc)
+
+    def missing(name, spec, base):
+        """A path dependency on a crate the source leaves out."""
+        if not isinstance(spec, str) and spec.get("workspace"):
+            spec, base = workspace_deps[name], ws
+        return not isinstance(spec, str) and "path" in spec and not (base / spec["path"] / "Cargo.toml").exists()
 
     def dep_info(name, spec):
         """(package name, version requirement or None for a path dep, optional)."""
@@ -513,6 +522,11 @@ def cmd_patch_manifests(args):
                     why = f"for another target ({t})"
                 elif pkg in dropped:
                     why = "workspace member left out"
+                elif missing(dname, table[dname], path):
+                    if optional or kind == "dev-dependencies":
+                        why = "not in the source"
+                    else:
+                        errors.append(f"{name}: {dname} is required and not in the source")
                 elif req is not None and not in_registry(pkg, req):
                     if kind == "dev-dependencies":
                         why = f"dev-dependency, not in the registry ({pkg} {req})"
@@ -559,8 +573,11 @@ def cmd_patch_manifests(args):
                     features[dname] = tomlkit.array()
         (path / "Cargo.toml").write_text(tomlkit.dumps(doc))
 
-    if dropped:
-        paths = {members[d][0] for d in dropped}
+    gone = [n for n in workspace_deps if missing(n, workspace_deps[n], ws)]
+    for n in gone:
+        del workspace_deps[n]
+    if dropped or absent or gone:
+        paths = {members[d][0] for d in dropped} | absent
         for key in ("members", "default-members"):
             if key in root["workspace"]:
                 keep = tomlkit.array()
@@ -569,6 +586,8 @@ def cmd_patch_manifests(args):
         root_path.write_text(tomlkit.dumps(root))
         for name in sorted(dropped):
             print(f"workspace: leave out {name}")
+        for name in sorted(absent | set(gone)):
+            print(f"workspace: drop {name}: not in the source")
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

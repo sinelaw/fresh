@@ -2,3 +2,5 @@ Version: 5
 Template: Github
 Owner: sinelaw
 Project: fresh
+Repacksuffix: +ds
+Dversionmangle: auto

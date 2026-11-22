@@ -80,7 +80,8 @@ jobs:
           persist-credentials: false
 
       # A `3.0 (quilt)` source package: the orig tarball is the tree as
-      # committed. The package version follows the workspace's.
+      # committed less debian/copyright's Files-Excluded, like Salsa's
+      # repacked one. The package version follows the workspace's.
       - name: Make the orig tarball and the source tree
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -91,9 +92,11 @@ jobs:
           test "$version" = "${cargo_version}-1"
           upstream=${version%-*}
           mkdir -p /build
-          git archive --prefix="fresh-editor-$upstream/" HEAD | xz -T0 > "/build/fresh-editor_$upstream.orig.tar.xz"
+          excluded=$(awk '/^Files-Excluded:/ { f = 1; next } f && /^ / { print ":(exclude)" $1; next } { f = 0 }' debian/copyright)
+          test -n "$excluded"
+          git archive --prefix="fresh-editor-$upstream/" HEAD -- . $excluded | xz -T0 > "/build/fresh-editor_$upstream.orig.tar.xz"
           tar -xf "/build/fresh-editor_$upstream.orig.tar.xz" -C /build
-          cp debian/changelog "/build/fresh-editor-$upstream/debian/changelog"
+          cp -r debian "/build/fresh-editor-$upstream/"
           echo "SRC=/build/fresh-editor-$upstream" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
