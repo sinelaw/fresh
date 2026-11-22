@@ -1974,8 +1974,10 @@ pub struct ContextMenuView {
 #[serde(rename_all = "camelCase")]
 pub struct ContextMenuItemView {
     pub label: String,
-    pub id: &'static str,
+    pub id: String,
     pub destructive: bool,
+    /// Shown greyed out; choosing it does nothing.
+    pub disabled: bool,
 }
 
 impl Editor {

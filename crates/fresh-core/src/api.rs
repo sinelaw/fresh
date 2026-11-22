@@ -5146,6 +5146,18 @@ pub enum PluginCommand {
     /// Remove a top-level menu
     RemoveMenu { menu_label: String },
 
+    /// Add a plugin's item to the file explorer's or the tabs' right-click
+    /// menu.
+    AddContextMenuItem { item: PluginContextMenuItem },
+
+    /// Drop every right-click menu item a plugin added (sent when it
+    /// unloads).
+    RemoveContextMenuItems { plugin_name: String },
+
+    /// Open `path` with the app the system uses for its type, and resolve
+    /// `request_id` with an `OpenInSystemAppResult`.
+    OpenInSystemApp { path: FileLocation, request_id: u64 },
+
     /// Create a new virtual buffer (not backed by a file)
     CreateVirtualBuffer {
         /// Display name (e.g., "*Diagnostics*")
@@ -7138,6 +7150,205 @@ impl AddMenuItemOptions {
     }
 }
 
+/// Which file explorer entries a plugin's right-click menu item is offered
+/// for (see `addFileExplorerMenuItem`). The item shows only when exactly
+/// one entry is selected and it is of this kind; the project root is never
+/// offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FileExplorerMenuScope {
+    /// A file.
+    File,
+    /// A folder.
+    Directory,
+    /// A file or a folder.
+    FileOrDirectory,
+}
+
+/// Which tabs a plugin's right-click menu item is offered for (see
+/// `addTabMenuItem`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TabMenuScope {
+    /// Tabs backed by a file: not a terminal, nor a plugin's panel.
+    FileTab,
+    /// Every tab: files, plugin panels, terminals.
+    AnyTab,
+}
+
+/// The kind of file explorer entry a menu item was chosen on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FileExplorerEntryKind {
+    File,
+    Directory,
+}
+
+impl FileExplorerMenuScope {
+    /// Whether an entry of `kind` gets an item of this scope.
+    pub fn offers(self, kind: FileExplorerEntryKind) -> bool {
+        match self {
+            Self::File => kind == FileExplorerEntryKind::File,
+            Self::Directory => kind == FileExplorerEntryKind::Directory,
+            Self::FileOrDirectory => true,
+        }
+    }
+}
+
+impl TabMenuScope {
+    /// Whether a tab gets an item of this scope; `has_file` says whether a
+    /// file backs the tab.
+    pub fn offers(self, has_file: bool) -> bool {
+        match self {
+            Self::FileTab => has_file,
+            Self::AnyTab => true,
+        }
+    }
+}
+
+/// Options for `editor.addFileExplorerMenuItem`: one plugin item in the
+/// file explorer's right-click menu.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct FileExplorerMenuItemOptions {
+    /// Item label, already translated by the plugin (`editor.t(…)`).
+    pub label: String,
+    /// Which entries the item is offered for.
+    pub scope: FileExplorerMenuScope,
+    /// Name of the handler (see `registerHandler`) called with a
+    /// `FileExplorerMenuTarget` when the item is chosen.
+    pub handler: String,
+    /// A context the item depends on, as `setContext` sets it and
+    /// `registerCommand`'s `context` names it: while it is not set in the
+    /// window, the item is shown greyed out and cannot be chosen. Omit for an
+    /// item that is always available.
+    #[serde(default)]
+    #[ts(optional)]
+    pub context: Option<String>,
+}
+
+/// Options for `editor.addTabMenuItem`: one plugin item in the tabs'
+/// right-click menu.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct TabMenuItemOptions {
+    /// Item label, already translated by the plugin (`editor.t(…)`).
+    pub label: String,
+    /// Which tabs the item is offered for.
+    pub scope: TabMenuScope,
+    /// Name of the handler (see `registerHandler`) called with a
+    /// `TabMenuTarget` when the item is chosen.
+    pub handler: String,
+    /// A context the item depends on, as `setContext` sets it and
+    /// `registerCommand`'s `context` names it: while it is not set in the
+    /// window, the item is shown greyed out and cannot be chosen. Omit for an
+    /// item that is always available.
+    #[serde(default)]
+    #[ts(optional)]
+    pub context: Option<String>,
+}
+
+/// A path on a window's filesystem: the value `editor.windowPath(window,
+/// value)` builds, which every file API resolves on that window's machine
+/// whichever window is active.
+// The one Rust form of the `WindowPath` the plugin API declares by hand in
+// `ts_export.rs`; the serde tag gives it that shape both ways.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename = "authority")]
+pub struct WindowPath {
+    #[ts(type = "number")]
+    pub window: crate::WindowId,
+    pub value: String,
+}
+
+/// Where a file is: on this computer, or on a window's machine. What a
+/// plugin's path argument names once the plugin runtime has resolved it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub enum FileLocation {
+    /// A file on this computer (`editor.localPath`).
+    ThisComputer(String),
+    /// A file of a window.
+    InWindow(WindowPath),
+}
+
+/// What a file explorer menu item's handler is called with: the entry it
+/// was chosen on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileExplorerMenuTarget {
+    /// Whether the entry is a file or a folder.
+    pub kind: FileExplorerEntryKind,
+    /// The entry as the explorer shows it, on the filesystem of the window
+    /// whose explorer it is (`path.window`). A symbolic link is not resolved;
+    /// `findBufferByPath` finds the entry's buffer if it is open.
+    #[ts(type = "WindowPath")]
+    pub path: WindowPath,
+}
+
+/// What a tab menu item's handler is called with: the tab it was chosen
+/// on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TabMenuTarget {
+    /// The window the tab is in. Act there: read its buffers with
+    /// `listBuffers(windowId)`.
+    #[ts(type = "number")]
+    pub window_id: crate::WindowId,
+    /// The split (pane) whose tab bar the tab is in.
+    #[ts(type = "number")]
+    pub split_id: SplitId,
+    /// The buffer the tab shows.
+    #[ts(type = "number")]
+    pub buffer_id: BufferId,
+    /// The file backing the tab, on its window's filesystem, or `null` for
+    /// a tab no file backs. Never `null` for a `"fileTab"` item.
+    #[ts(type = "WindowPath | null")]
+    pub path: Option<WindowPath>,
+}
+
+/// Which right-click menu a plugin item goes in, and which entries of it
+/// it is offered for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum PluginContextMenuPlacement {
+    FileExplorer(FileExplorerMenuScope),
+    Tab(TabMenuScope),
+}
+
+/// A plugin's item in one of the right-click menus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PluginContextMenuItem {
+    pub plugin_name: String,
+    pub label: String,
+    /// The plugin's handler, called with the menu's target.
+    pub handler: String,
+    pub placement: PluginContextMenuPlacement,
+    /// The context the item depends on; see the options' `context`.
+    pub context: Option<String>,
+}
+
+/// How `openInSystemApp` went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum OpenInSystemAppResult {
+    /// The system was asked to open it.
+    Opened,
+    /// The path is on another machine (an SSH or Kubernetes host), or its
+    /// window has closed, so this computer's apps cannot open it.
+    NotLocal,
+    /// The system could not open it; `error` says why.
+    Failed { error: String },
+}
+
 /// Options for showActionPopup
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -8045,6 +8256,8 @@ mod fromjs_impls {
         ActionPopupAction,
         ActionPopupOptions,
         AddMenuItemOptions,
+        FileExplorerMenuItemOptions,
+        TabMenuItemOptions,
         LspMenuItem,
         ViewTokenWire,
         ViewTokenStyle,

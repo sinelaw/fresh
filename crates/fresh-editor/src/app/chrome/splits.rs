@@ -762,9 +762,22 @@ impl Editor {
         col: u16,
         row: u16,
     ) {
-        self.active_window_mut().tab_context_menu = target
-            .as_buffer()
-            .map(|buffer_id| TabContextMenu::new(buffer_id, pane, col, row + 1));
+        let Some(buffer_id) = target.as_buffer() else {
+            self.active_window_mut().tab_context_menu = None;
+            return;
+        };
+        let has_file = self.tab_file(buffer_id).is_some();
+        let plugin_items = self.plugin_menu_entries(|placement| {
+            matches!(placement,
+                fresh_core::api::PluginContextMenuPlacement::Tab(scope) if scope.offers(has_file))
+        });
+        self.active_window_mut().tab_context_menu = Some(TabContextMenu::new(
+            buffer_id,
+            pane,
+            col,
+            row + 1,
+            plugin_items,
+        ));
     }
 
     /// The `×` on a pane's strip.

@@ -714,6 +714,7 @@ mod tests {
                     width: 20,
                     highlighted: 0,
                     items: vec!["Copy".into(), "Paste".into()],
+                    disabled: Vec::new(),
                 }),
                 ..Frame::default()
             })

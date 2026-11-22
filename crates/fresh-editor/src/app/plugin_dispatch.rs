@@ -926,6 +926,16 @@ impl Editor {
             PluginCommand::RemoveMenu { menu_label } => {
                 self.handle_remove_menu(menu_label);
             }
+            PluginCommand::AddContextMenuItem { item } => {
+                self.plugin_context_menu_items.push(item);
+            }
+            PluginCommand::RemoveContextMenuItems { plugin_name } => {
+                self.plugin_context_menu_items
+                    .retain(|item| item.plugin_name != plugin_name);
+            }
+            PluginCommand::OpenInSystemApp { path, request_id } => {
+                self.handle_open_in_system_app(path, request_id);
+            }
 
             // ==================== Split Commands ====================
             PluginCommand::FocusSplit { split_id } => {
@@ -3498,6 +3508,81 @@ impl Editor {
         } else {
             buffer_id
         }
+    }
+
+    /// Open `path` in the app the system uses for its type, when it is a file
+    /// on this computer, and resolve `request_id` with how that went, once
+    /// the system's launcher has finished.
+    fn handle_open_in_system_app(&mut self, path: fresh_core::api::FileLocation, request_id: u64) {
+        use fresh_core::api::{FileLocation, OpenInSystemAppResult};
+        let path = match path {
+            FileLocation::ThisComputer(path) => std::path::PathBuf::from(path),
+            FileLocation::InWindow(path) => {
+                let Some(window) = self
+                    .windows
+                    .get(&path.window)
+                    .filter(|w| w.files_are_on_this_computer())
+                else {
+                    self.resolve_json_callback(request_id, OpenInSystemAppResult::NotLocal);
+                    return;
+                };
+                // A relative path is the window's, as for every file API.
+                let path = window
+                    .resolve_open_path(std::path::Path::new(&path.value))
+                    .canonical_path;
+                // Canonical paths are verbatim (`\\?\C:\…`) on Windows, which
+                // `start` does not take; plugins see paths without the prefix.
+                crate::primitives::path_utils::strip_verbatim_prefix(&path).into_owned()
+            }
+        };
+        let opener = std::sync::Arc::clone(&self.system_opener);
+        let open = move || match opener(&path) {
+            Ok(()) => OpenInSystemAppResult::Opened,
+            Err(error) => OpenInSystemAppResult::Failed { error },
+        };
+        // Running the launcher here instead would make the editor wait on it.
+        let Some(sender) = self.async_bridge.as_ref().map(|bridge| bridge.sender()) else {
+            self.resolve_json_callback(
+                request_id,
+                OpenInSystemAppResult::Failed {
+                    error: "the editor cannot wait for the launcher here".to_string(),
+                },
+            );
+            return;
+        };
+        // The opener waits for the system's launcher to finish, which is what
+        // tells it whether the file opened: on a thread of its own, so the
+        // editor never waits. Not the runtime's blocking pool, which quitting
+        // waits on: a launcher that stays until its app closes (`xdg-open`
+        // with no desktop it knows) must not hold up the exit.
+        let spawned = std::thread::Builder::new()
+            .name("open-in-system-app".to_string())
+            .spawn(move || {
+                let result = serde_json::to_string(&open()).map_err(|e| e.to_string());
+                // Fails only once the editor has gone, when no one is waiting.
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(
+                    crate::services::async_bridge::AsyncMessage::PluginCallbackResult {
+                        request_id,
+                        result,
+                    },
+                );
+            });
+        if let Err(e) = spawned {
+            self.resolve_json_callback(
+                request_id,
+                OpenInSystemAppResult::Failed {
+                    error: e.to_string(),
+                },
+            );
+        }
+    }
+
+    /// Replace the function that opens files in the system's apps, so a
+    /// test launches nothing.
+    #[doc(hidden)]
+    pub fn set_system_opener(&mut self, opener: crate::app::SystemOpener) {
+        self.system_opener = opener;
     }
 
     /// Serialize `value` as JSON and resolve `request_id` as a JS Promise callback.

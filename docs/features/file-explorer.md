@@ -24,7 +24,7 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 
 ## Managing Files
 
-**Right-click** an entry for a context menu with New File, New Directory, Rename, Cut, Copy, Paste, Duplicate, Delete and Copy Full/Relative Path. It acts on the entry under the pointer; right-clicking empty space offers New File, New Directory and Paste in the project root. While the explorer has focus, an **Explorer** menu in the menu bar offers the main file actions plus Refresh and the hidden/gitignored toggles.
+**Right-click** an entry for a context menu with New File, New Directory, Rename, Cut, Copy, Paste, Duplicate, Delete and Copy Full/Relative Path. It acts on the entry under the pointer; right-clicking empty space offers New File, New Directory and Paste in the project root. Plugins can add items of their own: the bundled **Open in Default App** (also on a file tab's right-click menu and in the command palette) opens a file in the app this computer uses for its type, such as an image viewer for a picture. While the explorer has focus, an **Explorer** menu in the menu bar offers the main file actions plus Refresh and the hidden/gitignored toggles.
 
 ![The file explorer's right-click menu: New File, New Directory, Rename, Cut, Copy, Paste, Delete, Duplicate, Copy Full Path and Copy Relative Path](/images/explorer-context-menu.png)
 

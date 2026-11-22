@@ -4454,13 +4454,19 @@ impl Editor {
     /// tree is where rectangles come from. The fold is what skips the cells.
     fn open_context_menu_for_shell(&self) -> Option<crate::view::shell::context_menu::Menu> {
         let (_, core) = self.active_window().open_context_menu()?;
-        let items = self.active_window().context_menu_labels()?;
+        let (items, disabled) = self
+            .active_window()
+            .context_menu_items()?
+            .into_iter()
+            .map(|item| (item.label, item.disabled))
+            .unzip();
         Some(crate::view::shell::context_menu::Menu {
             x: core.position.0,
             y: core.position.1,
             width: core.width,
             highlighted: core.highlighted,
             items,
+            disabled,
         })
     }
 

@@ -190,11 +190,47 @@ impl Editor {
         } else {
             (false, false)
         };
+        // Plugins' items act on one entry: the one just selected, when it is
+        // neither the root nor one of several. Its path is the explorer's own:
+        // nothing is asked of the filesystem to open a menu, which on a remote
+        // window would be a round trip per right-click.
+        let plugin_items = self
+            .file_explorer()
+            .and_then(|explorer| explorer.get_selected_entry())
+            .filter(|_| !is_multi && !is_root_selected)
+            .map(|entry| {
+                let kind = if entry.is_dir() {
+                    fresh_core::api::FileExplorerEntryKind::Directory
+                } else {
+                    fresh_core::api::FileExplorerEntryKind::File
+                };
+                (kind, entry.path.to_wire_string().into_owned())
+            })
+            .map(|(kind, value)| crate::app::types::ExplorerPluginItems {
+                target: fresh_core::api::FileExplorerMenuTarget {
+                    kind,
+                    path: fresh_core::api::WindowPath {
+                        window: self.active_window_id(),
+                        value,
+                    },
+                },
+                items: self.plugin_menu_entries(|placement| {
+                    matches!(placement,
+                        fresh_core::api::PluginContextMenuPlacement::FileExplorer(scope)
+                            if scope.offers(kind))
+                }),
+            })
+            .filter(|plugin| !plugin.items.is_empty());
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::FileExplorer;
         self.active_window_mut().tab_context_menu = None;
-        self.active_window_mut().file_explorer_context_menu = Some(
-            crate::app::types::FileExplorerContextMenu::new(x, y + 1, is_multi, is_root_selected),
-        );
+        self.active_window_mut().file_explorer_context_menu =
+            Some(crate::app::types::FileExplorerContextMenu::new(
+                x,
+                y + 1,
+                is_multi,
+                is_root_selected,
+                plugin_items,
+            ));
     }
 
     /// A right-press on the panel that no row claimed — the empty space under

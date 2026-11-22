@@ -207,6 +207,8 @@
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
   .ctxmenu .ctxitem.destructive{color:var(--danger,#f47067)}
   .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
+  .ctxmenu .ctxitem.disabled{color:var(--muted)}
+  .ctxmenu .ctxitem.disabled.sel{background:transparent;color:var(--muted)}
   /* floating / dock widget panel surfaces (native plugin UI). The surface is
      a column flex box and the LIST inside it is the scroll container (flex:1;
      min-height:0; overflow-y:auto) — TUI parity: wheeling over the panel

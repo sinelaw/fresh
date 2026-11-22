@@ -1028,6 +1028,7 @@ mod band_tests {
             width: 10,
             highlighted: 0,
             items: vec!["Copy".into()],
+            disabled: Vec::new(),
         }
     }
 

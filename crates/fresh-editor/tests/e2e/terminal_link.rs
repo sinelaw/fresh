@@ -117,6 +117,37 @@ fn open_terminal_with_output(
     (terminal_id, buffer_id)
 }
 
+/// Drop the focused terminal split into scrollback once its snapshot of the
+/// grid holds `marker`.
+///
+/// Entering scrollback copies the grid as it is at that moment into the
+/// file-backed view. On Windows, ConPTY's repaint of the screen it knows
+/// about (see `feed_output_until_visible`) can still land after the injected
+/// output survived a render, and a snapshot taken then is blank. So go back
+/// to live mode, feed again, and take another until one holds the output;
+/// once taken, the snapshot is in the file and later repaints leave it be.
+fn enter_scrollback_showing(
+    harness: &mut EditorTestHarness,
+    terminal_id: TerminalId,
+    output: &[u8],
+    marker: &str,
+) {
+    const ATTEMPTS: usize = 50;
+    for _ in 0..ATTEMPTS {
+        harness.editor_mut().enter_terminal_scrollback();
+        harness.render().unwrap();
+        if harness.screen_to_string().contains(marker) {
+            return;
+        }
+        harness.editor_mut().enter_terminal_mode();
+        feed_output_until_visible(harness, terminal_id, output, marker);
+    }
+    panic!(
+        "the scrollback never showed {marker:?}:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Locate `needle` on the rendered screen, returning the (col, row) of its
 /// first character so a test can click into it.
 fn find_on_screen(harness: &EditorTestHarness, needle: &str) -> Option<(u16, u16)> {
@@ -352,20 +383,13 @@ fn ctrl_click_opens_path_in_scrollback_view() {
         None => return,
     };
 
-    open_terminal_with_output(
-        &mut harness,
-        b"build error at src/main.rs:2:6 here\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"build error at src/main.rs:2:6 here\n";
+    let (terminal_id, _) = open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
     // Leave live terminal mode: drop the focused split into read-only
     // scrollback (syncs the grid into the buffer), exactly as a scroll/
-    // click-away does.
-    harness.editor_mut().enter_terminal_scrollback();
-    harness.render().unwrap();
-
-    // The path is shown by the normal buffer renderer now.
-    harness.assert_screen_contains("src/main.rs:2:6");
+    // click-away does. The path is shown by the normal buffer renderer then.
+    enter_scrollback_showing(&mut harness, terminal_id, output, "src/main.rs:2:6");
 
     let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
     ctrl_left_click(&mut harness, col + 4, row);

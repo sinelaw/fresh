@@ -104,6 +104,29 @@ in bytes.
 fileStat(path: string | LocalPath | WindowPath | AuthorityPath): unknown;
 ```
 
+### `openInSystemApp`
+
+Open a file in the app this computer uses for its type, as a file
+manager's double click would: an image viewer for a picture, a PDF
+reader for a PDF. The editor carries on meanwhile. Resolves once the
+system's launcher has finished, with `{ kind: "failed" }` if it could
+not open the file; a launcher that stays until its app closes keeps
+the promise pending until then.
+
+Only for files on this computer: a `LocalPath`, or a path of a
+window whose files are here (a local window, or a container's, which
+shares this computer's files). A path of a window on another machine
+opens nothing and resolves with `{ kind: "notLocal" }`; such a window
+has a `remote` entry in `listWindows()`.
+
+```typescript
+openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<OpenInSystemAppResult>;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `path` | The file: a `WindowPath` (as a file explorer or tab menu item's handler receives), an absolute `LocalPath`, or a path of the active window, relative to its folder or absolute |
+
 ## Paths
 
 ### `pathJoin`

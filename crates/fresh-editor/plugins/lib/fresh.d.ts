@@ -1201,6 +1201,125 @@ type AddMenuItemOptions = {
 	before?: string;
 };
 /**
+* Options for `editor.addFileExplorerMenuItem`: one plugin item in the
+* file explorer's right-click menu.
+*/
+type FileExplorerMenuItemOptions = {
+	/**
+	* Item label, already translated by the plugin (`editor.t(…)`).
+	*/
+	label: string;
+	/**
+	* Which entries the item is offered for.
+	*/
+	scope: FileExplorerMenuScope;
+	/**
+	* Name of the handler (see `registerHandler`) called with a
+	* `FileExplorerMenuTarget` when the item is chosen.
+	*/
+	handler: string;
+	/**
+	* A context the item depends on, as `setContext` sets it and
+	* `registerCommand`'s `context` names it: while it is not set in the
+	* window, the item is shown greyed out and cannot be chosen. Omit for an
+	* item that is always available.
+	*/
+	context?: string;
+};
+/**
+* Which file explorer entries a plugin's right-click menu item is offered
+* for (see `addFileExplorerMenuItem`). The item shows only when exactly
+* one entry is selected and it is of this kind; the project root is never
+* offered.
+*/
+type FileExplorerMenuScope = "file" | "directory" | "fileOrDirectory";
+/**
+* The kind of file explorer entry a menu item was chosen on.
+*/
+type FileExplorerEntryKind = "file" | "directory";
+/**
+* What a file explorer menu item's handler is called with: the entry it
+* was chosen on.
+*/
+type FileExplorerMenuTarget = {
+	/**
+	* Whether the entry is a file or a folder.
+	*/
+	kind: FileExplorerEntryKind;
+	/**
+	* The entry as the explorer shows it, on the filesystem of the window
+	* whose explorer it is (`path.window`). A symbolic link is not resolved;
+	* `findBufferByPath` finds the entry's buffer if it is open.
+	*/
+	path: WindowPath;
+};
+/**
+* Options for `editor.addTabMenuItem`: one plugin item in the tabs'
+* right-click menu.
+*/
+type TabMenuItemOptions = {
+	/**
+	* Item label, already translated by the plugin (`editor.t(…)`).
+	*/
+	label: string;
+	/**
+	* Which tabs the item is offered for.
+	*/
+	scope: TabMenuScope;
+	/**
+	* Name of the handler (see `registerHandler`) called with a
+	* `TabMenuTarget` when the item is chosen.
+	*/
+	handler: string;
+	/**
+	* A context the item depends on, as `setContext` sets it and
+	* `registerCommand`'s `context` names it: while it is not set in the
+	* window, the item is shown greyed out and cannot be chosen. Omit for an
+	* item that is always available.
+	*/
+	context?: string;
+};
+/**
+* Which tabs a plugin's right-click menu item is offered for (see
+* `addTabMenuItem`).
+*/
+type TabMenuScope = "fileTab" | "anyTab";
+/**
+* What a tab menu item's handler is called with: the tab it was chosen
+* on.
+*/
+type TabMenuTarget = {
+	/**
+	* The window the tab is in. Act there: read its buffers with
+	* `listBuffers(windowId)`.
+	*/
+	windowId: number;
+	/**
+	* The split (pane) whose tab bar the tab is in.
+	*/
+	splitId: number;
+	/**
+	* The buffer the tab shows.
+	*/
+	bufferId: number;
+	/**
+	* The file backing the tab, on its window's filesystem, or `null` for
+	* a tab no file backs. Never `null` for a `"fileTab"` item.
+	*/
+	path: WindowPath | null;
+};
+/**
+* How `openInSystemApp` went.
+*/
+type OpenInSystemAppResult = {
+	"kind": "opened";
+} | {
+	"kind": "notLocal";
+} | {
+	"kind": "failed";
+	error: string;
+};
+/**
 * Plugin-contributed row in the LSP-Servers popup, passed to
 * `editor.setLspMenuContributions`.
 */
@@ -8193,6 +8312,72 @@ interface EditorAPI {
 	* the type (for example a misspelled field name) make the call throw.
 	*/
 	addMenuItem(opts: AddMenuItemOptions): boolean;
+	/**
+	* Add an item to the file explorer's right-click menu. It is offered
+	* when a single entry of `scope`'s kind is selected (never on the
+	* project root), after the editor's own items, in the order plugins
+	* added them.
+	* 
+	* Choosing it calls `handler` with a `FileExplorerMenuTarget`: the
+	* entry's kind and its `WindowPath`, which the file APIs and
+	* `openInSystemApp` take as is. Items are dropped when the plugin is
+	* unloaded.
+	* 
+	* The options are checked when the call is made; options that don't
+	* match the type (for example a misspelled field name or an unknown
+	* `scope`) make the call throw, as does a `handler` name another plugin
+	* has already registered (with a menu item, `registerCommand` or a
+	* timer). Returns whether the item was sent to the editor.
+	* 
+	* @param opts - The item
+	* 
+	* @example
+	* registerHandler("myPluginReveal", (target: FileExplorerMenuTarget) => {
+	*   editor.setStatus(target.path.value);
+	* });
+	* editor.addFileExplorerMenuItem({
+	*   label: editor.t("menu.reveal"),
+	*   scope: "file",
+	*   handler: "myPluginReveal",
+	* });
+	*/
+	addFileExplorerMenuItem(opts: FileExplorerMenuItemOptions): boolean;
+	/**
+	* Add an item to the tabs' right-click menu. It is offered on the tabs
+	* `scope` names, after the editor's own items, in the order plugins
+	* added them.
+	* 
+	* Choosing it calls `handler` with a `TabMenuTarget`: the tab's window,
+	* split and buffer, and the `WindowPath` of the file it shows. Items are
+	* dropped when the plugin is unloaded.
+	* 
+	* The options are checked when the call is made; options that don't
+	* match the type make the call throw, as does a `handler` name another
+	* plugin has already registered (with a menu item, `registerCommand` or
+	* a timer). Returns whether the item was sent to the editor.
+	* 
+	* @param opts - The item
+	*/
+	addTabMenuItem(opts: TabMenuItemOptions): boolean;
+	/**
+	* Open a file in the app this computer uses for its type, as a file
+	* manager's double click would: an image viewer for a picture, a PDF
+	* reader for a PDF. The editor carries on meanwhile. Resolves once the
+	* system's launcher has finished, with `{ kind: "failed" }` if it could
+	* not open the file; a launcher that stays until its app closes keeps
+	* the promise pending until then.
+	* 
+	* Only for files on this computer: a `LocalPath`, or a path of a
+	* window whose files are here (a local window, or a container's, which
+	* shares this computer's files). A path of a window on another machine
+	* opens nothing and resolves with `{ kind: "notLocal" }`; such a window
+	* has a `remote` entry in `listWindows()`.
+	* 
+	* @param path - The file: a `WindowPath` (as a file explorer or tab
+	* menu item's handler receives), an absolute `LocalPath`, or a path of
+	* the active window, relative to its folder or absolute
+	*/
+	openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<OpenInSystemAppResult>;
 	/**
 	* Contribute (or replace, or clear) menu rows for the LSP-Servers
 	* popup. Pass an empty `items` to clear this plugin's slice for

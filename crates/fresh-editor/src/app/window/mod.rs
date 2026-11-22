@@ -1540,45 +1540,8 @@ impl Window {
         }
     }
 
-    /// Item labels of the currently-open native context menu, in display
-    /// order — the single label source for both the TUI renderer and the
-    /// web `context_menu_view` projection.
-    pub(crate) fn context_menu_labels(&self) -> Option<Vec<String>> {
-        use crate::app::types::ContextMenuKind;
-        let (kind, _) = self.open_context_menu()?;
-        Some(match kind {
-            ContextMenuKind::FileExplorer => self
-                .file_explorer_context_menu
-                .as_ref()?
-                .items()
-                .iter()
-                .map(|i| i.label())
-                .collect(),
-            ContextMenuKind::NewTab => self
-                .new_tab_menu
-                .as_ref()?
-                .items()
-                .iter()
-                .map(|i| i.label())
-                .collect(),
-            ContextMenuKind::Tab => self
-                .tab_context_menu
-                .as_ref()?
-                .items()
-                .iter()
-                .map(|i| i.label())
-                .collect(),
-            ContextMenuKind::CloseSplit => self
-                .close_split_menu
-                .as_ref()?
-                .items()
-                .iter()
-                .map(|i| i.label())
-                .collect(),
-        })
-    }
-
-    /// The open native context menu's items for the web, in display order.
+    /// The open native context menu's rows, in display order — the single
+    /// source for both the TUI renderer and the web projection.
     pub(crate) fn context_menu_items(
         &self,
     ) -> Option<Vec<crate::view::scene::ContextMenuItemView>> {
@@ -1590,19 +1553,28 @@ impl Window {
                     .iter()
                     .map(|i| V {
                         label: i.label(),
-                        id: i.id(),
+                        id: i.id().to_string(),
                         destructive: i.destructive(),
+                        disabled: false,
                     })
                     .collect()
             };
         }
+        let rows = |rows: Vec<crate::app::types::ContextMenuRow>| -> Vec<V> {
+            rows.into_iter()
+                .map(|r| V {
+                    label: r.label,
+                    id: r.id,
+                    destructive: r.destructive,
+                    disabled: r.disabled,
+                })
+                .collect()
+        };
         let (kind, _) = self.open_context_menu()?;
         Some(match kind {
-            ContextMenuKind::FileExplorer => {
-                view!(self.file_explorer_context_menu.as_ref()?.items())
-            }
+            ContextMenuKind::FileExplorer => rows(self.file_explorer_context_menu.as_ref()?.rows()),
             ContextMenuKind::NewTab => view!(self.new_tab_menu.as_ref()?.items()),
-            ContextMenuKind::Tab => view!(self.tab_context_menu.as_ref()?.items()),
+            ContextMenuKind::Tab => rows(self.tab_context_menu.as_ref()?.rows()),
             ContextMenuKind::CloseSplit => view!(self.close_split_menu.as_ref()?.items()),
         })
     }

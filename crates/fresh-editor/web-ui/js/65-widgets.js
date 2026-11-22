@@ -1150,7 +1150,7 @@ function contextMenuEl(cm){
   const el=div("region ctxmenu ctx-"+cm.kind);
   el.style.left=`${px(cm.x,CW)}px`; el.style.top=`${px(cm.y,CH)}px`;
   cm.items.forEach((it,i)=>{
-    const row=div("ctxitem"+(i===cm.highlighted?" sel":"")+(it.destructive?" destructive":""));
+    const row=div("ctxitem"+(i===cm.highlighted?" sel":"")+(it.destructive?" destructive":"")+(it.disabled?" disabled":""));
     row.textContent=it.label; row.dataset.id=it.id;
     const cell={col:cm.x+1,row:cm.y+1+i};
     row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); };

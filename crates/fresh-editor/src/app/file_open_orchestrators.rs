@@ -1309,6 +1309,16 @@ impl crate::app::window::Window {
         self.buffer_metadata.insert(buffer_id, metadata);
     }
 
+    /// Whether this window's files are this computer's: a local window, or
+    /// one whose plugin-installed backend (a container) shares this
+    /// computer's filesystem — everything but a remote agent's (SSH,
+    /// Kubernetes), connected or not. The same split as `WindowInfo.remote`,
+    /// which is how plugins tell.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn files_are_on_this_computer(&self) -> bool {
+        self.authority_spec.remote_backend_info(false).is_none()
+    }
+
     /// Which authority this window's files are on: `None` for this machine,
     /// the host for a remote one. The same path under two is two files.
     ///

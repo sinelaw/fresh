@@ -55,6 +55,8 @@ pub struct Menu {
     pub width: u16,
     pub highlighted: usize,
     pub items: Vec<String>,
+    /// Which rows are greyed out, by index; a row past the end is enabled.
+    pub disabled: Vec<bool>,
 }
 
 /// The label as the old painter wrote it: one leading space, left-aligned, and
@@ -82,7 +84,11 @@ pub fn context_menu(menu: &Menu) -> Node<UiMsg> {
         .iter()
         .enumerate()
         .map(|(i, label)| {
-            let theme = if i == menu.highlighted {
+            // As in the menu bar, a disabled row looks disabled even under
+            // the highlight.
+            let theme = if menu.disabled.get(i).copied().unwrap_or(false) {
+                crate::view::ui::MenuRowStyle::Disabled.shell_theme()
+            } else if i == menu.highlighted {
                 crate::view::ui::MenuRowStyle::Highlighted.shell_theme()
             } else {
                 crate::view::ui::MenuRowStyle::Normal.shell_theme()
@@ -271,6 +277,7 @@ mod paint_tests {
                 width: 10,
                 highlighted: 0,
                 items: vec!["Copy".into(), "Paste".into()],
+                disabled: Vec::new(),
             },
             20,
             6,
@@ -301,6 +308,7 @@ mod paint_tests {
                         width: 10,
                         highlighted: 1,
                         items: vec!["Copy".into(), "Paste".into()],
+                        disabled: Vec::new(),
                     }),
                     ..Frame::default()
                 }),
@@ -338,6 +346,7 @@ mod paint_tests {
                 width: 10,
                 highlighted: 0,
                 items: vec!["Copy".into(), "Paste".into()],
+                disabled: Vec::new(),
             },
             20,
             6,
@@ -358,6 +367,7 @@ mod paint_tests {
                 width: 30,
                 highlighted: 0,
                 items: vec!["Copy".into()],
+                disabled: Vec::new(),
             },
             10,
             4,
@@ -385,6 +395,7 @@ mod paint_tests {
                         width: 10,
                         highlighted: 0,
                         items: vec!["Copy".into(), "Paste".into()],
+                        disabled: Vec::new(),
                     }),
                     ..Frame::default()
                 }),
@@ -419,6 +430,7 @@ mod paint_tests {
                     width: 8,
                     highlighted: 0,
                     items: vec!["One".into()],
+                    disabled: Vec::new(),
                 }),
                 ..Frame::default()
             },
@@ -445,6 +457,7 @@ mod input_tests {
             width: 10,
             highlighted: 0,
             items: vec!["Copy".into(), "Paste".into()],
+            disabled: Vec::new(),
         }
     }
 

@@ -546,6 +546,33 @@ impl OpenMachine {
     }
 }
 
+/// Opens a file in the app the system uses for its type. The editor's is
+/// [`default_system_opener`]; tests substitute one that launches nothing.
+pub type SystemOpener =
+    std::sync::Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>;
+
+/// Runs the system's launcher for `path` and waits for it to finish, which
+/// is what says whether the file opened: an error is a launcher that could
+/// not be started or that failed. Some launchers stay until the app they
+/// started closes, so this is called off the editor thread.
+///
+/// The launcher is started here, not through the window's `ProcessSpawner`:
+/// it has to run on the machine the user sees, whatever window the file is
+/// in, and only files on this computer reach it (`files_are_on_this_computer`).
+pub fn default_system_opener() -> SystemOpener {
+    std::sync::Arc::new(|path: &std::path::Path| {
+        #[cfg(feature = "runtime")]
+        {
+            open::that(path).map_err(|e| e.to_string())
+        }
+        #[cfg(not(feature = "runtime"))]
+        {
+            let _ = path;
+            Err("not available in this build".to_string())
+        }
+    })
+}
+
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
     /// Every connection this editor has open, and the only owner of any of
@@ -1182,6 +1209,17 @@ pub struct Editor {
     /// still open their targets long after it has exited.
     #[cfg(feature = "plugins")]
     line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
+
+    /// Plugins' items for the file explorer's and the tabs' right-click
+    /// menus (`addFileExplorerMenuItem` / `addTabMenuItem`), in the order
+    /// they were added. Editor-wide, like the plugins; each menu copies the
+    /// ones it offers when it opens.
+    plugin_context_menu_items: Vec<fresh_core::api::PluginContextMenuItem>,
+
+    /// Opens a file in the app the system uses for its type
+    /// (`openInSystemApp`); tests replace it so they launch nothing.
+    #[cfg(feature = "plugins")]
+    system_opener: SystemOpener,
 
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]

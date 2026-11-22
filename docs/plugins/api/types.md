@@ -1256,6 +1256,14 @@ type FileExplorerDecoration = {
 };
 ```
 
+### `FileExplorerEntryKind`
+
+The kind of file explorer entry a menu item was chosen on.
+
+```typescript
+type FileExplorerEntryKind = "file" | "directory";
+```
+
 ### `FileExplorerLeadingSlot`
 
 Leading-slot content for a file explorer row.
@@ -1274,6 +1282,67 @@ type FileExplorerLeadingSlot = {
   * Minimum display width reserved for the leading slot.
   */
   minWidth: number;
+};
+```
+
+### `FileExplorerMenuItemOptions`
+
+Options for `editor.addFileExplorerMenuItem`: one plugin item in the
+file explorer's right-click menu.
+
+```typescript
+type FileExplorerMenuItemOptions = {
+  /**
+  * Item label, already translated by the plugin (`editor.t(…)`).
+  */
+  label: string;
+  /**
+  * Which entries the item is offered for.
+  */
+  scope: FileExplorerMenuScope;
+  /**
+  * Name of the handler (see `registerHandler`) called with a
+  * `FileExplorerMenuTarget` when the item is chosen.
+  */
+  handler: string;
+  /**
+  * A context the item depends on, as `setContext` sets it and
+  * `registerCommand`'s `context` names it: while it is not set in the
+  * window, the item is shown greyed out and cannot be chosen. Omit for an
+  * item that is always available.
+  */
+  context?: string;
+};
+```
+
+### `FileExplorerMenuScope`
+
+Which file explorer entries a plugin's right-click menu item is offered
+for (see `addFileExplorerMenuItem`). The item shows only when exactly
+one entry is selected and it is of this kind; the project root is never
+offered.
+
+```typescript
+type FileExplorerMenuScope = "file" | "directory" | "fileOrDirectory";
+```
+
+### `FileExplorerMenuTarget`
+
+What a file explorer menu item's handler is called with: the entry it
+was chosen on.
+
+```typescript
+type FileExplorerMenuTarget = {
+  /**
+  * Whether the entry is a file or a folder.
+  */
+  kind: FileExplorerEntryKind;
+  /**
+  * The entry as the explorer shows it, on the filesystem of the window
+  * whose explorer it is (`path.window`). A symbolic link is not resolved;
+  * `findBufferByPath` finds the entry's buffer if it is open.
+  */
+  path: WindowPath;
 };
 ```
 
@@ -3673,6 +3742,21 @@ final text.
 type OffsetUnit = "byte" | "char";
 ```
 
+### `OpenInSystemAppResult`
+
+How `openInSystemApp` went.
+
+```typescript
+type OpenInSystemAppResult = {
+  "kind": "opened";
+} | {
+  "kind": "notLocal";
+} | {
+  "kind": "failed";
+  error: string;
+};
+```
+
 ### `OverlayColorSpec`
 
 Color specification that can be either RGB values or a theme key.
@@ -4444,6 +4528,73 @@ title uses `prompt_fg` + bold).
 type StyledText = {
   text: string;
   style?: Partial<OverlayOptions>;
+};
+```
+
+### `TabMenuItemOptions`
+
+Options for `editor.addTabMenuItem`: one plugin item in the tabs'
+right-click menu.
+
+```typescript
+type TabMenuItemOptions = {
+  /**
+  * Item label, already translated by the plugin (`editor.t(…)`).
+  */
+  label: string;
+  /**
+  * Which tabs the item is offered for.
+  */
+  scope: TabMenuScope;
+  /**
+  * Name of the handler (see `registerHandler`) called with a
+  * `TabMenuTarget` when the item is chosen.
+  */
+  handler: string;
+  /**
+  * A context the item depends on, as `setContext` sets it and
+  * `registerCommand`'s `context` names it: while it is not set in the
+  * window, the item is shown greyed out and cannot be chosen. Omit for an
+  * item that is always available.
+  */
+  context?: string;
+};
+```
+
+### `TabMenuScope`
+
+Which tabs a plugin's right-click menu item is offered for (see
+`addTabMenuItem`).
+
+```typescript
+type TabMenuScope = "fileTab" | "anyTab";
+```
+
+### `TabMenuTarget`
+
+What a tab menu item's handler is called with: the tab it was chosen
+on.
+
+```typescript
+type TabMenuTarget = {
+  /**
+  * The window the tab is in. Act there: read its buffers with
+  * `listBuffers(windowId)`.
+  */
+  windowId: number;
+  /**
+  * The split (pane) whose tab bar the tab is in.
+  */
+  splitId: number;
+  /**
+  * The buffer the tab shows.
+  */
+  bufferId: number;
+  /**
+  * The file backing the tab, on its window's filesystem, or `null` for
+  * a tab no file backs. Never `null` for a `"fileTab"` item.
+  */
+  path: WindowPath | null;
 };
 ```
 

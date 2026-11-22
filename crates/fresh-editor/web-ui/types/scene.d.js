@@ -742,7 +742,7 @@
 } */
 
 // view/scene.rs `ContextMenuItemView`.
-/** type ContextMenuItem = { label: String, id: String, destructive: Boolean } */
+/** type ContextMenuItem = { label: String, id: String, destructive: Boolean, disabled: Boolean } */
 
 // view/scene.rs `AuxLine`.
 /** type AuxLine = { text: String, selected: Boolean } */

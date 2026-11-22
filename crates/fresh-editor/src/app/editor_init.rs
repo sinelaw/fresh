@@ -825,6 +825,9 @@ impl Editor {
             all_workspaces_loaded: parts.all_workspaces_loaded,
             #[cfg(feature = "plugins")]
             line_targets: std::collections::HashMap::new(),
+            plugin_context_menu_items: Vec::new(),
+            #[cfg(feature = "plugins")]
+            system_opener: crate::app::default_system_opener(),
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]

@@ -792,4 +792,64 @@ the type (for example a misspelled field name) make the call throw.
 addMenuItem(opts: AddMenuItemOptions): boolean;
 ```
 
+### `addFileExplorerMenuItem`
+
+Add an item to the file explorer's right-click menu. It is offered
+when a single entry of `scope`'s kind is selected (never on the
+project root), after the editor's own items, in the order plugins
+added them.
+
+Choosing it calls `handler` with a `FileExplorerMenuTarget`: the
+entry's kind and its `WindowPath`, which the file APIs and
+`openInSystemApp` take as is. Items are dropped when the plugin is
+unloaded.
+
+The options are checked when the call is made; options that don't
+match the type (for example a misspelled field name or an unknown
+`scope`) make the call throw, as does a `handler` name another plugin
+has already registered (with a menu item, `registerCommand` or a
+timer). Returns whether the item was sent to the editor.
+
+
+@example
+registerHandler("myPluginReveal", (target: FileExplorerMenuTarget) => &#123;
+  editor.setStatus(target.path.value);
+});
+editor.addFileExplorerMenuItem(&#123;
+  label: editor.t("menu.reveal"),
+  scope: "file",
+  handler: "myPluginReveal",
+});
+
+```typescript
+addFileExplorerMenuItem(opts: FileExplorerMenuItemOptions): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `opts` | The item |
+
+### `addTabMenuItem`
+
+Add an item to the tabs' right-click menu. It is offered on the tabs
+`scope` names, after the editor's own items, in the order plugins
+added them.
+
+Choosing it calls `handler` with a `TabMenuTarget`: the tab's window,
+split and buffer, and the `WindowPath` of the file it shows. Items are
+dropped when the plugin is unloaded.
+
+The options are checked when the call is made; options that don't
+match the type make the call throw, as does a `handler` name another
+plugin has already registered (with a menu item, `registerCommand` or
+a timer). Returns whether the item was sent to the editor.
+
+```typescript
+addTabMenuItem(opts: TabMenuItemOptions): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `opts` | The item |
+
 :::
