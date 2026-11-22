@@ -813,6 +813,7 @@ impl Editor {
             background_process_handles: HashMap::new(),
             host_process_handles: HashMap::new(),
             status_bar_token_registry: Mutex::new(HashMap::new()),
+            skin_values: Default::default(),
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             runtime_settings: RuntimeSettings::default(),
             session_languages: parts.session_languages,

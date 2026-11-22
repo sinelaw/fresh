@@ -125,6 +125,9 @@ function nativePanelEl(p){
   // drawn here too — with the interior laid out in what is left of it.
   const frame=p.kind==="floating"?p.frame:undefined, framed=frame!==undefined;
   const el=div("native-panel np-"+p.kind+(p.keyboard?" kb":"")+(framed?" card":"")+(p.anchored?" anchored":""));
+  // A pop-up anchored over the dock or the explorer is that panel's (skins
+  // that set the panel apart move it along: docs/features/web-ui-skins.md).
+  if(p.anchored){ const over=panelUnder(p.rect); if(over) el.dataset.over=over; }
   place(el, frame??p.rect);
   // An anchored pop-up hugs its content, as the terminal's does — natively
   // laid out, that content is not the cells the terminal measured, so the

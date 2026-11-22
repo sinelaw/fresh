@@ -44,6 +44,8 @@ fresh --web
 
 The folder name is the skin's id unless the header sets `@id`.
 
+For a fuller example, `crates/fresh-editor/web-ui/example-skins/neon-hive/` is a skin that puts a honeycomb of neon instrument panels around the editor (on windows at least 1500px wide), wired together with SVG cables, and bundles a matching editor theme. Copy it into your skins folder to try it.
+
 ## `skin.css`
 
 ### The header
@@ -134,6 +136,18 @@ body.theme-neon-night:not(.mobile) { background: url(img/wallpaper.jpg) center/c
 - Some chrome stands on the editor's own ground: the active tab and panels mounted in a pane. A light skin with dark `--fg` on a dark editor theme can make that text vanish, so check the skin against both a dark and a light editor theme, and give such surfaces their own background.
 - `docs/internal/web-ui-theme-checklist.md` in the repository walks every surface worth checking.
 - The built-in skins in `crates/fresh-editor/web-ui/skins/` are complete examples. Winamp restyles nearly every surface.
+
+### Framing the side panels
+
+The Orchestrator dock and the file explorer are real controls, laid out by the editor on its cell grid. A skin doesn't move them, but it can frame them. The page publishes where they are as custom properties on `:root`, in pixels from the editor area's top-left corner:
+
+| Property | Meaning |
+|---|---|
+| `--dock-x`, `--dock-y`, `--dock-w`, `--dock-h` | the Orchestrator dock (`--dock-w` is `0px` while it is closed) |
+| `--explorer-x`, `--explorer-y`, `--explorer-w`, `--explorer-h` | the file explorer |
+| `--cell-w`, `--cell-h` | one cell of the grid |
+
+`<body>` also carries `has-dock`, `has-explorer` and `explorer-right`. Write those selectors as `body.theme-<id>.has-dock …`: `theme-<id>` is on `<html>` too, so a bare `.theme-<id>:not(.explorer-right)` would also match `<html>`. Inside `#device`, the editor area starts at `var(--bezel-side)`, `var(--bezel-top)`, so furniture can sit exactly behind a panel. Make the panel see-through (`.native-panel.np-dock`, `.fileexplorer`), and it reads as glass inside your frame. A skin can also set a panel apart from the editor: the panels' controls answer clicks by row and widget, not by pixel, so moving the drawing (`transform: translateX(…)`) does not change what a click means. Pop-ups that belong to a panel move along: the explorer's context menu is `.ctxmenu.ctx-fileExplorer`, and an anchored pop-up drawn over a panel carries `data-over="dock"` or `data-over="explorer"`. `--grid-w` and `--grid-h` give the size of the whole editor area. Neon Hive frames both panels as tall hexagons standing apart from the editor this way; the explorer side is the editor's own setting (Settings → File Explorer → Side).
 
 The skin's stylesheet is inserted after the page's base rules and before a few rules that must win over every skin (status-bar tone pills, popup row geometry, file-icon colours). Override those with a more specific selector.
 

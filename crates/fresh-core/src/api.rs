@@ -4111,6 +4111,12 @@ pub enum PluginCommand {
         value: String,
     },
 
+    /// Publish a named value for web skins: a skin's furniture shows it with
+    /// `data-bind="plugin_name:name"` (docs/features/web-ui-skins.md).
+    /// Editor-global (not per buffer) and never persisted; an empty value
+    /// removes it. `key` is the full "plugin_name:name" form.
+    SetSkinValue { key: String, value: String },
+
     /// Unregister a command by name. Only the named plugin's command goes:
     /// `%`-keyed names are per-plugin, so another plugin may have registered
     /// the same one.

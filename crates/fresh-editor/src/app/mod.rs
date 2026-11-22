@@ -1067,6 +1067,8 @@ pub struct Editor {
     /// Key: "plugin_name:token_name" (e.g., "git_statusbar:branch"); value: display title.
     /// Global and lifetime-checked. Per-buffer values live on each `Window`.
     status_bar_token_registry: Mutex<HashMap<String, String>>,
+    /// Values plugins publish for web skins (`set_skin_value`), by "plugin:name".
+    skin_values: std::collections::BTreeMap<String, String>,
 
     /// Registry of plugin-provided config schemas, keyed by plugin name.
     /// Each value is the validated JSON schema describing
@@ -2315,8 +2317,25 @@ impl Editor {
 
     /// Remove every registry entry and per-buffer value belonging to a plugin.
     /// Called when a plugin is unloaded.
+    /// Set (or, with an empty value, remove) a value published for web skins
+    /// (`PluginCommand::SetSkinValue`). Shown in the web scene as
+    /// `regions.skinValues`; the TUI does not draw them.
+    pub(crate) fn set_skin_value(&mut self, key: String, value: String) {
+        if value.is_empty() {
+            self.skin_values.remove(&key);
+        } else {
+            self.skin_values.insert(key, value);
+        }
+    }
+
+    /// The values plugins published for web skins, by "plugin:name".
+    pub fn skin_values(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.skin_values
+    }
+
     fn remove_plugin_status_bar_elements(&mut self, plugin_name: &str) {
         let prefix = format!("{}:", plugin_name);
+        self.skin_values.retain(|k, _| !k.starts_with(&prefix));
         self.status_bar_token_registry
             .lock()
             .unwrap()

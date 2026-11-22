@@ -110,6 +110,7 @@ function dockWidthPx(){
 // grid is one rectangle; the device wraps it, dock included.
 function layoutShell(){
   syncAppOrigin();
+  publishPanelGeometry();
   const dev=document.getElementById("device");
   if(!dev) return;
   // The bezel is a shell-theme decoration (COSMOS hardware / Winamp skin
@@ -133,6 +134,42 @@ function layoutShell(){
   dev.style.top=`${APPY-SHELL.top}px`;
   dev.style.width=`${px(sc.w,CW)+2*SHELL.side}px`;
   dev.style.height=`${px(sc.h,CH)+SHELL.top+SHELL.bot}px`;
+}
+
+// Where the side panels are, for skins: `--dock-*` and `--explorer-*` (x, y, w,
+// h in px from #app's origin) and the whole grid's `--grid-w` / `--grid-h` on :root, and `has-dock` / `has-explorer` /
+// `explorer-right` on <body>. Read off the scene's own projections — the dock's
+// display-list surface and the file explorer's rect — so a skin's furniture can
+// frame a panel without knowing the cell grid. Width 0 when a panel is closed.
+function publishPanelGeometry(){
+  const sc=scene;
+  const st=document.documentElement.style, b=document.body;
+  /** const put: (String, Rect | Null) => Undefined */
+  const put=(name,r)=>{
+    st.setProperty(`--${name}-x`,`${r?px(r.x,CW):0}px`); st.setProperty(`--${name}-y`,`${r?px(r.y,CH):0}px`);
+    st.setProperty(`--${name}-w`,`${r?px(r.w,CW):0}px`); st.setProperty(`--${name}-h`,`${r?px(r.h,CH):0}px`);
+    b.classList.toggle(`has-${name}`,!!r);
+  };
+  const dock=sc?treeDockRect(sc.regions):null;
+  const fe=sc?sc.regions.fileExplorer:null;
+  put("dock",dock);
+  put("explorer",fe?fe.rect:null);
+  st.setProperty("--grid-w",`${sc?px(sc.w,CW):0}px`); st.setProperty("--grid-h",`${sc?px(sc.h,CH):0}px`);
+  b.classList.toggle("explorer-right",!!fe&&!!sc&&fe.rect.x+fe.rect.w>=sc.w);
+}
+
+// Which side panel a pop-up belongs to, by where the editor placed it: "dock"
+// or "explorer" when the rect's centre lies in that panel's column, else "".
+// Lets a skin that sets a panel apart move the panel's pop-ups with it.
+/** function panelUnder(Rect) => String */
+function panelUnder(r){
+  const sc=scene;
+  if(!sc) return "";
+  const cx=r.x+r.w/2;
+  /** const inCol: (Rect | Null) => Boolean */
+  const inCol=c=>!!c&&cx>=c.x&&cx<c.x+c.w;
+  const fe=sc.regions.fileExplorer;
+  return inCol(treeDockRect(sc.regions))?"dock":inCol(fe?fe.rect:null)?"explorer":"";
 }
 
 function setZoom(z){

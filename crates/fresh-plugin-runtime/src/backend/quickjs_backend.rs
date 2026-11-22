@@ -1802,6 +1802,19 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Publish a named value for web UI skins. A skin's `furniture.html` shows
+    /// it with `data-bind="<plugin name>:<name>"` (as text), or as a CSS custom
+    /// property with `data-bind-var="--prop:<plugin name>:<name>"` (numbers stay
+    /// unitless, for gauges and bars). Values are editor-wide, not persisted,
+    /// and dropped when the plugin unloads; an empty `value` removes one.
+    /// Publishing the same value again costs no redraw.
+    pub fn set_skin_value(&self, name: String, value: String) -> bool {
+        let key = format!("{}:{}", self.plugin_name, name);
+        self.command_sender
+            .send(PluginCommand::SetSkinValue { key, value })
+            .is_ok()
+    }
+
     #[plugin_api(section = "Translation")]
     /// Translate a string - reads plugin name from __pluginName__ global
     /// Args is optional - can be omitted, undefined, null, or an object

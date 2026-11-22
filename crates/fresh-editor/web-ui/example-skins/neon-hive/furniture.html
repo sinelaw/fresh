@@ -1,0 +1,33 @@
+<!-- Neon Hive — the editor body, the Orchestrator dock and the file explorer
+     each in their own neon frame, set apart; a hexagon above the dock and one
+     below the explorer, staggered like a honeycomb. Decoration only: the
+     frames are placed from the page's panel geometry (--dock-*, --explorer-*,
+     --grid-*), and the readouts are live values (data-bind) — see skin.css
+     and plugin/sysmon.ts. -->
+<div class="hx-main"></div>
+<div class="hx-title"><i class="hx-dot"></i><span>NEON HIVE</span><i class="hx-dot"></i></div>
+<div class="hx-tall hx-dock"><div class="hx-b"><div class="hx-in"></div></div></div>
+<div class="hx-tall hx-fx"><div class="hx-b"><div class="hx-in"></div></div></div>
+
+<!-- Above the dock: the machine. -->
+<div class="hx hx-pink hx-sys"><div class="hx-b"><div class="hx-in">
+  <b class="hx-t">SYSTEM</b>
+  <div class="hx-gauges">
+    <span class="gz cpu" data-bind-var="--v:sysmon:cpu"><i></i><b data-bind="sysmon:cpu">–</b><small>CPU %</small></span>
+    <span class="gz mem" data-bind-var="--v:sysmon:mem"><i></i><b data-bind="sysmon:mem">–</b><small>MEM %</small></span>
+  </div>
+  <p><span>load</span> <em data-bind="sysmon:load">–</em></p>
+  <p><span>memory</span> <em data-bind="sysmon:memText">–</em></p>
+  <p><span>up</span> <em data-bind="sysmon:uptime">–</em></p>
+</div></div></div>
+
+<!-- Below the explorer: the code. -->
+<div class="hx hx-blue hx-diag"><div class="hx-b"><div class="hx-in">
+  <b class="hx-t">DIAGNOSTICS</b>
+  <div class="hx-gauges">
+    <span class="gz err" data-bind-var="--v:editor:diagnostics.errors"><i></i><b data-bind="editor:diagnostics.errors">0</b><small>ERR</small></span>
+    <span class="gz warn" data-bind-var="--v:editor:diagnostics.warnings"><i></i><b data-bind="editor:diagnostics.warnings">0</b><small>WARN</small></span>
+  </div>
+  <p><span>buffers</span> <em data-bind="editor:buffers">–</em></p>
+  <p><span>lsp</span> <em data-bind="editor:lsp">–</em></p>
+</div></div></div>

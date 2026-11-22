@@ -234,6 +234,14 @@ function treeEls(t, native){
 }
 // The dock's width in cells when a full-height left dock is up, else 0 — read
 // off the display list's surfaces, the one place the dock's rectangle lives.
+// The full-height dock's rectangle (cells), or null when none is up.
+/** function treeDockRect(Regions) => Rect | Null */
+function treeDockRect(regions){
+  const t=regions&&regions.tree;
+  if(!t||!t.surfaces) return null;
+  for(const s of t.surfaces) if(s.kind==="dock"&&s.w<(liveScene().w||0)) return {x:s.x,y:s.y,w:s.w,h:s.h};
+  return null;
+}
 /** function treeDockCells(Regions) => Number */
 function treeDockCells(regions){
   const t=regions&&regions.tree;

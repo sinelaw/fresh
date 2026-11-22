@@ -1374,6 +1374,25 @@ if (process.env.SKINS_DIR) {
   await page.waitForFunction(() => window.fresh.scene.theme.name === 'dev-skin-theme', null, { timeout: 6000 }).catch(() => {});
   check('dropping a theme.json into the skin folder applies it to the editor live', await page.evaluate(() =>
     window.fresh.scene.theme.name === 'dev-skin-theme' && window.fresh.scene.theme.bg === '#211133'));
+  // The example skin in the repo (web-ui/example-skins/neon-hive) loads as-is
+  // from a skins folder: header, furniture, images and its bundled theme.
+  const { cpSync } = await import('node:fs');
+  cpSync(new globalThis.URL('../example-skins/neon-hive', import.meta.url).pathname, process.env.SKINS_DIR + '/neon-hive', { recursive: true });
+  await page.evaluate(() => window.fresh.pollSkinFolders());
+  await page.waitForTimeout(400);
+  await page.evaluate(() => window.fresh.setWebTheme('neon-hive'));
+  await page.waitForFunction(() => window.fresh.scene.theme.name === 'neon-night', null, { timeout: 6000 }).catch(() => {});
+  check('the Neon Hive example skin loads from a skins folder, furniture, images and editor theme included', await page.evaluate(() =>
+    !!document.querySelector('#device .hx-right .gz.hint')
+    && document.getElementById('skin-css').textContent.includes('/skins/neon-hive/img/wires.svg')
+    && window.fresh.scene.theme.name === 'neon-night'));
+  check('the page publishes panel geometry for skins (--grid-w, --dock-w / --explorer-w, has-* classes)', await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement), sc = window.fresh.scene;
+    const fe = sc.regions.fileExplorer;
+    return parseFloat(cs.getPropertyValue('--grid-w')) > 0
+      && document.body.classList.contains('has-explorer') === !!fe
+      && (!fe || Math.abs(parseFloat(cs.getPropertyValue('--explorer-w')) - fe.rect.w * window.fresh.metrics.cw) < 1);
+  }));
 } else skip('skins folder (run via run.sh, which sets SKINS_DIR / FRESH_WEB_SKINS)');
 // A skin may bundle an EDITOR theme (theme.json, Fresh's ordinary theme
 // format). Picking the skin applies it through the editor's own theme switch,
