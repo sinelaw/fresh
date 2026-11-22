@@ -182,7 +182,7 @@ function renderMobileChrome(reg){
     const pct=div("m-sheet-item"); pct.innerHTML='<span class="m-sheet-ic">'+(paletteCentered?"☑":"☐")+'</span>Centered palette';
     pct.onclick=e=>{ e.stopPropagation(); mSheetOpen=false; setPaletteCentered(!paletteCentered); }; sh.appendChild(pct);
     // web-ui theme cycle (local view preference; the desktop pill is hidden on mobile)
-    const thm=div("m-sheet-item"); thm.innerHTML='<span class="m-sheet-ic">◐</span>Theme: '+esc(WEB_THEME_LABELS[webTheme]);
+    const thm=div("m-sheet-item"); thm.innerHTML='<span class="m-sheet-ic">◐</span>Theme: '+esc(skinName(webTheme));
     thm.onclick=e=>{ e.stopPropagation(); mSheetOpen=false; cycleWebTheme(1); }; sh.appendChild(thm);
     host.appendChild(sh);
   }
@@ -422,6 +422,8 @@ document.addEventListener("keydown",e=>{
   // compositionend. Forwarding here would double-deliver on browsers that
   // report the raw key during composition.
   if(e.isComposing) return;
+  // The skin picker's URL field (js/15-theme.js) types into itself.
+  if(e.target.closest("#themeswitch")) return;
   // App zoom: Ctrl/Cmd + = / - / 0 are FRONTEND-OWNED and never reach the
   // editor — like the browser's own zoom they change the view's typography
   // only; the editor just sees the resulting cols/rows re-fit (resize).
@@ -452,7 +454,7 @@ document.addEventListener("keydown",e=>{
     return;
   }
   // Web-theme cycle: Ctrl/Cmd+Alt+T is FRONTEND-OWNED (like the three above) —
-  // it steps the web UI theme (Cosmos → macOS → Compact) and never reaches the
+  // it steps through the web skins (built-in, then installed) and never reaches the
   // editor. Shift reverses the direction.
   if((e.ctrlKey||e.metaKey) && e.altKey && (e.key==="t"||e.key==="T"||e.code==="KeyT")){
     e.preventDefault();

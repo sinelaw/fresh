@@ -83,6 +83,8 @@
 //!   - `GET /`        → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
 //!   - `GET /favicon.ico` → 204
 //!   - `GET /fonts/symbols-nerd-font-mono-3.5.1.woff2` → `NERD_FONT`
+//!   - `GET /skins/index.json`, `GET /skins/<folder>/<file>` → web skins from
+//!     `$FRESH_WEB_SKINS` or `<config dir>/web-skins/` (see `skins.rs`)
 //!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
 //!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
@@ -110,6 +112,8 @@ use ratatui::Terminal;
 use serde_json::{json, Value};
 
 use crate::app::Editor;
+
+mod skins;
 use crate::config;
 use crate::config_io::DirectoryContext;
 use crate::model::filesystem::{FileSystem, StdFileSystem};
@@ -939,7 +943,9 @@ fn handle_http(
     allow_reset: bool,
 ) -> Result<bool> {
     let body_json = || serde_json::from_slice::<Value>(&req.body).unwrap_or_else(|_| json!({}));
-    match (req.method.as_str(), req.path.as_str()) {
+    // Routes match the path without its query string (`/?skin=…` is the page).
+    let path = req.path.split('?').next().unwrap_or_default();
+    match (req.method.as_str(), path) {
         ("GET", "/") => {
             respond(
                 stream,
@@ -965,6 +971,34 @@ fn handle_http(
                         NERD_FONT,
                     );
                 })?;
+            Ok(false)
+        }
+        // Web skins served from disk (`skins.rs`): the index the page polls,
+        // and the files of a skin folder.
+        ("GET", "/skins/index.json") => {
+            let dir = skins::skins_dir(&editor.dir_context().config_dir);
+            respond_with(
+                stream,
+                "200 OK",
+                "application/json",
+                "Cache-Control: no-store\r\n",
+                skins::index_json(&dir).as_bytes(),
+            )?;
+            Ok(false)
+        }
+        ("GET", p) if p.starts_with("/skins/") => {
+            let dir = skins::skins_dir(&editor.dir_context().config_dir);
+            let rest = &p["/skins/".len()..];
+            match skins::read_file(&dir, rest) {
+                Some((ctype, body)) => respond_with(
+                    stream,
+                    "200 OK",
+                    ctype,
+                    "Cache-Control: no-store\r\n",
+                    &body,
+                )?,
+                None => respond(stream, "404 Not Found", "text/plain", b"not found")?,
+            }
             Ok(false)
         }
         ("GET", "/favicon.ico") => {

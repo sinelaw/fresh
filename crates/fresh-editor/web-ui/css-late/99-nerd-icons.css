@@ -1,0 +1,6 @@
+  /* Nerd Font file icon colour; in css-late/ so it wins over a skin's plain
+     rules. Theme-following skins use the theme's colour (`--icon-color`);
+     skins with their own fixed palette (macOS, Winamp) re-state it with a more
+     specific `!important` rule in their own stylesheet (inheriting the name's
+     colour), since theme colours may vanish on their background. */
+  .fileexplorer .fx-icon.nerd,.tab .ticon{color:var(--icon-color,currentColor) !important}

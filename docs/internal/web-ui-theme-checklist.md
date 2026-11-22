@@ -577,5 +577,5 @@ selection, flat accent buttons, rounded translucent panels).
 | skin (navy/teal base) | `80-skin.css` | — | — |
 | Cosmos shell | `90-cosmos.css` | `10-core.js` (`layoutShell`) | — |
 | theme switcher | `91-theme-switch.css` | `15-theme.js` | — |
-| macOS theme | `92-theme-macos.css` | `15-theme.js` tokens | — |
-| Compact theme | `94-theme-compact.css` | `15-theme.js` tokens | — |
+| macOS skin | `skins/20-macos/skin.css` | its `:root.theme-macos` tokens | — |
+| Compact skin | `skins/30-compact/skin.css` | its `:root.theme-compact` tokens | — |

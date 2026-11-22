@@ -79,20 +79,25 @@ The served page is **one fully self-contained HTML file**, but it is
 ```
 crates/fresh-editor/web-ui/
   shell.html    document skeleton: <head>, body markup, style/script markers
-  css/          NN-name.css — concatenated (in filename order) into <style>
+  css/          NN-name.css — the base stylesheet, concatenated in filename order
+  css-late/     NN-name.css — rules that must win over every skin (after the skin's <style>)
   js/           NN-name.js  — concatenated (in filename order) into <script>
+  skins/        NN-id/skin.css (+ furniture.html) — the built-in web skins, bundled into the script
 ```
 
 `crates/fresh-editor/build.rs` (`assemble_webui`) concatenates each directory
 in **filename order** and splices the results into `shell.html`'s marker
-comments, writing `$OUT_DIR/webui-index.html`; `webui/mod.rs` embeds that via
+comments (`/*@CSS@*/`, `/*@CSS-LATE@*/`, `/*@JS@*/`; the built-in skin folders
+go into the JS's `/*@SKINS@*/` marker), writing `$OUT_DIR/webui-index.html`; `webui/mod.rs` embeds that via
 `include_str!`.
 
 **Order is load-bearing.**
 
 - **CSS**: later files deliberately override earlier ones (the polish pass,
   the navy/teal skin, and the COSMOS shell each re-skin rules that precede
-  them). Renaming a file so it sorts differently *changes the cascade*.
+  them). Renaming a file so it sorts differently *changes the cascade*. The
+  page's style order is: `css/` → the editor theme's `:root{}` rule
+  (`#editor-theme`) → the active skin (`#skin-css`) → `css-late/`.
 - **JS**: all files are concatenated into a single classic `<script>` and
   share one top-level scope; `function` declarations hoist across file
   boundaries, but `const`/`let` bindings must be declared in a file that
@@ -114,15 +119,20 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `60-polish.css` | visual polish pass: radii, hairlines, hovers, selection pills |
 | `70-mobile.css` | mobile / portrait touch shell |
 | `80-skin.css` | navy/teal orchestrator skin |
-| `90-cosmos.css` | COSMOS shell (the Cosmos web theme): wallpaper, device bezel, glass dock, motion |
-| `91-theme-switch.css` | the web-theme switcher pill + drop menu (token-driven, re-skinned per theme) |
-| `92-theme-macos.css` | macOS web themes (Light + Dark): title bar + traffic lights, vibrancy, SF font — one token-driven structural pass, gated on `body.macfam` |
-| `94-theme-compact.css` | Compact web theme: full-bleed, dense spacing, UI font, cards; colours derived from the editor theme |
+| `90-cosmos.css` | the shell every `@frame bezel` skin shares: `#device` bezel kit (`.dv-*`), `@frame full` geometry, motion |
+| `91-theme-switch.css` | the skin picker pill + drop menu, install actions (token-driven, re-skinned per skin) |
+| `css-late/97–99` | status-tone pills, popup row geometry, Nerd Font icon colour — after the skin, so they win |
+
+The built-in skins live in `skins/` as the same folders a user installs (see
+`docs/features/web-ui-skins.md`): `10-cosmos` (wallpaper + glass),
+`20-macos` / `21-macos-dark` (title bar, vibrancy, SF font; Dark `@extends`
+Light), `30-compact` (full-bleed, dense, colours derived from the editor
+theme with `color-mix`), `40-winamp` (metal, bevels, LCD).
 
 | JS | concern |
 |---|---|
 | `10-core.js` | cell↔px metrics, zoom, web-theme density scale, shell geometry, DOM helpers |
-| `15-theme.js` | web-theme system: registry, `applyWebTheme`, `setWebTheme`, the switcher |
+| `15-theme.js` | web skins: reading skin folders (built-in, served, browser-installed), `applyWebTheme`, `setWebTheme`, install/remove, the skins-folder poll, the picker |
 | `20-cells.js` | icon set, cell-grid SVG renderer, TUI theme → CSS variables |
 | `30-render.js` | per-region DOM patching, motion (FX), `render()` |
 | `40-menu.js` / `45-tabs.js` / `55-status.js` | native chrome builders |
@@ -169,32 +179,40 @@ check), closed records (a map is a `Dict<V>`), and `let`/`const` are
 function-scoped for the checker (two block-local `const x` of different
 types in one function need different names).
 
-## Web themes (chrome look) vs the TUI colour theme
+## Web skins (chrome look) vs the TUI colour theme
 
 The editor's **TUI colour theme** owns every *buffer* cell (syntax colours,
 selection, cursor) and is piped into the chrome's CSS variables by
 `applyTheme()` (js/20-cells.js) — it is editor state, shared with the TUI.
 
-Layered on top is a **web theme**: a purely frontend choice of *chrome* look,
+Layered on top is a **web skin**: a purely frontend choice of *chrome* look,
 in the same class as zoom / palette placement / Alt-selection — a view
 preference persisted in `localStorage` (`fresh.webtheme`), never sent to the
-editor. Four ship:
+editor. A skin is a folder of plain web files — `skin.css` with a
+`==FreshSkin==` header, an optional `furniture.html`, images — specified in
+`docs/features/web-ui-skins.md`. Users add their own three ways: from the
+server's skins folder (`$FRESH_WEB_SKINS` or `<config>/web-skins/`, served at
+`/skins/…` by `src/webui/skins.rs` and polled, so a saved edit re-applies
+live), or installed into the browser from a URL or a picked folder (kept in
+localStorage). Five ship, in `skins/`:
 
 - **Cosmos** (default) — the abstract wallpaper, the `COSMOS-991` hardware
-  bezel around the grid, and the frosted-glass orchestrator dock
-  (`90-cosmos.css`).
+  bezel around the grid (the shared bezel kit in `90-cosmos.css`, dressed by
+  `skins/10-cosmos`).
 - **macOS Light / macOS Dark** — a native-feeling desktop app: a title bar with
   traffic lights + the document name, the SF system (proportional) chrome font,
   light or dark vibrancy panels, the system accent blue and a Finder-style
-  source-list dock. Both variants are one token-driven structural pass gated on
-  `body.macfam`; only their colour tokens differ.
+  source-list dock. macOS Dark `@extends macos`: one token-driven structural
+  pass gated on `.theme-macos`; only the colour tokens differ.
 - **Compact** — a quiet, professional IDE frame: no wallpaper/bezel, a ~8%
   smaller measured grid, a proportional UI font for the chrome, tight
   paddings, hairline rules and lifted cards. Its colours are not a fixed
-  palette: `deriveCompact()` computes them from the editor theme's own
-  background (a shade lighter on a dark theme, darker on a light one, neutral
-  inks, one accent), so the frame matches whatever theme the buffer uses.
-  Fresh Desktop opens on this theme.
+  palette: `color-mix()` over the editor theme's own `var(--bg)`, keyed on the
+  `editor-dark` / `editor-light` class (a shade lighter on a dark theme,
+  darker on a light one, neutral inks, one accent), so the frame matches
+  whatever theme the buffer uses. Fresh Desktop opens on this theme.
+- **Winamp Classic** — brushed metal, hard bevels, LCD-green readouts; a
+  `@frame bezel` skin with its own furniture.
 
 Compact and the two macOS themes also lay the shell's **surfaces** out
 natively: the confirmation card is a real dialog, and a plugin panel (the
@@ -220,24 +238,29 @@ field's label or placeholder) and its state (`aria-checked`,
 `js/65-widgets.js`. Nothing takes the keyboard focus: the editor owns every
 key, as it does for the rest of the page.
 
-`js/15-theme.js` is the whole mechanism. `applyWebTheme()` (called from
-`render()` right after `applyTheme()`) does two things: it sets the
-`theme-<name>` class on `<body>` (plus `macfam` for the two macOS variants) —
-which drives all *structural* CSS (`92/94-theme-*.css`, plus the Cosmos-gated
-wallpaper/bezel/dock rules in `90-cosmos.css`) — and it layers the theme's
-*chrome colour tokens* inline over `applyTheme()`'s TUI-derived values (`--bg`
-is never overridden, so the buffer stays the TUI theme's). Everything drawn on the cell
+`js/15-theme.js` is the whole mechanism. `applyTheme()` writes the TUI
+theme's colours into a plain `:root{}` rule (`<style id="editor-theme">`), and
+`applyWebTheme()` (called from `render()` right after it) puts the active
+skin's CSS — and that of every skin it `@extends`, base first — into
+`<style id="skin-css">`, sets `theme-<id>` for the whole chain on `<html>` and
+`<body>`, and `editor-dark`/`editor-light` on `<html>`. A skin's
+`:root.theme-<id>{--fg:…}` therefore wins over the TUI value by the ordinary
+cascade (`--bg` is never set by a skin, so the buffer stays the TUI theme's);
+structure is any CSS under `.theme-<id>`. Furniture is rebuilt into `#device`
+from the skin's HTML through a tag whitelist; no skin runs script. Everything drawn on the cell
 grid — the buffer's `svg.cells` and the display list's `.tree-line` runs — is
 pinned to `--mono-family` at the measured size, so a theme may repoint the
 chrome's `--font-family` at a proportional stack without disturbing the grid.
 
-Users switch it three ways, all frontend-owned: the floating **theme pill** in
-the top-right corner (a menu of the four), the **Ctrl/Cmd+Alt+T** chord
-(Shift reverses), and the mobile **⋮** sheet's "Theme:" row. The choice is
-exposed on `window.fresh` (`setWebTheme` / `cycleWebTheme` / `webTheme` /
-`webThemes`) for drivers and tests.
+Users switch it four ways, all frontend-owned: the floating **skin pill** in
+the top-right corner (every skin, plus install / remove), the
+**Ctrl/Cmd+Alt+T** chord (Shift reverses), the mobile **⋮** sheet's "Theme:"
+row, and `?skin=<id>` on the page URL (also the way out of a skin that hid
+the pill). The choice is exposed on `window.fresh` (`setWebTheme` /
+`cycleWebTheme` / `webTheme` / `webThemes` / `skins` / `installSkin` /
+`installSkinFromUrl` / `removeSkin` / `pollSkinFolders`) for drivers and tests.
 
-When building or reviewing a theme, walk
+When building or reviewing a skin, walk
 `docs/internal/web-ui-theme-checklist.md` — an element-by-element visual
 checklist of every chrome surface (dock, explorer, buffer, menus, palette,
 popups, settings, …) and the dimensions to verify (margins, colours, padding,

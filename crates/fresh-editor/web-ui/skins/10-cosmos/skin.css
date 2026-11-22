@@ -1,0 +1,55 @@
+/* ==FreshSkin==
+@id           cosmos
+@name         Cosmos
+@description  Wallpaper, glass & hardware bezel
+@author       Fresh
+@version      1.0.0
+@frame        bezel
+@scale        1
+@menu         cells
+@furniture    furniture.html
+==/FreshSkin== */
+
+/* Cosmos — the built-in web skin's own stylesheet (web-ui/skins/10-cosmos).
+   Injected only while Cosmos is the active skin (js/15-theme.js), between the
+   page's base stylesheet and its css-late/ rules. Cosmos sets no colour
+   tokens: the chrome follows the editor theme. The bezel kit it dresses
+   (#device and the .dv-* classes its furniture.html uses) is shared base CSS
+   in css/90-cosmos.css, so any skin with `@frame bezel` can use it. */
+  /* ---- wallpaper: vivid flowing colour fields over deep blue. The device
+     covers the middle, so the glows are pushed to the edges where the
+     wallpaper actually shows. ---- */
+  body.theme-cosmos:not(.mobile){background:
+    radial-gradient(80rem 55rem at 90% -8%, rgba(255,200,96,.80), rgba(255,160,64,.25) 45%, transparent 65%),
+    radial-gradient(50rem 40rem at 102% 62%, rgba(255,145,60,.50), transparent 60%),
+    radial-gradient(70rem 55rem at 48% -22%, rgba(160,95,235,.50), transparent 60%),
+    radial-gradient(90rem 70rem at -12% 115%, rgba(56,230,246,.70), rgba(40,160,220,.25) 45%, transparent 65%),
+    radial-gradient(60rem 45rem at -8% 22%, rgba(64,140,230,.55), transparent 60%),
+    radial-gradient(55rem 40rem at 55% 122%, rgba(255,130,90,.40), transparent 60%),
+    linear-gradient(135deg,#12233f 0%,#1a2d4e 45%,#0c1930 100%) #0f1c33}
+  /* The pipeline's menubar row spans the FULL grid width and the dock paints
+     over its left half — in the TUI with cells, here with the opaque ground on
+     the dock's surface. The clip keeps that strip from showing through while
+     the dock slides in or out (the chrome FLIPs, the dock's items do not).
+     layoutShell keeps --clip-left at the dock's pixel width (0 when no dock). */
+  body.theme-cosmos:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
+
+  /* ---- the theme switcher, on the glass ---------------------------------
+     `#themeswitch` is frontend furniture (js/15-theme.js) with a token-only
+     base, so it read as a flat chip on a glass desk. Here it is glass. */
+  body.theme-cosmos #themebtn{background:rgba(255,255,255,.10);border:none;
+    color:#e8f0f8;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.26),
+      inset 0 1px 0 rgba(255,255,255,.34),0 6px 18px rgba(2,6,14,.45)}
+  body.theme-cosmos #themebtn:hover{background:rgba(255,255,255,.17)}
+  body.theme-cosmos #thememenu{background:rgba(19,29,44,.92);border:none;
+    -webkit-backdrop-filter:blur(30px) saturate(1.7);backdrop-filter:blur(30px) saturate(1.7);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 26px 64px rgba(2,6,14,.62)}
+  body.theme-cosmos .ts-row.on{background:rgba(47,214,195,.20)}
+  body.theme-cosmos .ts-row:hover{background:rgba(255,255,255,.10)}
+
+  /* Tab drop zone as rounded, glowing glass. */
+  body.theme-cosmos .region.dropzone{border-width:1px;border-radius:var(--r-md,9px);
+    background:color-mix(in srgb,var(--dz-bg,var(--accent)) 22%,transparent);
+    box-shadow:0 0 18px color-mix(in srgb,var(--dz-border,var(--accent)) 40%,transparent),
+      inset 0 0 14px color-mix(in srgb,var(--dz-border,var(--accent)) 22%,transparent)}

@@ -1,14 +1,114 @@
-  /* Web theme: Compact — a quiet, professional IDE frame.
-     (web-ui/css — concatenated in filename order into the page's single
-     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
-     later files deliberately override earlier ones.) */
-  /* ======================================================================
-     Gated on body.theme-compact (set by js/15-theme.js). Maximises editor real
-     estate: no wallpaper margin, no hardware bezel, a ~8% smaller grid
-     (webThemeScale), tight paddings and hairline dividers.
+/* ==FreshSkin==
+@id           compact
+@name         Compact
+@description  Quiet IDE frame that follows your editor theme
+@author       Fresh
+@version      1.0.0
+@frame        full
+@scale        0.92
+@menu         flow
+==/FreshSkin== */
 
-     COLOURS are derived from the editor theme's own background by
-     deriveCompact() (js/15-theme.js): the frame sits one shade off the buffer
+  /* ---- colour tokens: the chrome palette, layered over the editor theme's.
+     `--bg` (the buffer ground) is the editor theme's and is never set here. ---- */
+  :root.theme-compact{
+    --fg:#d4d7dd;
+    --muted:#8b919b;
+    --muted-menu:#8b919b;
+    --bg2:#252526;
+    --bg3:#252526;
+    --menuhi:#2b4a70;
+    --border:#333438;
+    --status-bg:#1d1d1e;
+    --status-fg:#9aa0aa;
+    --shell:#1d1d1e;
+    --accent:#4d8ff5;
+    --ui-accent:#4d8ff5;
+    --on-ui-accent:#ffffff;
+    --on-accent:#ffffff;
+    --on-sel:#e8eaee;
+    --ok:#3fb950;
+    --danger:#f47067;
+    --surface:#252526;
+    --surface-2:#2a2a2c;
+    --hairline:rgba(255,255,255,.075);
+    --hairline-strong:rgba(255,255,255,.13);
+    --hover:rgba(255,255,255,.06);
+    --sel:color-mix(in srgb, var(--ui-accent) 24%, transparent);
+    --sel-ring:none;
+    --shadow:0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+    --r-sm:4px;
+    --r-md:6px;
+    --r-lg:8px;
+  }
+  /* ---- adaptive tokens: one shade off the editor's own background — lighter
+     on a dark editor theme, darker on a light one. The page sets editor-dark /
+     editor-light on :root from the editor background (neither on a terminal
+     reset ground, which keeps the static palette above). `:where()` keeps
+     these at the specificity of the static block, so a skin that extends
+     Compact overrides them with a plain `:root.theme-<its id>` rule. ---- */
+  :root.theme-compact:where(.editor-dark){
+    --shell:color-mix(in srgb, var(--bg), #ffffff 3.5%);
+    --status-bg:color-mix(in srgb, var(--bg), #ffffff 3.5%);
+    --bg2:color-mix(in srgb, var(--bg), #ffffff 7.5%);
+    --bg3:color-mix(in srgb, var(--bg), #ffffff 7.5%);
+    --surface:color-mix(in srgb, var(--bg), #ffffff 7.5%);
+    --surface-2:color-mix(in srgb, var(--bg), #ffffff 10%);
+    --border:color-mix(in srgb, var(--bg), #ffffff 14%);
+    --fg:#d4d7dd;
+    --muted:#8b919b;
+    --muted-menu:#8b919b;
+    --status-fg:#9aa0aa;
+    --accent:#4d8ff5;
+    --ui-accent:#4d8ff5;
+    --on-ui-accent:#ffffff;
+    --on-accent:#ffffff;
+    --on-sel:#eef0f3;
+    --menuhi:color-mix(in srgb, color-mix(in srgb, var(--bg), #ffffff 7.5%), #4d8ff5 38%);
+    --ok:#3fb950;
+    --danger:#f47067;
+    --hairline:rgba(255,255,255,.075);
+    --hairline-strong:rgba(255,255,255,.13);
+    --hover:rgba(255,255,255,.06);
+    --shadow:0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+  }
+  :root.theme-compact:where(.editor-light){
+    --shell:color-mix(in srgb, var(--bg), #000000 4%);
+    --status-bg:color-mix(in srgb, var(--bg), #000000 4%);
+    --bg2:color-mix(in srgb, var(--bg), #ffffff 70%);
+    --bg3:color-mix(in srgb, var(--bg), #ffffff 70%);
+    --surface:color-mix(in srgb, var(--bg), #ffffff 70%);
+    --surface-2:color-mix(in srgb, var(--bg), #000000 6%);
+    --border:color-mix(in srgb, var(--bg), #000000 14%);
+    --fg:#1f2328;
+    --muted:#5f6670;
+    --muted-menu:#5f6670;
+    --status-fg:#4b525c;
+    --accent:#1a6fd9;
+    --ui-accent:#1a6fd9;
+    --on-ui-accent:#ffffff;
+    --on-accent:#ffffff;
+    --on-sel:#1f2328;
+    --menuhi:color-mix(in srgb, color-mix(in srgb, var(--bg), #ffffff 70%), #1a6fd9 22%);
+    --ok:#1a7f37;
+    --danger:#cf222e;
+    --hairline:rgba(0,0,0,.085);
+    --hairline-strong:rgba(0,0,0,.15);
+    --hover:rgba(0,0,0,.05);
+    --shadow:0 12px 32px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08);
+  }
+
+  /* Skin: Compact — a quiet, professional IDE frame.
+     (web-ui/skins/30-compact — injected only while Compact or a skin extending
+     it is active, between the base stylesheet and css-late/.) */
+  /* ======================================================================
+     Gated on .theme-compact. Maximises editor real estate: no wallpaper
+     margin, no hardware bezel (`@frame full`), a ~8% smaller grid
+     (`@scale 0.92`), tight paddings and hairline dividers.
+
+     COLOURS are derived from the editor theme's own background by the
+     `.editor-dark` / `.editor-light` token blocks above (color-mix over
+     var(--bg)): the frame sits one shade off the buffer
      — lighter on a dark theme, darker on a light one — with neutral inks and
      one calm accent, so the window reads as a single surface under any
      editor theme. This file owns the type, the DENSITY and the shapes.
@@ -262,3 +362,6 @@
   body.theme-compact .trustdialog .td-opt .td-otext .td-odesc{margin-top:2px;line-height:1.45}
   body.theme-compact .trustdialog .td-buttons{margin-top:14px;gap:8px}
   body.theme-compact .trustdialog .td-btn{padding:5px 16px;border-color:var(--hairline-strong)}
+
+  /* Native dock ground (was css/46-native.css). */
+  body.theme-compact .native-panel.np-dock{background:var(--shell)}

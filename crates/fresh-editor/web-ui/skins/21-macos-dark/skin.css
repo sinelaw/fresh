@@ -1,0 +1,43 @@
+/* ==FreshSkin==
+@id           macos-dark
+@name         macOS Dark
+@description  Native macOS — dark & vibrant
+@author       Fresh
+@version      1.0.0
+@extends      macos
+==/FreshSkin== */
+
+  /* ---- colour tokens: the chrome palette, layered over the editor theme's.
+     `--bg` (the buffer ground) is the editor theme's and is never set here. ---- */
+  :root.theme-macos-dark{
+    --fg:#e3e3e6;
+    --muted:#909096;
+    --bg2:#2e2e30;
+    --bg3:#252527;
+    --menuhi:#0a84ff;
+    --border:#48484b;
+    --status-bg:#252527;
+    --status-fg:#98989d;
+    --shell:#2b2b2d;
+    --accent:#0a84ff;
+    --ui-accent:#0a84ff;
+    --on-ui-accent:#ffffff;
+    --on-accent:#ffffff;
+    --on-sel:#ffffff;
+    --ok:#30d158;
+    --surface:#2e2e30;
+    --surface-2:#262628;
+    --hairline:rgba(255,255,255,.09);
+    --hairline-strong:rgba(255,255,255,.16);
+    --hover:rgba(255,255,255,.07);
+    --sel:#0a84ff;
+    --sel-ring:none;
+    --shadow:0 16px 48px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.45);
+    --mac-titlebar:linear-gradient(180deg,#333335,#2a2a2c);
+    --mac-title-fg:#c9c9ce;
+    --mac-panel:rgba(44,44,47,.74);
+    --mac-btn:linear-gradient(180deg,#3c3c3f,#353538);
+    --mac-btn-fg:#e3e3e6;
+    --mac-sidebar:#252527;
+  }
+

@@ -220,7 +220,9 @@ function legibleMuted(muted,fg,surfaces){
 /** function applyTheme(SceneTheme) => Undefined */
 function applyTheme(t){
   if(!t) return;
-  const r=document.documentElement.style;
+  // The `:root{}` rule of <style id=editor-theme> (shell.html): below every
+  // skin's `:root.theme-<id>` rule, above the stylesheet defaults.
+  const r=editorThemeDecl();
   /** const set: (String, String | Null) => Undefined */
   const set=(k,v)=>{ if(v) r.setProperty(k,v); else r.removeProperty(k); };
   set("--bg",t.bg); set("--fg",t.fg); set("--accent",t.accent);

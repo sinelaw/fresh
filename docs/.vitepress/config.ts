@@ -75,6 +75,7 @@ export default defineConfig({
           { text: "Git", link: "/features/git" },
           { text: "Compare Files", link: "/features/compare-files" },
           { text: "Themes", link: "/features/themes" },
+          { text: "Web UI Skins", link: "/features/web-ui-skins" },
           { text: "Encoding", link: "/features/encoding" },
           { text: "Workspace Trust", link: "/features/workspace-trust" },
           { text: "Remote Editing (SSH)", link: "/features/ssh" },

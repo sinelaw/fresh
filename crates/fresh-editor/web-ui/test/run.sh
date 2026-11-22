@@ -54,10 +54,13 @@ if [ -z "${CHROMIUM:-}" ]; then
   fi
 fi
 
-# 3) Start the bridge and always tear it down on exit.
-(cd "$REPO_ROOT" && "./target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
+# 3) Start the bridge and always tear it down on exit. It serves web skins
+#    from a fresh, empty folder the suite writes into (the dev-loop tests).
+SKINS_DIR="$(mktemp -d)"
+export SKINS_DIR
+(cd "$REPO_ROOT" && FRESH_WEB_SKINS="$SKINS_DIR" "./target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
 SERVER_PID=$!
-trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$SKINS_DIR"' EXIT
 
 echo "Waiting for $UI_URL/state ..."
 ready=""

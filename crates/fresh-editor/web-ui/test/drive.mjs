@@ -1197,12 +1197,12 @@ check('macOS: body theme class set, bezel off, title bar shown', await page.eval
 check('macOS: chrome font is proportional but the BUFFER stays monospace',
   await page.evaluate(() => /apple-system|sans-serif/i.test(getComputedStyle(document.body).fontFamily)) &&
   (await svgFamily()) === cosmosBufFont && /mono/i.test(cosmosBufFont));
-// → macOS Dark: same structural chrome (title bar + traffic lights, macfam
-// class), but a dark System palette (dark toolbar surface).
+// → macOS Dark: same structural chrome (title bar + traffic lights: it
+// `@extends macos`, so theme-macos is on too), but a dark System palette.
 await page.evaluate(() => window.fresh.setWebTheme('macos-dark'));
 await page.waitForTimeout(300);
 check('macOS Dark: shares the macOS title bar but swaps to a dark palette', await page.evaluate(() => {
-  const dark = document.body.classList.contains('theme-macos-dark') && document.body.classList.contains('macfam') &&
+  const dark = document.body.classList.contains('theme-macos-dark') && document.body.classList.contains('theme-macos') &&
     getComputedStyle(document.getElementById('mactitle')).display !== 'none';
   // toolbar surface (--shell) is dark, not the light macOS value
   const shell = getComputedStyle(document.documentElement).getPropertyValue('--shell').trim();
@@ -1220,16 +1220,16 @@ check('Compact: theme class set, bezel off, denser grid (cell width shrank)', aw
 check('theme choice persists in localStorage', await page.evaluate(() => localStorage.getItem('fresh.webtheme') === 'compact'));
 // → Winamp: a SHELL theme (like Cosmos) — the hardware bezel host is on and
 // dressed as the "CODE STUDIO" skin window (furniture), and its own chrome
-// palette is layered inline (navy playlist selection, LCD-green accent). The
+// palette is its skin.css's `:root.theme-winamp` tokens (navy playlist selection, LCD-green accent). The
 // BUFFER stays the TUI monospace stack, same as every other web theme.
 await page.evaluate(() => window.fresh.setWebTheme('winamp'));
 await page.waitForTimeout(400);
 check('Winamp: theme class set, shell bezel ON, skin furniture built', await page.evaluate(() =>
   document.body.classList.contains('theme-winamp') && document.getElementById('device').classList.contains('on') &&
   !!document.querySelector('#device .wa-title .wa-title-text')));
-check('Winamp: chrome palette layered inline (navy selection + LCD-green accent), buffer stays monospace',
+check('Winamp: chrome palette from its skin.css tokens (navy selection + LCD-green accent), buffer stays monospace',
   await page.evaluate(() => {
-    const r = document.documentElement.style;
+    const r = getComputedStyle(document.documentElement);
     return r.getPropertyValue('--sel').trim() === '#313c90' && r.getPropertyValue('--accent').trim() === '#4ef07f';
   }) && (await svgFamily()) === cosmosBufFont);
 await page.screenshot({ path: `${SHOTS}/33b-theme-winamp.png` });
@@ -1242,6 +1242,144 @@ await page.waitForTimeout(400);
 check('picking Cosmos from the menu restores the bezel shell', await page.evaluate(() =>
   window.fresh.webTheme === 'cosmos' && document.getElementById('device').classList.contains('on')));
 await page.screenshot({ path: `${SHOTS}/34-theme-cosmos.png` });
+
+console.log('\n[web skins: CSS packages — built-in, installed in the browser, and served from a folder]');
+// Every skin is a folder of plain files: skin.css (a ==FreshSkin== header,
+// `:root.theme-<id>` tokens, structural CSS) and optional furniture.html. The
+// built-ins are bundled the same way, so they are the format's first users.
+check('the five built-ins load as CSS packages (macOS Dark extends macOS)', await page.evaluate(() => {
+  const sk = window.fresh.skins;
+  const dark = sk.find(s => s.id === 'macos-dark');
+  return sk.filter(s => s.origin === 'builtin').length === 5 && dark && dark.parent === 'macos';
+}));
+await page.evaluate(() => window.fresh.setWebTheme('macos-dark'));
+await page.waitForTimeout(250);
+check('an extending skin injects its parent\'s CSS first and carries both classes on <html>', await page.evaluate(() => {
+  const css = document.getElementById('skin-css').textContent;
+  const h = document.documentElement.classList;
+  return css.indexOf('skin: macos ') >= 0 && css.indexOf('skin: macos ') < css.indexOf('skin: macos-dark')
+    && h.contains('theme-macos') && h.contains('theme-macos-dark');
+}));
+await page.evaluate(() => window.fresh.setWebTheme('compact'));
+await page.waitForTimeout(250);
+check('Compact follows the editor ground in plain CSS (editor-dark/light + color-mix over --bg)', await page.evaluate(() => {
+  const h = document.documentElement.classList;
+  const shell = getComputedStyle(document.documentElement).getPropertyValue('--shell');
+  return (h.contains('editor-dark') || h.contains('editor-light')) && /color-mix/.test(shell);
+}));
+// Install from CSS text (the same path a picked folder takes).
+const neonCss = `/* ==FreshSkin==
+@id       test-neon
+@name     Test Neon
+@extends  compact
+==/FreshSkin== */
+:root.theme-test-neon{ --ui-accent:#ff00aa; --menuhi:#ff00aa; }
+.theme-test-neon .statusbar{ outline: 1px solid var(--ui-accent); }`;
+const inst = await page.evaluate(css => window.fresh.installSkin(css), neonCss);
+check('a skin installs from its CSS and becomes active', inst.ok && await page.evaluate(() =>
+  window.fresh.webTheme === 'test-neon' && document.documentElement.classList.contains('theme-compact')
+  && getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim() === '#ff00aa'), JSON.stringify(inst));
+check('a skin that replaces the highlight fill gets a readable ink computed for it', await page.evaluate(() =>
+  getComputedStyle(document.documentElement).getPropertyValue('--on-menuhi').trim() === '#10131a'));
+check('bad packages are refused with a reason', await page.evaluate(() => {
+  const noHead = window.fresh.installSkin(':root{--fg:red}');
+  const clash = window.fresh.installSkin('/* ==FreshSkin==\n@id cosmos\n@name Mine\n==/FreshSkin== */');
+  const loop = window.fresh.installSkin('/* ==FreshSkin==\n@id ghost\n@name G\n@extends nowhere\n==/FreshSkin== */');
+  return !noHead.ok && /FreshSkin/.test(noHead.error) && !clash.ok && /built-in/.test(clash.error) && !loop.ok;
+}));
+// Furniture is HTML, but only a few inert tags, their classes and their text survive.
+const furnOk = await page.evaluate(() => window.fresh.installSkin(
+  '/* ==FreshSkin==\n@id test-bezel\n@name Test Bezel\n@extends cosmos\n@furniture furniture.html\n==/FreshSkin== */',
+  '<div class="tb-a" onclick="window.__pwned=1"><script>window.__pwned=2</script><img src="x" onerror="window.__pwned=3"><span class="tb-b">hi</span></div>'));
+await page.waitForTimeout(300);
+check('furniture.html is rebuilt from whitelisted tags only (no script, no handlers)', furnOk.ok && await page.evaluate(() => {
+  const d = document.getElementById('device');
+  return !!d.querySelector('.tb-a > span.tb-b') && !d.querySelector('script,img,[onclick]') && window.__pwned === undefined
+    && d.textContent.includes('hi');
+}));
+// Persisted in the browser: a reload comes back on the installed skin.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
+await page.waitForTimeout(300);
+check('installed skins and the choice survive a reload (localStorage)', await page.evaluate(() =>
+  window.fresh.webTheme === 'test-bezel' && window.fresh.skins.some(s => s.id === 'test-neon' && s.origin === 'browser')
+  && !!document.querySelector('#device .tb-b')));
+// Install from a URL through the picker. Relative url()s become absolute, and
+// typing in the URL field never reaches the editor.
+await page.route('https://skins.example/**', route => {
+  const u = route.request().url();
+  if (u.endsWith('/glow/skin.css')) return route.fulfill({ status: 200, contentType: 'text/css', headers: { 'access-control-allow-origin': '*' },
+    body: '/* ==FreshSkin==\n@name Glow\n@extends winamp\n==/FreshSkin== */\n:root.theme-glow{--ui-accent:#00ffcc}\n.theme-glow #device{background-image:url(img/metal.png)}' });
+  return route.fulfill({ status: 404, body: '' });
+});
+const bufBefore = paneText(await scene(page));
+await page.locator('#themebtn').click();
+await page.locator('#thememenu .ts-act', { hasText: 'Install from URL' }).click();
+await page.locator('#thememenu .ts-url input').click();
+await page.keyboard.type('https://skins.example/glow/');
+await page.waitForTimeout(200);
+const typedIntoEditor = paneText(await scene(page)) !== bufBefore;
+await page.keyboard.press('Enter');
+await page.waitForFunction(() => window.fresh.webTheme === 'glow', null, { timeout: 5000 }).catch(() => {});
+check('install from URL (folder URL → skin.css; id from the folder name)', await page.evaluate(() =>
+  window.fresh.webTheme === 'glow' && document.documentElement.classList.contains('theme-winamp')));
+check('the skin\'s relative url() is rewritten against where it came from', await page.evaluate(() =>
+  document.getElementById('skin-css').textContent.includes('url("https://skins.example/glow/img/metal.png")')));
+// Back on the skin the buffer was read under (same grid), the text is as it
+// was: neither the typed URL nor the Enter that submitted it got through.
+await page.evaluate(() => window.fresh.setWebTheme('test-bezel'));
+await page.waitForTimeout(400);
+const enterLeaked = paneText(await scene(page)) !== bufBefore;
+await page.evaluate(() => window.fresh.setWebTheme('glow'));
+await page.waitForTimeout(300);
+check('typing in the picker\'s URL field (Enter included) does not reach the editor', !typedIntoEditor && !enterLeaked);
+// Remove (two clicks: ✕, then the confirm).
+const glowRow = page.locator('#thememenu .ts-row', { hasText: 'Glow' });
+if (!(await glowRow.count())) await page.locator('#themebtn').click();
+await page.locator('#thememenu .ts-row', { hasText: 'Glow' }).locator('.ts-tool', { hasText: '✕' }).click();
+await page.locator('#thememenu .ts-row', { hasText: 'Glow' }).locator('.ts-tool', { hasText: 'Remove' }).click();
+await page.waitForTimeout(300);
+check('removing the active skin falls back to the one it extends', await page.evaluate(() =>
+  !window.fresh.skins.some(s => s.id === 'glow') && window.fresh.webTheme === 'winamp'));
+await page.keyboard.press('Escape');
+// Served from the skins folder (FRESH_WEB_SKINS, set by run.sh): listed, and
+// reloaded when a file changes — the skin author's loop.
+if (process.env.SKINS_DIR) {
+  const { mkdirSync: mk, writeFileSync: wr } = await import('node:fs');
+  const dir = process.env.SKINS_DIR + '/dev-skin';
+  mk(dir, { recursive: true });
+  const devCss = c => `/* ==FreshSkin==\n@name Dev Skin\n@extends compact\n==/FreshSkin== */\n:root.theme-dev-skin{--ui-accent:${c}}\n.theme-dev-skin .statusbar{background-image:url(img/x.png)}`;
+  wr(dir + '/skin.css', devCss('#123456'));
+  mk(dir + '/img', { recursive: true });
+  wr(dir + '/img/x.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  await page.evaluate(() => window.fresh.pollSkinFolders());
+  await page.waitForTimeout(300);
+  check('a skins-folder skin is listed', await page.evaluate(() => window.fresh.skins.some(s => s.id === 'dev-skin' && s.origin === 'folder')));
+  await page.evaluate(() => window.fresh.setWebTheme('dev-skin'));
+  await page.waitForTimeout(300);
+  check('it applies, with its relative url()s pointing at the served folder', await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim() === '#123456'
+    && document.getElementById('skin-css').textContent.includes('/skins/dev-skin/img/x.png')));
+  const img = await page.request.get(URL + '/skins/dev-skin/img/x.png');
+  wr(process.env.SKINS_DIR + '/secret.txt', 'not a skin file');
+  const esc = await page.request.get(URL + '/skins/secret.txt');
+  check('the folder\'s files are served, and only plain paths', img.status() === 200
+    && img.headers()['content-type'] === 'image/png' && esc.status() === 404);
+  wr(dir + '/skin.css', devCss('#abcdef'));
+  await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim() === '#abcdef',
+    null, { timeout: 5000 }).catch(() => {});
+  check('saving skin.css re-applies it live', await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim() === '#abcdef'));
+} else skip('skins folder (run via run.sh, which sets SKINS_DIR / FRESH_WEB_SKINS)');
+// `?skin=` picks a skin at load (and is the way out of one that hid the picker).
+await page.goto(URL + '/?skin=macos', { waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
+check('?skin=<id> selects a skin at load', await page.evaluate(() => window.fresh.webTheme === 'macos'));
+// Leave the browser as the rest of the suite expects it: Cosmos, nothing installed.
+await page.evaluate(() => { localStorage.removeItem('fresh.skins'); localStorage.setItem('fresh.webtheme', 'cosmos'); });
+await page.goto(URL + '/', { waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
+await page.waitForTimeout(300);
 
 console.log('\n[embedded terminal: Ctrl+hover carries the modifier and underlines a path link]');
 // Regression: the frontend used to send `moved` events WITHOUT the ctrl flag,

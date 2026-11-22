@@ -31,14 +31,27 @@
 
   This file is the document SKELETON only. The full self-contained page is
   assembled at build time by crates/fresh-editor/build.rs (assemble_webui):
-  web-ui/css/*.css and web-ui/js/*.js are each concatenated in filename order
-  into the CSS/JS comment markers found in the style and script blocks below.
+  web-ui/css/*.css, web-ui/css-late/*.css and web-ui/js/*.js are each
+  concatenated in filename order into the comment markers found in the style
+  and script blocks below, and the built-in skins (web-ui/skins/) are bundled
+  into the script.
   The numeric filename prefixes define that order and it is load-bearing —
   later CSS files deliberately override earlier ones, and all JS files share
   one scope. See web-ui/README.md.
 -->
 <style>
 /*@CSS@*/
+</style>
+<!-- The editor (TUI) theme's colours as one `:root{}` rule, written by
+     applyTheme() (js/20-cells.js). A rule rather than inline style, so a
+     skin's `:root.theme-<id>{--fg:…}` simply wins by specificity. -->
+<style id="editor-theme">:root{}</style>
+<!-- The active web skin's own stylesheet (js/15-theme.js fills it from the
+     skin package; empty for a skin without CSS). Between the base rules above
+     and the css-late/ rules below, which must win over every skin. -->
+<style id="skin-css"></style>
+<style>
+/*@CSS-LATE@*/
 </style>
 </head>
 <body>
@@ -48,17 +61,19 @@
      floating dock; pointer-transparent, painted behind #app by document order. -->
 <div id="device" aria-hidden="true"></div>
 <div id="app"></div>
-<!-- macOS theme title bar (window controls + document title). Shown only under
-     body.theme-macos; #app is inset below it. Decorative — pointer-transparent. -->
+<!-- Title-bar host (window controls + document title). Hidden unless a skin's
+     CSS shows it (macOS does, and insets #app below it); js/15-theme.js keeps
+     .mt-name on the active document. Decorative — pointer-transparent. -->
 <div id="mactitle" aria-hidden="true"><span class="mt-lights"></span><span class="mt-name"></span></div>
 <div id="mobile"></div>
 <div id="err"></div>
 <div id="reconnect" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Reconnecting…</span></div>
 <div id="natsel" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Select text — drag, then Ctrl+C</span></div>
 
-<!-- Frontend-owned web-theme switcher (js/15-theme.js). A floating pill in the
-     top-right corner + a drop menu of the web themes; independent of the
-     server-driven chrome, hidden on the mobile shell. -->
+<!-- Frontend-owned skin picker (js/15-theme.js). A floating pill in the
+     top-right corner + a drop menu of the web skins (built-in and installed),
+     with install / export / remove; independent of the server-driven chrome,
+     hidden on the mobile shell. -->
 <div id="themeswitch">
   <button id="themebtn" type="button" title="Web UI theme (Ctrl+Alt+T)" aria-haspopup="menu"></button>
   <div id="thememenu" role="menu"></div>

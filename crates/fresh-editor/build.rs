@@ -459,12 +459,16 @@ fn generate_test_roots() {
 
 /// Build the single self-contained web-ui page from its split sources.
 ///
-/// `web-ui/shell.html` is the document skeleton; `web-ui/css/*.css` and
-/// `web-ui/js/*.js` are concatenated in filename order (numeric prefixes
-/// define the order, which is load-bearing) into its `/*@CSS@*/` and
-/// `/*@JS@*/` markers. Output: `$OUT_DIR/webui-index.html`, embedded by
-/// `webui/mod.rs` via `include_str!` so `fresh --web` stays fully
-/// self-contained.
+/// `web-ui/shell.html` is the document skeleton; `web-ui/css/*.css`,
+/// `web-ui/css-late/*.css` and `web-ui/js/*.js` are concatenated in filename
+/// order (numeric prefixes define the order, which is load-bearing) into its
+/// `/*@CSS@*/`, `/*@CSS-LATE@*/` and `/*@JS@*/` markers. The built-in web
+/// skins (`web-ui/skins/NN-name/`: `skin.css` plus an optional
+/// `furniture.html`) are bundled, in directory order, into the JS's
+/// `/*@SKINS@*/` marker, and read the same way as a skin folder the user
+/// installs (see docs/features/web-ui-skins.md).
+/// Output: `$OUT_DIR/webui-index.html`, embedded by `webui/mod.rs` via
+/// `include_str!` so `fresh --web` stays fully self-contained.
 fn assemble_webui() {
     // Inside the crate, not at the workspace root: `cargo package` vendors only
     // files under the package directory, so a path reaching outside it would
@@ -479,36 +483,119 @@ fn assemble_webui() {
         "cargo::rerun-if-changed={}",
         root.join("shell.html").display()
     );
-    // The directory entries are also watched so ADDING/REMOVING a part
-    // retriggers; per-file lines below catch content edits.
-    println!("cargo::rerun-if-changed={}", root.join("css").display());
-    println!("cargo::rerun-if-changed={}", root.join("js").display());
 
-    let concat_dir = |dir: &str| -> String {
-        let mut files: Vec<_> = fs::read_dir(root.join(dir))
-            .unwrap_or_else(|e| panic!("web-ui/{dir}: {e}"))
+    // The files of a directory, sorted by name. The directory itself is also
+    // watched so ADDING/REMOVING a part retriggers; per-file lines catch
+    // content edits.
+    let sorted = |dir: &Path, want_dirs: bool| -> Vec<std::path::PathBuf> {
+        println!("cargo::rerun-if-changed={}", dir.display());
+        let mut entries: Vec<_> = fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
             .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir() == want_dirs)
             .collect();
-        files.sort();
+        entries.sort();
+        entries
+    };
+    let concat_dir = |dir: &str| -> String {
         let mut out = String::new();
-        for f in &files {
+        for f in sorted(&root.join(dir), false) {
             println!("cargo::rerun-if-changed={}", f.display());
-            out.push_str(&fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display())));
+            out.push_str(
+                &fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display())),
+            );
         }
         out
     };
 
+    // Built-in skins: `[{"dir": "<NN-name>", "files": {"<name>": "<text>"}}, …]`,
+    // the same shape a folder the user installs is read into. `</` is escaped
+    // so no file can close the page's <script> (`<\/` reads back as `</` in a
+    // JS string).
+    let mut skins = String::from("[");
+    for dir in sorted(&root.join("skins"), true) {
+        let dname = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            dir.join("skin.css").is_file(),
+            "web-ui/skins/{dname} has no skin.css"
+        );
+        if skins.len() > 1 {
+            skins.push(',');
+        }
+        skins.push_str("{\"dir\":");
+        skins.push_str(&js_string(&dname));
+        skins.push_str(",\"files\":{");
+        let mut first = true;
+        for f in sorted(&dir, false) {
+            let name = f
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                name.ends_with(".css") || name.ends_with(".html"),
+                "web-ui/skins/{dname}/{name}: a built-in skin bundles only .css/.html (inline images as data: URLs)"
+            );
+            println!("cargo::rerun-if-changed={}", f.display());
+            let text = fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+            if !first {
+                skins.push(',');
+            }
+            first = false;
+            skins.push_str(&js_string(&name));
+            skins.push(':');
+            skins.push_str(&js_string(&text));
+        }
+        skins.push_str("}}");
+    }
+    skins.push(']');
+    let skins = skins.replace("</", "<\\/");
+
     let shell = fs::read_to_string(root.join("shell.html")).expect("web-ui/shell.html");
     let css = concat_dir("css");
+    let css_late = concat_dir("css-late");
     let js = concat_dir("js");
     assert!(
-        shell.contains("/*@CSS@*/") && shell.contains("/*@JS@*/"),
-        "web-ui/shell.html must contain the /*@CSS@*/ and /*@JS@*/ markers"
+        shell.contains("/*@CSS@*/")
+            && shell.contains("/*@CSS-LATE@*/")
+            && shell.contains("/*@JS@*/"),
+        "web-ui/shell.html must contain the /*@CSS@*/, /*@CSS-LATE@*/ and /*@JS@*/ markers"
     );
+    assert!(
+        js.matches("/*@SKINS@*/[]").count() == 1,
+        "web-ui/js must contain the /*@SKINS@*/[] marker exactly once"
+    );
+    let js = js.replacen("/*@SKINS@*/[]", &skins, 1);
     let page = shell
         .replacen("/*@CSS@*/", &css, 1)
+        .replacen("/*@CSS-LATE@*/", &css_late, 1)
         .replacen("/*@JS@*/", &js, 1);
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
     fs::write(Path::new(&out_dir).join("webui-index.html"), page).expect("write webui-index.html");
+}
+
+/// `s` as a double-quoted JSON (and so JS) string literal.
+fn js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

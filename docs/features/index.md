@@ -13,6 +13,7 @@
 - [Git](./git.md) - Review diffs, browse log, navigate hunks
 - [Compare Files](./compare-files.md) - Two files side by side, both editable (`fresh --diff A B`, `git difftool`)
 - [Themes](./themes.md) - Customizable color themes
+- [Web UI Skins](./web-ui-skins.md) - Restyle the browser UI's chrome with a folder of CSS, installable from a URL or folder
 - [Encoding](./encoding.md) - Text encoding detection and conversion
 - [Remote Editing (SSH)](./ssh.md) - Edit files on remote machines via SSH
 - [Devcontainers](./devcontainer.md) - Attach to a project's devcontainer

@@ -178,7 +178,7 @@ let lastCell=null;
 // modal was supposed to be covering. The palette's own `.modal-scrim` was
 // already listed for exactly this.
 /** const onChrome: (UiEvent) => El | Null */
-const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.tree-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal,.native-panel,.native-panel-scrim,.native-scrim");
+const onChrome = e => e.target.closest("#themeswitch,#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.tree-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal,.native-panel,.native-panel-scrim,.native-scrim");
 // `count` carries the browser's click count (event.detail); the bridge primes
 // the editor's own double/triple-click detection with it (see apply_mouse).
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,count:e.detail,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
@@ -296,7 +296,9 @@ mqMobile.addEventListener("change", () => resize());
 // COSMOS shell inset.
 exposeTestHook({ get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   setPaletteCentered, setNatselEnabled, setWebTheme, cycleWebTheme,
-  get webTheme(){return webTheme;}, get webThemes(){return WEB_THEMES.slice();},
+  get webTheme(){return webTheme;}, get webThemes(){return skinIds();},
+  installSkin:(css,furniture)=>{ const r=installSkin({css,furniture:furniture??""},"",""); if(r.ok) setWebTheme(r.id); return r; }, installSkinFromUrl, removeSkin, pollSkinFolders,
+  get skins(){return skins.map(s=>({id:s.id,name:s.name,origin:s.origin,parent:s.parent}));},
   get frames(){return frameCount;}, get seq(){return lastSeq;},
   get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;},
   get renderedRegions(){return renderedRegions;},

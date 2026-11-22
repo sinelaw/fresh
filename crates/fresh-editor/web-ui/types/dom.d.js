@@ -65,7 +65,7 @@
 // is two calls, `append` takes text (`appendChild` an element), and a
 // listener with options is added through `listen` (js/00-ffi.js).
 /** type El = {
-    id: String, className: String, textContent: String, innerHTML: String,
+    id: String, className: String, textContent: String, innerHTML: String, tagName: String,
     title: String, tabIndex: Number, nodeType: Number,
     data: String,
     value: String, type: String, placeholder: String, autocomplete: String,
@@ -91,6 +91,7 @@
     scrollIntoView: ({block: String}) => Undefined,
     focus: ({preventScroll: Boolean}) => Undefined,
     blur: () => Undefined,
+    click: () => Undefined,
     setSelectionRange: (Number, Number) => Undefined,
     setAttribute: (String, String) => Undefined,
     getAttribute: (String) => String | Null,
@@ -163,7 +164,7 @@
 const document;
 
 /** const window: {
-    innerWidth: Number, innerHeight: Number,
+    innerWidth: Number, innerHeight: Number, location: {href: String},
     addEventListener: (String, (UiEvent) => Undefined) => Undefined,
     removeEventListener: (String, (UiEvent) => Undefined) => Undefined,
     getSelection: () => Selection | Null,

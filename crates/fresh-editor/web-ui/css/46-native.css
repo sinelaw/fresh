@@ -111,10 +111,9 @@ body.alt-held .native-confirm .accel{text-decoration:underline;text-underline-of
 .w-radio.focus{outline:1px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm,4px)}
 /* The display list's ground for the dock would cover the native dock, which
    now stands under that layer (so a floating panel's frame can stand over
-   both). The native dock takes the ground each theme gives the dock. */
+   both). The native dock takes the ground each skin gives it (in the skin's
+   own stylesheet, web-ui/skins/). */
 body .tree-surface.dock{visibility:hidden}
-body.theme-compact .native-panel.np-dock{background:var(--shell)}
-body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 /* The dock's wall, which its (hidden) display-list items drew; the resize
    grip over it is still the tree's, and still drags. */
 .native-panel.np-dock{border-right:1px solid var(--hairline-strong,var(--border))}
@@ -163,7 +162,7 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
   --border:color-mix(in srgb,var(--ed-fg) 25%,transparent);
   --hover:color-mix(in srgb,var(--ed-fg) 8%,transparent)}
 /* The macOS skin paints every `.w-button` in its push-button ink and every
-   `.w-text` as a boxed field (css/92-theme-macos.css); on a pane's ground a
+   `.w-text` as a boxed field (skins/20-macos/skin.css); on a pane's ground a
    bare button is text in that ground's ink, and a field's label sits outside
    its input (above), as on the other skins. */
 .native-panel.np-pane .w-button.bare{color:var(--fg)}
