@@ -398,7 +398,7 @@ async function fetchText(url) {
     ok = resp.ok; status = resp.status;
     if (ok) text = await resp.text();
   } catch (_) {
-    throw new Error(`could not fetch ${url} — the server may not allow cross-origin requests; download the skin and use “Install from folder…”`);
+    throw new Error(`could not fetch ${url} (it may not exist, or its server does not allow cross-origin requests — the browser cannot tell which). Download the skin and use “Install from folder…”`);
   }
   if (!ok) throw new Error(`${url} answered HTTP ${status}`);
   return text;

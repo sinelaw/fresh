@@ -129,6 +129,7 @@ body.theme-neon-night:not(.mobile) { background: url(img/wallpaper.jpg) center/c
 - Relative `url(…)`s resolve against the skin folder.
 - Keep the buffer monospace. The cell grid is pinned to `--mono-family`, so changing `--font-family` restyles the chrome only.
 - Never put padding or borders on rows drawn over the cell grid; tint them with colour and inset shadows instead.
+- Some chrome stands on the editor's own ground: the active tab and panels mounted in a pane. A light skin with dark `--fg` on a dark editor theme can make that text vanish, so check the skin against both a dark and a light editor theme, and give such surfaces their own background.
 - `docs/internal/web-ui-theme-checklist.md` in the repository walks every surface worth checking.
 - The built-in skins in `crates/fresh-editor/web-ui/skins/` are complete examples. Winamp restyles nearly every surface.
 
