@@ -72,16 +72,16 @@ The editor's model (on master):
   file's buffer up the same way.
 * All of them rely on one identity: **the buffer for file X holds X's text.**
 
-An earlier revision of #3838 made a plugin's viewer a read-only
-virtual buffer that *counted* as the file's tab. It kept one tab per file for
-the opens it covered, and broke the identity for everything else: a project
-replace applied its edits to the viewer and left the file unchanged; an LSP
-rename edited the viewer; recovered unsaved work could land in a buffer that
-cannot be saved; the explorer's preview or Live Grep's closed the viewer;
-renaming or deleting the file left the viewer claiming a path that was gone;
-and opening with an encoding still made a second tab.
+The tempting shortcut is a read-only virtual buffer for the viewer that
+*counts* as the file's tab. It was tried, and it keeps one tab per file only
+for the opens taught about it, while breaking the identity for everything
+else: a project replace applies its edits to the viewer and leaves the file
+unchanged; an LSP rename edits the viewer; recovered unsaved work can land in
+a buffer that cannot be saved; the explorer's preview or Live Grep's closes
+the viewer; renaming or deleting the file leaves the viewer claiming a path
+that is gone; and opening with an encoding still makes a second tab.
 
-The lesson is the first constraint above: **the file keeps its one real
+Hence the first constraint above: **the file keeps its one real
 buffer, and a viewer is a way of showing that buffer's tab.** Master already
 has that: `createBufferGroup(name, mode, layout, { inTabOf: bufferId })` shows
 a group in a file's own tab — "the tab stays the file's tab in every way (its
