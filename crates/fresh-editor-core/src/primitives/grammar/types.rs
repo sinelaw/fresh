@@ -3777,4 +3777,80 @@ mod tests {
         // Must NOT match arbitrary strings.
         assert_eq!(tree_sitter_for_syntect_name("does-not-exist"), None);
     }
+
+    #[test]
+    fn test_justfile_indented_body_with_colon_keeps_string_and_later_recipes() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        let registry = GrammarRegistry::default();
+        let syntax_set = registry.syntax_set();
+        let syntax = registry
+            .find_syntax_by_name("Justfile")
+            .expect("Justfile grammar must be loaded");
+        let mut state = ParseState::new(syntax);
+        let mut scopes = ScopeStack::new();
+
+        let src = "serve:\n    echo \"http://localhost:8080\"\n    echo \"Content-Type: application/json\"\n    echo \"key: value\"\n\nbuild:\n    cargo build --release\n\ntest:\n    cargo test\n";
+
+        let mut line_scopes: Vec<(String, Vec<(usize, String)>)> = Vec::new();
+        for line in src.split_inclusive('\n') {
+            let ops = state.parse_line(line, syntax_set).unwrap();
+            let mut per_byte = Vec::new();
+            let mut op_iter = ops.iter().peekable();
+            for (byte_idx, _) in line.char_indices() {
+                while let Some((offset, op)) = op_iter.peek() {
+                    if *offset <= byte_idx {
+                        scopes.apply(op).unwrap();
+                        op_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                let stack_str = scopes
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.build_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                per_byte.push((byte_idx, stack_str));
+            }
+            for (_, op) in op_iter {
+                scopes.apply(op).unwrap();
+            }
+            line_scopes.push((line.to_string(), per_byte));
+        }
+
+        let scope_at = |line_idx: usize, needle: &str| -> String {
+            let (ref line, ref bytes) = line_scopes[line_idx];
+            let pos = line.find(needle).unwrap();
+            bytes
+                .iter()
+                .find(|(b, _)| *b == pos)
+                .map(|(_, s)| s.clone())
+                .unwrap()
+        };
+
+        // Top-level recipes are highlighted as functions.
+        assert!(scope_at(0, "serve").contains("entity.name.function.justfile"));
+        assert!(scope_at(5, "build").contains("entity.name.function.justfile"));
+        assert!(scope_at(8, "test").contains("entity.name.function.justfile"));
+
+        // Indented `echo` commands must NOT be matched as recipe declarations,
+        // and quoted strings containing colons must get string scope and close cleanly.
+        for line_idx in [1usize, 2, 3] {
+            let echo_scope = scope_at(line_idx, "echo");
+            assert!(
+                !echo_scope.contains("entity.name.function.justfile"),
+                "line {line_idx} `echo` was wrongly scoped as a recipe: {echo_scope}"
+            );
+            let quote_scope = scope_at(line_idx, "\"");
+            assert!(
+                quote_scope.contains("string.quoted.double.justfile"),
+                "line {line_idx} string lost double-quote scope: {quote_scope}"
+            );
+        }
+
+        // After the body lines, string scope must have popped so `cargo` isn't inside a string.
+        assert!(!scope_at(6, "cargo").contains("string.quoted"));
+    }
 }
