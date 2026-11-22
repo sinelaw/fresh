@@ -1,7 +1,8 @@
 # Design: lazy file views — showing a file through a plugin, in its own tab
 
-Status: proposed (not implemented). Open With (#3838) is the first user of
-the parts that exist today; this document is where viewers go from there.
+Status: proposed (not implemented). #3838 adds the plugin menu items and
+`openInSystemApp` a viewer UI will need; this document is where in-editor
+viewers go from there.
 
 A file whose bytes are not meant to be read as text — a PDF, an image, an
 EPUB — or a text file better read another way — a CSV as a table — should be
@@ -71,7 +72,7 @@ The editor's model (on master):
   file's buffer up the same way.
 * All of them rely on one identity: **the buffer for file X holds X's text.**
 
-A first attempt (an earlier revision of #3838) made a plugin's viewer a read-only
+An earlier revision of #3838 made a plugin's viewer a read-only
 virtual buffer that *counted* as the file's tab. It kept one tab per file for
 the opens it covered, and broke the identity for everything else: a project
 replace applied its edits to the viewer and left the file unchanged; an LSP
@@ -285,14 +286,16 @@ can honour:
 
 ## 8. Phasing
 
-1. **#3838**, simplified to the parts that are sound: plugin items in the explorer
-   and tab menus, `openInSystemApp`, and Open With as a plugin. A viewer is
-   shown in the file's own tab through `createBufferGroup({ inTabOf })` and
-   filled with `setVirtualBufferContent`. One tab per file holds by
-   construction; a viewer's content is not lazy yet.
-2. **Kind A** — `createRenderedView` and its range contract; Open With viewers
-   move onto it, and become lazy.
-3. **Kind E** — whatever byte-range reporting `lines_changed` lacks for binary
+1. **#3838** — what a viewer UI needs and nothing that shows a file in a tab:
+   plugin items in the explorer and tab menus, `openInSystemApp`, and the
+   bundled Open in Default App built on them.
+2. **Viewers in the file's tab, not yet lazy** — an Open With plugin that
+   shows a viewer in the file's own tab through `createBufferGroup({ inTabOf
+   })`, filled with `setVirtualBufferContent`. One tab per file holds by
+   construction, with no new core.
+3. **Kind A** — `createRenderedView`, its range contract and the navigation of
+   §6; viewers move onto it and become lazy.
+4. **Kind E** — whatever byte-range reporting `lines_changed` lacks for binary
    files (whose "lines" are arbitrary), and a CSV viewer/editor on it.
-4. **Defaults** — routing a file type to a view when it opens ("Always open
+5. **Defaults** — routing a file type to a view when it opens ("Always open
    with").

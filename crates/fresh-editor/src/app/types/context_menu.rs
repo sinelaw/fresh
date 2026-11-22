@@ -666,21 +666,21 @@ mod tests {
             LeafId(SplitId(1)),
             0,
             0,
-            vec![entry("Open With…", "open_with_tab")],
+            vec![entry("Plugin Item", "plugin_tab_item")],
         );
         let rows = menu.rows();
         let own = TabContextMenuItem::all().len();
         assert_eq!(rows.len(), own + 1);
         assert_eq!(menu.menu.item_count, own + 1);
-        assert_eq!(rows[own].label, "Open With…");
-        assert_eq!(rows[own].id, "plugin:open_with_tab");
+        assert_eq!(rows[own].label, "Plugin Item");
+        assert_eq!(rows[own].id, "plugin:plugin_tab_item");
 
         let mut menu = menu;
         menu.menu.highlighted = own;
         assert_eq!(
             menu.highlighted_item(),
             Some(TabMenuChoice::Plugin {
-                handler: "open_with_tab".to_string()
+                handler: "plugin_tab_item".to_string()
             })
         );
         menu.menu.highlighted = 0;
@@ -706,14 +706,14 @@ mod tests {
             false,
             Some(ExplorerPluginItems {
                 target: target.clone(),
-                items: vec![entry("Open With…", "open_with_explorer")],
+                items: vec![entry("Plugin Item", "plugin_explorer_item")],
             }),
         );
         menu.menu.highlighted = FileExplorerContextMenuItem::all().len();
         assert_eq!(
             menu.highlighted_item(),
             Some(FileExplorerMenuChoice::Plugin {
-                handler: "open_with_explorer".to_string(),
+                handler: "plugin_explorer_item".to_string(),
                 target,
             })
         );
