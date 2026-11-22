@@ -52,6 +52,8 @@ const C = {
   gutter: "editor.line_number_fg",
   key: "ui.help_key_fg",
   mark: "syntax.type",
+  /** A bold lead in the release notes: the headline of each change. */
+  strong: "syntax.type",
   hoverFg: "ui.menu_hover_fg",
 };
 
@@ -234,7 +236,9 @@ function title(): WidgetSpec[] {
   ];
 }
 
-/** The release notes as written, drawn the way they read: `###` headings,
+/** The release notes as written, from their first heading on (the lines
+ *  above it are the changelog's own preamble — where to follow the
+ *  project, where settings live — not news), drawn the way they read: `###` headings,
  *  bullets (nested ones indented) with their continuation lines, quotes,
  *  and paragraphs; inside them **bold**, `code` and [links](url). Nothing
  *  is shortened, reordered or dropped. */
@@ -245,7 +249,9 @@ function whatsNew(): WidgetSpec[] {
     blank(),
     heading(editor.t("news.heading", { version: notes.version })),
   ];
-  for (const block of noteBlocks(notes.markdown)) {
+  const blocks = noteBlocks(notes.markdown);
+  const first = blocks.findIndex((b) => b.kind === "heading");
+  for (const block of first > 0 ? blocks.slice(first) : blocks) {
     if (block.kind === "blank") {
       out.push(blank());
     } else if (block.kind === "heading") {
@@ -312,7 +318,7 @@ function inline(text: string, fg: string, bold = false): StyledSegment[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > at) out.push({ text: text.slice(at, m.index), style: { fg, bold } });
-    if (m[1] !== undefined) out.push(...inline(m[1], fg, true));
+    if (m[1] !== undefined) out.push(...inline(m[1], C.strong, true));
     else if (m[2] !== undefined) out.push({ text: m[2], style: { fg: C.key, bold } });
     else out.push(...inline(m[3], fg, bold).map((seg) => ({ ...seg, style: { ...seg.style, underline: true } })));
     at = re.lastIndex;

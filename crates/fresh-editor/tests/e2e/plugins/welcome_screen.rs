@@ -80,6 +80,9 @@ struct LatestRelease {
     first_lead: String,
     /// The credit its first bullet ends with, e.g. `(#3735)`.
     first_credit: String,
+    /// The first line above its first heading (the changelog's preamble),
+    /// if it has one.
+    preamble: Option<String>,
 }
 
 fn changelog_latest() -> Option<LatestRelease> {
@@ -97,6 +100,11 @@ fn changelog_latest() -> Option<LatestRelease> {
         .filter_map(|l| l.strip_prefix("### "))
         .map(|h| h.trim().to_string())
         .collect();
+    let preamble = body
+        .iter()
+        .take_while(|l| !l.starts_with("### "))
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string());
     let first = body.iter().find_map(|l| l.strip_prefix("* **"))?;
     let first_lead = first.split("**").next()?.replace('`', "");
     let first_credit = first[first.rfind(" (")? + 1..].to_string();
@@ -105,6 +113,7 @@ fn changelog_latest() -> Option<LatestRelease> {
         headings,
         first_lead,
         first_credit,
+        preamble,
     })
 }
 
@@ -591,7 +600,8 @@ fn settle(harness: &mut EditorTestHarness) {
 /// and each bullet whole — its bold lead and its credit. The page used to
 /// cut the release to eight shortened bullets, run the sections together,
 /// and count the rest as "…and N more", which said nothing about what they
-/// were. They open the page, ahead of the checkbox and the essentials.
+/// were. They open the page, ahead of the checkbox and the essentials,
+/// from their first heading on.
 #[test]
 fn whats_new_shows_the_changelogs_latest_release_as_written() {
     let Some(latest) = changelog_latest() else {
@@ -628,6 +638,19 @@ fn whats_new_shows_the_changelogs_latest_release_as_written() {
     row_of(&latest.first_lead);
     row_of(&latest.first_credit);
     assert!(!page.contains("…and "), "the notes are cut short:\n{page}");
+    // The preamble ("follow me on X", where settings live) is the
+    // changelog's, not news: the notes start at their first heading.
+    if let Some(preamble) = latest.preamble {
+        let opening: String = preamble
+            .split_whitespace()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            !page.contains(&opening),
+            "the preamble {opening:?} is on the page:\n{page}"
+        );
+    }
 }
 
 /// **A narrow pane wraps the page's lines rather than cutting them.** The
