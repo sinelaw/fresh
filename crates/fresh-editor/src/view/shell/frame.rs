@@ -153,6 +153,89 @@ impl HostTarget {
 // aside for: whole-description comparison is the wrong shape for the reason
 // above, and the subtree hoist that would make the point moot has not been
 // written.
+/// Blank cells reserved around the side panels, as a web skin asked for them
+/// (the web bridge's `layoutHints`, combined across browsers; see
+/// docs/features/web-ui-skins.md). Each `[top, right, bottom, left]`, in cells.
+/// Real cells of the one grid every client shares: the terminal shows them as
+/// blank space too, which is why the session daemon turns them off while a
+/// terminal is attached (`Editor::set_skin_gaps_suppressed`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkinGaps {
+    /// Around the Orchestrator dock. The left and right gaps are part of the
+    /// dock's column (`Editor::compute_dock_split`), so everything that
+    /// subtracts the dock from the frame width stays right.
+    pub dock: [u16; 4],
+    /// Around the sidebar (the file explorer's column).
+    pub sidebar: [u16; 4],
+    /// The status bar under the editor body only, not across the sidebar.
+    pub status_under_body: bool,
+}
+
+impl SkinGaps {
+    /// The largest of each: what several browsers asked for together.
+    pub fn merge(self, o: SkinGaps) -> SkinGaps {
+        let m = |a: [u16; 4], b: [u16; 4]| std::array::from_fn(|i| a[i].max(b[i]));
+        SkinGaps {
+            dock: m(self.dock, o.dock),
+            sidebar: m(self.sidebar, o.sidebar),
+            status_under_body: self.status_under_body || o.status_under_body,
+        }
+    }
+
+    /// Read from a `layoutHints` message's fields; each gap is capped (at
+    /// 40 cells) so a skin cannot squeeze the editor away.
+    pub fn from_json(v: &serde_json::Value) -> SkinGaps {
+        let four = |k: &str| -> [u16; 4] {
+            let a = v.get(k).and_then(|a| a.as_array());
+            std::array::from_fn(|i| {
+                a.and_then(|a| a.get(i))
+                    .and_then(|n| n.as_u64())
+                    .map_or(0, |n| n.min(40) as u16)
+            })
+        };
+        SkinGaps {
+            dock: four("dock"),
+            sidebar: four("sidebar"),
+            status_under_body: v
+                .get("statusUnderBody")
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false),
+        }
+    }
+
+    /// The columns the sidebar's own gaps add to its column.
+    pub fn sidebar_cols(&self) -> u16 {
+        self.sidebar[1].saturating_add(self.sidebar[3])
+    }
+
+    /// The columns the dock's own gaps add to its column.
+    pub fn dock_cols(&self) -> u16 {
+        self.dock[1].saturating_add(self.dock[3])
+    }
+}
+
+/// `n` wrapped in blank cells: `[top, right, bottom, left]` around a node
+/// whose own width is `w`. No wrapper when there is nothing to reserve, so a
+/// frame without skin gaps lays out exactly as before.
+fn padded(n: Node<UiMsg>, w: u16, g: [u16; 4]) -> Node<UiMsg> {
+    if g == [0; 4] {
+        return n.w(Sizing::Cells(w));
+    }
+    let [t, r, b, l] = g;
+    col()
+        .w(Sizing::Cells(w.saturating_add(l).saturating_add(r)))
+        .children([
+            row().h(Sizing::Cells(t)),
+            row().flex(1).children([
+                row().w(Sizing::Cells(l)),
+                n.w(Sizing::Cells(w)),
+                row().w(Sizing::Cells(r)),
+            ]),
+            row().h(Sizing::Cells(b)),
+        ])
+}
+
 #[derive(Clone, Debug)]
 pub struct Frame {
     /// A page the body shows instead of the grid, for a window with nothing
@@ -328,6 +411,8 @@ pub struct Frame {
     /// is still the widget runtime's; what the tree owns is the box — where it
     /// goes, its ring, its title and its `[×]`.
     pub panel: Option<super::panel::Panel>,
+    /// Blank cells a web skin reserved around the side panels.
+    pub gaps: SkinGaps,
 }
 
 impl Default for Frame {
@@ -373,6 +458,7 @@ impl Default for Frame {
             splits: None,
             window: None,
             panel: None,
+            gaps: SkinGaps::default(),
         }
     }
 }
@@ -521,8 +607,13 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // the region key, so every caller that asks for `HostRegion::Explorer`'s
     // rectangle still gets one — the whole column, of which the explorer is
     // the first section.
+    let gaps = f.gaps;
     let sidebar = |s: &super::sidebar::Sidebar| {
-        named(HostRegion::Explorer, super::sidebar::sidebar(s)).w(Sizing::Cells(s.cols))
+        padded(
+            named(HostRegion::Explorer, super::sidebar::sidebar(s)),
+            s.cols,
+            gaps.sidebar,
+        )
     };
     // The body: the grid. Every pane's content and bars are leaves of its
     // own (see `splits::live_pane`), and the dividers between the panes draw
@@ -545,13 +636,28 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             (None, None) => region(HostRegion::Body),
         }
     };
+    // The status bar's row. Under the whole window area, or — when a skin
+    // asked (`SkinGaps::status_under_body`) and a sidebar is up — under the
+    // body alone, so the sidebar's column runs to the bottom.
+    let status_node = |f: &Frame| -> Node<UiMsg> {
+        match &f.status_bar_items {
+            Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
+                .h(cells(f.status_bar)),
+            None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
+        }
+    };
+    let status_in_body = gaps.status_under_body && f.sidebar.is_some();
+    let body_col = |f: &Frame| -> Node<UiMsg> {
+        match status_in_body {
+            true => col()
+                .flex(1)
+                .children([body_region(f).flex(1), status_node(f)]),
+            false => body_region(f).flex(1),
+        }
+    };
     let body: Node<UiMsg> = match &f.sidebar {
-        Some(s) if s.on_left => row()
-            .flex(1)
-            .children([sidebar(s), body_region(&f).flex(1)]),
-        Some(s) => row()
-            .flex(1)
-            .children([body_region(&f).flex(1), sidebar(s)]),
+        Some(s) if s.on_left => row().flex(1).children([sidebar(s), body_col(&f)]),
+        Some(s) => row().flex(1).children([body_col(&f), sidebar(s)]),
         // No sidebar: the explorer is still in the tree taking nothing, so it
         // has a rectangle to report and the body's own is unaffected.
         None => row().flex(1).children([
@@ -577,10 +683,10 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             // Native: the tree measures the bar from its own elements. The row
             // keeps its region key, so every caller that asks for
             // `HostRegion::StatusBar`'s rectangle still gets one.
-            match &f.status_bar_items {
-                Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
-                    .h(cells(f.status_bar)),
-                None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
+            match status_in_body {
+                // Moved into the body's column above; nothing here.
+                true => row().h(Sizing::Cells(0)),
+                false => status_node(&f),
             },
             // Native: the tree measures this row from its own text. See
             // `shell::search_options`.
@@ -772,17 +878,22 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // element state would follow whichever window is active, and its sessions
     // list would lose its scroll on every switch.
     let frame = row().children([
+        // `w` is the dock's whole column, its skin gaps included; the dock
+        // itself is what is left between them.
         match f.dock {
-            Some(w) => named(
-                HostRegion::Dock,
-                super::dock::dock(
-                    f.dock_interior.clone(),
-                    f.dock_grip_hovered,
-                    f.dock_focused,
-                    f.dock_reserved,
+            Some(w) => padded(
+                named(
+                    HostRegion::Dock,
+                    super::dock::dock(
+                        f.dock_interior.clone(),
+                        f.dock_grip_hovered,
+                        f.dock_focused,
+                        f.dock_reserved,
+                    ),
                 ),
-            )
-            .w(Sizing::Cells(w)),
+                w.saturating_sub(f.gaps.dock_cols()),
+                f.gaps.dock,
+            ),
             None => region(HostRegion::Dock).w(Sizing::Cells(0)),
         },
         window_area,
@@ -1197,6 +1308,54 @@ mod tests {
 
     /// A frame with `n` of the optional rows, so a sequence of these makes the
     /// retained tree add and drop regions between layouts.
+    #[test]
+    fn skin_gaps_reserve_blank_cells_around_the_dock() {
+        let size = ratatui::layout::Rect::new(0, 0, 100, 30);
+        let rect = |f: Frame, r: HostRegion| {
+            region_rects(f, size)
+                .into_iter()
+                .find(|(x, _)| *x == r)
+                .map(|(_, rect)| rect)
+                .unwrap()
+        };
+        let plain = frame_with(true, true, false, Some(20));
+        assert_eq!(
+            rect(plain.clone(), HostRegion::Dock),
+            ratatui::layout::Rect::new(0, 0, 20, 30)
+        );
+        // The dock's column stays 20 wide; the dock is what is left between
+        // its gaps: 4 rows above, 2 columns on its right, 1 on its left.
+        let gapped = Frame {
+            gaps: SkinGaps {
+                dock: [4, 2, 0, 1],
+                ..Default::default()
+            },
+            ..plain
+        };
+        assert_eq!(
+            rect(gapped.clone(), HostRegion::Dock),
+            ratatui::layout::Rect::new(1, 4, 17, 26)
+        );
+        // The window area beside it is unchanged: the gaps were the dock's.
+        assert_eq!(rect(gapped, HostRegion::MenuBar).x, 20);
+    }
+
+    #[test]
+    fn skin_gaps_merge_to_the_largest_and_read_capped() {
+        let a = SkinGaps {
+            dock: [1, 5, 0, 0],
+            ..Default::default()
+        };
+        let b = SkinGaps::from_json(&serde_json::json!({
+            "dock": [3, 2, 99], "sidebar": [0, 0, 7, 1], "statusUnderBody": true
+        }));
+        assert_eq!(b.dock, [3, 2, 40, 0], "capped at 40, missing sides 0");
+        let m = a.merge(b);
+        assert_eq!(m.dock, [3, 5, 40, 0]);
+        assert_eq!(m.sidebar, [0, 0, 7, 1]);
+        assert!(m.status_under_body);
+    }
+
     fn frame_with(menu: bool, status: bool, prompt: bool, dock: Option<u16>) -> Frame {
         Frame {
             window: Some(1),

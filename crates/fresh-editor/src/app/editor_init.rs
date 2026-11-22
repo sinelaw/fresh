@@ -814,6 +814,8 @@ impl Editor {
             host_process_handles: HashMap::new(),
             status_bar_token_registry: Mutex::new(HashMap::new()),
             skin_values: Default::default(),
+            skin_gaps: Default::default(),
+            skin_gaps_suppressed: false,
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             runtime_settings: RuntimeSettings::default(),
             session_languages: parts.session_languages,

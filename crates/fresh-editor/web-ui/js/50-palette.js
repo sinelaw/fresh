@@ -68,7 +68,7 @@ function searchOptionsEl(p){
 /** function fbClick(Number, Number, Boolean) => (UiEvent) => Undefined */
 function fbClick(col,row,dbl){
   return e=>{ e.preventDefault(); e.stopPropagation();
-    sendClick({button:"left",col,row,count:dbl?e.detail:1}); };
+    sendClickN({button:"left",col,row}, dbl?e.detail:1); };
 }
 // Click target for a recorded span: its middle cell, so a padded native
 // control can never round outside the span the editor hit-tests.

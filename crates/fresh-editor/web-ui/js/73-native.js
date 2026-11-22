@@ -147,7 +147,7 @@ function nativePanelEl(p){
   if(paged) el.classList.add("paged");
   // A strip — a toolbar or key-hint row a buffer group mounts in a pane a
   // cell or two tall — is laid out on that height, not padded past it.
-  if(p.kind==="pane"&&!p.page&&p.rect&&p.rect.h<=3){ el.classList.add("strip"); el.style.setProperty("--cell-h", CH+"px"); }
+  if(p.kind==="pane"&&!p.page&&p.rect&&p.rect.h<=3){ el.classList.add("strip"); el.style.setProperty("--cell-h", `${CH}px`); }
   // A floating panel is a dialog (modal while centred); a docked one a region.
   if(p.kind==="floating") aria(el, "dialog", {modal:!p.anchored, label:p.title||null});
   else aria(el, "region", {label:p.title||p.kind});
@@ -201,19 +201,21 @@ function syncPage(el, page){
     const k=w.dataset.wkey;
     if(k!==undefined&&byKey[k]===undefined) byKey[k]=w;
   }
+  /** const ORIGIN: [Number, Number] */
+  const ORIGIN=[0,0];
   /** const pts: [Number, Number][] */
-  const pts=[[0,0]];
+  const pts=[ORIGIN];
   for(const [row,key] of page.marks){
     const w=byKey[key];
     if(w===undefined) continue;
-    const top=w.getBoundingClientRect().top-base, last=pts[pts.length-1]??[0,0];
+    const top=w.getBoundingClientRect().top-base, last=pts[pts.length-1]??ORIGIN;
     if(row>last[0]&&top>=last[1]) pts.push([row,top]);
   }
-  const tail=pts[pts.length-1]??[0,0];
+  const tail=pts[pts.length-1]??ORIGIN;
   pts.push([Math.max(page.content,tail[0]+1), el.scrollHeight]);
   const r=page.offset;
-  let i=0; while(i<pts.length-2&&(pts[i+1]??[0,0])[0]<=r) i++;
-  const [r0,t0]=pts[i]??[0,0], [r1,t1]=pts[i+1]??[0,0];
+  let i=0; while(i<pts.length-2&&(pts[i+1]??ORIGIN)[0]<=r) i++;
+  const [r0,t0]=pts[i]??ORIGIN, [r1,t1]=pts[i+1]??ORIGIN;
   const at=t0+(t1-t0)*Math.min(1,Math.max(0,(r-r0)/Math.max(1,r1-r0)));
   // At the end of the content, the end of the page (heights differ, so the
   // last row of the window lands on the last of the page).

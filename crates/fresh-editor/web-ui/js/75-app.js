@@ -284,7 +284,9 @@ const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
   keybindingEditor:"keybindingEditor", settings:"settings",
   trustDialog:"trustDialog", cursor:"caret", poll:null,
   // Skin values re-bind in place (bindSkinValues, js/15-theme.js), never a rebuild.
-  skinValues:null };
+  skinValues:null,
+  // The named-region list: CSS variables for skins (publishPanelGeometry), no rebuild.
+  layout:null };
 // Apply a region-diff frame: each changed path replaces its value wholesale
 // (null is a legal value — regions are frequently null). Panes are diffed one
 // level deeper; "regions.panes.len" truncates/extends the array. Then rebuild
@@ -317,6 +319,7 @@ function setRegion(r, key, v){
     case "cursor": r.cursor=jsonAs(v); break;
     case "poll": r.poll=jsonAs(v); break;
     case "skinValues": r.skinValues=jsonAs(v); break;
+    case "layout": r.layout=jsonAs(v); break;
   }
 }
 /** function applyFrame(Dict<FrameValue>) => Undefined */
@@ -378,6 +381,7 @@ function connect(){
       scene=sc; lastSeq=m.seq;
       if(sc.clipboard) clipSeq=sc.clipboard.seq;
       render();
+      sendLayoutHints(true);   // this client's skin's gaps, to a (re)started server
       resize();     // fit the grid to this window; the server pushes the resized frame
     } else {   // "frame"
       frameCount++; lastSeq=m.seq; lastFrameKeys=Object.keys(m.changed);
@@ -396,7 +400,7 @@ function connect(){
 // working for tests and manual recovery.
 async function refresh(){ try{ /** const s: Scene */ const s=await (await fetch("/state")).json(); scene=s; render(); }catch(e){ showErr("load failed: "+String(e)); } }
 /** function sendKey<T>(T) => Undefined */
-function sendKey(d){ wsSend({type:"key",...d}); }
+function sendKey(d){ wsSend(tagged("key",d)); }
 function sendPaste(text){ wsSend({type:"paste",text}); }
 /** function resize() => Undefined */
 function resize(){ const a=byId("app");

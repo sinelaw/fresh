@@ -790,6 +790,10 @@ impl EditorServer {
         };
         let mut cols = before.cols;
         let mut rows = before.rows;
+        // A web skin's layout gaps are blank cells in the one shared grid; a
+        // terminal attached to the session would only see empty columns, so
+        // they are off while one is.
+        editor.set_skin_gaps_suppressed(!self.clients.is_empty());
         let poll = bridge.poll(editor, &mut cols, &mut rows);
         // Heartbeat/flush here rather than in the render path: reaping a
         // half-open browser frees a size constraint, and the refit below is

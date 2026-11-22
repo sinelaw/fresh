@@ -173,6 +173,61 @@ fn content_type(name: &str) -> &'static str {
     }
 }
 
+/// The frame's named regions, as one list: `[{id, x, y, w, h, open, side?,
+/// focused?}]` in cells, from the editor's own region model
+/// (`frame::regions_of` on the retained tree), plus `gaps` — the skin gaps
+/// asked for and whether they are in force. Every region is listed, a closed
+/// one at zero size, so a skin can tell "closed" from "unknown". Ids:
+/// `dock`, `menubar`, `sidebar` (the file explorer's column), `body`,
+/// `statusbar`, `searchOptions`, `promptLine`.
+pub(super) fn layout_json(editor: &mut crate::app::Editor) -> serde_json::Value {
+    use crate::view::shell::frame::HostRegion as R;
+    let sidebar_side = editor.file_explorer_side_name();
+    let dock_focused = editor.dock_has_focus();
+    let sidebar_focused = editor.explorer_has_focus();
+    let regions: Vec<serde_json::Value> = editor
+        .shell_regions_now()
+        .into_iter()
+        .map(|(r, rect)| {
+            let (id, side, focused) = match r {
+                R::Dock => ("dock", Some("left"), Some(dock_focused)),
+                R::MenuBar => ("menubar", None, None),
+                R::Explorer => ("sidebar", Some(sidebar_side), Some(sidebar_focused)),
+                R::Body => ("body", None, None),
+                R::StatusBar => ("statusbar", None, None),
+                R::SearchOptions => ("searchOptions", None, None),
+                R::PromptLine => ("promptLine", None, None),
+            };
+            let mut o = serde_json::json!({
+                "id": id, "x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height,
+                "open": rect.width > 0 && rect.height > 0,
+            });
+            if let Some(s) = side {
+                o["side"] = s.into();
+            }
+            if let Some(f) = focused {
+                o["focused"] = f.into();
+            }
+            o
+        })
+        .collect();
+    let (gaps, suppressed) = editor.skin_gaps_requested();
+    serde_json::json!({ "regions": regions, "gaps": gaps, "gapsSuppressed": suppressed })
+}
+
+/// `skinSettings` message: editor settings a skin proposes when it is picked
+/// (unless the user opted out for that skin) — today `{"explorerSide":
+/// "left"|"right"}`. Applied through the editor's own setting, so it persists
+/// like the user choosing it, and only when it differs.
+pub(super) fn apply_skin_settings(editor: &mut crate::app::Editor, v: &serde_json::Value) {
+    if let Some(side) = v.get("explorerSide").and_then(|s| s.as_str()) {
+        if (side == "left" || side == "right") && editor.file_explorer_side_name() != side {
+            editor.toggle_file_explorer_side();
+            editor.relayout();
+        }
+    }
+}
+
 /// The largest bundled theme accepted (a full theme file is a few KB).
 const MAX_THEME: usize = 512 * 1024;
 

@@ -77,6 +77,7 @@ The stylesheet starts with a comment block that names the skin:
 | `@scale` | Density, from `0.5` to `1.5`, applied under the user's own zoom (Compact uses `0.92`). |
 | `@menu` | `cells`: menu titles sit at the terminal's columns. `flow`: they are evenly spaced. |
 | `@furniture` | The HTML file whose markup is built inside `#device`. |
+| `@dock-gap`, `@sidebar-gap`, `@status-bar`, `@explorer-side` | Room around the side panels, and the explorer's side; see [Asking the editor for room](#asking-the-editor-for-room). |
 | `@editor-theme` | The editor theme that goes with the skin: a `.json` file in the folder (a folder's `theme.json` is found even without this line; URL installs need it), or the name of an installed theme such as `builtin://nord` or `nord`. See [The editor theme](#the-editor-theme). |
 
 ### Colours: CSS custom properties
@@ -137,17 +138,32 @@ body.theme-neon-night:not(.mobile) { background: url(img/wallpaper.jpg) center/c
 - `docs/internal/web-ui-theme-checklist.md` in the repository walks every surface worth checking.
 - The built-in skins in `crates/fresh-editor/web-ui/skins/` are complete examples. Winamp restyles nearly every surface.
 
-### Framing the side panels
+### The layout: where everything is
 
-The Orchestrator dock and the file explorer are real controls, laid out by the editor on its cell grid. A skin doesn't move them, but it can frame them. The page publishes where they are as custom properties on `:root`, in pixels from the editor area's top-left corner:
+The editor lays the frame out — the Orchestrator dock, the menu bar, the sidebar (the file explorer's column), the editor body, the status bar — and tells the page where each region is. The page turns that into custom properties on `:root`, in pixels from the editor area's top-left corner, for every region id:
 
 | Property | Meaning |
 |---|---|
-| `--dock-x`, `--dock-y`, `--dock-w`, `--dock-h` | the Orchestrator dock (`--dock-w` is `0px` while it is closed) |
-| `--explorer-x`, `--explorer-y`, `--explorer-w`, `--explorer-h` | the file explorer |
+| `--<id>-x`, `--<id>-y`, `--<id>-w`, `--<id>-h` | the region (`-w` / `-h` are `0px` while it is closed) |
+| `--grid-w`, `--grid-h` | the whole editor area |
 | `--cell-w`, `--cell-h` | one cell of the grid |
 
-`<body>` also carries `has-dock`, `has-explorer` and `explorer-right`. Write those selectors as `body.theme-<id>.has-dock …`: `theme-<id>` is on `<html>` too, so a bare `.theme-<id>:not(.explorer-right)` would also match `<html>`. Inside `#device`, the editor area starts at `var(--bezel-side)`, `var(--bezel-top)`, so furniture can sit exactly behind a panel. Make the panel see-through (`.native-panel.np-dock`, `.fileexplorer`), and it reads as glass inside your frame. A skin can also set a panel apart from the editor: the panels' controls answer clicks by row and widget, not by pixel, so moving the drawing (`transform: translateX(…)`) does not change what a click means. Pop-ups that belong to a panel move along: the explorer's context menu is `.ctxmenu.ctx-fileExplorer`, and an anchored pop-up drawn over a panel carries `data-over="dock"` or `data-over="explorer"`. `--grid-w` and `--grid-h` give the size of the whole editor area. Neon Hive frames both panels as tall hexagons standing apart from the editor this way; the explorer side is the editor's own setting (Settings → File Explorer → Side).
+Region ids: `dock`, `menubar`, `sidebar`, `body`, `statusbar`, `searchOptions`, `promptLine`. `<body>` also carries `has-<id>` (open), `<id>-left` / `<id>-right` (its side: `sidebar-right` when the explorer is on the right) and `<id>-focused` (it has the keyboard). Write selectors that use them as `body.theme-<id>.has-dock …`: `theme-<id>` is on `<html>` too, so a bare `.theme-<id>:not(.sidebar-right)` would also match `<html>`.
+
+Inside `#device`, the editor area starts at `var(--bezel-side)`, `var(--bezel-top)`, so furniture can sit exactly behind a region. Make a panel see-through (`.native-panel.np-dock`, `.fileexplorer`) and it reads as glass inside your frame. Pop-ups that belong to a panel can be styled with it: the explorer's context menu is `.ctxmenu.ctx-fileExplorer`, and an anchored pop-up drawn over a panel carries `data-over="dock"` or `data-over="sidebar"`.
+
+### Asking the editor for room
+
+A frame or a readout needs space the editor would otherwise fill. A skin asks for it in its header, in cells, and the editor reserves blank cells there — real layout, so every surface stays where its clicks go:
+
+| Key | Meaning |
+|---|---|
+| `@dock-gap` | blank cells around the Orchestrator dock, in CSS shorthand order: `t`, `v h`, `t h b`, or `t r b l` |
+| `@sidebar-gap` | the same around the sidebar (the file explorer's column) |
+| `@status-bar body` | the status bar under the editor body only, so the sidebar's column runs to the bottom |
+| `@explorer-side left` / `right` | a setting the skin proposes: applied through the editor's own setting when the skin is picked, with the same opt-out as its editor theme |
+
+Gaps are capped at 40 cells each. With several browsers open on one session, each skin's requests are combined (the largest of each wins), and they are turned off while a terminal is attached to the session — a terminal would only see blank columns. A phone (the mobile layout) asks for none. Neon Hive reserves rows above the dock and below the explorer for its SYSTEM and DIAGNOSTICS hexagons, and columns between the panels and the editor for its cables.
 
 The skin's stylesheet is inserted after the page's base rules and before a few rules that must win over every skin (status-bar tone pills, popup row geometry, file-icon colours). Override those with a more specific selector.
 
@@ -168,7 +184,7 @@ Use another file name with `@editor-theme my-theme.json`, or pair the skin with 
 
 When you **pick** the skin, its editor theme is applied as well, exactly as if you had chosen it in the editor. This happens on a pick, not on every page load. A bundled theme is saved as `<config dir>/themes/web-skins/<skin id>.json`, so it also appears in the editor's theme list (in the terminal too).
 
-The editor theme is not per-browser the way a skin is. It is the editor's own setting: every window attached to the session, including the terminal, uses it, and it is saved in `config.json`. To keep your editor theme, untick **Also use its editor theme** under the skin in the picker. That choice is remembered for that skin, and picking the skin then leaves the theme alone. Switching to a skin without an editor theme never changes it.
+The editor theme is not per-browser the way a skin is. It is the editor's own setting: every window attached to the session, including the terminal, uses it, and it is saved in `config.json`. To keep your editor theme (and settings such as the explorer's side), untick **Also apply …** under the skin in the picker. That choice is remembered for that skin, and picking the skin then leaves the theme alone. Switching to a skin without an editor theme never changes it.
 
 In the skins folder, saving `theme.json` re-applies it live, like `skin.css`. A folder (served or picked) finds `theme.json` by itself; a URL has no folder listing, so a skin meant to be installed from a URL declares it with `@editor-theme theme.json`. Adding that line always is the simplest habit, since it works for every install route.
 

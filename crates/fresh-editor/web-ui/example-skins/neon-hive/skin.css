@@ -3,16 +3,29 @@
 @name         Neon Hive
 @description  Editor, dock and explorer as separate neon hexagons, with live system readouts
 @author       Fresh (example skin)
-@version      1.0.0
+@version      2.0.0
 @frame        bezel
 @furniture    furniture.html
 @editor-theme theme.json
+@dock-gap     13 7 2 3
+@sidebar-gap  2 3 14 7
+@status-bar   body
+@explorer-side right
 ==/FreshSkin== */
 
-/* An example skin: everything here is the public skin format — CSS custom
-   properties, CSS scoped under .theme-neon-hive, furniture.html, two SVG
-   images and a bundled editor theme (theme.json). Copy the folder into your
-   skins folder (~/.config/fresh/web-skins/) to try it or start from it. */
+/* An example skin: everything here is the public skin format — the header,
+   CSS custom properties, CSS scoped under .theme-neon-hive, furniture.html, an
+   SVG image and a bundled editor theme (theme.json). Copy the folder into your
+   skins folder (~/.config/fresh/web-skins/) to try it or start from it.
+
+   The layout is the EDITOR's, asked for in the header: @dock-gap reserves 13
+   rows above the Orchestrator dock (the SYSTEM hexagon lives there) and 7
+   columns between it and the editor; @sidebar-gap reserves 14 rows below the
+   file explorer (DIAGNOSTICS) and 7 columns before it; @status-bar body keeps
+   the status bar under the editor alone; @explorer-side right proposes the
+   explorer on the right when the skin is picked. Everything below only DRAWS
+   into that space, placed from the page's layout variables (--dock-*,
+   --sidebar-*, --body-*, --menubar-*, --statusbar-*). */
 
 /* ---- palette ---------------------------------------------------------- */
 :root.theme-neon-hive {
@@ -43,25 +56,6 @@ body.theme-neon-hive:not(.mobile) {
     linear-gradient(180deg, #0c0617, #12081f 55%, #0a0514);
 }
 
-/* ---- the editor's frame: a neon rim with a title strip --------------------
-   (Overridden further down: Neon Hive frames the body, dock and explorer
-   separately. Kept as the frame a skin extending this one starts from.) */
-.theme-neon-hive #device {
-  border-radius: 16px; letter-spacing: normal;
-  background: linear-gradient(180deg, #1c0d31, #12081f 40%);
-  box-shadow: 0 0 0 1.5px var(--hive-pink), 0 0 22px rgba(255,63,180,.55),
-    0 0 70px rgba(155,92,255,.35), inset 0 0 24px rgba(155,92,255,.25);
-}
-.theme-neon-hive #device::before {
-  border-radius: 16px; padding: 1.5px;
-  background: linear-gradient(90deg, var(--hive-pink), var(--hive-violet) 50%, var(--hive-blue));
-}
-.theme-neon-hive #device .dv-screen {
-  top: calc(var(--bezel-top) - 4px); bottom: calc(var(--bezel-bot) - 4px);
-  left: calc(var(--bezel-side) - 4px); right: calc(var(--bezel-side) - 4px);
-  border-radius: 8px; background: #07030d;
-  box-shadow: inset 0 0 0 1px rgba(155,92,255,.35), inset 0 0 18px rgba(0,0,0,.9);
-}
 .theme-neon-hive #device .hx-title {
   position: absolute; left: 0; right: 0; top: 0; height: calc(var(--bezel-top) - 14px);
   display: flex; align-items: center; justify-content: center; gap: 14px;
@@ -74,7 +68,7 @@ body.theme-neon-hive:not(.mobile) {
   filter: drop-shadow(0 0 4px var(--hive-pink));
 }
 
-/* One panel: .hx glows (a filter must sit OUTSIDE the clip, or the clip cuts
+/* Generic panel parts. One panel: .hx glows (a filter must sit OUTSIDE the clip, or the clip cuts
    the glow off), .hx-b is the neon rim, .hx-in the dark glass inside it. */
 .theme-neon-hive #device .hx {
   --hx-c: var(--hive-violet); --hx-w: 252px; --hx-h: 218px;
@@ -157,6 +151,132 @@ body.theme-neon-hive:not(.mobile) {
   margin-top: 4px; font-size: 8.5px; letter-spacing: .14em;
 }
 
+/* ---- the frame around the grid gives way to one frame per module ---------- */
+:root.theme-neon-hive { --bezel-top: 56px; --bezel-side: 14px; --bezel-bot: 18px; --hx-cap: 30px; --hx-cut: 22px; }
+.theme-neon-hive #device { background: none; box-shadow: none; border-radius: 0; }
+.theme-neon-hive #device::before { display: none; }
+.theme-neon-hive #device .dv-screen { display: none; }
+/* In #device's coordinates: the grid starts at (--bezel-side, --bezel-top). */
+.theme-neon-hive #device { --ox: var(--bezel-side); --oy: var(--bezel-top); }
+
+/* The editor module: menu row, panes and its own status bar, in a frame cut
+   at the corners, with the title strip above. */
+.theme-neon-hive #device .hx-main {
+  position: absolute;
+  left: calc(var(--ox) + var(--body-x) - 14px); width: calc(var(--body-w) + 28px);
+  top: 4px; height: calc(var(--oy) - 4px + var(--statusbar-y) + var(--statusbar-h) + 12px);
+  filter: drop-shadow(0 0 6px var(--hive-violet)) drop-shadow(0 0 22px rgba(255,63,180,.45));
+}
+.theme-neon-hive #device .hx-main::before, .theme-neon-hive #device .hx-main::after {
+  content: ""; position: absolute;
+  clip-path: polygon(var(--hx-cut) 0, calc(100% - var(--hx-cut)) 0, 100% var(--hx-cut), 100% calc(100% - var(--hx-cut)),
+    calc(100% - var(--hx-cut)) 100%, var(--hx-cut) 100%, 0 calc(100% - var(--hx-cut)), 0 var(--hx-cut));
+}
+.theme-neon-hive #device .hx-main::before {
+  inset: 0; background: linear-gradient(180deg, var(--hive-pink), var(--hive-violet) 55%, var(--hive-pink));
+}
+.theme-neon-hive #device .hx-main::after {
+  inset: 2px; background: linear-gradient(180deg, #1d0d33, #0b0614 calc(var(--oy) - 4px));
+}
+.theme-neon-hive #device .hx-title {
+  left: calc(var(--ox) + var(--body-x)); width: var(--body-w); right: auto; top: 4px; height: calc(var(--oy) - 10px);
+}
+
+/* The side modules: each a stack of hexagons of one width and shape — the
+   wider panel's width, centred on its own panel — the panel's tall one and a
+   readout hexagon in the reserved rows. */
+.theme-neon-hive #device { --side-w: calc(max(var(--dock-w), var(--sidebar-w)) + 22px); }
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) {
+  --hx-c: var(--hive-pink); position: absolute; display: none; width: var(--side-w);
+  filter: drop-shadow(0 0 5px var(--hx-c)) drop-shadow(0 0 16px color-mix(in srgb, var(--hx-c) 50%, transparent));
+}
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) :is(.hx-b, .hx-in) {
+  position: absolute;
+  clip-path: polygon(0 var(--hx-cap), 50% 0, 100% var(--hx-cap), 100% calc(100% - var(--hx-cap)),
+    50% 100%, 0 calc(100% - var(--hx-cap)));
+}
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) .hx-b { inset: 0; background: var(--hx-c); }
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) .hx-in {
+  inset: 2.5px; padding: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hx-c) 16%, #0d0618), #0a0513 30%, #0a0513 70%,
+    color-mix(in srgb, var(--hx-c) 12%, #0d0618));
+}
+body.theme-neon-hive.has-dock #device :is(.hx-dock, .hx-sys) { display: block; }
+body.theme-neon-hive.has-sidebar #device :is(.hx-fx, .hx-diag) { display: block; --hx-c: var(--hive-blue); }
+.theme-neon-hive #device :is(.hx-dock, .hx-sys) { left: calc(var(--ox) + var(--dock-x) + var(--dock-w) / 2 - var(--side-w) / 2); }
+.theme-neon-hive #device :is(.hx-fx, .hx-diag) { left: calc(var(--ox) + var(--sidebar-x) + var(--sidebar-w) / 2 - var(--side-w) / 2); }
+.theme-neon-hive #device .hx-dock {
+  top: calc(var(--oy) + var(--dock-y) - var(--hx-cap)); height: calc(var(--dock-h) + 2 * var(--hx-cap));
+}
+.theme-neon-hive #device .hx-fx {
+  top: calc(var(--oy) + var(--sidebar-y) - var(--hx-cap)); height: calc(var(--sidebar-h) + 2 * var(--hx-cap));
+}
+/* The readout hexagons fill the rows the header reserved. */
+.theme-neon-hive #device .hx-sys {
+  top: calc(var(--oy) + 2px); height: calc(var(--dock-y) - var(--hx-cap) - 12px);
+}
+.theme-neon-hive #device .hx-diag {
+  top: calc(var(--oy) + var(--sidebar-y) + var(--sidebar-h) + var(--hx-cap) + 10px);
+  height: calc(var(--grid-h) - var(--sidebar-y) - var(--sidebar-h) - var(--hx-cap) - 12px);
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in {
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px;
+  padding: calc(var(--hx-cap) - 8px) 26px calc(var(--hx-cap) - 10px);
+  font: 11.5px/1.5 var(--mono-family); color: var(--hive-green);
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p {
+  margin: 0; display: grid; grid-template-columns: 7em 9em; gap: 0 10px; white-space: nowrap;
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p span { text-align: right; color: #c9a8ff; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p em { font-style: normal; color: var(--hive-green); }
+
+/* Cables across the gaps between the modules. */
+.theme-neon-hive #device .hx-cables {
+  position: absolute; display: none; top: calc(var(--oy) + var(--body-y) + var(--body-h) * .3); height: calc(var(--body-h) * .4);
+  background:
+    linear-gradient(90deg, transparent 0 18%, rgba(255,63,180,.85) 18% 21%, transparent 21% 38%,
+      rgba(155,92,255,.7) 38% 40%, transparent 40% 60%, rgba(79,216,255,.7) 60% 62%, transparent 62% 79%,
+      rgba(255,63,180,.6) 79% 81%, transparent 81%);
+  filter: drop-shadow(0 0 4px rgba(255,63,180,.7));
+  -webkit-mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
+  mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
+}
+.theme-neon-hive #device .hx-cables::before, .theme-neon-hive #device .hx-cables::after {
+  content: ""; position: absolute; left: 8%; right: 8%; height: 14px; border-radius: 2px;
+  background: linear-gradient(180deg, #3a1d5c, #1a0c2c); box-shadow: inset 0 0 0 1px var(--hive-violet), 0 0 8px rgba(155,92,255,.6);
+}
+.theme-neon-hive #device .hx-cables::before { top: 22%; }
+.theme-neon-hive #device .hx-cables::after { bottom: 22%; }
+body.theme-neon-hive.has-dock #device .hx-cables.l {
+  display: block; left: calc(var(--ox) + var(--dock-x) + var(--dock-w) / 2 + var(--side-w) / 2 + 8px);
+  width: calc(var(--body-x) - var(--dock-x) - var(--dock-w) / 2 - var(--side-w) / 2 - 30px);
+}
+body.theme-neon-hive.has-sidebar.sidebar-right #device .hx-cables.r {
+  display: block; left: calc(var(--ox) + var(--body-x) + var(--body-w) + 22px);
+  width: calc(var(--sidebar-x) + var(--sidebar-w) / 2 - var(--side-w) / 2 - var(--body-x) - var(--body-w) - 30px);
+}
+
+/* The panels, and the rows around them, let the frames show. */
+.theme-neon-hive .native-panel.np-dock, .theme-neon-hive .fileexplorer,
+.theme-neon-hive .menubar, .theme-neon-hive .statusbar {
+  background: transparent !important; border-color: transparent !important;
+}
+.theme-neon-hive .fileexplorer .fx-title { background: transparent; }
+
+/* Not enough height for the readouts: the reserved rows stay plain desk. */
+@media (max-height: 640px) { .theme-neon-hive #device :is(.hx-sys, .hx-diag) { display: none !important; } }
+
+/* Live values drive the rings: --v comes from the bound value (0–100 for a
+   percentage; a count for errors / warnings, ten per full ring). */
+.theme-neon-hive #device .gz { --gz-p: calc(min(var(--v, 0), 100) * 1%); }
+.theme-neon-hive #device :is(.gz.err, .gz.warn) { --gz-p: calc(min(var(--v, 0) * 10, 100) * 1%); }
+.theme-neon-hive #device .gz.cpu { --gz-c: var(--hive-pink); }
+.theme-neon-hive #device .gz.mem { --gz-c: var(--hive-violet); }
+.theme-neon-hive #device .gz.err { --gz-c: #ff5a7a; }
+.theme-neon-hive #device .gz.warn { --gz-c: #ffd23f; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz { width: 48px; height: 48px; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz small { margin-top: 5px; white-space: nowrap; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-gauges { display: flex; justify-content: center; gap: 44px; margin: 2px 0 20px; }
 /* ---- chrome touches -------------------------------------------------------- */
 .theme-neon-hive .menubar, .theme-neon-hive .statusbar { text-shadow: 0 0 6px rgba(79,216,255,.35); }
 .theme-neon-hive .tab.active { box-shadow: inset 0 -2px 0 var(--hive-pink); }
@@ -164,88 +284,6 @@ body.theme-neon-hive:not(.mobile) {
   background: rgba(26,12,44,.85); color: var(--fg); border: 1px solid var(--hive-pink);
   box-shadow: 0 0 12px rgba(255,63,180,.45);
 }
-
-/* ---- the side panels: tall hexagons, apart from the editor ----------------
-   The Orchestrator dock and the file explorer keep their real controls (their
-   clicks go by row and widget, not by pixel), so the skin can SET THEM APART:
-   each is shifted outward by --hx-gap, framed by its own tall hexagon
-   (furniture, placed from the page's --dock-* / --explorer-* geometry), and
-   made see-through so it reads as the glass inside that frame. The editor body
-   gets a frame of its own (.hx-main) instead of the one around the whole grid,
-   and the status bar is narrowed to the body. Pop-ups that belong to a panel —
-   the explorer's context menu, the dock's anchored drop-downs — move with it.
-   Put the explorer on the other side from the dock in Settings → File
-   Explorer → Side ("right"), and the two flank the editor. */
-:root.theme-neon-hive { --hx-gap: 34px; --bezel-side: 48px; }
-
-/* The grid-wide frame gives way to per-region frames. */
-.theme-neon-hive #device { background: none; box-shadow: none; }
-.theme-neon-hive #device::before { display: none; }
-.theme-neon-hive #device .dv-screen { display: none; }
-
-/* Where the editor body lies between the panels (inside #device). */
-.theme-neon-hive #device { --body-l: var(--bezel-side); --body-r: calc(var(--bezel-side) + var(--grid-w)); }
-.theme-neon-hive.has-dock #device { --body-l: calc(var(--bezel-side) + var(--dock-x) + var(--dock-w)); }
-.theme-neon-hive.has-explorer.explorer-right #device { --body-r: calc(var(--bezel-side) + var(--explorer-x)); }
-.theme-neon-hive #device .hx-main {
-  position: absolute; left: calc(var(--body-l) - 10px); width: calc(var(--body-r) - var(--body-l) + 20px);
-  top: 12px; height: calc(var(--bezel-top) - 12px + var(--grid-h) + 12px);
-  border-radius: 14px; background: linear-gradient(180deg, #1c0d31, #0b0614 46px);
-  box-shadow: 0 0 0 1.5px var(--hive-pink), 0 0 20px rgba(255,63,180,.5), 0 0 64px rgba(155,92,255,.3);
-}
-.theme-neon-hive #device .hx-main::after {
-  content: ""; position: absolute; left: 8px; right: 8px; top: calc(var(--bezel-top) - 12px - 4px); bottom: 8px;
-  border-radius: 6px; background: #07030d; box-shadow: inset 0 0 0 1px rgba(155,92,255,.35);
-}
-.theme-neon-hive #device .hx-title { left: var(--body-l); right: calc(100% - var(--body-r)); }
-
-/* The panels' frames. */
-.theme-neon-hive #device .hx-tall {
-  --hx-c: var(--hive-pink);
-  position: absolute; display: none;
-  filter: drop-shadow(0 0 5px var(--hx-c)) drop-shadow(0 0 16px color-mix(in srgb, var(--hx-c) 50%, transparent));
-}
-.theme-neon-hive #device .hx-tall .hx-b, .theme-neon-hive #device .hx-tall .hx-in {
-  clip-path: polygon(0 var(--hx-cap), 50% 0, 100% var(--hx-cap), 100% calc(100% - var(--hx-cap)),
-    50% 100%, 0 calc(100% - var(--hx-cap)));
-  padding: 0;
-}
-.theme-neon-hive #device .hx-tall .hx-in {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--hx-c) 16%, #0d0618), #0a0513 30%, #0a0513 70%,
-    color-mix(in srgb, var(--hx-c) 12%, #0d0618));
-}
-.theme-neon-hive.has-dock #device .hx-dock { display: block; }
-.theme-neon-hive.has-explorer #device .hx-fx { display: block; --hx-c: var(--hive-blue); }
-.theme-neon-hive #device .hx-dock {
-  left: calc(var(--bezel-side) + var(--dock-x) - var(--hx-gap) - 4px); width: calc(var(--dock-w) + 8px);
-  top: calc(var(--bezel-top) + var(--dock-y) - var(--hx-cap)); height: calc(var(--dock-h) + 2 * var(--hx-cap));
-}
-.theme-neon-hive #device .hx-fx {
-  left: calc(var(--bezel-side) + var(--explorer-x) + var(--hx-gap) - 4px); width: calc(var(--explorer-w) + 8px);
-  top: calc(var(--bezel-top) + var(--explorer-y) - var(--hx-cap) - var(--cell-h));
-  height: calc(var(--explorer-h) + 2 * var(--hx-cap) + 2 * var(--cell-h));
-}
-
-/* Set the panels (and their pop-ups) apart. Their input is by row and widget,
-   so moving the drawing does not move what a click means. */
-body.theme-neon-hive:not(.mobile) .native-panel.np-dock,
-body.theme-neon-hive:not(.mobile) .native-panel[data-over="dock"] { transform: translateX(calc(-1 * var(--hx-gap))); }
-body.theme-neon-hive.explorer-right:not(.mobile) .fileexplorer,
-body.theme-neon-hive.explorer-right:not(.mobile) .ctxmenu.ctx-fileExplorer,
-body.theme-neon-hive.explorer-right:not(.mobile) .native-panel[data-over="explorer"] { transform: translateX(var(--hx-gap)); }
-body.theme-neon-hive:not(.explorer-right):not(.mobile) .fileexplorer,
-body.theme-neon-hive:not(.explorer-right):not(.mobile) .ctxmenu.ctx-fileExplorer,
-body.theme-neon-hive:not(.explorer-right):not(.mobile) .native-panel[data-over="explorer"] { transform: translateX(calc(-1 * var(--hx-gap))); }
-/* The status bar runs under the explorer column; keep it to the body. */
-body.theme-neon-hive.has-explorer.explorer-right:not(.mobile) .statusbar {
-  width: calc(var(--explorer-x) - var(--dock-x) - var(--dock-w)) !important;
-}
-/* The panels, and the rows their caps cross, let the frames show. */
-.theme-neon-hive .native-panel.np-dock, .theme-neon-hive .fileexplorer,
-.theme-neon-hive .menubar, .theme-neon-hive .statusbar {
-  background: transparent !important; border-color: transparent !important;
-}
-.theme-neon-hive .fileexplorer .fx-title { background: transparent; }
 
 /* ---- pop-ups: every floating surface in the same neon glass ----------------
    Drop-downs and pop-ups from the panels (anchored native cards), context
@@ -267,7 +305,7 @@ body.theme-neon-hive.has-explorer.explorer-right:not(.mobile) .statusbar {
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--pop-c) 60%, transparent))
     drop-shadow(0 14px 28px rgba(0,0,0,.6));
 }
-.theme-neon-hive :is(.ctxmenu.ctx-fileExplorer, .native-panel[data-over="explorer"]) { --pop-c: var(--hive-blue); }
+.theme-neon-hive :is(.ctxmenu.ctx-fileExplorer, .native-panel[data-over="sidebar"]) { --pop-c: var(--hive-blue); }
 .theme-neon-hive :is(.palette, .popup) { --pop-c: var(--hive-violet); }
 /* The cut corners would clip the inset rim at the diagonals: draw those four
    edges again as thin gradients. */
@@ -304,148 +342,3 @@ body.theme-neon-hive.has-explorer.explorer-right:not(.mobile) .statusbar {
 }
 .theme-neon-hive .native-panel.card .w-button { border-radius: 0 !important; border-color: transparent !important; background: transparent !important; }
 
-/* ---- the honeycomb stagger: a hexagon above the dock, one below the explorer --
-   The dock is drawn --hx-lift lower and the explorer --hx-lift higher (by
-   transform: their controls answer by row and widget, not by pixel), which
-   frees a hexagon's height above the dock and below the explorer. The editor
-   area is inset top and bottom to make that room. Only on tall, wide windows;
-   elsewhere the panels just stand apart. */
-:root.theme-neon-hive { --hx-lift: 0px; --hx-pad: 14px; }
-.theme-neon-hive #device .hx-sys, .theme-neon-hive #device .hx-diag { display: none; }
-@media (min-width: 1400px) and (min-height: 860px) {
-  :root.theme-neon-hive { --hx-lift: 118px; }
-  body.theme-neon-hive:not(.mobile) #app {
-    top: calc(var(--hx-lift) + var(--hx-cap) + var(--cell-h, 18px) + var(--hx-pad));
-    bottom: calc(var(--hx-lift) + var(--hx-cap) + var(--hx-pad));
-    left: calc(var(--bezel-side) + 8px); right: calc(var(--bezel-side) + 8px);
-  }
-  .theme-neon-hive.has-dock #device .hx-sys, .theme-neon-hive.has-explorer #device .hx-diag { display: block; }
-}
-body.theme-neon-hive:not(.mobile) .native-panel.np-dock,
-body.theme-neon-hive:not(.mobile) .native-panel[data-over="dock"] {
-  transform: translate(calc(-1 * var(--hx-gap)), var(--hx-lift));
-}
-body.theme-neon-hive.explorer-right:not(.mobile) :is(.fileexplorer, .ctxmenu.ctx-fileExplorer, .native-panel[data-over="explorer"]) {
-  transform: translate(var(--hx-gap), calc(-1 * var(--hx-lift)));
-}
-body.theme-neon-hive:not(.explorer-right):not(.mobile) :is(.fileexplorer, .ctxmenu.ctx-fileExplorer, .native-panel[data-over="explorer"]) {
-  transform: translate(calc(-1 * var(--hx-gap)), calc(-1 * var(--hx-lift)));
-}
-.theme-neon-hive #device .hx-dock { top: calc(var(--bezel-top) + var(--dock-y) - var(--hx-cap) + var(--hx-lift)); }
-.theme-neon-hive #device .hx-fx { top: calc(var(--bezel-top) + var(--explorer-y) - var(--hx-cap) - var(--cell-h) - var(--hx-lift)); }
-
-/* The two hexagons: as wide as their panel's frame, filling the freed height. */
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) {
-  --hx-h: calc(2 * var(--hx-lift) - 26px);
-  height: var(--hx-h);
-}
-.theme-neon-hive #device .hx-sys {
-  left: calc(var(--bezel-side) + var(--dock-x) - var(--hx-gap) - 4px); width: calc(var(--dock-w) + 8px);
-  top: calc(var(--bezel-top) + var(--dock-y) - var(--hx-cap) + var(--hx-lift) - 12px - var(--hx-h));
-}
-.theme-neon-hive #device .hx-diag {
-  left: calc(var(--bezel-side) + var(--explorer-x) + var(--hx-gap) - 4px); width: calc(var(--explorer-w) + 8px);
-  top: calc(var(--bezel-top) + var(--explorer-y) - var(--cell-h) - var(--hx-lift) + var(--explorer-h)
-    + 2 * var(--cell-h) + var(--hx-cap) + 12px);
-}
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in { padding: 18px 26% 16px; gap: 2px; }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-gauges { justify-content: center; gap: 26px; margin: 2px 0 14px; }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p em { font-style: normal; color: var(--hive-green); }
-.theme-neon-hive #device .gz.cpu { --gz-c: var(--hive-pink); }
-.theme-neon-hive #device .gz.mem { --gz-c: var(--hive-violet); }
-.theme-neon-hive #device .gz.err { --gz-c: #ff5a7a; }
-.theme-neon-hive #device .gz.warn { --gz-c: #ffd23f; }
-/* A bound number drives the ring: --v is set from the live value (0–100 for
-   percentages; a count for errors / warnings, capped by the calc). */
-.theme-neon-hive #device .gz { --gz-p: calc(min(var(--v, 0), 100) * 1%); }
-.theme-neon-hive #device :is(.gz.err, .gz.warn) { --gz-p: calc(min(var(--v, 0) * 10, 100) * 1%); }
-
-/* ---- one column shape -------------------------------------------------------
-   Every hexagon in a side column — the dock's, the explorer's, and the two
-   readout hexagons — has the same shape and the same width: the wider of the
-   two panels, centred on its panel. Only the heights differ. */
-.theme-neon-hive #device { --side-w: calc(max(var(--dock-w), var(--explorer-w)) + 24px); }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) { filter: drop-shadow(0 0 5px var(--hx-c)) drop-shadow(0 0 16px color-mix(in srgb, var(--hx-c) 50%, transparent)); }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) :is(.hx-b, .hx-in) {
-  clip-path: polygon(0 var(--hx-cap), 50% 0, 100% var(--hx-cap), 100% calc(100% - var(--hx-cap)),
-    50% 100%, 0 calc(100% - var(--hx-cap)));
-}
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--hx-c) 16%, #0d0618), #0a0513 40%, #0a0513 60%,
-    color-mix(in srgb, var(--hx-c) 12%, #0d0618));
-  padding: calc(var(--hx-cap) - 6px) 30px calc(var(--hx-cap) - 10px); align-items: center;
-}
-.theme-neon-hive #device :is(.hx-dock, .hx-sys) {
-  width: var(--side-w);
-  left: calc(var(--bezel-side) + var(--dock-x) - var(--hx-gap) + var(--dock-w) / 2 - var(--side-w) / 2);
-}
-.theme-neon-hive #device :is(.hx-fx, .hx-diag) { width: var(--side-w); }
-body.theme-neon-hive.explorer-right #device :is(.hx-fx, .hx-diag) {
-  left: calc(var(--bezel-side) + var(--explorer-x) + var(--hx-gap) + var(--explorer-w) / 2 - var(--side-w) / 2);
-}
-body.theme-neon-hive:not(.explorer-right) #device :is(.hx-fx, .hx-diag) {
-  left: calc(var(--bezel-side) + var(--explorer-x) - var(--hx-gap) + var(--explorer-w) / 2 - var(--side-w) / 2);
-}
-/* Readout rows: label and value in two even columns. */
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p {
-  display: grid; grid-template-columns: 7em 9em; gap: 0 10px; font-size: 11.5px; line-height: 1.5;
-}
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p span { width: auto; text-align: right; }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz { width: 48px; height: 48px; }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz small { margin-top: 5px; white-space: nowrap; }
-.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-gauges { gap: 44px; margin: 2px 0 20px; }
-
-/* Room for the wider column: each side frame is as wide as the wider panel,
-   centred on its own, so the editor area is inset by half the difference too. */
-@media (min-width: 1400px) and (min-height: 860px) {
-  body.theme-neon-hive:not(.mobile) #app {
-    left: calc(var(--bezel-side) + 8px + max(0px, (var(--explorer-w) - var(--dock-w)) / 2));
-    right: calc(var(--bezel-side) + 8px + max(0px, (var(--dock-w) - var(--explorer-w)) / 2));
-  }
-}
-
-/* ---- separation: the editor as its own module -------------------------------
-   A wide band of desk between the editor and each side column, cables
-   crossing it, and the editor's frame cut at the corners like the hexagons. */
-:root.theme-neon-hive { --hx-gap: 76px; --bezel-side: 96px; --hx-cut: 22px; }
-.theme-neon-hive #device .hx-main {
-  border-radius: 0; box-shadow: none; background: none;
-  filter: drop-shadow(0 0 6px var(--hive-violet)) drop-shadow(0 0 22px rgba(255,63,180,.45));
-}
-.theme-neon-hive #device .hx-main::before {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, var(--hive-pink), var(--hive-violet) 55%, var(--hive-pink));
-  clip-path: polygon(var(--hx-cut) 0, calc(100% - var(--hx-cut)) 0, 100% var(--hx-cut), 100% calc(100% - var(--hx-cut)),
-    calc(100% - var(--hx-cut)) 100%, var(--hx-cut) 100%, 0 calc(100% - var(--hx-cut)), 0 var(--hx-cut));
-}
-.theme-neon-hive #device .hx-main::after {
-  left: 2px; right: 2px; top: 2px; bottom: 2px; border-radius: 0; box-shadow: none;
-  background: linear-gradient(180deg, #1d0d33, #0b0614 var(--bezel-top));
-  clip-path: polygon(calc(var(--hx-cut) - 1px) 0, calc(100% - var(--hx-cut) + 1px) 0, 100% calc(var(--hx-cut) - 1px),
-    100% calc(100% - var(--hx-cut) + 1px), calc(100% - var(--hx-cut) + 1px) 100%, calc(var(--hx-cut) - 1px) 100%,
-    0 calc(100% - var(--hx-cut) + 1px), 0 calc(var(--hx-cut) - 1px));
-}
-.theme-neon-hive #device .hx-main { left: calc(var(--body-l) - 16px); width: calc(var(--body-r) - var(--body-l) + 32px);
-  top: 6px; height: calc(var(--bezel-top) - 6px + var(--grid-h) + 18px); }
-
-/* Cables across the gaps: a bundle of thin glowing lines with a clamp. */
-.theme-neon-hive #device .hx-cables {
-  position: absolute; top: calc(var(--bezel-top) + 18%); height: 42%;
-  width: calc(var(--hx-gap) - 22px);
-  background:
-    linear-gradient(90deg, transparent 0 18%, rgba(255,63,180,.85) 18% 21%, transparent 21% 38%,
-      rgba(155,92,255,.7) 38% 40%, transparent 40% 60%, rgba(79,216,255,.7) 60% 62%, transparent 62% 79%,
-      rgba(255,63,180,.6) 79% 81%, transparent 81%);
-  filter: drop-shadow(0 0 4px rgba(255,63,180,.7));
-  -webkit-mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
-  mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
-}
-.theme-neon-hive #device .hx-cables::before, .theme-neon-hive #device .hx-cables::after {
-  content: ""; position: absolute; left: 8%; right: 8%; height: 14px; border-radius: 2px;
-  background: linear-gradient(180deg, #3a1d5c, #1a0c2c); box-shadow: inset 0 0 0 1px var(--hive-violet), 0 0 8px rgba(155,92,255,.6);
-}
-.theme-neon-hive #device .hx-cables::before { top: 22%; }
-.theme-neon-hive #device .hx-cables::after { bottom: 22%; }
-.theme-neon-hive #device .hx-cables.l { left: calc(var(--body-l) - 16px - var(--hx-gap) + 12px); }
-.theme-neon-hive #device .hx-cables.r { left: calc(var(--body-r) + 16px + 10px); }
-body.theme-neon-hive:not(.has-dock) #device .hx-cables.l, body.theme-neon-hive:not(.has-explorer) #device .hx-cables.r { display: none; }

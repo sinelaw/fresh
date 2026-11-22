@@ -2399,7 +2399,9 @@ impl Window {
         let menu_rows = u16::from(self.menu_bar_visible);
         let chrome_width = self.terminal_width.saturating_sub(self.dock_cols);
         let file_explorer_width = if self.file_explorer_visible {
-            self.file_explorer_width.to_cols(chrome_width)
+            self.file_explorer_width
+                .to_cols(chrome_width)
+                .saturating_add(self.sidebar_gap_cols)
         } else {
             0
         };

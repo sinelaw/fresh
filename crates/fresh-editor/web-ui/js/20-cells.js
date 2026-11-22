@@ -72,7 +72,7 @@ const ASCII = /^[\x20-\x7E]*$/;
 /** function cellUnits(String) => String[] | Null */
 function cellUnits(t){
   if(ASCII.test(t)) return null;                       // fast path: 1 unit = 1 cell
-  if(GRAPHEMES) return Array.from(GRAPHEMES.segment(t), g => g.segment);
+  if(GRAPHEMES) return segmentText(GRAPHEMES, t);
   return Array.from(t);                                // last resort: code points
 }
 // How many cells a run occupies.

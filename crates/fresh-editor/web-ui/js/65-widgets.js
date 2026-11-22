@@ -280,7 +280,8 @@ function rowCells(s){ return s.kind==="row"?s.children:[]; }
 function widgetNode(spec, ctx){
   const el=widgetNodeOf(spec, ctx);
   const k=spec?specKey(spec):undefined;
-  if(k&&el.nodeType===1&&el.dataset.wkey===undefined) el.dataset.wkey=k;
+  if(k===undefined||k==="") return el;
+  if(el.nodeType===1&&el.dataset.wkey===undefined) el.dataset.wkey=k;
   return el;
 }
 // Lines a terminal layout wrapped to its measure, one row per line, read as
@@ -313,8 +314,9 @@ function paragraphs(kids){
     /** const same: (WidgetSpec | Null) => Boolean */
     const same=b=>b!==null&&b.kind==="button"&&b.key===first.key&&b.focusable===first.focusable
       &&!!b.disabled===!!first.disabled
-      &&JSON.stringify(b.style??null)===JSON.stringify(first.style??null)
-      &&JSON.stringify(b.hoverStyle??null)===JSON.stringify(first.hoverStyle??null);
+      &&(b.style===undefined?"":JSON.stringify(b.style))===(first.style===undefined?"":JSON.stringify(first.style))
+      &&(b.hoverStyle===undefined?"":JSON.stringify(b.hoverStyle))
+        ===(first.hoverStyle===undefined?"":JSON.stringify(first.hoverStyle));
     // The first line's leading spaces stay: they are the paragraph's indent.
     let j=i+1, text=(first.label||"").trimEnd();
     while(j<kids.length&&same(line(kids[j]))){ const b=line(kids[j]); text+=" "+((b&&b.kind==="button"?b.label:"")||"").trim(); j++; }
@@ -323,8 +325,11 @@ function paragraphs(kids){
   }
   return out;
 }
-/** function widgetNodeOf(WidgetSpec, WCtx) => El */
-function widgetNodeOf(spec, ctx){
+// An arrow, so the checker sees a function that never reads `this`: it is
+// called recursively (through widgetNode), and a `function` declaration in
+// that cycle gets its `this` unified with "called detached".
+/** const widgetNodeOf: (WidgetSpec, WCtx) => El */
+const widgetNodeOf = (spec, ctx) => {
   if(!spec) return document.createTextNode("");
   const kind=spec.kind, fk=ctx.focusKey, wkey=specKey(spec);
   const focused = !!wkey && wkey===fk;
@@ -836,7 +841,7 @@ function widgetNodeOf(spec, ctx){
     return el;
   }
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
-}
+};
 
 // A tree row press by identity: the tree's key, the event, the row.
 // `cell`: the cell a right-click landed on (a `context` press), else null.

@@ -3209,10 +3209,11 @@ impl Editor {
         );
         // Where the column starts, for the blur observer: beside the dock
         // on the left, or against the frame's edge on the right.
+        let g = self.effective_skin_gaps().sidebar;
         let x0 = if on_left {
-            chrome_area.x
+            chrome_area.x.saturating_add(g[3])
         } else {
-            (chrome_area.x + chrome_area.width).saturating_sub(cols)
+            (chrome_area.x + chrome_area.width).saturating_sub(cols.saturating_add(g[1]))
         };
         let grip_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerBorder));
         // Squeeze what pressure must and size the rest — app logic keyed on
@@ -3822,7 +3823,14 @@ impl Editor {
             search_options.is_some(),
             prompt_row_visible,
         );
-        let explorer_h = chrome_area.height.saturating_sub(fixed);
+        // A web skin's gaps above and below the sidebar come out of its
+        // column; a status bar moved under the body gives its row back.
+        let gaps = self.effective_skin_gaps();
+        let explorer_h = chrome_area
+            .height
+            .saturating_sub(fixed)
+            .saturating_add(u16::from(gaps.status_under_body && status_row))
+            .saturating_sub(gaps.sidebar[0].saturating_add(gaps.sidebar[2]));
         let sidebar = self.sidebar_content(chrome_area, explorer_h);
         // The bar's elements, measured from the chrome column it will occupy.
         let status_bar_items = status_row
@@ -3924,6 +3932,7 @@ impl Editor {
             false => splits,
         };
         crate::view::shell::frame::Frame {
+            gaps: self.effective_skin_gaps(),
             placeholder,
             panel: self.panel_description(),
             // The dock's content, described whenever a panel is mounted in
@@ -4485,6 +4494,37 @@ impl Editor {
             .find(|(r, _)| *r == region)
             .map(|(_, rect)| rect)
             .unwrap_or_default()
+    }
+
+    /// Every named region's rectangle THIS instant, read off the retained
+    /// tree like [`Self::shell_region_now`] — the web's `regions.layout`.
+    pub(crate) fn shell_regions_now(
+        &self,
+    ) -> Vec<(crate::view::shell::frame::HostRegion, ratatui::layout::Rect)> {
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
+        match self.shell_ui.as_ref() {
+            Some(ui) => crate::view::shell::frame::regions_of(ui, size),
+            None => Vec::new(),
+        }
+    }
+
+    /// The file explorer's side, as the web names it.
+    pub(crate) fn file_explorer_side_name(&self) -> &'static str {
+        match self.active_window().file_explorer_side {
+            FileExplorerSide::Left => "left",
+            FileExplorerSide::Right => "right",
+        }
+    }
+
+    /// Whether the Orchestrator dock has the keyboard (and is not covered).
+    pub(crate) fn dock_has_focus(&self) -> bool {
+        self.dock.as_ref().is_some_and(|d| d.focused) && !self.dock_covered
+    }
+
+    /// Whether the file explorer has the keyboard.
+    pub(crate) fn explorer_has_focus(&self) -> bool {
+        self.active_window().key_context == crate::input::keybindings::KeyContext::FileExplorer
     }
 
     /// Where the open context menu landed, read off the retained tree.
@@ -5760,6 +5800,12 @@ impl Editor {
         let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
             return (None, size);
         };
+        // A web skin's side gaps are part of the dock's column (the frame
+        // lays the dock out between them), so every "frame less the dock"
+        // computation already leaves room for them.
+        let width = width
+            .saturating_add(self.effective_skin_gaps().dock_cols())
+            .min(size.width);
         let dock = ratatui::layout::Rect {
             x: size.x,
             y: size.y,

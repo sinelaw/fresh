@@ -24,6 +24,13 @@ const exposeTestHook;
 const toFixed;
 
 
+// `{type, ...o}`: a WebSocket message of kind `type` carrying `o`'s fields.
+/** const tagged: <T, U>(String, T) => U */
+const tagged;
+// The grapheme clusters of a string (`Array.from(seg.segment(t), g => g.segment)`).
+/** const segmentText: (Segmenter, String) => String[] */
+const segmentText;
+
 // ---- web skins (js/15-theme.js) ----------------------------------------------
 // Untrusted JSON (the served skin index, the browser's stored skins): an
 // opaque value read through checked accessors. `jsonGet` of a missing key, or

@@ -1069,6 +1069,12 @@ pub struct Editor {
     status_bar_token_registry: Mutex<HashMap<String, String>>,
     /// Values plugins publish for web skins (`set_skin_value`), by "plugin:name".
     skin_values: std::collections::BTreeMap<String, String>,
+    /// Blank cells the web skins asked for around the side panels (combined
+    /// across browsers by the web bridge). See `frame::SkinGaps`.
+    skin_gaps: crate::view::shell::frame::SkinGaps,
+    /// Set by the session daemon while a terminal client is attached: the
+    /// gaps are a web skin's, and a terminal would only see blank columns.
+    skin_gaps_suppressed: bool,
 
     /// Registry of plugin-provided config schemas, keyed by plugin name.
     /// Each value is the validated JSON schema describing
@@ -2326,6 +2332,41 @@ impl Editor {
         } else {
             self.skin_values.insert(key, value);
         }
+    }
+
+    /// Reserve blank cells around the side panels for a web skin (the web
+    /// bridge's combined `layoutHints`). Relayouts only when the gaps in force
+    /// change.
+    pub fn set_skin_gaps(&mut self, gaps: crate::view::shell::frame::SkinGaps) {
+        let before = self.effective_skin_gaps();
+        self.skin_gaps = gaps;
+        if self.effective_skin_gaps() != before {
+            self.relayout();
+        }
+    }
+
+    /// Turn the skin gaps off (a terminal client is attached) or back on.
+    pub fn set_skin_gaps_suppressed(&mut self, suppressed: bool) {
+        let before = self.effective_skin_gaps();
+        self.skin_gaps_suppressed = suppressed;
+        if self.effective_skin_gaps() != before {
+            self.relayout();
+        }
+    }
+
+    /// The gaps the layout uses this frame: what the skins asked for, unless
+    /// suppressed.
+    pub fn effective_skin_gaps(&self) -> crate::view::shell::frame::SkinGaps {
+        match self.skin_gaps_suppressed {
+            true => Default::default(),
+            false => self.skin_gaps,
+        }
+    }
+
+    /// What the skins asked for, and whether it is suppressed — echoed to
+    /// every browser so a client can tell why there is (or isn't) space.
+    pub fn skin_gaps_requested(&self) -> (crate::view::shell::frame::SkinGaps, bool) {
+        (self.skin_gaps, self.skin_gaps_suppressed)
     }
 
     /// The values plugins published for web skins, by "plugin:name".

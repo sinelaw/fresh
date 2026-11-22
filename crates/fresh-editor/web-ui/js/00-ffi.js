@@ -10,6 +10,11 @@ const exposeTestHook = hook => { window.fresh = hook; };
 const toFixed = (n, digits) => n.toFixed(digits);
 // Web skins (js/15-theme.js): untrusted JSON read one checked step at a time,
 // the editor theme's style rule, a file input's files, and HTML parsed inert.
+// A message object: `o`'s fields with `type` added (object spread, which the
+// checker does not type).
+const tagged = (type, o) => ({ type, ...o });
+// A string's grapheme clusters, through an `Intl.Segmenter`.
+const segmentText = (seg, t) => Array.from(seg.segment(t), g => g.segment);
 const jsonParse = s => JSON.parse(s);
 const jsonKind = v => v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
 const jsonGet = (v, k) => v !== null && typeof v === "object" && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, k) ? v[k] : undefined;

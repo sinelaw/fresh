@@ -36,7 +36,6 @@
      (layoutShell() hides #device). A skin's own rules may still inset #app,
      as macOS does below its title bar. */
   body.frame-full:not(.mobile) #app{left:0;top:0;right:0;bottom:0}
-  body.frame-full:not(.mobile) .menubar{clip-path:none}
   /* machined-metal rim: a 3px gradient ring masked out of a padded overlay */
   #device::before{content:"";position:absolute;inset:0;border-radius:28px;padding:3px;
     background:linear-gradient(180deg,#eef1f5,#a9b0ba 14%,#565b64 40%,#3a3e46 58%,#7c828d 86%,#d6dbe2);

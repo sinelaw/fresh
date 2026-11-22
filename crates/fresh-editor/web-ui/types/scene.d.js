@@ -100,11 +100,21 @@
     settings: Settings | Null,
     cursor: CursorPos | Null,
     poll: Poll,
-    skinValues: Dict<String>
+    skinValues: Dict<String>,
+    layout: Layout
 } */
 
 // view/scene.rs `RectView` (also mod.rs `rect_json`, native.rs rect json!).
 /** type Rect = { x: Number, y: Number, w: Number, h: Number } */
+
+// src/webui/skins.rs `layout_json`: the frame's named regions, one list, and
+// the skin gaps asked for (`[top, right, bottom, left]` in cells).
+/** type LayoutRegion = {
+    id: String, x: Number, y: Number, w: Number, h: Number, open: Boolean,
+    side?: String, focused?: Boolean
+} */
+/** type SkinGaps = { dock: Number[], sidebar: Number[], statusUnderBody: Boolean } */
+/** type Layout = { regions: LayoutRegion[], gaps: SkinGaps, gapsSuppressed: Boolean } */
 
 // src/webui/mod.rs `scene_json` (`cursor`): the hardware caret cell.
 /** type CursorPos = { x: Number, y: Number } */

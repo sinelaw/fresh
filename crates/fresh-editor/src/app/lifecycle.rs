@@ -576,8 +576,10 @@ impl Editor {
         // result. The active window's grid is the frame's, laid out once with
         // `layout_only`; every other window's grid the retained tree does not
         // hold, so it is laid out offscreen from the same description.
+        let sidebar_gap = self.effective_skin_gaps().sidebar_cols();
         for window in self.windows.values_mut() {
             window.adopt_screen(width, height, dock_cols);
+            window.sidebar_gap_cols = sidebar_gap;
         }
         self.refresh_pane_rects();
         let active = self.active_window;

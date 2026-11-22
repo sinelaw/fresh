@@ -43,12 +43,14 @@
 /** type Skin = {
     id: String, name: String, description: String, author: String, version: String,
     parent: String, frame: String, scale: Number, menu: String, furnitureFile: String,
+    dockGap: Number[] | Null, sidebarGap: Number[] | Null, statusBar: String, explorerSide: String,
     css: String, furniture: String, editorTheme: String, editorThemeName: String,
     origin: String, source: String, stamp: String
 } */
 /** type ResolvedSkin = {
     id: String, chain: String[], frame: String, scale: Number, menu: String, furniture: String, css: String,
-    themeOwner: String, editorTheme: String, editorThemeName: String
+    themeOwner: String, editorTheme: String, editorThemeName: String,
+    dockGap: Number[], sidebarGap: Number[], statusUnderBody: Boolean, explorerSide: String
 } */
 /** type SkinFiles = {css: String, furniture: String, theme: String} */
 /** type InstallResult = {ok: Boolean, id: String, error: String} */
@@ -118,6 +120,25 @@ function parseSkin(files, fallbackId, origin) {
   const scale = get("scale") ? parseFloat(get("scale")) : 0;
   if (scale !== 0 && !(scale >= 0.5 && scale <= 1.5)) return fail("@scale must be a number from 0.5 to 1.5");
   const furnitureFile = get("furniture");
+  // Layout asks, in cells: `@dock-gap` / `@sidebar-gap` in CSS shorthand order
+  // (1–4 numbers: all | vertical horizontal | top horizontal bottom | top
+  // right bottom left), `@status-bar body`, and `@explorer-side` (a setting
+  // proposed on pick, like the editor theme).
+  /** const gap: (String) => Number[] | Null | Undefined */
+  const gap = k => {
+    const v = get(k).trim();
+    if (!v) return null;
+    const n = v.split(/\s+/).map(x => parseInt(x, 10));
+    if (n.length > 4 || n.some(x => !(x >= 0 && x <= 40) || Math.floor(x) !== x)) return undefined;
+    const [t, r = t, b = t, l = r] = n;
+    return [t, r, b, l];
+  };
+  const dockGap = gap("dock-gap"), sidebarGap = gap("sidebar-gap");
+  if (dockGap === undefined || sidebarGap === undefined) return fail("@dock-gap / @sidebar-gap take 1–4 whole numbers of cells, 0–40");
+  const statusBar = get("status-bar");
+  if (statusBar && statusBar !== "body" && statusBar !== "full") return fail('@status-bar must be "body" or "full"');
+  const explorerSide = get("explorer-side");
+  if (explorerSide && explorerSide !== "left" && explorerSide !== "right") return fail('@explorer-side must be "left" or "right"');
   if (furnitureFile && !plainSkinPath(furnitureFile)) return fail("@furniture must be a relative path inside the skin folder");
   const themeRef = get("editor-theme");
   const editorThemeName = themeRef && !/\.json$/i.test(themeRef) ? themeRef : "";
@@ -131,6 +152,7 @@ function parseSkin(files, fallbackId, origin) {
   return { skin: {
     id, name, description: get("description"), author: get("author"), version: get("version"),
     parent, frame, scale, menu, furnitureFile, css, furniture: files.furniture.slice(0, 200000),
+    dockGap, sidebarGap, statusBar, explorerSide,
     editorTheme, editorThemeName, origin, source: "", stamp: "",
   }, error: "" };
 }
@@ -244,13 +266,19 @@ function resolveSkin(id) {
   }
   /** const res: ResolvedSkin */
   const res = { id, chain: [], frame: "full", scale: 1, menu: "cells", furniture: "", css: "",
-    themeOwner: "", editorTheme: "", editorThemeName: "" };
+    themeOwner: "", editorTheme: "", editorThemeName: "",
+    dockGap: [0, 0, 0, 0], sidebarGap: [0, 0, 0, 0], statusUnderBody: false, explorerSide: "" };
   for (const s of chain) {
     res.chain.push(s.id);
     if (s.frame) res.frame = s.frame;
     if (s.scale) res.scale = s.scale;
     if (s.menu) res.menu = s.menu;
     if (s.furniture) res.furniture = s.furniture;
+    const dg = s.dockGap, sg = s.sidebarGap;
+    if (dg) res.dockGap = dg;
+    if (sg) res.sidebarGap = sg;
+    if (s.statusBar) res.statusUnderBody = s.statusBar === "body";
+    if (s.explorerSide) res.explorerSide = s.explorerSide;
     if (s.editorTheme || s.editorThemeName) {
       res.themeOwner = s.id; res.editorTheme = s.editorTheme; res.editorThemeName = s.editorThemeName;
     }
@@ -408,6 +436,7 @@ function applyWebTheme() {
   const style = document.getElementById("skin-css");
   const key = `${sk.id}#${skinRev}`;
   if (style && style.dataset.theme !== key) { style.dataset.theme = key; style.textContent = sk.css; }
+  sendLayoutHints(false);
   renderFurniture(sk);
   // A skin may replace the fills themselves (Winamp's navy highlight, macOS's
   // blue), and the ink that goes ON a fill is computed from it — so recompute
@@ -460,15 +489,51 @@ function setSkinThemeOptOut(id, out) {
   try { localStorage.setItem(SKIN_KEEP_THEME_KEY, JSON.stringify(list)); } catch (_) {}
 }
 // The display name of the active skin's editor theme ("" when it has none).
+// What picking the skin changes in the editor, for the picker's toggle:
+// "its editor theme <name>" and/or "the explorer on the right"; "" for none.
+/** function skinEditorChanges(ResolvedSkin) => String */
+function skinEditorChanges(sk) {
+  const parts = [];
+  const t = skinEditorThemeName(sk);
+  if (t) parts.push(`its editor theme <b>${esc(t)}</b>`);
+  if (sk.explorerSide) parts.push(`the explorer on the <b>${esc(sk.explorerSide)}</b>`);
+  return parts.join(" and ");
+}
 /** function skinEditorThemeName(ResolvedSkin) => String */
 function skinEditorThemeName(sk) {
   if (sk.editorThemeName) return sk.editorThemeName.replace(/^builtin:\/\//, "");
   if (!sk.editorTheme) return "";
   try { return jsonStr(jsonGet(jsonParse(sk.editorTheme), "name")) ?? "its theme"; } catch (_) { return "its theme"; }
 }
+// This client's skin's layout asks (`@dock-gap`, `@sidebar-gap`,
+// `@status-bar`), as a `layoutHints` message. The bridge keeps them per
+// browser and combines them (src/webui/mod.rs `combined_gaps`); the editor
+// reserves the cells, and suppresses them while a terminal is attached. A
+// phone (the mobile shell) asks for none. Sent when they change and on every
+// (re)connect.
+let sentHints = "";
+/** function sendLayoutHints(Boolean) => Undefined */
+function sendLayoutHints(force) {
+  const sk = activeSkin();
+  const none = isMobile();
+  /** const msg: {type: String, dock: Number[], sidebar: Number[], statusUnderBody: Boolean} */
+  const msg = { type: "layoutHints", dock: none ? [0, 0, 0, 0] : sk.dockGap,
+    sidebar: none ? [0, 0, 0, 0] : sk.sidebarGap, statusUnderBody: !none && sk.statusUnderBody };
+  const key = JSON.stringify(msg);
+  if (!force && key === sentHints) return;
+  const w = ws;
+  if (!w || w.readyState !== 1) return;
+  sentHints = key;
+  wsSend(msg);
+}
+
 function applySkinEditorTheme() {
   const sk = activeSkin();
-  if (!sk.themeOwner || skinThemeOptOuts().includes(sk.id)) return;
+  if (skinThemeOptOuts().includes(sk.id)) return;
+  // Settings the skin proposes (only `@explorer-side` today): applied through
+  // the editor's own setting, on a pick, with the same per-skin opt-out.
+  if (sk.explorerSide) wsSend({ type: "skinSettings", explorerSide: sk.explorerSide });
+  if (!sk.themeOwner) return;
   if (sk.editorTheme) {
     try { wsSend({ type: "skinTheme", skin: sk.themeOwner, theme: jsonParse(sk.editorTheme), name: undefined }); } catch (_) {}
   } else {
@@ -823,21 +888,20 @@ function renderThemeSwitch() {
     }
     menu.appendChild(row);
     // The active skin's editor theme: applied on a pick unless switched off here.
-    const themeName = on ? skinEditorThemeName(activeSkin()) : "";
-    if (themeName) {
+    const changes = on ? skinEditorChanges(activeSkin()) : "";
+    if (changes) {
       const keep = skinThemeOptOuts().includes(sk.id);
       const opt = div("ts-opt");
       opt.setAttribute("role", "menuitemcheckbox");
       opt.setAttribute("aria-checked", keep ? "false" : "true");
-      opt.innerHTML = '<span class="ts-box">' + (keep ? "" : "✓") + '</span><span>Also use its editor theme <b>'
-        + esc(themeName) + "</b></span>";
-      opt.title = keep ? "Apply this skin's editor theme now, and whenever you pick the skin"
-        : "Leave the editor theme alone when picking this skin (the current theme stays)";
+      opt.innerHTML = '<span class="ts-box">' + (keep ? "" : "✓") + "</span><span>Also apply " + changes + "</span>";
+      opt.title = keep ? "Apply these editor settings now, and whenever you pick this skin"
+        : "Leave the editor's theme and settings alone when picking this skin";
       opt.onclick = e => {
         e.stopPropagation();
         setSkinThemeOptOut(sk.id, !keep);
         if (keep) applySkinEditorTheme();
-        skinNote = { text: keep ? `Editor theme set to “${themeName}”.` : "The editor theme now stays as it is when you pick this skin.", error: false };
+        skinNote = { text: keep ? "Applied the skin's editor settings." : "The editor's theme and settings now stay as they are when you pick this skin.", error: false };
         renderThemeSwitch();
       };
       menu.appendChild(opt);

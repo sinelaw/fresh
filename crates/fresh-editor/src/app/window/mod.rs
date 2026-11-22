@@ -761,6 +761,9 @@ pub struct Window {
     /// derived cache, never a source of truth: `Editor::dock` owns the
     /// real placement and `relayout` recomputes this from it.
     pub(crate) dock_cols: u16,
+    /// Columns a web skin reserved beside the sidebar (`SkinGaps::sidebar_cols`),
+    /// set with the screen geometry; part of the sidebar's column.
+    pub(crate) sidebar_gap_cols: u16,
 
     /// Where the last layout put this window's panes.
     ///
@@ -2680,6 +2683,7 @@ impl Window {
             terminal_width: 80,
             terminal_height: 24,
             dock_cols: 0,
+            sidebar_gap_cols: 0,
             pane_rects: Default::default(),
             preview: None,
             terminal_link_hover: None,

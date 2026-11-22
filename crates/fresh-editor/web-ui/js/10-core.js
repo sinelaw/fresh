@@ -88,12 +88,23 @@ const SHELL={ get pad(){return shellN("--shell-pad");}, get top(){return shellN(
 let APPX=0, APPY=0;
 function syncAppOrigin(){ const r=byId("app").getBoundingClientRect(); APPX=r.left; APPY=r.top; }
 const appH=()=>byId("app").clientHeight;
-// Pixel width of a full-height LEFT dock (0 when the dock is hidden/absent):
-// the columns of the grid the dock's own surface covers.
+// One of the frame's named regions (`regions.layout`, src/webui/skins.rs):
+// dock, menubar, sidebar, body, statusbar, searchOptions, promptLine. Null
+// before the first scene or from an older server.
+/** function layoutRegion(String) => LayoutRegion | Null */
+function layoutRegion(id){
+  const sc=scene;
+  const l=sc?sc.regions.layout:null;
+  return l ? (l.regions.find(r=>r.id===id) ?? null) : null;
+}
+// Pixel offset of the window area from the grid's left edge: the dock's whole
+// column (a skin's gaps around it included). The menu bar starts there.
 function dockWidthPx(){
   const sc=scene;
   if(!sc) return 0;
-  return px(treeDockCells(sc.regions),CW);
+  const mb=layoutRegion("menubar"), body=layoutRegion("body");
+  const x=mb&&mb.open ? mb.x : (body ? Math.min(body.x, layoutRegion("sidebar")?.x ?? body.x) : treeDockCells(sc.regions));
+  return px(x,CW);
 }
 // Wrap the bezel around the WHOLE grid. Runs after every render/frame (the
 // grid size is server-driven) and on window resize; on mobile (or before the
@@ -120,56 +131,47 @@ function layoutShell(){
   const sc=scene;
   if(isMobile()||!sc||!shellTheme()){
     dev.classList.remove("on");
-    document.documentElement.style.setProperty("--clip-left","0px");
     return;
   }
   dev.classList.add("on");
-  // The menubar row spans the full grid width; the dock covers its left half,
-  // in the terminal by painting over it and here by an opaque ground on the
-  // dock's surface. The clip keeps the strip from showing through while the
-  // dock slides in and out (the FLIP in 30-render.js moves the chrome, not the
-  // dock's own items) — see the CSS.
-  document.documentElement.style.setProperty("--clip-left", `${dockWidthPx()}px`);
   dev.style.left=`${APPX-SHELL.side}px`;
   dev.style.top=`${APPY-SHELL.top}px`;
   dev.style.width=`${px(sc.w,CW)+2*SHELL.side}px`;
   dev.style.height=`${px(sc.h,CH)+SHELL.top+SHELL.bot}px`;
 }
 
-// Where the side panels are, for skins: `--dock-*` and `--explorer-*` (x, y, w,
-// h in px from #app's origin) and the whole grid's `--grid-w` / `--grid-h` on :root, and `has-dock` / `has-explorer` /
-// `explorer-right` on <body>. Read off the scene's own projections — the dock's
-// display-list surface and the file explorer's rect — so a skin's furniture can
-// frame a panel without knowing the cell grid. Width 0 when a panel is closed.
+// The frame's layout, for skins, generated from `regions.layout` (the
+// editor's own named regions — nothing guessed here). For every region id:
+// `--<id>-x/y/w/h` on :root (px from #app's origin; 0 when closed), and on
+// <body> `has-<id>` (open), `<id>-left` / `<id>-right` (its side) and
+// `<id>-focused`. Ids: dock, menubar, sidebar (the file explorer's column),
+// body, statusbar, searchOptions, promptLine. Plus `--grid-w/h`.
+const LAYOUT_IDS = ["dock", "menubar", "sidebar", "body", "statusbar", "searchOptions", "promptLine"];
 function publishPanelGeometry(){
   const sc=scene;
   const st=document.documentElement.style, b=document.body;
-  /** const put: (String, Rect | Null) => Undefined */
-  const put=(name,r)=>{
-    st.setProperty(`--${name}-x`,`${r?px(r.x,CW):0}px`); st.setProperty(`--${name}-y`,`${r?px(r.y,CH):0}px`);
-    st.setProperty(`--${name}-w`,`${r?px(r.w,CW):0}px`); st.setProperty(`--${name}-h`,`${r?px(r.h,CH):0}px`);
-    b.classList.toggle(`has-${name}`,!!r);
-  };
-  const dock=sc?treeDockRect(sc.regions):null;
-  const fe=sc?sc.regions.fileExplorer:null;
-  put("dock",dock);
-  put("explorer",fe?fe.rect:null);
+  for(const id of LAYOUT_IDS){
+    const r=layoutRegion(id);
+    const open=!!r&&r.open;
+    st.setProperty(`--${id}-x`,`${r?px(r.x,CW):0}px`); st.setProperty(`--${id}-y`,`${r?px(r.y,CH):0}px`);
+    st.setProperty(`--${id}-w`,`${open&&r?px(r.w,CW):0}px`); st.setProperty(`--${id}-h`,`${open&&r?px(r.h,CH):0}px`);
+    b.classList.toggle(`has-${id}`,open);
+    b.classList.toggle(`${id}-left`,open&&!!r&&r.side==="left");
+    b.classList.toggle(`${id}-right`,open&&!!r&&r.side==="right");
+    b.classList.toggle(`${id}-focused`,open&&!!r&&r.focused===true);
+  }
   st.setProperty("--grid-w",`${sc?px(sc.w,CW):0}px`); st.setProperty("--grid-h",`${sc?px(sc.h,CH):0}px`);
-  b.classList.toggle("explorer-right",!!fe&&!!sc&&fe.rect.x+fe.rect.w>=sc.w);
 }
 
 // Which side panel a pop-up belongs to, by where the editor placed it: "dock"
-// or "explorer" when the rect's centre lies in that panel's column, else "".
-// Lets a skin that sets a panel apart move the panel's pop-ups with it.
+// or "sidebar" when the rect's centre lies in that region's column, else "".
+// Lets a skin that frames a panel style the panel's pop-ups with it.
 /** function panelUnder(Rect) => String */
 function panelUnder(r){
-  const sc=scene;
-  if(!sc) return "";
   const cx=r.x+r.w/2;
-  /** const inCol: (Rect | Null) => Boolean */
-  const inCol=c=>!!c&&cx>=c.x&&cx<c.x+c.w;
-  const fe=sc.regions.fileExplorer;
-  return inCol(treeDockRect(sc.regions))?"dock":inCol(fe?fe.rect:null)?"explorer":"";
+  /** const inCol: (LayoutRegion | Null) => Boolean */
+  const inCol=c=>!!c&&c.open&&cx>=c.x&&cx<c.x+c.w;
+  return inCol(layoutRegion("dock"))?"dock":inCol(layoutRegion("sidebar"))?"sidebar":"";
 }
 
 function setZoom(z){

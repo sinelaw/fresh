@@ -27,12 +27,6 @@
     radial-gradient(60rem 45rem at -8% 22%, rgba(64,140,230,.55), transparent 60%),
     radial-gradient(55rem 40rem at 55% 122%, rgba(255,130,90,.40), transparent 60%),
     linear-gradient(135deg,#12233f 0%,#1a2d4e 45%,#0c1930 100%) #0f1c33}
-  /* The pipeline's menubar row spans the FULL grid width and the dock paints
-     over its left half — in the TUI with cells, here with the opaque ground on
-     the dock's surface. The clip keeps that strip from showing through while
-     the dock slides in or out (the chrome FLIPs, the dock's items do not).
-     layoutShell keeps --clip-left at the dock's pixel width (0 when no dock). */
-  body.theme-cosmos:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
   /* ---- the theme switcher, on the glass ---------------------------------
      `#themeswitch` is frontend furniture (js/15-theme.js) with a token-only

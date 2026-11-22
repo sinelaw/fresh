@@ -118,7 +118,7 @@ const cellAt = e => cellAtXY(e.clientX, e.clientY);
 /** const btn: (UiEvent) => String */
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 /** function sendMouse<T>(T) => Undefined */
-function sendMouse(o){ wsSend({type:"mouse",...o}); }
+function sendMouse(o){ wsSend(tagged("mouse",o)); }
 // A chrome control's click, *completed*.
 //
 // `fresh-ui` derives a click from a press AND a release, and every widget it
@@ -131,17 +131,22 @@ function sendMouse(o){ wsSend({type:"mouse",...o}); }
 // `Click` to `Press` one at a time. Completing the gesture at the source fixes
 // the class instead of the instances, and costs nothing for a handler that
 // acts on the press: it has already run by the time the release arrives.
-/** function sendClick<T>(T) => Undefined */
-function sendClick(o){
-  sendMouse({...o, kind:"down"});
-  sendMouse({kind:"up", button:o.button??"left", col:o.col, row:o.row});
+/** type Click = {button: String, col: Number, row: Number} */
+/** function sendClick(Click) => Undefined */
+function sendClick(o){ sendClickN(o, 1); }
+// The same, with the browser's click count (a double-click's second press
+// carries 2, which primes the editor's own double-click detection).
+/** function sendClickN(Click, Number) => Undefined */
+function sendClickN(o, count){
+  sendMouse({kind:"down", button:o.button, col:o.col, row:o.row, count});
+  sendMouse({kind:"up", button:o.button, col:o.col, row:o.row});
 }
 /** function sendWidget<T>(T) => Undefined */
-function sendWidget(o){ wsSend({type:"widget",...o}); }
+function sendWidget(o){ wsSend(tagged("widget",o)); }
 /** function sendSettings<T>(T) => Undefined */
-function sendSettings(o){ wsSend({type:"settings",...o}); }
+function sendSettings(o){ wsSend(tagged("settings",o)); }
 /** function sendKbedit<T>(T) => Undefined */
-function sendKbedit(o){ wsSend({type:"kbedit",...o}); }
+function sendKbedit(o){ wsSend(tagged("kbedit",o)); }
 // click handler that forwards a SettingsHit (kind + indices) to the editor
 // `double` carries the browser's click count so entry rows (map/list) can
 // open their edit dialog on double-click, exactly like the TUI's

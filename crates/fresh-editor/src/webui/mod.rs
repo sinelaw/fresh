@@ -464,6 +464,15 @@ impl WebBridge {
         acc
     }
 
+    /// The layout hints of every connected browser's skin, combined: the
+    /// largest gap of each wins, so every skin gets at least what it asked for.
+    pub fn combined_gaps(&self) -> crate::view::shell::frame::SkinGaps {
+        self.ws.iter().fold(
+            Default::default(),
+            |acc: crate::view::shell::frame::SkinGaps, c| acc.merge(c.hints),
+        )
+    }
+
     /// Accept, read and apply everything the browsers sent this pass.
     ///
     /// Order matters and matches what the standalone loop always did: drain
@@ -483,16 +492,23 @@ impl WebBridge {
         //    fresh hello. A dropped client may have been the size constraint,
         //    so flag a refit.
         let mut inputs: Vec<Value> = Vec::new();
+        let mut hints_dirty = false;
         let mut i = 0;
         while i < self.ws.len() {
             match self.ws[i].drain_messages() {
                 Ok(msgs) => {
                     for m in &msgs {
                         let v: Value = serde_json::from_str(m).unwrap_or_else(|_| json!({}));
-                        if v.get("type").and_then(|t| t.as_str()) == Some("resize") {
+                        let kind = v.get("type").and_then(|t| t.as_str());
+                        if kind == Some("resize") {
                             if self.ws[i].note_resize(&v) {
                                 out.resize_dirty = true;
                             }
+                        } else if kind == Some("layoutHints") {
+                            // Per client, like its size: the editor gets the
+                            // combination below.
+                            self.ws[i].hints = crate::view::shell::frame::SkinGaps::from_json(&v);
+                            hints_dirty = true;
                         } else {
                             inputs.push(v);
                         }
@@ -503,7 +519,16 @@ impl WebBridge {
                     eprintln!("[webui] ws client disconnected: {e}");
                     self.ws.remove(i);
                     out.resize_dirty = true;
+                    hints_dirty = true;
                 }
+            }
+        }
+        // The skins' layout hints, combined across the clients still here.
+        if hints_dirty {
+            let gaps = self.combined_gaps();
+            if editor.skin_gaps_requested().0 != gaps {
+                editor.set_skin_gaps(gaps);
+                out.mutated = true;
             }
         }
 
@@ -1018,7 +1043,8 @@ fn handle_http(
         (
             "POST",
             p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
-            | "/resize" | "/quit" | "/node" | "/open" | "/skinTheme"),
+            | "/resize" | "/quit" | "/node" | "/open" | "/skinTheme" | "/skinSettings"
+            | "/layoutHints"),
         ) => {
             apply_message(editor, &p[1..], &body_json(), cols, rows);
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
@@ -1097,6 +1123,10 @@ fn apply_message(
         "node" => apply_node(editor, v),
         "open" => apply_open(editor, v),
         "skinTheme" => skins::apply_skin_theme(editor, v),
+        "skinSettings" => skins::apply_skin_settings(editor, v),
+        // Over HTTP (tests, curl) the hints are the editor's outright; a
+        // browser's WebSocket hints are combined per client by the bridge.
+        "layoutHints" => editor.set_skin_gaps(crate::view::shell::frame::SkinGaps::from_json(v)),
         _ => return false,
     }
     true
@@ -1604,6 +1634,10 @@ struct WsSession {
     /// client first reports (seeded to the current effective size on join so it
     /// doesn't transiently shrink the grid before its real viewport arrives).
     want: Option<(u16, u16)>,
+    /// This client's skin's layout hints (`layoutHints`): blank cells around
+    /// the side panels. Combined across clients (`WebBridge::combined_gaps`),
+    /// the largest of each winning.
+    hints: crate::view::shell::frame::SkinGaps,
 }
 
 /// Fingerprint a JSON value for change detection by streaming its serialization
@@ -1650,6 +1684,7 @@ impl WsSession {
             last_recv: Instant::now(),
             last_ping: Instant::now(),
             want: None,
+            hints: Default::default(),
         }
     }
 
@@ -2098,12 +2133,13 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
 
     // --- per-window geometry, read off the frame's tree ---
     let content = editor.body_area().unwrap_or(Rect::new(0, 0, w, h));
-    // The menu bar spans the FULL width at row 0 — exactly as the TUI draws it,
-    // *above* any left dock (the dock/file-explorer carve the rows below). Using
-    // `content.x` here would shift the whole menu right when a left dock opens.
-    // Per-menu title x still comes from the tree's label rectangles (so
-    // titles + their dropdowns align); only the container is full-width.
-    let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
+    // The menu bar's own row, as the frame laid it out: beside the dock, not
+    // over it (the dock's column runs the frame's full height). Per-menu title
+    // x comes from the tree's label rectangles, relative to this.
+    let _ = content;
+    let menubar_rect =
+        Some(editor.shell_region_now(crate::view::shell::frame::HostRegion::MenuBar))
+            .filter(|r| r.height > 0);
 
     // **The rectangles are the tree's here too, and so is the thumb.** The
     // web is a consumer of the same layout the TUI folds (D.3), so a pane's
@@ -2323,6 +2359,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         // Values plugins publish for web skins (`editor.setSkinValue`), by
         // "plugin:name": a skin's furniture binds to them (`data-bind`).
         "skinValues": editor.skin_values(),
+        // The frame's named regions, one list, as the editor laid them out:
+        // what a skin frames and decorates (`skins::layout_json`).
+        "layout": skins::layout_json(editor),
     });
 
     // The active window id lets the frontend tell a WORKSPACE SWITCH (dock

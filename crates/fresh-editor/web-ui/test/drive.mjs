@@ -1386,14 +1386,30 @@ if (process.env.SKINS_DIR) {
     !!document.querySelector('#device .hx-right .gz.hint')
     && document.getElementById('skin-css').textContent.includes('/skins/neon-hive/img/wires.svg')
     && window.fresh.scene.theme.name === 'neon-night'));
-  check('the page publishes panel geometry for skins (--grid-w, --dock-w / --explorer-w, has-* classes)', await page.evaluate(() => {
+  check('the page publishes the editor\'s layout for skins (--sidebar-w from regions.layout, has-* classes)', await page.evaluate(() => {
     const cs = getComputedStyle(document.documentElement), sc = window.fresh.scene;
-    const fe = sc.regions.fileExplorer;
+    const side = sc.regions.layout.regions.find(r => r.id === 'sidebar');
     return parseFloat(cs.getPropertyValue('--grid-w')) > 0
-      && document.body.classList.contains('has-explorer') === !!fe
-      && (!fe || Math.abs(parseFloat(cs.getPropertyValue('--explorer-w')) - fe.rect.w * window.fresh.metrics.cw) < 1);
+      && document.body.classList.contains('has-sidebar') === side.open
+      && Math.abs(parseFloat(cs.getPropertyValue('--sidebar-w')) - (side.open ? side.w : 0) * window.fresh.metrics.cw) < 1;
   }));
 } else skip('skins folder (run via run.sh, which sets SKINS_DIR / FRESH_WEB_SKINS)');
+// The layout list and the room a skin asks for: regions.layout names every
+// region (closed ones at zero size); layoutHints reserve real blank cells, so
+// the dock moves down and the scene says why.
+check('regions.layout lists every named region from the editor\'s model', await page.evaluate(() => {
+  const ids = window.fresh.scene.regions.layout.regions.map(r => r.id).sort().join(',');
+  return ids === 'body,dock,menubar,promptLine,searchOptions,sidebar,statusbar';
+}));
+await page.request.post(URL + '/layoutHints', { data: { dock: [5, 3, 0, 0], sidebar: [0, 0, 4, 2], statusUnderBody: true } });
+await page.waitForTimeout(500);
+check('layout hints reserve cells: the dock starts lower and the gaps are echoed', await page.evaluate(() => {
+  const l = window.fresh.scene.regions.layout;
+  const dock = l.regions.find(r => r.id === 'dock');
+  return l.gaps.dock[0] === 5 && l.gaps.statusUnderBody === true && (!dock.open || dock.y === 5);
+}));
+await page.request.post(URL + '/layoutHints', { data: {} });
+await page.waitForTimeout(300);
 // A skin may bundle an EDITOR theme (theme.json, Fresh's ordinary theme
 // format). Picking the skin applies it through the editor's own theme switch,
 // unless the user opted out for that skin in the picker.
