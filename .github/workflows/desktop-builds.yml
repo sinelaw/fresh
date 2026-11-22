@@ -71,12 +71,12 @@ jobs:
     env:
       VERSION: ${{ inputs.version || '0.0.0-dev' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.5.0
         with:
           node-version: '24'
           cache: npm
@@ -85,7 +85,7 @@ jobs:
       # ── The editor binaries, from the release build job ──────────────────
       - name: Download editor (Linux)
         if: matrix.platform == 'linux' && github.event_name != 'pull_request'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-x86_64-unknown-linux-gnu
           path: artifacts/
@@ -96,7 +96,7 @@ jobs:
 
       - name: Download editor (macOS x86_64)
         if: matrix.platform == 'macos' && github.event_name != 'pull_request'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-x86_64-apple-darwin
           path: artifacts/
@@ -105,7 +105,7 @@ jobs:
 
       - name: Download editor (macOS aarch64)
         if: matrix.platform == 'macos' && github.event_name != 'pull_request'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-aarch64-apple-darwin
           path: artifacts/
@@ -114,7 +114,7 @@ jobs:
 
       - name: Download editor (Windows)
         if: matrix.platform == 'windows' && github.event_name != 'pull_request'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-x86_64-pc-windows-msvc
           path: artifacts/
@@ -153,11 +153,13 @@ jobs:
       # ── …or, on a pull request, built from source with the release flags ─
       - name: Install Rust toolchain (pull request)
         if: github.event_name == 'pull_request'
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Cache Cargo dependencies (pull request)
         if: github.event_name == 'pull_request'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
 
       - name: Build editor (pull request)
         if: github.event_name == 'pull_request'
@@ -300,7 +302,7 @@ jobs:
 
       - name: Upload smoke-test screenshot
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: desktop-smoke-${{ matrix.platform }}
           path: ${{ runner.temp }}/smoke-*.png
@@ -320,7 +322,7 @@ jobs:
           done
 
       - name: Upload Fresh Desktop
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-desktop-${{ matrix.platform }}
           path: |
