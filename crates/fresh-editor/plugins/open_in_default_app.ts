@@ -20,11 +20,13 @@ const LOCAL_FILES = "open-in-default-app-local";
 
 /** A window has a remote machine when its files are on an SSH or
  *  Kubernetes host; a local window's, or a container's (which shares this
- *  computer's files), are here. */
+ *  computer's files), are here. Plugins load before the editor lists its
+ *  windows, so a window not listed yet counts as here: offering the item
+ *  costs nothing, as `openInSystemApp` refuses a file that is not. */
 function updateLocalFilesContext(): void {
   const id = editor.activeWindow();
   const window = editor.listWindows().find((w) => w.id === id);
-  editor.setContext(LOCAL_FILES, window !== undefined && !window.remote);
+  editor.setContext(LOCAL_FILES, window === undefined || !window.remote);
 }
 
 function fileName(path: WindowPath): string {
@@ -93,7 +95,9 @@ editor.registerCommand(
 );
 
 // Contexts are kept per window, and a window's machine can change under it
-// (attaching to a host): set it for whichever window is in front.
+// (attaching to a host): set it for whichever window is in front, and again
+// once the editor is ready and lists its windows.
+editor.on("ready", updateLocalFilesContext);
 editor.on("active_window_changed", updateLocalFilesContext);
 editor.on("authority_changed", updateLocalFilesContext);
 updateLocalFilesContext();

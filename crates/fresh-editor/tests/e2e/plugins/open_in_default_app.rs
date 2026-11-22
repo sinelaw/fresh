@@ -47,6 +47,8 @@ fn setup() -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
     )
     .unwrap();
     harness.wait_for_screen_contains("plugins ready").unwrap();
+    // As the frontends do once started; the plugin checks the window again.
+    harness.editor_mut().fire_ready_hook();
     (temp, project_root, harness)
 }
 
