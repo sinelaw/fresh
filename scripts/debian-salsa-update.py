@@ -4,8 +4,9 @@
 Usage: debian-salsa-update.py [--repo DIR] prepare VERSION [REVISION]
        debian-salsa-update.py [--repo DIR] release
 
-prepare  Import VERSION, set the changelog version, commit, build and
-         lintian. Salsa's debian/ is otherwise left alone. Pushes nothing.
+prepare  Import VERSION (repacked if debian/watch has a Repacksuffix), set the
+         changelog version, commit, build and lintian. Salsa's debian/ is
+         otherwise left alone. Pushes nothing.
 release  Sign, push, open a self-merging Salsa MR into debian/latest, wait
          for CI, upload to mentors and push the debian/<version> tag.
          Unlock the gpg key first.
@@ -92,13 +93,19 @@ def build():
     deb("lintian", "--info", "--display-info", "--pedantic", "--fail-on", "error,warning", changes())
 
 
-def prepare(upstream, revision="1"):
+def prepare(release, revision="1"):
     require_clean()
+    # A repacked orig (Files-Excluded) gets the watch file's suffix, e.g. 0.5.9+ds.
+    suffix = re.search(r"^Repacksuffix:\s*(\S+)", (REPO / "debian/watch").read_text(), re.M | re.I)
+    upstream = release + (suffix[1] if suffix else "")
     if not out("tag", "-l", f"upstream/{upstream}"):
         say(f"importing upstream {upstream}")
-        deb("uscan", "--download-version", upstream, "--destdir", "..")
+        deb("uscan", "--download-version", release, "--destdir", "..")
+        origs = list(REPO.parent.glob(f"fresh-editor_{upstream}.orig.tar.*"))
+        if len(origs) != 1:
+            sys.exit(f"error: expected one orig tarball for {upstream} in {REPO.parent}, found {origs}")
         deb("gbp", "import-orig", "--no-interactive", "--pristine-tar", "--no-sign-tags",
-            f"--upstream-version={upstream}", f"../fresh-editor_{upstream}.orig.tar.gz")
+            f"--upstream-version={upstream}", f"../{origs[0].name}")
 
     changelog = REPO / "debian/changelog"
     def set_changelog(date):
