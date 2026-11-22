@@ -189,6 +189,13 @@ registerHandler("pdfRows", async ({ viewId, from, to, width }) => {
 editor.setRenderedViewRows(view.id, { exact: 118_440 }); // the count, once known
 editor.invalidateRenderedRows(view.id, from, to);        // re-ask for a range
 
+// Navigation (§6) adds options to the same call: the plugin maps between
+// rows and the file, and names its "go to" unit. Each answer may come later.
+//   goTo: { unit: "%goto.page", handler: "pdfRowForPage" },  // Go to Line becomes Go to Page
+//   rowForByte: "pdfRowForByte",   // file byte (or fraction) -> row
+//   bytesForRow: "pdfBytesForRow", // row -> file bytes, for history and switching views
+// Row cells may carry a gutter label: { row, cells, label: "p. 1500" }.
+
 // Kind E: restyle the file's own buffer as it is drawn (exists today).
 editor.on("lines_changed", ({ buffer_id, lines }) => { /* align the visible rows */ });
 ```
@@ -200,21 +207,75 @@ editor.on("lines_changed", ({ buffer_id, lines }) => { /* align the visible rows
 | Which rows or bytes are visible, per pane, and at what width | Mapping a range to the file's pages, records or bytes |
 | Caching answered ranges; placeholders for the rest | Reading only those bytes, where the file lives |
 | Asking again on scroll, resize or invalidation; never waiting | Rendering styled cells for exactly that range |
-| Cursor, selection, copy on loaded rows; scrollbar from the row count | The row count (or estimate); search and "go to" across the whole document |
+| Cursor, selection, copy on loaded rows; the scrollbar from rows, an estimate or file bytes (§6) | The row count or estimate; mapping rows to file bytes and back; its "go to" unit and gutter labels; search across the whole document |
 | Keeping the file's one buffer and tab; never writing a rendering | Saying when rendered rows are stale |
 
-## 6. Open questions
+## 6. Navigation: the scrollbar, Go to Line, Go to byte offset
 
-* **Extent.** A rendering whose length is unknown until laid out: how the
-  scrollbar and "go to end" behave on an estimate, and how a revision moves
-  the user's place.
+Navigation follows what the editor already does for a huge text file: a file
+over the large-file threshold opens without a line index, so its gutter shows
+byte offsets, its scrollbar is proportional to bytes (`MarkerBasis::Bytes` in
+`view/scrollbar_marker.rs`), and Go to Line offers to scan the file for a line
+index first ("Scan Line Index", run where the file lives). Positions get more
+exact as more is known, and nothing waits for the whole file. Lazy views keep
+that shape.
+
+**Kind E — the file's own text.** Nothing changes: it is the file's buffer.
+The scrollbar uses the bases it uses today (rows, lines, or bytes on an
+unscanned large file); Go to Line, Go to byte offset, the gutter and position
+history are the file's own. A plugin that adds rows (virtual lines, wrapping
+of wide cells) is drawn under the visual-row basis as Markdown compose is.
+"Go to row 3,000,000" of a CSV is Go to Line, except where quoted line breaks
+make records and lines differ; there the plugin can offer its own "go to
+record", answered with a byte offset.
+
+**Kind A — a separate rendering.** Its positions are rendered rows, which are
+not the file's lines or bytes, so each navigation needs a basis the plugin
+can honour:
+
+| | Exact row count known | Only an estimate | Nothing known yet |
+|---|---|---|---|
+| **Scrollbar** | Proportional to rows, like a scanned file | Proportional to the estimate; when the plugin revises it, the row on screen stays put and the thumb moves | Proportional to the file's bytes, like an unscanned large file: the plugin maps a byte fraction to rows |
+| **Dragging the thumb / Page Down far** | Asks for the target rows | Asks for rows at the estimated position; the plugin answers with the true rows there | Asks the plugin for the rows at that fraction of the file |
+
+* **The plugin maps between rows and the file.** Two questions the editor can
+  ask, each answered later (the editor shows placeholders meanwhile, as for
+  rows): *which rows does file byte B (or fraction F) start at*, and *which
+  file bytes make row R*. A hex view answers both by arithmetic; a PDF answers
+  with the page that holds an object; an EPUB with the chapter's entry. A
+  plugin that cannot map a direction says so, and the editor offers only what
+  it can do.
+* **The gutter shows the plugin's labels,** as a large file shows byte offsets
+  instead of line numbers: page numbers, chapter names, hex offsets. The
+  plugin returns a label per row with the row's cells, or none.
+* **Go to Line** in a view means its own unit, which the plugin names: "Go to
+  Page" for a PDF, "Go to Chapter" for an EPUB, "Go to Offset" for hex. The
+  plugin resolves the input to a row; the editor jumps there and asks for the
+  rows. Without a named unit, Go to Line goes to a rendered row, which is
+  only meaningful with an exact row count.
+* **Go to byte offset** maps through the plugin from file byte to row. It is
+  the natural jump for a hex view and for "show me where this byte is"; for a
+  PDF it lands on the page that holds the byte, if the plugin can tell.
+* **Position history and bookmarks** keep a row and, when the plugin gave
+  one, the file bytes the row came from. A revised estimate moves rows; the
+  file anchor does not, so a jump back asks the plugin for the row of that
+  anchor rather than trusting the stale row number.
+* **Switching between text and a view** keeps the place where it can: the
+  file byte under the cursor in text becomes a row through the plugin, and
+  back.
+
+## 7. Open questions
+
+* **Extent.** How often a plugin may revise an estimate before a moving thumb
+  is a distraction, and what "go to end" does on an estimate (ask the plugin
+  for its last rows, as §6 does for any far jump).
 * **Width.** Images and reflowed text depend on the pane's width, so a resize
   invalidates everything; two panes of different widths need two caches.
 * **Placeholders.** What an unanswered row shows, and whether a short delay
   before showing it avoids flicker.
 * **Positions.** What cursor, selection, search and copy mean on rows that are
-  not loaded; how a view position maps back to a place in the file (for "go
-  to definition", bookmarks, position history).
+  not loaded, and what a plugin that cannot map rows to file bytes loses
+  (§6: history falls back to row numbers).
 * **Pictures.** Whether images want a canvas (design C) next to rows, and pixel
   graphics (Kitty/Sixel) later.
 * **Restore.** Groups are rebuilt by plugins after a restart, so a file shown
@@ -222,7 +283,7 @@ editor.on("lines_changed", ({ buffer_id, lines }) => { /* align the visible rows
 * **Defaults.** "Always open .pdf with …" is routing a file type to a view when
   it opens; it builds on this and is separate work.
 
-## 7. Phasing
+## 8. Phasing
 
 1. **#3838**, simplified to the parts that are sound: plugin items in the explorer
    and tab menus, `openInSystemApp`, and Open With as a plugin. A viewer is
