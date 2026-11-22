@@ -807,7 +807,8 @@ unloaded.
 The options are checked when the call is made; options that don't
 match the type (for example a misspelled field name or an unknown
 `scope`) make the call throw, as does a `handler` name another plugin
-already uses.
+has already registered (with a menu item, `registerCommand` or a
+timer). Returns whether the item was sent to the editor.
 
 
 @example
@@ -834,13 +835,14 @@ Add an item to the tabs' right-click menu. It is offered on the tabs
 `scope` names, after the editor's own items, in the order plugins
 added them.
 
-Choosing it calls `handler` with a `TabMenuTarget`: the tab's buffer
-and the `WindowPath` of the file it shows. Items are dropped when the
-plugin is unloaded.
+Choosing it calls `handler` with a `TabMenuTarget`: the tab's window,
+split and buffer, and the `WindowPath` of the file it shows. Items are
+dropped when the plugin is unloaded.
 
 The options are checked when the call is made; options that don't
 match the type make the call throw, as does a `handler` name another
-plugin already uses.
+plugin has already registered (with a menu item, `registerCommand` or
+a timer). Returns whether the item was sent to the editor.
 
 ```typescript
 addTabMenuItem(opts: TabMenuItemOptions): boolean;

@@ -8050,7 +8050,8 @@ impl JsEditorApi {
     /// The options are checked when the call is made; options that don't
     /// match the type (for example a misspelled field name or an unknown
     /// `scope`) make the call throw, as does a `handler` name another plugin
-    /// already uses.
+    /// has already registered (with a menu item, `registerCommand` or a
+    /// timer). Returns whether the item was sent to the editor.
     ///
     /// @param opts - The item
     ///
@@ -8074,7 +8075,7 @@ impl JsEditorApi {
             opts.label,
             fresh_core::api::PluginContextMenuPlacement::FileExplorer(opts.scope),
             opts.handler,
-            opts.when,
+            opts.context,
         )
     }
 
@@ -8083,13 +8084,14 @@ impl JsEditorApi {
     /// `scope` names, after the editor's own items, in the order plugins
     /// added them.
     ///
-    /// Choosing it calls `handler` with a `TabMenuTarget`: the tab's buffer
-    /// and the `WindowPath` of the file it shows. Items are dropped when the
-    /// plugin is unloaded.
+    /// Choosing it calls `handler` with a `TabMenuTarget`: the tab's window,
+    /// split and buffer, and the `WindowPath` of the file it shows. Items are
+    /// dropped when the plugin is unloaded.
     ///
     /// The options are checked when the call is made; options that don't
     /// match the type make the call throw, as does a `handler` name another
-    /// plugin already uses.
+    /// plugin has already registered (with a menu item, `registerCommand` or
+    /// a timer). Returns whether the item was sent to the editor.
     ///
     /// @param opts - The item
     #[plugin_api(ts_return = "boolean")]
@@ -8103,7 +8105,7 @@ impl JsEditorApi {
             opts.label,
             fresh_core::api::PluginContextMenuPlacement::Tab(opts.scope),
             opts.handler,
-            opts.when,
+            opts.context,
         )
     }
 
@@ -8116,7 +8118,7 @@ impl JsEditorApi {
         label: String,
         placement: fresh_core::api::PluginContextMenuPlacement,
         handler_name: String,
-        when: Option<String>,
+        context: Option<String>,
     ) -> fresh_js::Result<bool> {
         // The host calls the handler by name when the item is chosen, and a
         // name resolves to one plugin (as for `registerCommand` and timers):
@@ -8150,7 +8152,7 @@ impl JsEditorApi {
                     label,
                     handler: handler_name,
                     placement,
-                    when,
+                    context,
                 },
             })
             .is_ok())
@@ -8171,8 +8173,8 @@ impl JsEditorApi {
     /// has a `remote` entry in `listWindows()`.
     ///
     /// @param path - The file: a `WindowPath` (as a file explorer or tab
-    /// menu item's handler receives), a `LocalPath`, or a path of the active
-    /// window, relative to its folder or absolute
+    /// menu item's handler receives), an absolute `LocalPath`, or a path of
+    /// the active window, relative to its folder or absolute
     #[plugin_api(
         async_promise,
         js_name = "openInSystemApp",

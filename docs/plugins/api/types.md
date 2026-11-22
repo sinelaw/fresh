@@ -1306,11 +1306,12 @@ type FileExplorerMenuItemOptions = {
   */
   handler: string;
   /**
-  * A context (see `setContext`) the item depends on: while it is not
-  * set in the window, the item is shown greyed out and cannot be chosen.
-  * Omit for an item that is always available.
+  * A context the item depends on, as `setContext` sets it and
+  * `registerCommand`'s `context` names it: while it is not set in the
+  * window, the item is shown greyed out and cannot be chosen. Omit for an
+  * item that is always available.
   */
-  when?: string;
+  context?: string;
 };
 ```
 
@@ -1332,11 +1333,14 @@ was chosen on.
 
 ```typescript
 type FileExplorerMenuTarget = {
+  /**
+  * Whether the entry is a file or a folder.
+  */
   kind: FileExplorerEntryKind;
   /**
-  * The entry, on the filesystem of the window whose explorer it is
-  * (`path.window`), spelled as the editor opens it: a symbolic link
-  * resolved, so it matches the `path` of the entry's buffer if it is open.
+  * The entry as the explorer shows it, on the filesystem of the window
+  * whose explorer it is (`path.window`). A symbolic link is not resolved;
+  * `findBufferByPath` finds the entry's buffer if it is open.
   */
   path: WindowPath;
 };
@@ -4548,11 +4552,12 @@ type TabMenuItemOptions = {
   */
   handler: string;
   /**
-  * A context (see `setContext`) the item depends on: while it is not
-  * set in the window, the item is shown greyed out and cannot be chosen.
-  * Omit for an item that is always available.
+  * A context the item depends on, as `setContext` sets it and
+  * `registerCommand`'s `context` names it: while it is not set in the
+  * window, the item is shown greyed out and cannot be chosen. Omit for an
+  * item that is always available.
   */
-  when?: string;
+  context?: string;
 };
 ```
 
@@ -4577,6 +4582,10 @@ type TabMenuTarget = {
   * `listBuffers(windowId)`.
   */
   windowId: number;
+  /**
+  * The split (pane) whose tab bar the tab is in.
+  */
+  splitId: number;
   /**
   * The buffer the tab shows.
   */

@@ -118,12 +118,13 @@ pub struct ContextMenuRow {
 }
 
 impl ContextMenuRow {
-    fn plugin(entry: &PluginMenuEntry) -> Self {
+    /// The `index`th of a menu's plugin rows.
+    fn plugin(index: usize, entry: &PluginMenuEntry) -> Self {
         Self {
             label: entry.label.clone(),
-            // A handler name belongs to one plugin (the runtime refuses
-            // another's), so this names one row.
-            id: format!("plugin:{}", entry.handler),
+            // A plugin can give two items one handler, so the row's place
+            // among the plugin rows is part of its name.
+            id: format!("plugin:{index}:{}", entry.handler),
             destructive: false,
             disabled: !entry.enabled,
         }
@@ -237,6 +238,8 @@ pub enum TabMenuChoice {
     Plugin {
         handler: String,
     },
+    /// A plugin's item that is greyed out: choosing it does nothing.
+    Disabled,
 }
 
 impl TabContextMenu {
@@ -273,7 +276,12 @@ impl TabContextMenu {
                 destructive: i.destructive(),
                 disabled: false,
             })
-            .chain(self.plugin_items.iter().map(ContextMenuRow::plugin))
+            .chain(
+                self.plugin_items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| ContextMenuRow::plugin(i, entry)),
+            )
             .collect()
     }
 
@@ -285,21 +293,14 @@ impl TabContextMenu {
         }
         let entry = self
             .plugin_items
-            .get(self.menu.highlighted - builtin.len())
-            .filter(|entry| entry.enabled)?;
-        Some(TabMenuChoice::Plugin {
-            handler: entry.handler.clone(),
+            .get(self.menu.highlighted - builtin.len())?;
+        Some(if entry.enabled {
+            TabMenuChoice::Plugin {
+                handler: entry.handler.clone(),
+            }
+        } else {
+            TabMenuChoice::Disabled
         })
-    }
-
-    /// Whether the highlighted row is a disabled one, which choosing
-    /// leaves the menu open.
-    pub fn highlighted_is_disabled(&self) -> bool {
-        self.menu
-            .highlighted
-            .checked_sub(self.items().len())
-            .and_then(|i| self.plugin_items.get(i))
-            .is_some_and(|entry| !entry.enabled)
     }
 }
 
@@ -570,6 +571,8 @@ pub enum FileExplorerMenuChoice {
         handler: String,
         target: fresh_core::api::FileExplorerMenuTarget,
     },
+    /// A plugin's item that is greyed out: choosing it does nothing.
+    Disabled,
 }
 
 impl FileExplorerContextMenu {
@@ -626,7 +629,12 @@ impl FileExplorerContextMenu {
                 destructive: i.destructive(),
                 disabled: false,
             })
-            .chain(self.plugin_entries().iter().map(ContextMenuRow::plugin))
+            .chain(
+                self.plugin_entries()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| ContextMenuRow::plugin(i, entry)),
+            )
             .collect()
     }
 
@@ -637,24 +645,15 @@ impl FileExplorerContextMenu {
             return Some(FileExplorerMenuChoice::Builtin(*item));
         }
         let plugin = self.plugin_items.as_ref()?;
-        let entry = plugin
-            .items
-            .get(self.menu.highlighted - builtin.len())
-            .filter(|entry| entry.enabled)?;
-        Some(FileExplorerMenuChoice::Plugin {
-            handler: entry.handler.clone(),
-            target: plugin.target.clone(),
+        let entry = plugin.items.get(self.menu.highlighted - builtin.len())?;
+        Some(if entry.enabled {
+            FileExplorerMenuChoice::Plugin {
+                handler: entry.handler.clone(),
+                target: plugin.target.clone(),
+            }
+        } else {
+            FileExplorerMenuChoice::Disabled
         })
-    }
-
-    /// Whether the highlighted row is a disabled one, which choosing
-    /// leaves the menu open.
-    pub fn highlighted_is_disabled(&self) -> bool {
-        self.menu
-            .highlighted
-            .checked_sub(self.items().len())
-            .and_then(|i| self.plugin_entries().get(i))
-            .is_some_and(|entry| !entry.enabled)
     }
 }
 
@@ -706,7 +705,7 @@ mod tests {
         assert_eq!(rows.len(), own + 1);
         assert_eq!(menu.menu.item_count, own + 1);
         assert_eq!(rows[own].label, "Plugin Item");
-        assert_eq!(rows[own].id, "plugin:plugin_tab_item");
+        assert_eq!(rows[own].id, "plugin:0:plugin_tab_item");
 
         let mut menu = menu;
         menu.menu.highlighted = own;
@@ -767,10 +766,7 @@ mod tests {
         let own = TabContextMenuItem::all().len();
         assert!(menu.rows()[own].disabled);
         menu.menu.highlighted = own;
-        assert!(menu.highlighted_is_disabled());
-        assert_eq!(menu.highlighted_item(), None);
-        menu.menu.highlighted = 0;
-        assert!(!menu.highlighted_is_disabled());
+        assert_eq!(menu.highlighted_item(), Some(TabMenuChoice::Disabled));
     }
 
     #[test]

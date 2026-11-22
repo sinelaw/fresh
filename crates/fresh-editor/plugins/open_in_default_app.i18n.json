@@ -4,6 +4,7 @@
     "cmd.open_in_default_app_desc": "Отваря текущия файл в програмата, която този компютър използва за типа му",
     "menu.open_in_default_app": "Отваряне в програмата по подразбиране",
     "status.no_file": "Този раздел не показва файл",
+    "status.opening": "%{name} се отваря в приложението по подразбиране на системата…",
     "status.opened": "%{name} е отворен в програмата по подразбиране на системата",
     "status.not_local": "%{name} не е на този компютър",
     "status.failed": "%{name} не може да се отвори в програмата по подразбиране на системата: %{error}"
@@ -13,6 +14,7 @@
     "cmd.open_in_default_app_desc": "Otevře aktuální soubor v aplikaci, kterou tento počítač používá pro jeho typ",
     "menu.open_in_default_app": "Otevřít ve výchozí aplikaci",
     "status.no_file": "Tato karta nezobrazuje soubor",
+    "status.opening": "Otevírání %{name} ve výchozí aplikaci systému…",
     "status.opened": "%{name} otevřen ve výchozí aplikaci systému",
     "status.not_local": "%{name} není na tomto počítači",
     "status.failed": "%{name} nelze otevřít ve výchozí aplikaci systému: %{error}"
@@ -22,6 +24,7 @@
     "cmd.open_in_default_app_desc": "Die aktuelle Datei in der App öffnen, die dieser Computer für ihren Typ verwendet",
     "menu.open_in_default_app": "In Standard-App öffnen",
     "status.no_file": "Dieser Tab zeigt keine Datei",
+    "status.opening": "%{name} wird in der Standard-App des Systems geöffnet…",
     "status.opened": "%{name} in der Standard-App des Systems geöffnet",
     "status.not_local": "%{name} liegt nicht auf diesem Computer",
     "status.failed": "%{name} konnte nicht in der Standard-App des Systems geöffnet werden: %{error}"
@@ -31,6 +34,7 @@
     "cmd.open_in_default_app_desc": "Open the current file in the app this computer uses for its type",
     "menu.open_in_default_app": "Open in Default App",
     "status.no_file": "This tab does not show a file",
+    "status.opening": "Opening %{name} in the system's default app…",
     "status.opened": "Opened %{name} in the system's default app",
     "status.not_local": "%{name} is not on this computer",
     "status.failed": "Could not open %{name} in the system's default app: %{error}"
@@ -40,6 +44,7 @@
     "cmd.open_in_default_app_desc": "Abre el archivo actual en la aplicación que este equipo usa para su tipo",
     "menu.open_in_default_app": "Abrir en la aplicación predeterminada",
     "status.no_file": "Esta pestaña no muestra un archivo",
+    "status.opening": "Abriendo %{name} en la aplicación predeterminada del sistema…",
     "status.opened": "%{name} abierto en la aplicación predeterminada del sistema",
     "status.not_local": "%{name} no está en este equipo",
     "status.failed": "No se pudo abrir %{name} en la aplicación predeterminada del sistema: %{error}"
@@ -49,6 +54,7 @@
     "cmd.open_in_default_app_desc": "Ouvre le fichier actuel dans l'application que cet ordinateur utilise pour son type",
     "menu.open_in_default_app": "Ouvrir dans l'application par défaut",
     "status.no_file": "Cet onglet n'affiche pas de fichier",
+    "status.opening": "Ouverture de %{name} dans l'application par défaut du système…",
     "status.opened": "%{name} ouvert dans l'application par défaut du système",
     "status.not_local": "%{name} n'est pas sur cet ordinateur",
     "status.failed": "Impossible d'ouvrir %{name} dans l'application par défaut du système : %{error}"
@@ -58,6 +64,7 @@
     "cmd.open_in_default_app_desc": "Apre il file corrente nell'app che questo computer usa per il suo tipo",
     "menu.open_in_default_app": "Apri nell'app predefinita",
     "status.no_file": "Questa scheda non mostra un file",
+    "status.opening": "Apertura di %{name} nell'app predefinita del sistema…",
     "status.opened": "%{name} aperto nell'app predefinita del sistema",
     "status.not_local": "%{name} non è su questo computer",
     "status.failed": "Impossibile aprire %{name} nell'app predefinita del sistema: %{error}"
@@ -67,6 +74,7 @@
     "cmd.open_in_default_app_desc": "このコンピューターがその種類に使うアプリで現在のファイルを開きます",
     "menu.open_in_default_app": "既定のアプリで開く",
     "status.no_file": "このタブはファイルを表示していません",
+    "status.opening": "%{name} をシステムの既定のアプリで開いています…",
     "status.opened": "%{name} をシステムの既定のアプリで開きました",
     "status.not_local": "%{name} はこのコンピューター上にありません",
     "status.failed": "%{name} をシステムの既定のアプリで開けませんでした: %{error}"
@@ -76,6 +84,7 @@
     "cmd.open_in_default_app_desc": "이 컴퓨터가 해당 형식에 사용하는 앱으로 현재 파일을 엽니다",
     "menu.open_in_default_app": "기본 앱으로 열기",
     "status.no_file": "이 탭은 파일을 표시하지 않습니다",
+    "status.opening": "시스템 기본 앱에서 %{name} 여는 중…",
     "status.opened": "%{name}을(를) 시스템 기본 앱으로 열었습니다",
     "status.not_local": "%{name}은(는) 이 컴퓨터에 없습니다",
     "status.failed": "%{name}을(를) 시스템 기본 앱으로 열 수 없습니다: %{error}"
@@ -85,6 +94,7 @@
     "cmd.open_in_default_app_desc": "Abre o arquivo atual no aplicativo que este computador usa para o tipo dele",
     "menu.open_in_default_app": "Abrir no aplicativo padrão",
     "status.no_file": "Esta aba não mostra um arquivo",
+    "status.opening": "Abrindo %{name} no app padrão do sistema…",
     "status.opened": "%{name} aberto no aplicativo padrão do sistema",
     "status.not_local": "%{name} não está neste computador",
     "status.failed": "Não foi possível abrir %{name} no aplicativo padrão do sistema: %{error}"
@@ -94,6 +104,7 @@
     "cmd.open_in_default_app_desc": "Открывает текущий файл в приложении, которое этот компьютер использует для его типа",
     "menu.open_in_default_app": "Открыть в приложении по умолчанию",
     "status.no_file": "Эта вкладка не показывает файл",
+    "status.opening": "Открытие %{name} в приложении по умолчанию…",
     "status.opened": "%{name} открыт в приложении системы по умолчанию",
     "status.not_local": "%{name} находится не на этом компьютере",
     "status.failed": "Не удалось открыть %{name} в приложении системы по умолчанию: %{error}"
@@ -103,6 +114,7 @@
     "cmd.open_in_default_app_desc": "เปิดไฟล์ปัจจุบันในแอปที่คอมพิวเตอร์เครื่องนี้ใช้กับไฟล์ชนิดนี้",
     "menu.open_in_default_app": "เปิดในแอปเริ่มต้น",
     "status.no_file": "แท็บนี้ไม่ได้แสดงไฟล์",
+    "status.opening": "กำลังเปิด %{name} ในแอปเริ่มต้นของระบบ…",
     "status.opened": "เปิด %{name} ในแอปเริ่มต้นของระบบแล้ว",
     "status.not_local": "%{name} ไม่ได้อยู่บนคอมพิวเตอร์เครื่องนี้",
     "status.failed": "ไม่สามารถเปิด %{name} ในแอปเริ่มต้นของระบบ: %{error}"
@@ -112,6 +124,7 @@
     "cmd.open_in_default_app_desc": "Відкриває поточний файл у програмі, яку цей комп'ютер використовує для його типу",
     "menu.open_in_default_app": "Відкрити в типовій програмі",
     "status.no_file": "Ця вкладка не показує файл",
+    "status.opening": "Відкриття %{name} у програмі за замовчуванням…",
     "status.opened": "%{name} відкрито в типовій програмі системи",
     "status.not_local": "%{name} не на цьому комп'ютері",
     "status.failed": "Не вдалося відкрити %{name} у типовій програмі системи: %{error}"
@@ -121,6 +134,7 @@
     "cmd.open_in_default_app_desc": "Mở tệp hiện tại bằng ứng dụng mà máy tính này dùng cho loại tệp đó",
     "menu.open_in_default_app": "Mở bằng ứng dụng mặc định",
     "status.no_file": "Thẻ này không hiển thị tệp",
+    "status.opening": "Đang mở %{name} bằng ứng dụng mặc định của hệ thống…",
     "status.opened": "Đã mở %{name} trong ứng dụng mặc định của hệ thống",
     "status.not_local": "%{name} không nằm trên máy tính này",
     "status.failed": "Không thể mở %{name} trong ứng dụng mặc định của hệ thống: %{error}"
@@ -130,6 +144,7 @@
     "cmd.open_in_default_app_desc": "用本机为该文件类型设置的应用打开当前文件",
     "menu.open_in_default_app": "用默认应用打开",
     "status.no_file": "此标签页未显示文件",
+    "status.opening": "正在用系统默认应用打开 %{name}…",
     "status.opened": "已用系统默认应用打开 %{name}",
     "status.not_local": "%{name} 不在这台计算机上",
     "status.failed": "无法用系统默认应用打开 %{name}：%{error}"

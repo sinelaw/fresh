@@ -33,6 +33,8 @@ function fileName(path: WindowPath): string {
 
 async function openInDefaultApp(path: WindowPath): Promise<void> {
   const name = fileName(path);
+  // The launcher can take a moment to answer.
+  editor.setStatus(editor.t("status.opening", { name }));
   const result = await editor.openInSystemApp(path);
   switch (result.kind) {
     case "opened":
@@ -73,14 +75,14 @@ editor.addFileExplorerMenuItem({
   label: editor.t("menu.open_in_default_app"),
   scope: "file",
   handler: "open_in_default_app_explorer",
-  when: LOCAL_FILES,
+  context: LOCAL_FILES,
 });
 
 editor.addTabMenuItem({
   label: editor.t("menu.open_in_default_app"),
   scope: "fileTab",
   handler: "open_in_default_app_tab",
-  when: LOCAL_FILES,
+  context: LOCAL_FILES,
 });
 
 editor.registerCommand(

@@ -15,6 +15,7 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | `lsp_help.ts` | Install instructions when a language server is missing (all languages whose helper only offers install help) |
 | `search_replace.ts` | Search and replace functionality |
 | `path_complete.ts` | Path completion in prompts |
+| `open_in_default_app.ts` | Open in Default App: opens a file in the app this computer uses for its type, from the file explorer's and tabs' right-click menus and the command palette |
 
 ### Orchestrator
 

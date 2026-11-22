@@ -5,7 +5,8 @@
 //! The test plugin's handlers write what they were called with to the status
 //! bar, so every assertion is on the rendered screen.
 
-use crate::common::harness::{copy_plugin_lib, layout, EditorTestHarness};
+use crate::common::context_menu::{click_text, right_click_explorer_entry, right_click_tab};
+use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
@@ -32,16 +33,27 @@ editor.addTabMenuItem({
   scope: "fileTab",
   handler: "ctx_file_tab",
 });
+registerHandler("ctx_any_tab", (t: TabMenuTarget) => {
+  editor.setStatus(`ANY TAB ${t.path === null ? "no file" : editor.pathBasename(t.path.value)}`);
+});
+editor.addTabMenuItem({
+  label: "On Every Tab",
+  scope: "anyTab",
+  handler: "ctx_any_tab",
+});
 
 // An item that depends on a context, and a command that sets it.
+// Counts its calls, so a call the test did not expect shows.
+let needsCalls = 0;
 registerHandler("ctx_needs", (t: FileExplorerMenuTarget) => {
-  editor.setStatus(`NEEDS ${editor.pathBasename(t.path.value)}`);
+  needsCalls += 1;
+  editor.setStatus(`NEEDS call ${needsCalls} ${editor.pathBasename(t.path.value)}`);
 });
 editor.addFileExplorerMenuItem({
   label: "Needs The Context",
   scope: "file",
   handler: "ctx_needs",
-  when: "test-menu-context",
+  context: "test-menu-context",
 });
 registerHandler("ctx_set", () => {
   editor.setContext("test-menu-context", true);
@@ -90,41 +102,6 @@ fn open_explorer(harness: &mut EditorTestHarness, item: &str) {
         .unwrap();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item(item).unwrap();
-}
-
-/// Right-click `name` where the explorer draws it: the leftmost place it is
-/// drawn below the tab bar.
-fn right_click_explorer_entry(harness: &mut EditorTestHarness, name: &str) {
-    let (col, row) = (layout::TAB_BAR_ROW as u16 + 1..HEIGHT)
-        .filter_map(|row| {
-            let line = harness.screen_row_text(row);
-            let byte = line.find(name)?;
-            Some((line[..byte].chars().count() as u16, row))
-        })
-        .min()
-        .unwrap_or_else(|| panic!("{name} not on screen:\n{}", harness.screen_to_string()));
-    harness.mouse_right_click(col + 1, row).unwrap();
-    harness.render().unwrap();
-}
-
-fn right_click_tab(harness: &mut EditorTestHarness, name: &str) {
-    let bar = harness.get_tab_bar();
-    let byte = bar
-        .find(name)
-        .unwrap_or_else(|| panic!("{name} not in the tab bar: {bar}"));
-    let col = bar[..byte].chars().count() as u16;
-    harness
-        .mouse_right_click(col + 1, layout::TAB_BAR_ROW as u16)
-        .unwrap();
-    harness.render().unwrap();
-}
-
-fn click_text(harness: &mut EditorTestHarness, text: &str) {
-    let (col, row) = harness
-        .find_text_on_screen(text)
-        .unwrap_or_else(|| panic!("{text} not on screen:\n{}", harness.screen_to_string()));
-    harness.mouse_click(col + 1, row).unwrap();
-    harness.render().unwrap();
 }
 
 fn dismiss_menu(harness: &mut EditorTestHarness) {
@@ -178,7 +155,9 @@ fn a_file_tab_item_is_offered_on_file_tabs_and_gets_the_file() {
         "a file-tab item on a panel's tab:\n{}",
         harness.screen_to_string()
     );
-    dismiss_menu(&mut harness);
+    // An "anyTab" item is, and gets no file.
+    click_text(&mut harness, "On Every Tab");
+    harness.wait_for_screen_contains("ANY TAB no file").unwrap();
 
     right_click_tab(&mut harness, "notes.txt");
     harness.wait_for_screen_contains("Name The File").unwrap();
@@ -204,7 +183,6 @@ fn an_item_whose_context_is_not_set_is_shown_but_does_nothing() {
         "the menu closed:\n{}",
         harness.screen_to_string()
     );
-    assert!(!harness.screen_to_string().contains("NEEDS notes.txt"));
     dismiss_menu(&mut harness);
 
     // Once the plugin sets the context, it runs.
@@ -226,5 +204,8 @@ fn an_item_whose_context_is_not_set_is_shown_but_does_nothing() {
         .wait_for_screen_contains("Needs The Context")
         .unwrap();
     click_text(&mut harness, "Needs The Context");
-    harness.wait_for_screen_contains("NEEDS notes.txt").unwrap();
+    // Its first call: the click on the greyed-out item called nothing.
+    harness
+        .wait_for_screen_contains("NEEDS call 1 notes.txt")
+        .unwrap();
 }

@@ -21,26 +21,21 @@ impl Editor {
         use crate::app::types::{ContextMenuKind, FileExplorerMenuChoice, TabMenuChoice};
         match kind {
             ContextMenuKind::Tab => {
-                // A disabled row is not a choice: the menu stays open.
-                if self
-                    .active_window()
-                    .tab_context_menu
-                    .as_ref()
-                    .is_some_and(|m| m.highlighted_is_disabled())
-                {
-                    return Ok(());
-                }
                 let selected = self
                     .active_window()
                     .tab_context_menu
                     .as_ref()
                     .and_then(|m| Some((m.highlighted_item()?, m.buffer_id, m.split_id)));
+                // A disabled row is not a choice: the menu stays open.
+                if matches!(selected, Some((TabMenuChoice::Disabled, ..))) {
+                    return Ok(());
+                }
                 self.active_window_mut().close_context_menus();
                 match selected {
                     Some((TabMenuChoice::Builtin(item), buffer_id, split_id)) => {
                         return self.execute_tab_context_menu_action(item, buffer_id, split_id);
                     }
-                    Some((TabMenuChoice::Plugin { handler }, buffer_id, _)) => {
+                    Some((TabMenuChoice::Plugin { handler }, buffer_id, split_id)) => {
                         let window = self.active_window_id();
                         let path = self
                             .tab_file(buffer_id)
@@ -52,12 +47,13 @@ impl Editor {
                             &handler,
                             &fresh_core::api::TabMenuTarget {
                                 window_id: window,
+                                split_id: split_id.0,
                                 buffer_id,
                                 path,
                             },
                         );
                     }
-                    None => {}
+                    Some((TabMenuChoice::Disabled, ..)) | None => {}
                 }
             }
             ContextMenuKind::NewTab => {
@@ -72,20 +68,15 @@ impl Editor {
                 }
             }
             ContextMenuKind::FileExplorer => {
-                // A disabled row is not a choice: the menu stays open.
-                if self
-                    .active_window()
-                    .file_explorer_context_menu
-                    .as_ref()
-                    .is_some_and(|m| m.highlighted_is_disabled())
-                {
-                    return Ok(());
-                }
                 let selected = self
                     .active_window()
                     .file_explorer_context_menu
                     .as_ref()
                     .and_then(|m| m.highlighted_item());
+                // A disabled row is not a choice: the menu stays open.
+                if selected == Some(FileExplorerMenuChoice::Disabled) {
+                    return Ok(());
+                }
                 self.active_window_mut().close_context_menus();
                 match selected {
                     Some(FileExplorerMenuChoice::Builtin(item)) => {
@@ -94,7 +85,7 @@ impl Editor {
                     Some(FileExplorerMenuChoice::Plugin { handler, target }) => {
                         self.run_plugin_menu_handler(&handler, &target);
                     }
-                    None => {}
+                    Some(FileExplorerMenuChoice::Disabled) | None => {}
                 }
             }
             ContextMenuKind::CloseSplit => {
@@ -140,9 +131,9 @@ impl Editor {
                 label: item.label.clone(),
                 handler: item.handler.clone(),
                 enabled: item
-                    .when
+                    .context
                     .as_ref()
-                    .is_none_or(|when| contexts.contains(when)),
+                    .is_none_or(|context| contexts.contains(context)),
             })
             .collect()
     }
@@ -176,7 +167,11 @@ impl Editor {
                     );
                     tracing::error!("menu item {handler}: {e}");
                 }
-                None => {}
+                None => {
+                    self.set_status_message(
+                        fresh_i18n::t!("status.plugin_manager_unavailable").to_string(),
+                    );
+                }
             }
         }
         #[cfg(not(feature = "plugins"))]

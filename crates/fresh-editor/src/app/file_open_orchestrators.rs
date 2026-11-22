@@ -1314,6 +1314,7 @@ impl crate::app::window::Window {
     /// computer's filesystem — everything but a remote agent's (SSH,
     /// Kubernetes), connected or not. The same split as `WindowInfo.remote`,
     /// which is how plugins tell.
+    #[cfg(feature = "plugins")]
     pub(crate) fn files_are_on_this_computer(&self) -> bool {
         self.authority_spec.remote_backend_info(false).is_none()
     }

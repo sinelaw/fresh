@@ -555,6 +555,10 @@ pub type SystemOpener =
 /// is what says whether the file opened: an error is a launcher that could
 /// not be started or that failed. Some launchers stay until the app they
 /// started closes, so this is called off the editor thread.
+///
+/// The launcher is started here, not through the window's `ProcessSpawner`:
+/// it has to run on the machine the user sees, whatever window the file is
+/// in, and only files on this computer reach it (`files_are_on_this_computer`).
 pub fn default_system_opener() -> SystemOpener {
     std::sync::Arc::new(|path: &std::path::Path| {
         #[cfg(feature = "runtime")]

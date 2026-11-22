@@ -7222,12 +7222,13 @@ pub struct FileExplorerMenuItemOptions {
     /// Name of the handler (see `registerHandler`) called with a
     /// `FileExplorerMenuTarget` when the item is chosen.
     pub handler: String,
-    /// A context (see `setContext`) the item depends on: while it is not
-    /// set in the window, the item is shown greyed out and cannot be chosen.
-    /// Omit for an item that is always available.
+    /// A context the item depends on, as `setContext` sets it and
+    /// `registerCommand`'s `context` names it: while it is not set in the
+    /// window, the item is shown greyed out and cannot be chosen. Omit for an
+    /// item that is always available.
     #[serde(default)]
     #[ts(optional)]
-    pub when: Option<String>,
+    pub context: Option<String>,
 }
 
 /// Options for `editor.addTabMenuItem`: one plugin item in the tabs'
@@ -7243,12 +7244,13 @@ pub struct TabMenuItemOptions {
     /// Name of the handler (see `registerHandler`) called with a
     /// `TabMenuTarget` when the item is chosen.
     pub handler: String,
-    /// A context (see `setContext`) the item depends on: while it is not
-    /// set in the window, the item is shown greyed out and cannot be chosen.
-    /// Omit for an item that is always available.
+    /// A context the item depends on, as `setContext` sets it and
+    /// `registerCommand`'s `context` names it: while it is not set in the
+    /// window, the item is shown greyed out and cannot be chosen. Omit for an
+    /// item that is always available.
     #[serde(default)]
     #[ts(optional)]
-    pub when: Option<String>,
+    pub context: Option<String>,
 }
 
 /// A path on a window's filesystem: the value `editor.windowPath(window,
@@ -7280,10 +7282,11 @@ pub enum FileLocation {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FileExplorerMenuTarget {
+    /// Whether the entry is a file or a folder.
     pub kind: FileExplorerEntryKind,
-    /// The entry, on the filesystem of the window whose explorer it is
-    /// (`path.window`), spelled as the editor opens it: a symbolic link
-    /// resolved, so it matches the `path` of the entry's buffer if it is open.
+    /// The entry as the explorer shows it, on the filesystem of the window
+    /// whose explorer it is (`path.window`). A symbolic link is not resolved;
+    /// `findBufferByPath` finds the entry's buffer if it is open.
     #[ts(type = "WindowPath")]
     pub path: WindowPath,
 }
@@ -7298,6 +7301,9 @@ pub struct TabMenuTarget {
     /// `listBuffers(windowId)`.
     #[ts(type = "number")]
     pub window_id: crate::WindowId,
+    /// The split (pane) whose tab bar the tab is in.
+    #[ts(type = "number")]
+    pub split_id: SplitId,
     /// The buffer the tab shows.
     #[ts(type = "number")]
     pub buffer_id: BufferId,
@@ -7325,8 +7331,8 @@ pub struct PluginContextMenuItem {
     /// The plugin's handler, called with the menu's target.
     pub handler: String,
     pub placement: PluginContextMenuPlacement,
-    /// The context the item depends on; see the options' `when`.
-    pub when: Option<String>,
+    /// The context the item depends on; see the options' `context`.
+    pub context: Option<String>,
 }
 
 /// How `openInSystemApp` went.

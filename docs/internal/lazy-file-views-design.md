@@ -73,10 +73,10 @@ The editor's model (on master):
 * All of them rely on one identity: **the buffer for file X holds X's text.**
 
 The tempting shortcut is a read-only virtual buffer for the viewer that
-*counts* as the file's tab. It was tried, and it keeps one tab per file only
-for the opens taught about it, while breaking the identity for everything
-else: a project replace applies its edits to the viewer and leaves the file
-unchanged; an LSP rename edits the viewer; recovered unsaved work can land in
+*counts* as the file's tab. That keeps one tab per file only for the opens
+taught about it, while breaking the identity for everything else: a project
+replace applies its edits to the viewer and leaves the file unchanged; an LSP
+rename edits the viewer; recovered unsaved work can land in
 a buffer that cannot be saved; the explorer's preview or Live Grep's closes
 the viewer; renaming or deleting the file leaves the viewer claiming a path
 that is gone; and opening with an encoding still makes a second tab.
@@ -129,7 +129,8 @@ The notes behind the grid:
   so F is good enough as a start.
 
 No single design serves all four. The split is between **a rendering that is
-not the file's text** (PDF, EPUB, images: A, or C for pictures) and **the
+not the file's text** (PDF, EPUB, a hex dump: A; images: C, or A drawing
+them as text cells until C exists) and **the
 file's own text drawn differently** (CSV: E). A and E turn out to be one
 contract with two kinds of position.
 
@@ -152,7 +153,8 @@ contract with two kinds of position.
   the view shows the file again. Nothing writes a rendering to the file, and
   every place that looks a file up by path keeps finding its real buffer.
 
-**Kind A: rows of a separate rendering** (PDF, EPUB, images in text form).
+**Kind A: rows of a separate rendering** (PDF, EPUB, a hex dump, an image
+drawn as text cells until a canvas exists).
 
 * Positions are rows of the rendering. The plugin says how many there are, or
   an estimate it revises as it learns (an EPUB's chapters as they are laid
@@ -163,7 +165,7 @@ contract with two kinds of position.
   "go to page" and search across the whole document go through the plugin,
   which knows the mapping and can answer with a row to jump to.
 
-**Kind E: the file's own text, drawn differently** (CSV, logs, hex of a binary).
+**Kind E: the file's own text, drawn differently** (CSV, logs).
 
 * Positions are byte ranges of the file's real buffer, which is loaded lazily
   as any huge file is.
@@ -187,7 +189,7 @@ registerHandler("pdfRows", async ({ viewId, from, to, width }) => {
   const cells = await renderPagesFor(from, to, width);   // reads only those pages
   editor.setRenderedRows(viewId, from, cells);           // styled cells, row by row
 });
-editor.setRenderedViewRows(view.id, { exact: 118_440 }); // the count, once known
+editor.setRenderedRowCount(view.id, { exact: 118_440 }); // the count, once known
 editor.invalidateRenderedRows(view.id, from, to);        // re-ask for a range
 
 // Navigation (§6) adds options to the same call: the plugin maps between

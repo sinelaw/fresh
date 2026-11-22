@@ -1219,11 +1219,12 @@ type FileExplorerMenuItemOptions = {
 	*/
 	handler: string;
 	/**
-	* A context (see `setContext`) the item depends on: while it is not
-	* set in the window, the item is shown greyed out and cannot be chosen.
-	* Omit for an item that is always available.
+	* A context the item depends on, as `setContext` sets it and
+	* `registerCommand`'s `context` names it: while it is not set in the
+	* window, the item is shown greyed out and cannot be chosen. Omit for an
+	* item that is always available.
 	*/
-	when?: string;
+	context?: string;
 };
 /**
 * Which file explorer entries a plugin's right-click menu item is offered
@@ -1241,11 +1242,14 @@ type FileExplorerEntryKind = "file" | "directory";
 * was chosen on.
 */
 type FileExplorerMenuTarget = {
+	/**
+	* Whether the entry is a file or a folder.
+	*/
 	kind: FileExplorerEntryKind;
 	/**
-	* The entry, on the filesystem of the window whose explorer it is
-	* (`path.window`), spelled as the editor opens it: a symbolic link
-	* resolved, so it matches the `path` of the entry's buffer if it is open.
+	* The entry as the explorer shows it, on the filesystem of the window
+	* whose explorer it is (`path.window`). A symbolic link is not resolved;
+	* `findBufferByPath` finds the entry's buffer if it is open.
 	*/
 	path: WindowPath;
 };
@@ -1268,11 +1272,12 @@ type TabMenuItemOptions = {
 	*/
 	handler: string;
 	/**
-	* A context (see `setContext`) the item depends on: while it is not
-	* set in the window, the item is shown greyed out and cannot be chosen.
-	* Omit for an item that is always available.
+	* A context the item depends on, as `setContext` sets it and
+	* `registerCommand`'s `context` names it: while it is not set in the
+	* window, the item is shown greyed out and cannot be chosen. Omit for an
+	* item that is always available.
 	*/
-	when?: string;
+	context?: string;
 };
 /**
 * Which tabs a plugin's right-click menu item is offered for (see
@@ -1289,6 +1294,10 @@ type TabMenuTarget = {
 	* `listBuffers(windowId)`.
 	*/
 	windowId: number;
+	/**
+	* The split (pane) whose tab bar the tab is in.
+	*/
+	splitId: number;
 	/**
 	* The buffer the tab shows.
 	*/
@@ -8317,7 +8326,8 @@ interface EditorAPI {
 	* The options are checked when the call is made; options that don't
 	* match the type (for example a misspelled field name or an unknown
 	* `scope`) make the call throw, as does a `handler` name another plugin
-	* already uses.
+	* has already registered (with a menu item, `registerCommand` or a
+	* timer). Returns whether the item was sent to the editor.
 	* 
 	* @param opts - The item
 	* 
@@ -8337,13 +8347,14 @@ interface EditorAPI {
 	* `scope` names, after the editor's own items, in the order plugins
 	* added them.
 	* 
-	* Choosing it calls `handler` with a `TabMenuTarget`: the tab's buffer
-	* and the `WindowPath` of the file it shows. Items are dropped when the
-	* plugin is unloaded.
+	* Choosing it calls `handler` with a `TabMenuTarget`: the tab's window,
+	* split and buffer, and the `WindowPath` of the file it shows. Items are
+	* dropped when the plugin is unloaded.
 	* 
 	* The options are checked when the call is made; options that don't
 	* match the type make the call throw, as does a `handler` name another
-	* plugin already uses.
+	* plugin has already registered (with a menu item, `registerCommand` or
+	* a timer). Returns whether the item was sent to the editor.
 	* 
 	* @param opts - The item
 	*/
@@ -8363,8 +8374,8 @@ interface EditorAPI {
 	* has a `remote` entry in `listWindows()`.
 	* 
 	* @param path - The file: a `WindowPath` (as a file explorer or tab
-	* menu item's handler receives), a `LocalPath`, or a path of the active
-	* window, relative to its folder or absolute
+	* menu item's handler receives), an absolute `LocalPath`, or a path of
+	* the active window, relative to its folder or absolute
 	*/
 	openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<OpenInSystemAppResult>;
 	/**

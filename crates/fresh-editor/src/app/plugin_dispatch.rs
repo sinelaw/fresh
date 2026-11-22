@@ -3527,9 +3527,12 @@ impl Editor {
                     return;
                 };
                 // A relative path is the window's, as for every file API.
-                window
+                let path = window
                     .resolve_open_path(std::path::Path::new(&path.value))
-                    .canonical_path
+                    .canonical_path;
+                // Canonical paths are verbatim (`\\?\C:\…`) on Windows, which
+                // `start` does not take; plugins see paths without the prefix.
+                crate::primitives::path_utils::strip_verbatim_prefix(&path).into_owned()
             }
         };
         let opener = std::sync::Arc::clone(&self.system_opener);
@@ -3537,9 +3540,14 @@ impl Editor {
             Ok(()) => OpenInSystemAppResult::Opened,
             Err(error) => OpenInSystemAppResult::Failed { error },
         };
+        // Running the launcher here instead would make the editor wait on it.
         let Some(sender) = self.async_bridge.as_ref().map(|bridge| bridge.sender()) else {
-            let result = open();
-            self.resolve_json_callback(request_id, result);
+            self.resolve_json_callback(
+                request_id,
+                OpenInSystemAppResult::Failed {
+                    error: "the editor cannot wait for the launcher here".to_string(),
+                },
+            );
             return;
         };
         // The opener waits for the system's launcher to finish, which is what

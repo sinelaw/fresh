@@ -125,7 +125,7 @@ openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<
 
 | Parameter | Description |
 |-----------|-------------|
-| `path` | The file: a `WindowPath` (as a file explorer or tab menu item's handler receives), a `LocalPath`, or a path of the active window, relative to its folder or absolute |
+| `path` | The file: a `WindowPath` (as a file explorer or tab menu item's handler receives), an absolute `LocalPath`, or a path of the active window, relative to its folder or absolute |
 
 ## Paths
 

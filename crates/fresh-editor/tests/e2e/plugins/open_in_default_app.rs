@@ -6,7 +6,8 @@
 //! and succeeds only for the file it should be asked to open; assertions are
 //! on the rendered screen.
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, layout, EditorTestHarness};
+use crate::common::context_menu::{click_text, right_click_explorer_entry, right_click_tab};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
@@ -50,12 +51,13 @@ fn setup() -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
 }
 
 /// A stand-in for the system's launcher: launches nothing, and succeeds only
-/// for notes.txt.
-fn expect_notes(harness: &mut EditorTestHarness) {
+/// for the project's notes.txt, named by its full path.
+fn expect_notes(harness: &mut EditorTestHarness, root: &Path) {
+    let notes = root.join("notes.txt").canonicalize().unwrap();
     harness
         .editor_mut()
-        .set_system_opener(Arc::new(|path: &Path| -> Result<(), String> {
-            if path.ends_with("notes.txt") {
+        .set_system_opener(Arc::new(move |path: &Path| -> Result<(), String> {
+            if path == notes {
                 Ok(())
             } else {
                 Err(format!("asked for {}", path.display()))
@@ -69,41 +71,6 @@ fn open_explorer(harness: &mut EditorTestHarness, item: &str) {
         .unwrap();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item(item).unwrap();
-}
-
-/// Right-click `name` where the explorer draws it: the leftmost place it is
-/// drawn below the tab bar.
-fn right_click_explorer_entry(harness: &mut EditorTestHarness, name: &str) {
-    let (col, row) = (layout::TAB_BAR_ROW as u16 + 1..HEIGHT)
-        .filter_map(|row| {
-            let line = harness.screen_row_text(row);
-            let byte = line.find(name)?;
-            Some((line[..byte].chars().count() as u16, row))
-        })
-        .min()
-        .unwrap_or_else(|| panic!("{name} not on screen:\n{}", harness.screen_to_string()));
-    harness.mouse_right_click(col + 1, row).unwrap();
-    harness.render().unwrap();
-}
-
-fn right_click_tab(harness: &mut EditorTestHarness, name: &str) {
-    let bar = harness.get_tab_bar();
-    let byte = bar
-        .find(name)
-        .unwrap_or_else(|| panic!("{name} not in the tab bar: {bar}"));
-    let col = bar[..byte].chars().count() as u16;
-    harness
-        .mouse_right_click(col + 1, layout::TAB_BAR_ROW as u16)
-        .unwrap();
-    harness.render().unwrap();
-}
-
-fn click_text(harness: &mut EditorTestHarness, text: &str) {
-    let (col, row) = harness
-        .find_text_on_screen(text)
-        .unwrap_or_else(|| panic!("{text} not on screen:\n{}", harness.screen_to_string()));
-    harness.mouse_click(col + 1, row).unwrap();
-    harness.render().unwrap();
 }
 
 fn open_file(harness: &mut EditorTestHarness, path: &Path) {
@@ -126,8 +93,8 @@ fn run_from_palette(harness: &mut EditorTestHarness) {
 
 #[test]
 fn the_explorer_opens_a_file_in_its_default_app() {
-    let (_temp, _root, mut harness) = setup();
-    expect_notes(&mut harness);
+    let (_temp, root, mut harness) = setup();
+    expect_notes(&mut harness, &root);
     open_explorer(&mut harness, "notes.txt");
 
     right_click_explorer_entry(&mut harness, "notes.txt");
@@ -153,7 +120,7 @@ fn the_explorer_offers_it_on_files_only() {
 #[test]
 fn a_file_tab_opens_its_file_in_its_default_app() {
     let (_temp, root, mut harness) = setup();
-    expect_notes(&mut harness);
+    expect_notes(&mut harness, &root);
     open_file(&mut harness, &root.join("notes.txt"));
 
     right_click_tab(&mut harness, "notes.txt");
@@ -165,7 +132,7 @@ fn a_file_tab_opens_its_file_in_its_default_app() {
 #[test]
 fn the_palette_opens_the_active_file_in_its_default_app() {
     let (_temp, root, mut harness) = setup();
-    expect_notes(&mut harness);
+    expect_notes(&mut harness, &root);
     open_file(&mut harness, &root.join("notes.txt"));
 
     run_from_palette(&mut harness);
@@ -208,6 +175,9 @@ fn the_editor_keeps_working_while_the_launcher_runs() {
     open_file(&mut harness, &root.join("notes.txt"));
 
     run_from_palette(&mut harness);
+    harness
+        .wait_for_screen_contains("Opening notes.txt")
+        .unwrap();
     // The launcher is still running, and typing still reaches the buffer.
     harness.type_text("typed meanwhile ").unwrap();
     harness.wait_for_screen_contains("typed meanwhile").unwrap();

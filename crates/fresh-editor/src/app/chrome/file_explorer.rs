@@ -191,9 +191,9 @@ impl Editor {
             (false, false)
         };
         // Plugins' items act on one entry: the one just selected, when it is
-        // neither the root nor one of several. Its path is spelled as opening
-        // it would (a symbolic link resolved), so a plugin finds the entry's
-        // buffer by it.
+        // neither the root nor one of several. Its path is the explorer's own:
+        // nothing is asked of the filesystem to open a menu, which on a remote
+        // window would be a round trip per right-click.
         let plugin_items = self
             .file_explorer()
             .and_then(|explorer| explorer.get_selected_entry())
@@ -204,29 +204,21 @@ impl Editor {
                 } else {
                     fresh_core::api::FileExplorerEntryKind::File
                 };
-                (kind, entry.path.as_path().to_path_buf())
+                (kind, entry.path.to_wire_string().into_owned())
             })
-            .map(|(kind, path)| {
-                let window = self.active_window();
-                let value = window
-                    .resolve_open_path(&path)
-                    .canonical_path
-                    .to_string_lossy()
-                    .into_owned();
-                crate::app::types::ExplorerPluginItems {
-                    target: fresh_core::api::FileExplorerMenuTarget {
-                        kind,
-                        path: fresh_core::api::WindowPath {
-                            window: window.id,
-                            value,
-                        },
+            .map(|(kind, value)| crate::app::types::ExplorerPluginItems {
+                target: fresh_core::api::FileExplorerMenuTarget {
+                    kind,
+                    path: fresh_core::api::WindowPath {
+                        window: self.active_window_id(),
+                        value,
                     },
-                    items: self.plugin_menu_entries(|placement| {
-                        matches!(placement,
-                            fresh_core::api::PluginContextMenuPlacement::FileExplorer(scope)
-                                if scope.offers(kind))
-                    }),
-                }
+                },
+                items: self.plugin_menu_entries(|placement| {
+                    matches!(placement,
+                        fresh_core::api::PluginContextMenuPlacement::FileExplorer(scope)
+                            if scope.offers(kind))
+                }),
             })
             .filter(|plugin| !plugin.items.is_empty());
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::FileExplorer;
