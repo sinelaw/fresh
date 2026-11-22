@@ -8339,8 +8339,10 @@ interface EditorAPI {
 	/**
 	* Open a file in the app this computer uses for its type, as a file
 	* manager's double click would: an image viewer for a picture, a PDF
-	* reader for a PDF. Resolves as soon as the system's launcher has been
-	* started; `{ kind: "failed" }` means none could be.
+	* reader for a PDF. The editor carries on meanwhile. Resolves once the
+	* system's launcher has finished, with `{ kind: "failed" }` if it could
+	* not open the file; a launcher that stays until its app closes keeps
+	* the promise pending until then.
 	* 
 	* Only for files on this computer: a `LocalPath`, or a path of a
 	* window whose files are here (a local window, or a container's, which

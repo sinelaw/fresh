@@ -551,14 +551,15 @@ impl OpenMachine {
 pub type SystemOpener =
     std::sync::Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>;
 
-/// Starts the system's launcher for `path` and returns without waiting for
-/// it: some launchers stay until the app they started exits. An error means
-/// no launcher could be started.
+/// Runs the system's launcher for `path` and waits for it to finish, which
+/// is what says whether the file opened: an error is a launcher that could
+/// not be started or that failed. Some launchers stay until the app they
+/// started closes, so this is called off the editor thread.
 pub fn default_system_opener() -> SystemOpener {
     std::sync::Arc::new(|path: &std::path::Path| {
         #[cfg(feature = "runtime")]
         {
-            open::that_detached(path).map_err(|e| e.to_string())
+            open::that(path).map_err(|e| e.to_string())
         }
         #[cfg(not(feature = "runtime"))]
         {

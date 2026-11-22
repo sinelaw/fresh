@@ -289,3 +289,38 @@ fn picking_an_open_viewer_closes_the_text_tab() {
         .wait_until(|h| tabs_named(h, "photo.fakeimg") == 1 && !h.screen_to_string().contains(TEXT))
         .unwrap();
 }
+
+#[test]
+fn the_editor_keeps_working_while_the_system_app_launcher_runs() {
+    let (_temp, root, mut harness) = setup();
+    // Stands in for a launcher that stays until its app closes: it returns
+    // only once the test lets it.
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    harness
+        .editor_mut()
+        .set_system_opener(Arc::new(move |_path: &Path| -> Result<(), String> {
+            released
+                .lock()
+                .map_err(|e| e.to_string())?
+                .recv()
+                .map_err(|e| e.to_string())
+        }));
+    open_file(&mut harness, &root.join("photo.fakeimg"));
+
+    palette_open_with(&mut harness);
+    pick(&mut harness, "System Default App");
+    // The launcher is still running, and typing still reaches the buffer.
+    harness.type_text("typed meanwhile ").unwrap();
+    harness.wait_for_screen_contains("typed meanwhile").unwrap();
+    assert!(
+        !harness.screen_to_string().contains("Opened photo.fakeimg"),
+        "reported opened before the launcher finished:\n{}",
+        harness.screen_to_string()
+    );
+
+    release.send(()).unwrap();
+    harness
+        .wait_for_screen_contains("Opened photo.fakeimg in the system's default app")
+        .unwrap();
+}

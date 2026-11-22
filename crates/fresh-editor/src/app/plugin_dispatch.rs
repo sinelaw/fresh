@@ -3511,7 +3511,8 @@ impl Editor {
     }
 
     /// Open `path` in the app the system uses for its type, when it is a file
-    /// on this computer, and resolve `request_id` with how that went.
+    /// on this computer, and resolve `request_id` with how that went, once
+    /// the system's launcher has finished.
     fn handle_open_in_system_app(&mut self, path: fresh_core::api::FileLocation, request_id: u64) {
         use fresh_core::api::{FileLocation, OpenInSystemAppResult};
         let path = match path {
@@ -3531,11 +3532,42 @@ impl Editor {
                     .canonical_path
             }
         };
-        let result = match (self.system_opener)(&path) {
+        let opener = std::sync::Arc::clone(&self.system_opener);
+        let open = move || match opener(&path) {
             Ok(()) => OpenInSystemAppResult::Opened,
             Err(error) => OpenInSystemAppResult::Failed { error },
         };
-        self.resolve_json_callback(request_id, result);
+        let Some(sender) = self.async_bridge.as_ref().map(|bridge| bridge.sender()) else {
+            let result = open();
+            self.resolve_json_callback(request_id, result);
+            return;
+        };
+        // The opener waits for the system's launcher to finish, which is what
+        // tells it whether the file opened: on a thread of its own, so the
+        // editor never waits. Not the runtime's blocking pool, which quitting
+        // waits on: a launcher that stays until its app closes (`xdg-open`
+        // with no desktop it knows) must not hold up the exit.
+        let spawned = std::thread::Builder::new()
+            .name("open-in-system-app".to_string())
+            .spawn(move || {
+                let result = serde_json::to_string(&open()).map_err(|e| e.to_string());
+                // Fails only once the editor has gone, when no one is waiting.
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(
+                    crate::services::async_bridge::AsyncMessage::PluginCallbackResult {
+                        request_id,
+                        result,
+                    },
+                );
+            });
+        if let Err(e) = spawned {
+            self.resolve_json_callback(
+                request_id,
+                OpenInSystemAppResult::Failed {
+                    error: e.to_string(),
+                },
+            );
+        }
     }
 
     /// Replace the function that opens files in the system's apps, so a
