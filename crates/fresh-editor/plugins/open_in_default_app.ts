@@ -9,10 +9,23 @@ const editor = getEditor();
  *
  * Offered on files in the file explorer's right-click menu, on file tabs in
  * the tab menu, and as a command for the active tab's file. Each use acts on
- * the file of the window it came from; a window whose files are on another
- * machine (SSH, Kubernetes) gets a message instead, as this computer's apps
- * cannot reach them.
+ * the file of the window it came from. In a window whose files are on another
+ * machine (SSH, Kubernetes) this computer's apps cannot reach them: the menu
+ * items are greyed out and the command is hidden there, through a context
+ * this plugin keeps for the active window.
  */
+
+/** Set while the active window's files are on this computer. */
+const LOCAL_FILES = "open-in-default-app-local";
+
+/** A window has a remote machine when its files are on an SSH or
+ *  Kubernetes host; a local window's, or a container's (which shares this
+ *  computer's files), are here. */
+function updateLocalFilesContext(): void {
+  const id = editor.activeWindow();
+  const window = editor.listWindows().find((w) => w.id === id);
+  editor.setContext(LOCAL_FILES, window !== undefined && !window.remote);
+}
 
 function fileName(path: WindowPath): string {
   return editor.pathBasename(path.value) || path.value;
@@ -60,16 +73,25 @@ editor.addFileExplorerMenuItem({
   label: editor.t("menu.open_in_default_app"),
   scope: "file",
   handler: "open_in_default_app_explorer",
+  when: LOCAL_FILES,
 });
 
 editor.addTabMenuItem({
   label: editor.t("menu.open_in_default_app"),
   scope: "fileTab",
   handler: "open_in_default_app_tab",
+  when: LOCAL_FILES,
 });
 
 editor.registerCommand(
   "%cmd.open_in_default_app",
   "%cmd.open_in_default_app_desc",
   "open_in_default_app_active",
+  LOCAL_FILES,
 );
+
+// Contexts are kept per window, and a window's machine can change under it
+// (attaching to a host): set it for whichever window is in front.
+editor.on("active_window_changed", updateLocalFilesContext);
+editor.on("authority_changed", updateLocalFilesContext);
+updateLocalFilesContext();
