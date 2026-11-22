@@ -734,6 +734,10 @@ pub struct PluginTrackedState {
     /// Ids of the edit rule sets from `editor.registerEditRules`. Dropped on
     /// unload, so a disabled or reloaded plugin's rules stop applying.
     pub edit_rule_ids: Vec<String>,
+    /// Whether the plugin added right-click menu items
+    /// (`addFileExplorerMenuItem` / `addTabMenuItem`). They are dropped on
+    /// unload, so a reloaded plugin does not show each item twice.
+    pub has_context_menu_items: bool,
 }
 
 /// Forget a background process id (it exited or a kill was requested), so
@@ -8032,6 +8036,134 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    #[plugin_api(section = "Popups & Menus")]
+    /// Add an item to the file explorer's right-click menu. It is offered
+    /// when a single entry of `scope`'s kind is selected (never on the
+    /// project root), after the editor's own items, in the order plugins
+    /// added them.
+    ///
+    /// Choosing it calls `handler` with a `FileExplorerMenuTarget`: the
+    /// entry's kind and its `WindowPath`, which the file APIs and
+    /// `openInSystemApp` take as is. Items are dropped when the plugin is
+    /// unloaded.
+    ///
+    /// The options are checked when the call is made; options that don't
+    /// match the type (for example a misspelled field name or an unknown
+    /// `scope`) make the call throw.
+    ///
+    /// @param opts - The item
+    ///
+    /// @example
+    /// registerHandler("myPluginReveal", (target: FileExplorerMenuTarget) => {
+    ///   editor.setStatus(target.path.value);
+    /// });
+    /// editor.addFileExplorerMenuItem({
+    ///   label: editor.t("menu.reveal"),
+    ///   scope: "file",
+    ///   handler: "myPluginReveal",
+    /// });
+    pub fn add_file_explorer_menu_item(
+        &self,
+        opts: fresh_core::api::FileExplorerMenuItemOptions,
+    ) -> bool {
+        self.add_context_menu_item(
+            opts.label,
+            fresh_core::api::PluginContextMenuPlacement::FileExplorer(opts.scope),
+            opts.handler,
+        )
+    }
+
+    #[plugin_api(section = "Popups & Menus")]
+    /// Add an item to the tabs' right-click menu. It is offered on the tabs
+    /// `scope` names, after the editor's own items, in the order plugins
+    /// added them.
+    ///
+    /// Choosing it calls `handler` with a `TabMenuTarget`: the tab's buffer
+    /// and the `WindowPath` of the file it shows. Items are dropped when the
+    /// plugin is unloaded.
+    ///
+    /// The options are checked when the call is made; options that don't
+    /// match the type make the call throw.
+    ///
+    /// @param opts - The item
+    pub fn add_tab_menu_item(&self, opts: fresh_core::api::TabMenuItemOptions) -> bool {
+        self.add_context_menu_item(
+            opts.label,
+            fresh_core::api::PluginContextMenuPlacement::Tab(opts.scope),
+            opts.handler,
+        )
+    }
+
+    /// Shared body of the two menu-item methods above.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn add_context_menu_item(
+        &self,
+        label: String,
+        placement: fresh_core::api::PluginContextMenuPlacement,
+        handler_name: String,
+    ) -> bool {
+        // The host calls the handler by name when the item is chosen; this
+        // map tells the runtime which plugin's realm holds that name (as for
+        // `registerCommand` and timers).
+        self.registered_actions.borrow_mut().insert(
+            handler_name.clone(),
+            PluginHandler {
+                plugin_name: self.plugin_name.clone(),
+                handler_name: handler_name.clone(),
+            },
+        );
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .has_context_menu_items = true;
+        self.command_sender
+            .send(PluginCommand::AddContextMenuItem {
+                item: fresh_core::api::PluginContextMenuItem {
+                    plugin_name: self.plugin_name.clone(),
+                    label,
+                    handler: handler_name,
+                    placement,
+                },
+            })
+            .is_ok()
+    }
+
+    #[plugin_api(section = "Files")]
+    /// Open a file in the app this computer uses for its type, as a file
+    /// manager's double click would: an image viewer for a picture, a PDF
+    /// reader for a PDF.
+    ///
+    /// Only for files on this computer: a `LocalPath`, or a path of a
+    /// window whose files are here. A path of a window on another machine
+    /// (SSH, a container) opens nothing and resolves with
+    /// `{ kind: "notLocal" }`; `getAuthorityLabel()` is empty for a window
+    /// whose files are here.
+    ///
+    /// @param path - The file: a `WindowPath` (as a file explorer or tab
+    /// menu item's handler receives), a `LocalPath`, or a string for one of
+    /// the active window's files
+    #[plugin_api(
+        async_promise,
+        js_name = "openInSystemApp",
+        ts_return = "OpenInSystemAppResult"
+    )]
+    #[qjs(rename = "_openInSystemAppStart")]
+    pub fn open_in_system_app_start(
+        &self,
+        _ctx: fresh_js::Ctx<'_>,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        path: fresh_core::api::PluginPath,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::OpenInSystemApp {
+            path,
+            request_id: id,
+        });
+        id
+    }
+
     // See `PluginCommand::SetLspMenuContributions`.
     #[plugin_api(section = "Languages & LSP")]
     /// Contribute (or replace, or clear) menu rows for the LSP-Servers
@@ -11594,6 +11726,15 @@ impl QuickJsBackend {
                 let _ = self.command_sender.send(PluginCommand::ClearPluginTimer {
                     timer_id: *timer_id,
                 });
+            }
+
+            // Drop the plugin's right-click menu items.
+            if tracked.has_context_menu_items {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::RemoveContextMenuItems {
+                        plugin_name: plugin_name.to_string(),
+                    });
             }
 
             // Drop the plugin's edit rules (all of its sets at once).

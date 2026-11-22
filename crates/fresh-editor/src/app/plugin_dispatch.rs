@@ -926,6 +926,17 @@ impl Editor {
             PluginCommand::RemoveMenu { menu_label } => {
                 self.handle_remove_menu(menu_label);
             }
+            PluginCommand::AddContextMenuItem { item } => {
+                self.plugin_context_menu_items.push(item);
+            }
+            PluginCommand::RemoveContextMenuItems { plugin_name } => {
+                self.plugin_context_menu_items
+                    .retain(|item| item.plugin_name != plugin_name);
+            }
+            PluginCommand::OpenInSystemApp { path, request_id } => {
+                let result = self.open_in_system_app(path);
+                self.resolve_json_callback(request_id, result);
+            }
 
             // ==================== Split Commands ====================
             PluginCommand::FocusSplit { split_id } => {
@@ -3501,6 +3512,46 @@ impl Editor {
     }
 
     /// Serialize `value` as JSON and resolve `request_id` as a JS Promise callback.
+    /// Open `path` in the app the system uses for its type, when it is a file
+    /// on this computer: a local path, or one of a window whose files are
+    /// here.
+    fn open_in_system_app(
+        &mut self,
+        path: fresh_core::api::PluginPath,
+    ) -> fresh_core::api::OpenInSystemAppResult {
+        use fresh_core::api::{OpenInSystemAppResult, PluginPath};
+        let path = match path {
+            PluginPath::Local(path) => path,
+            PluginPath::Authority { window, path } => {
+                let window = window.map_or_else(|| self.active_window_id(), fresh_core::WindowId);
+                // A window keyed by a host is another machine's (SSH, or one
+                // not connected yet); a plugin-installed backend such as a
+                // container has a host key too. Only a plain local window's
+                // paths name files here.
+                let local = self
+                    .windows
+                    .get(&window)
+                    .is_some_and(|w| w.host_key().is_none());
+                if !local {
+                    return OpenInSystemAppResult::NotLocal;
+                }
+                path
+            }
+        };
+        let opener = std::sync::Arc::clone(&self.system_opener);
+        match opener(std::path::Path::new(&path)) {
+            Ok(()) => OpenInSystemAppResult::Opened,
+            Err(error) => OpenInSystemAppResult::Failed { error },
+        }
+    }
+
+    /// Replace the function that opens files in the system's apps, so a
+    /// test launches nothing.
+    #[doc(hidden)]
+    pub fn set_system_opener(&mut self, opener: crate::app::SystemOpener) {
+        self.system_opener = opener;
+    }
+
     fn resolve_json_callback<T: serde::Serialize>(&mut self, request_id: u64, value: T) {
         let callback_id = fresh_core::api::JsCallbackId::from(request_id);
         let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());

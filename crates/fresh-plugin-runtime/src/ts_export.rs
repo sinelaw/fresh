@@ -135,6 +135,14 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TsActionPopupAction" | "ActionPopupAction" => Some(decl_with_docs::<ActionPopupAction>(&cfg)),
         "ActionPopupOptions" => Some(decl_with_docs::<ActionPopupOptions>(&cfg)),
         "AddMenuItemOptions" => Some(decl_with_docs::<fresh_core::api::AddMenuItemOptions>(&cfg)),
+        "FileExplorerMenuItemOptions" => Some(decl_with_docs::<fresh_core::api::FileExplorerMenuItemOptions>(&cfg)),
+        "FileExplorerMenuScope" => Some(decl_with_docs::<fresh_core::api::FileExplorerMenuScope>(&cfg)),
+        "FileExplorerEntryKind" => Some(decl_with_docs::<fresh_core::api::FileExplorerEntryKind>(&cfg)),
+        "FileExplorerMenuTarget" => Some(decl_with_docs::<fresh_core::api::FileExplorerMenuTarget>(&cfg)),
+        "TabMenuItemOptions" => Some(decl_with_docs::<fresh_core::api::TabMenuItemOptions>(&cfg)),
+        "TabMenuScope" => Some(decl_with_docs::<fresh_core::api::TabMenuScope>(&cfg)),
+        "TabMenuTarget" => Some(decl_with_docs::<fresh_core::api::TabMenuTarget>(&cfg)),
+        "OpenInSystemAppResult" => Some(decl_with_docs::<fresh_core::api::OpenInSystemAppResult>(&cfg)),
         "TsLspMenuItem" | "LspMenuItem" => Some(decl_with_docs::<fresh_core::api::LspMenuItem>(&cfg)),
         "TsHighlightSpan" => Some(decl_with_docs::<TsHighlightSpan>(&cfg)),
         "FileExplorerDecoration" => Some(decl_with_docs::<FileExplorerDecoration>(&cfg)),
@@ -410,6 +418,14 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsActionPopupAction",             // Used by ActionPopupOptions.actions
     "ActionPopupOptions",              // Used by showActionPopup
     "AddMenuItemOptions",              // Used by addMenuItem
+    "FileExplorerMenuItemOptions",     // Used by addFileExplorerMenuItem
+    "FileExplorerMenuScope",           // Used by FileExplorerMenuItemOptions
+    "FileExplorerEntryKind",           // Used by FileExplorerMenuTarget
+    "FileExplorerMenuTarget",          // Passed to a file explorer menu item's handler
+    "TabMenuItemOptions",              // Used by addTabMenuItem
+    "TabMenuScope",                    // Used by TabMenuItemOptions
+    "TabMenuTarget",                   // Passed to a tab menu item's handler
+    "OpenInSystemAppResult",           // Returned by openInSystemApp
     "TsLspMenuItem",                   // Used by setLspMenuContributions
     "FileExplorerDecoration",          // Used by setFileExplorerDecorations
     "FileExplorerSlotEntry",           // Used by setFileExplorerSlots

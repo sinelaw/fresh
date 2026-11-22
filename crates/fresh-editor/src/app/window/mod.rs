@@ -1550,9 +1550,9 @@ impl Window {
             ContextMenuKind::FileExplorer => self
                 .file_explorer_context_menu
                 .as_ref()?
-                .items()
-                .iter()
-                .map(|i| i.label())
+                .rows()
+                .into_iter()
+                .map(|r| r.label)
                 .collect(),
             ContextMenuKind::NewTab => self
                 .new_tab_menu
@@ -1564,9 +1564,9 @@ impl Window {
             ContextMenuKind::Tab => self
                 .tab_context_menu
                 .as_ref()?
-                .items()
-                .iter()
-                .map(|i| i.label())
+                .rows()
+                .into_iter()
+                .map(|r| r.label)
                 .collect(),
             ContextMenuKind::CloseSplit => self
                 .close_split_menu
@@ -1590,19 +1590,26 @@ impl Window {
                     .iter()
                     .map(|i| V {
                         label: i.label(),
-                        id: i.id(),
+                        id: i.id().to_string(),
                         destructive: i.destructive(),
                     })
                     .collect()
             };
         }
+        let rows = |rows: Vec<crate::app::types::ContextMenuRow>| -> Vec<V> {
+            rows.into_iter()
+                .map(|r| V {
+                    label: r.label,
+                    id: r.id,
+                    destructive: r.destructive,
+                })
+                .collect()
+        };
         let (kind, _) = self.open_context_menu()?;
         Some(match kind {
-            ContextMenuKind::FileExplorer => {
-                view!(self.file_explorer_context_menu.as_ref()?.items())
-            }
+            ContextMenuKind::FileExplorer => rows(self.file_explorer_context_menu.as_ref()?.rows()),
             ContextMenuKind::NewTab => view!(self.new_tab_menu.as_ref()?.items()),
-            ContextMenuKind::Tab => view!(self.tab_context_menu.as_ref()?.items()),
+            ContextMenuKind::Tab => rows(self.tab_context_menu.as_ref()?.rows()),
             ContextMenuKind::CloseSplit => view!(self.close_split_menu.as_ref()?.items()),
         })
     }

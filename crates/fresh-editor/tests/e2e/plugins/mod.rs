@@ -14,6 +14,7 @@ pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod compare_files;
 pub mod config_changed_adoption;
+pub mod context_menu_items;
 pub mod csharp_restore_trust;
 pub mod dashboard;
 pub mod hostile_plugin;

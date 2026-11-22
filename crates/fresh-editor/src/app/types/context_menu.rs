@@ -94,6 +94,49 @@ pub enum ContextMenuKind {
     CloseSplit,
 }
 
+/// A plugin's item in an open right-click menu (see
+/// `addFileExplorerMenuItem` / `addTabMenuItem`): its label, and the
+/// handler that choosing it calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginMenuEntry {
+    pub label: String,
+    pub handler: String,
+}
+
+/// One row of a menu, as both frontends draw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenuRow {
+    pub label: String,
+    /// A stable name for the row, for the web (`data-id`).
+    pub id: String,
+    pub destructive: bool,
+}
+
+impl ContextMenuRow {
+    fn plugin(entry: &PluginMenuEntry) -> Self {
+        Self {
+            label: entry.label.clone(),
+            // Handler names are unique across plugins (the runtime looks
+            // them up by name), so this names one row.
+            id: format!("plugin:{}", entry.handler),
+            destructive: false,
+        }
+    }
+}
+
+/// A menu's width: its own, or wider to fit a plugin's label. A row is
+/// drawn as a space, the label and at least one space more, inside the
+/// border.
+fn width_with_plugin_items(width: u16, plugin_items: &[PluginMenuEntry]) -> u16 {
+    plugin_items
+        .iter()
+        .map(|entry| {
+            let label = crate::primitives::display_width::str_width(&entry.label);
+            u16::try_from(label.saturating_add(4)).unwrap_or(u16::MAX)
+        })
+        .fold(width, u16::max)
+}
+
 /// Tab context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabContextMenuItem {
@@ -174,33 +217,71 @@ pub struct TabContextMenu {
     pub buffer_id: BufferId,
     /// The split ID where the tab is located
     pub split_id: LeafId,
+    /// Plugins' items for this tab, shown after the editor's own.
+    pub plugin_items: Vec<PluginMenuEntry>,
     /// Shared geometry + navigation core (position, highlight, width, items).
     pub menu: ContextMenu,
 }
 
+/// What a tab menu row does when chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabMenuChoice {
+    Builtin(TabContextMenuItem),
+    /// Call this plugin handler with the tab.
+    Plugin {
+        handler: String,
+    },
+}
+
 impl TabContextMenu {
     /// Create a new tab context menu
-    pub fn new(buffer_id: BufferId, split_id: LeafId, x: u16, y: u16) -> Self {
+    pub fn new(
+        buffer_id: BufferId,
+        split_id: LeafId,
+        x: u16,
+        y: u16,
+        plugin_items: Vec<PluginMenuEntry>,
+    ) -> Self {
+        let item_count = TabContextMenuItem::all().len() + plugin_items.len();
+        let width = width_with_plugin_items(TAB_CONTEXT_MENU_WIDTH, &plugin_items);
         Self {
             buffer_id,
             split_id,
-            menu: ContextMenu::new(
-                x,
-                y,
-                TAB_CONTEXT_MENU_WIDTH,
-                TabContextMenuItem::all().len(),
-            ),
+            plugin_items,
+            menu: ContextMenu::new(x, y, width, item_count),
         }
     }
 
-    /// The items this menu presents, in display order.
+    /// The editor's own items, in display order (before the plugins').
     pub fn items(&self) -> &'static [TabContextMenuItem] {
         TabContextMenuItem::all()
     }
 
-    /// Get the currently highlighted item
-    pub fn highlighted_item(&self) -> TabContextMenuItem {
-        TabContextMenuItem::all()[self.menu.highlighted]
+    /// Every row, in display order.
+    pub fn rows(&self) -> Vec<ContextMenuRow> {
+        self.items()
+            .iter()
+            .map(|i| ContextMenuRow {
+                label: i.label(),
+                id: i.id().to_string(),
+                destructive: i.destructive(),
+            })
+            .chain(self.plugin_items.iter().map(ContextMenuRow::plugin))
+            .collect()
+    }
+
+    /// What the highlighted row does.
+    pub fn highlighted_item(&self) -> Option<TabMenuChoice> {
+        let builtin = self.items();
+        if let Some(item) = builtin.get(self.menu.highlighted) {
+            return Some(TabMenuChoice::Builtin(*item));
+        }
+        let entry = self
+            .plugin_items
+            .get(self.menu.highlighted - builtin.len())?;
+        Some(TabMenuChoice::Plugin {
+            handler: entry.handler.clone(),
+        })
     }
 }
 
@@ -448,17 +529,48 @@ pub struct FileExplorerContextMenu {
     pub is_multi_selection: bool,
     /// Whether the sole selected node is the project root
     pub is_root_selected: bool,
+    /// Plugins' items for the entry the menu is about, shown after the
+    /// editor's own. `None` for a menu about several entries or the root.
+    pub plugin_items: Option<ExplorerPluginItems>,
     /// Shared geometry + navigation core (position, highlight, width, items).
     pub menu: ContextMenu,
 }
 
+/// Plugins' items in a file explorer menu, and the entry they act on.
+#[derive(Debug, Clone)]
+pub struct ExplorerPluginItems {
+    pub target: fresh_core::api::FileExplorerMenuTarget,
+    pub items: Vec<PluginMenuEntry>,
+}
+
+/// What a file explorer menu row does when chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileExplorerMenuChoice {
+    Builtin(FileExplorerContextMenuItem),
+    /// Call this plugin handler with the entry.
+    Plugin {
+        handler: String,
+        target: fresh_core::api::FileExplorerMenuTarget,
+    },
+}
+
 impl FileExplorerContextMenu {
-    pub fn new(x: u16, y: u16, is_multi_selection: bool, is_root_selected: bool) -> Self {
-        let item_count = Self::items_for(is_multi_selection, is_root_selected).len();
+    pub fn new(
+        x: u16,
+        y: u16,
+        is_multi_selection: bool,
+        is_root_selected: bool,
+        plugin_items: Option<ExplorerPluginItems>,
+    ) -> Self {
+        let plugin_entries = plugin_items.as_ref().map_or(&[][..], |p| &p.items[..]);
+        let item_count =
+            Self::items_for(is_multi_selection, is_root_selected).len() + plugin_entries.len();
+        let width = width_with_plugin_items(FILE_EXPLORER_CONTEXT_MENU_WIDTH, plugin_entries);
         Self {
             is_multi_selection,
             is_root_selected,
-            menu: ContextMenu::new(x, y, FILE_EXPLORER_CONTEXT_MENU_WIDTH, item_count),
+            plugin_items,
+            menu: ContextMenu::new(x, y, width, item_count),
         }
     }
 
@@ -477,13 +589,40 @@ impl FileExplorerContextMenu {
         }
     }
 
+    /// The editor's own items, in display order (before the plugins').
     pub fn items(&self) -> &'static [FileExplorerContextMenuItem] {
         Self::items_for(self.is_multi_selection, self.is_root_selected)
     }
 
-    /// Get the currently highlighted item.
-    pub fn highlighted_item(&self) -> FileExplorerContextMenuItem {
-        self.items()[self.menu.highlighted]
+    fn plugin_entries(&self) -> &[PluginMenuEntry] {
+        self.plugin_items.as_ref().map_or(&[], |p| &p.items)
+    }
+
+    /// Every row, in display order.
+    pub fn rows(&self) -> Vec<ContextMenuRow> {
+        self.items()
+            .iter()
+            .map(|i| ContextMenuRow {
+                label: i.label(),
+                id: i.id().to_string(),
+                destructive: i.destructive(),
+            })
+            .chain(self.plugin_entries().iter().map(ContextMenuRow::plugin))
+            .collect()
+    }
+
+    /// What the highlighted row does.
+    pub fn highlighted_item(&self) -> Option<FileExplorerMenuChoice> {
+        let builtin = self.items();
+        if let Some(item) = builtin.get(self.menu.highlighted) {
+            return Some(FileExplorerMenuChoice::Builtin(*item));
+        }
+        let plugin = self.plugin_items.as_ref()?;
+        let entry = plugin.items.get(self.menu.highlighted - builtin.len())?;
+        Some(FileExplorerMenuChoice::Plugin {
+            handler: entry.handler.clone(),
+            target: plugin.target.clone(),
+        })
     }
 }
 
@@ -511,6 +650,90 @@ mod tests {
         // Default highlight is the first item — "Close split".
         assert_eq!(menu.highlighted_item(), CloseSplitMenuItem::CloseSplit);
         assert_eq!(menu.items().len(), 2);
+    }
+
+    fn entry(label: &str, handler: &str) -> PluginMenuEntry {
+        PluginMenuEntry {
+            label: label.to_string(),
+            handler: handler.to_string(),
+        }
+    }
+
+    #[test]
+    fn tab_menu_lists_plugin_items_after_its_own() {
+        let menu = TabContextMenu::new(
+            BufferId(1),
+            LeafId(SplitId(1)),
+            0,
+            0,
+            vec![entry("Open With…", "open_with_tab")],
+        );
+        let rows = menu.rows();
+        let own = TabContextMenuItem::all().len();
+        assert_eq!(rows.len(), own + 1);
+        assert_eq!(menu.menu.item_count, own + 1);
+        assert_eq!(rows[own].label, "Open With…");
+        assert_eq!(rows[own].id, "plugin:open_with_tab");
+
+        let mut menu = menu;
+        menu.menu.highlighted = own;
+        assert_eq!(
+            menu.highlighted_item(),
+            Some(TabMenuChoice::Plugin {
+                handler: "open_with_tab".to_string()
+            })
+        );
+        menu.menu.highlighted = 0;
+        assert_eq!(
+            menu.highlighted_item(),
+            Some(TabMenuChoice::Builtin(TabContextMenuItem::Close))
+        );
+    }
+
+    #[test]
+    fn explorer_menu_hands_its_entry_to_plugin_items() {
+        let target = fresh_core::api::FileExplorerMenuTarget {
+            window_id: fresh_core::WindowId(1),
+            kind: fresh_core::api::FileExplorerEntryKind::File,
+            path: fresh_core::api::WindowPath {
+                window: fresh_core::WindowId(1),
+                value: "/p/a.png".to_string(),
+            },
+        };
+        let mut menu = FileExplorerContextMenu::new(
+            0,
+            0,
+            false,
+            false,
+            Some(ExplorerPluginItems {
+                target: target.clone(),
+                items: vec![entry("Open With…", "open_with_explorer")],
+            }),
+        );
+        menu.menu.highlighted = FileExplorerContextMenuItem::all().len();
+        assert_eq!(
+            menu.highlighted_item(),
+            Some(FileExplorerMenuChoice::Plugin {
+                handler: "open_with_explorer".to_string(),
+                target,
+            })
+        );
+    }
+
+    #[test]
+    fn a_long_plugin_label_widens_the_menu() {
+        let narrow = TabContextMenu::new(BufferId(1), LeafId(SplitId(1)), 0, 0, vec![]);
+        assert_eq!(narrow.menu.width, TAB_CONTEXT_MENU_WIDTH);
+        let label = "A label much longer than any of the tab menu's own";
+        let wide = TabContextMenu::new(
+            BufferId(1),
+            LeafId(SplitId(1)),
+            0,
+            0,
+            vec![entry(label, "h")],
+        );
+        // A space before the label and one after, inside the border.
+        assert_eq!(wide.menu.width as usize, label.len() + 4);
     }
 
     #[test]
