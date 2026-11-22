@@ -53,13 +53,16 @@ fn setup() -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
 }
 
 /// A stand-in for the system's launcher: launches nothing, and succeeds only
-/// for the project's notes.txt, named by its full path.
+/// for the project's notes.txt, named by a full path a launcher takes (on
+/// Windows, not the `\\?\` form `start` refuses).
 fn expect_notes(harness: &mut EditorTestHarness, root: &Path) {
     let notes = root.join("notes.txt").canonicalize().unwrap();
     harness
         .editor_mut()
         .set_system_opener(Arc::new(move |path: &Path| -> Result<(), String> {
-            if path == notes {
+            let usable = path.is_absolute() && !path.to_string_lossy().starts_with(r"\\?\");
+            // The same file, however the platform spells its canonical path.
+            if usable && path.canonicalize().ok().as_deref() == Some(notes.as_path()) {
                 Ok(())
             } else {
                 Err(format!("asked for {}", path.display()))
