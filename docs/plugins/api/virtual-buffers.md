@@ -36,36 +36,6 @@ Replaces any previous targets for the buffer; pass `[]` to clear.
 setLineTargets(bufferId: number, targets: LineTarget[]): boolean;
 ```
 
-### `openFileView`
-
-Show a file in its tab as text or in a viewer of yours, keeping the
-file to one tab.
-
-With `{ kind: "viewer", viewerId }` the tab becomes a read-only
-buffer you fill with `setVirtualBufferContent`; `viewerId` is your
-name for the viewer. That buffer is the file's tab: opening the file
-any way (the explorer, Quick Open, `openFile`) goes to it, its
-`BufferInfo.viewing` names the viewer and the file, and nothing ever
-saves it as the file. With `{ kind: "text" }` the tab shows the
-file's text again.
-
-If the file already has a tab in its window, the new view takes that
-tab's place and the old buffer closes; showing it the way it already
-is just goes to the tab. A text tab with unsaved changes is never
-replaced: that resolves with `{ kind: "unsavedChanges" }`.
-
-Acts in the active window, the one the path must belong to. A file
-open in another window resolves with `{ kind: "failed" }`.
-
-```typescript
-openFileView(path: string | WindowPath | AuthorityPath, view: FileView): Promise<OpenFileViewResult>;
-```
-
-| Parameter | Description |
-|-----------|-------------|
-| `path` | The file: a `WindowPath`, or a path of the active window, relative to its folder or absolute |
-| `view` | How to show it |
-
 ### `createVirtualBuffer`
 
 Create a virtual buffer in current split (async, returns buffer and split IDs)

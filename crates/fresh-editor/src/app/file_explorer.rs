@@ -2852,8 +2852,7 @@ impl crate::app::window::Window {
             return RevealOutcome::NoFile;
         };
         // An unnamed buffer is file-backed with an empty path: no file yet.
-        // A plugin's viewer tab reveals the file it shows.
-        let Some(file_path) = metadata.tab_file().filter(|p| !p.as_os_str().is_empty()) else {
+        let Some(file_path) = metadata.file_path().filter(|p| !p.as_os_str().is_empty()) else {
             return RevealOutcome::NoFile;
         };
         let target_path = file_path.clone();

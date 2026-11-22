@@ -3427,9 +3427,7 @@ fn serialize_split_view_state(
         }
 
         if let Some(meta) = buffer_metadata.get(buffer_id) {
-            // A plugin's viewer tab is kept as its file, which comes back as
-            // text: the viewer is the plugin's, and it is not running yet.
-            if let Some(abs_path) = meta.tab_file() {
+            if let Some(abs_path) = meta.file_path() {
                 if abs_path.as_os_str().is_empty() {
                     // Unnamed buffer - reference by recovery ID
                     if let Some(ref recovery_id) = meta.recovery_id {

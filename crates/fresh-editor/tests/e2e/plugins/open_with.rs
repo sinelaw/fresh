@@ -37,7 +37,6 @@ fn setup() -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
     fs::write(plugins_dir.join("test_open_with_viewer.ts"), TEST_VIEWER).unwrap();
     fs::write(project_root.join("photo.fakeimg"), format!("{TEXT}\n")).unwrap();
     fs::create_dir(project_root.join("folder")).unwrap();
-    fs::write(project_root.join("notes.txt"), "some notes\n").unwrap();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         WIDTH,
@@ -267,7 +266,7 @@ fn a_failing_system_app_is_reported() {
 }
 
 #[test]
-fn opening_a_viewed_file_goes_to_its_viewer_tab() {
+fn picking_an_open_viewer_closes_the_text_tab() {
     let (_temp, root, mut harness) = setup();
     let photo = root.join("photo.fakeimg");
     open_file(&mut harness, &photo);
@@ -275,38 +274,20 @@ fn opening_a_viewed_file_goes_to_its_viewer_tab() {
     pick(&mut harness, "Fake Viewer");
     harness.wait_for_screen_contains(VIEWED).unwrap();
 
-    // Another file in front, then the viewed file opened the usual way: it
-    // goes to the viewer, not to a second tab with its text.
-    open_file(&mut harness, &root.join("notes.txt"));
-    harness.wait_for_screen_contains("some notes").unwrap();
+    // Opening the file the usual way gives it a text tab beside the viewer.
     open_file(&mut harness, &photo);
-    harness.wait_for_screen_contains(VIEWED).unwrap();
-    assert_eq!(
-        tabs_named(&harness, "photo.fakeimg"),
-        1,
-        "{}",
-        harness.get_tab_bar()
-    );
-    assert!(!harness.screen_to_string().contains(TEXT));
-}
-
-#[test]
-fn a_new_view_takes_the_old_tabs_place() {
-    let (_temp, root, mut harness) = setup();
-    open_file(&mut harness, &root.join("photo.fakeimg"));
-    open_file(&mut harness, &root.join("notes.txt"));
-    harness.wait_for_screen_contains("some notes").unwrap();
-    open_file(&mut harness, &root.join("photo.fakeimg"));
     harness.wait_for_screen_contains(TEXT).unwrap();
+    harness
+        .wait_until(|h| tabs_named(h, "photo.fakeimg") == 2)
+        .unwrap();
 
+    // Back to the viewer it already has: the text tab goes.
     palette_open_with(&mut harness);
     pick(&mut harness, "Fake Viewer");
     harness.wait_for_screen_contains(VIEWED).unwrap();
-    // Still before notes.txt, where its text tab was.
-    let bar = harness.get_tab_bar();
-    let photo_at = bar.find("photo.fakeimg").unwrap();
-    let notes_at = bar.find("notes.txt").unwrap();
-    assert!(photo_at < notes_at, "tab moved: {bar}");
+    harness
+        .wait_until(|h| tabs_named(h, "photo.fakeimg") == 1 && !h.screen_to_string().contains(TEXT))
+        .unwrap();
 }
 
 #[test]

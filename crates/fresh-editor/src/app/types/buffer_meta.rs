@@ -82,22 +82,6 @@ pub struct BufferMetadata {
     /// before, which is what it goes back to once that editor lets go. Not a
     /// read-only the layout keeps.
     pub open_elsewhere: Option<bool>,
-
-    /// The file this buffer shows in a plugin's viewer (`openFileView`).
-    /// The buffer is virtual, so nothing saves, reverts or sends it to a
-    /// language server as that file; this is what makes it the file's tab
-    /// all the same: opening the file finds it, and a session keeps it as
-    /// the file.
-    pub viewing: Option<FileViewing>,
-}
-
-/// A file a plugin's viewer shows in a virtual buffer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileViewing {
-    /// The file, as opening it would spell it (canonical, host-side).
-    pub path: PathBuf,
-    /// The plugin's name for the viewer.
-    pub viewer_id: String,
 }
 
 impl BufferMetadata {
@@ -107,13 +91,6 @@ impl BufferMetadata {
             BufferKind::File { path, .. } => Some(path),
             BufferKind::Virtual { .. } => None,
         }
-    }
-
-    /// The file this buffer's tab is: its own, or the one a plugin's viewer
-    /// shows in it. Empty for an unnamed buffer, as `file_path` is.
-    pub fn tab_file(&self) -> Option<&PathBuf> {
-        self.file_path()
-            .or_else(|| self.viewing.as_ref().map(|viewing| &viewing.path))
     }
 
     /// Get the LSP-facing URI if this is a file-backed buffer.
@@ -177,7 +154,6 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
-            viewing: None,
         }
     }
 
@@ -200,7 +176,6 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
-            viewing: None,
         }
     }
 
@@ -263,7 +238,6 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
-            viewing: None,
         }
     }
 
@@ -304,7 +278,6 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
-            viewing: None,
         }
     }
 
@@ -425,7 +398,6 @@ impl BufferMetadata {
             synthetic_placeholder: false,
             recovery_id: None,
             open_elsewhere: None,
-            viewing: None,
         }
     }
 

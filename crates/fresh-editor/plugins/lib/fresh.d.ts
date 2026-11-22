@@ -962,12 +962,6 @@ type BufferInfo = {
 	* snapshot at the last `update_plugin_state_snapshot` tick.
 	*/
 	splits: number[];
-	/**
-	* The file this buffer shows in a plugin's viewer (`openFileView`), or
-	* `null`. Such a buffer is virtual, with an empty `path`, and it is
-	* the file's tab: opening the file goes to it.
-	*/
-	viewing: FileViewing | null;
 };
 /**
 * Information about an editor session (plugin-visible). Returned
@@ -1303,48 +1297,6 @@ type OpenInSystemAppResult = {
 } | {
 	"kind": "failed";
 	error: string;
-};
-/**
-* How a file's tab shows it (see `openFileView`).
-*/
-type FileView = {
-	"kind": "text";
-} | {
-	"kind": "viewer";
-	/**
-	* The plugin's name for the viewer, reported back as
-	* `BufferInfo.viewing.viewer_id`.
-	*/
-	viewerId: string;
-	/**
-	* Mode for the viewer's keys (define it with `defineMode` first).
-	*/
-	mode?: string;
-};
-/**
-* How `openFileView` went.
-*/
-type OpenFileViewResult = {
-	"kind": "opened";
-	bufferId: number;
-} | {
-	"kind": "unsavedChanges";
-} | {
-	"kind": "failed";
-	error: string;
-};
-/**
-* The file a buffer shows in a plugin's viewer (see `openFileView`).
-*/
-type FileViewing = {
-	/**
-	* The viewer, as `openFileView` named it.
-	*/
-	viewer_id: string;
-	/**
-	* The file, as opening it would spell it.
-	*/
-	path: string;
 };
 /**
 * Plugin-contributed row in the LSP-Servers popup, passed to
@@ -8403,31 +8355,6 @@ interface EditorAPI {
 	* window, relative to its folder or absolute
 	*/
 	openInSystemApp(path: string | LocalPath | WindowPath | AuthorityPath): Promise<OpenInSystemAppResult>;
-	/**
-	* Show a file in its tab as text or in a viewer of yours, keeping the
-	* file to one tab.
-	* 
-	* With `{ kind: "viewer", viewerId }` the tab becomes a read-only
-	* buffer you fill with `setVirtualBufferContent`; `viewerId` is your
-	* name for the viewer. That buffer is the file's tab: opening the file
-	* any way (the explorer, Quick Open, `openFile`) goes to it, its
-	* `BufferInfo.viewing` names the viewer and the file, and nothing ever
-	* saves it as the file. With `{ kind: "text" }` the tab shows the
-	* file's text again.
-	* 
-	* If the file already has a tab in its window, the new view takes that
-	* tab's place and the old buffer closes; showing it the way it already
-	* is just goes to the tab. A text tab with unsaved changes is never
-	* replaced: that resolves with `{ kind: "unsavedChanges" }`.
-	* 
-	* Acts in the active window, the one the path must belong to. A file
-	* open in another window resolves with `{ kind: "failed" }`.
-	* 
-	* @param path - The file: a `WindowPath`, or a path of the active
-	* window, relative to its folder or absolute
-	* @param view - How to show it
-	*/
-	openFileView(path: string | WindowPath | AuthorityPath, view: FileView): Promise<OpenFileViewResult>;
 	/**
 	* Contribute (or replace, or clear) menu rows for the LSP-Servers
 	* popup. Pass an empty `items` to clear this plugin's slice for

@@ -10,9 +10,8 @@ const editor = getEditor();
  * tab menu, and as a command for the active tab's file. Each opens a picker
  * listing the ways the file can open, the one it is shown in now marked.
  *
- * A file keeps one tab (`openFileView`): picking another way to show a file
- * that is open replaces its tab in place, unless the text has unsaved
- * changes, and opening the file any other way goes to that tab.
+ * A file keeps one tab: picking another way to show a file that is open
+ * replaces its tab, unless the text has unsaved changes.
  *
  * The menu items are registered once, for every window; each use acts in the
  * window it came from. A file is a `WindowPath` throughout: the same path in
@@ -42,8 +41,8 @@ const editor = getEditor();
 
 /** What a viewer's `open` is called with. */
 export type ViewerRequest = {
-  /** The file's tab: a read-only buffer to fill with
-   *  `setVirtualBufferContent`. */
+  /** A read-only buffer in a new tab for the file, which replaces the
+   *  file's other tab. Fill it with `setVirtualBufferContent`. */
   bufferId: number;
   /** The file to show, on its window's filesystem: the file APIs take it as
    *  is, and `openMachine({ kind: "window", window: path.window })` runs
@@ -62,8 +61,6 @@ export type Viewer = {
   /** File extensions it shows, without the dot (e.g. `["pdf"]`); matched
    *  ignoring case. */
   extensions: string[];
-  /** Mode for the viewer's keys (define it with `defineMode` first). */
-  mode?: string;
   open(request: ViewerRequest): void | Promise<void>;
 };
 
@@ -91,9 +88,15 @@ type Choice =
   | { kind: "viewer"; viewer: Viewer }
   | { kind: "systemApp" };
 
+/** A viewer tab this plugin made, and what it shows. */
+type ViewerTab = { path: WindowPath; viewerId: string };
+
 const PROMPT_TYPE = "open-with";
 
 const viewers = new Map<string, Viewer>();
+
+/** Viewer tabs by buffer id (unique across windows). */
+const viewerTabs = new Map<number, ViewerTab>();
 
 /** The open picker: its file, and what each suggestion's value picks. */
 let picker: { path: WindowPath; choices: Map<string, Choice> } | null = null;
@@ -101,6 +104,10 @@ let picker: { path: WindowPath; choices: Map<string, Choice> } | null = null;
 // =============================================================================
 // Helpers
 // =============================================================================
+
+function samePath(a: WindowPath, b: WindowPath): boolean {
+  return a.window === b.window && a.value === b.value;
+}
 
 function fileName(path: WindowPath): string {
   return editor.pathBasename(path.value) || path.value;
@@ -118,12 +125,19 @@ function viewersFor(path: WindowPath): Viewer[] {
   return [...viewers.values()].filter((v) => v.extensions.includes(ext));
 }
 
-/** How the file's tab shows it now (the editor keeps a file to one tab):
- *  `"text"`, a viewer's id, or `null` when the file has no tab. */
-function shownAs(path: WindowPath): string | null {
-  for (const buffer of editor.listBuffers(path.window)) {
-    if (buffer.viewing?.path === path.value) return buffer.viewing.viewer_id;
-    if (!buffer.is_virtual && buffer.path === path.value) return "text";
+/** The text tab of `path` in its window, if one is open. */
+function textTabOf(path: WindowPath): BufferInfo | null {
+  return (
+    editor
+      .listBuffers(path.window)
+      .find((b) => !b.is_virtual && b.path === path.value) ?? null
+  );
+}
+
+/** The viewer tab of `path` in its window, if one is open. */
+function viewerTabOf(path: WindowPath): [number, ViewerTab] | null {
+  for (const entry of viewerTabs) {
+    if (samePath(entry[1].path, path)) return entry;
   }
   return null;
 }
@@ -136,55 +150,66 @@ function isOnThisComputer(windowId: number): boolean {
   return window !== undefined && !window.remote;
 }
 
-/** The file a buffer of the active window is the tab of: its own, or the
- *  one a viewer shows in it. */
-function fileOfBuffer(bufferId: number): WindowPath | null {
-  const info = editor.getBufferInfo(bufferId);
-  const file = info?.viewing?.path || info?.path;
-  return file ? editor.windowPath(editor.activeWindow(), file) : null;
+/** The file a tab of window `windowId` shows: its own, or its viewer's. */
+function fileOfTab(
+  windowId: number,
+  bufferId: number,
+  path: WindowPath | null,
+): WindowPath | null {
+  if (path) return path;
+  const viewer = viewerTabs.get(bufferId);
+  return viewer && viewer.path.window === windowId ? viewer.path : null;
 }
 
 // =============================================================================
 // Opening
 // =============================================================================
 
-// Every use starts in the window in front (a menu or the palette), and the
-// editor shows a file in a tab of that window — so nothing is done once the
-// reader has moved to another.
+// Tabs open in the window in front. Every use starts there (a menu or the
+// palette), and acting after the reader has moved to another window would
+// put a tab where they are not looking — so that is checked before acting.
 
-function reportFailure(path: WindowPath, label: string, error: string): void {
-  editor.setStatus(
-    editor.t("status.viewer_failed", { viewer: label, name: fileName(path), error }),
-  );
-}
-
-async function openAs(path: WindowPath, view: FileView, label: string): Promise<number | null> {
-  const result = await editor.openFileView(path, view);
-  switch (result.kind) {
-    case "opened":
-      return result.bufferId;
-    case "unsavedChanges":
-      editor.setStatus(editor.t("status.unsaved", { name: fileName(path) }));
-      return null;
-    case "failed":
-      reportFailure(path, label, result.error);
-      return null;
-  }
+async function openAsText(path: WindowPath): Promise<void> {
+  const viewer = viewerTabOf(path);
+  editor.openFile(path.value);
+  if (!viewer) return;
+  // Close the viewer only once the text is open: an open can fail.
+  await editor.flush();
+  if (textTabOf(path)) editor.closeBuffer(viewer[0], true);
 }
 
 async function openInViewer(path: WindowPath, viewer: Viewer): Promise<void> {
-  const alreadyShown = shownAs(path) === viewer.id;
-  const bufferId = await openAs(
-    path,
-    { kind: "viewer", viewerId: viewer.id, mode: viewer.mode },
-    viewer.label,
-  );
-  // A tab that already showed the file this way keeps what it shows.
-  if (bufferId === null || alreadyShown) return;
+  const existing = viewerTabOf(path);
+  const text = textTabOf(path);
+  if (text?.modified) {
+    editor.setStatus(editor.t("status.unsaved", { name: fileName(path) }));
+    return;
+  }
+  if (existing && existing[1].viewerId === viewer.id) {
+    editor.showBuffer(existing[0]);
+    if (text) editor.closeBuffer(text.id);
+    return;
+  }
+  const { bufferId } = await editor.createVirtualBuffer({
+    name: fileName(path),
+    readOnly: true,
+    editingDisabled: true,
+  });
+  viewerTabs.set(bufferId, { path, viewerId: viewer.id });
+  // The new tab is in place; now the file's other tab can go. This
+  // plugin's own viewer tabs go whatever their viewer wrote in them.
+  if (existing) editor.closeBuffer(existing[0], true);
+  if (text) editor.closeBuffer(text.id);
   try {
     await viewer.open({ bufferId, path, viewerId: viewer.id });
   } catch (e) {
-    reportFailure(path, viewer.label, String(e));
+    editor.setStatus(
+      editor.t("status.viewer_failed", {
+        viewer: viewer.label,
+        name: fileName(path),
+        error: String(e),
+      }),
+    );
   }
 }
 
@@ -210,8 +235,7 @@ async function open(path: WindowPath, choice: Choice): Promise<void> {
   if (path.window !== editor.activeWindow()) return;
   switch (choice.kind) {
     case "text":
-      await openAs(path, { kind: "text" }, editor.t("choice.text"));
-      return;
+      return openAsText(path);
     case "viewer":
       return openInViewer(path, choice.viewer);
     case "systemApp":
@@ -225,19 +249,21 @@ async function open(path: WindowPath, choice: Choice): Promise<void> {
 
 function openWith(path: WindowPath): void {
   if (path.window !== editor.activeWindow()) return;
-  const shown = shownAs(path);
+  // Every way the file is open now is marked: text, a viewer, or both.
+  const viewerShown = viewerTabOf(path)?.[1].viewerId ?? null;
+  const textShown = textTabOf(path) !== null;
   const entries: Array<{ value: string; choice: Choice; label: string; current: boolean }> = [
     {
       value: "text",
       choice: { kind: "text" },
       label: editor.t("choice.text"),
-      current: shown === "text",
+      current: textShown,
     },
     ...viewersFor(path).map((viewer) => ({
       value: `viewer:${viewer.id}`,
       choice: { kind: "viewer", viewer } as Choice,
       label: viewer.label,
-      current: shown === viewer.id,
+      current: viewerShown === viewer.id,
     })),
   ];
   if (isOnThisComputer(path.window)) {
@@ -280,6 +306,16 @@ editor.on("prompt_cancelled", (args) => {
   if (args.prompt_type === PROMPT_TYPE) picker = null;
 });
 
+editor.on("buffer_closed", (args) => {
+  viewerTabs.delete(args.buffer_id);
+});
+
+editor.on("window_closed", (args) => {
+  for (const [bufferId, tab] of viewerTabs) {
+    if (tab.path.window === args.id) viewerTabs.delete(bufferId);
+  }
+});
+
 // =============================================================================
 // Entry points
 // =============================================================================
@@ -289,12 +325,23 @@ registerHandler("open_with_explorer", (target: FileExplorerMenuTarget) => {
 });
 
 registerHandler("open_with_tab", (target: TabMenuTarget) => {
-  // A "fileTab" item: a viewer's tab is its file's too.
-  if (target.path) openWith(target.path);
+  const path = fileOfTab(target.windowId, target.bufferId, target.path);
+  if (path === null) {
+    editor.setStatus(editor.t("status.no_file"));
+    return;
+  }
+  openWith(path);
 });
 
 registerHandler("open_with_active", () => {
-  const path = fileOfBuffer(editor.getActiveBufferId());
+  const windowId = editor.activeWindow();
+  const bufferId = editor.getActiveBufferId();
+  const own = editor.getBufferPath(bufferId);
+  const path = fileOfTab(
+    windowId,
+    bufferId,
+    own ? editor.windowPath(windowId, own) : null,
+  );
   if (path === null) {
     editor.setStatus(editor.t("status.no_file"));
     return;
@@ -310,7 +357,7 @@ editor.addFileExplorerMenuItem({
 
 editor.addTabMenuItem({
   label: editor.t("menu.open_with"),
-  scope: "fileTab",
+  scope: "anyTab",
   handler: "open_with_tab",
 });
 
