@@ -1,0 +1,20 @@
+Description: Remove redundant Utility desktop category
+ The Development category is sufficient for Fresh, which is a
+ text editor. Keeping Utility as a second main category can cause
+ the application to appear more than once in application menus.
+Author: Damian Daniel <damian@danielovci.net>
+Forwarded: https://github.com/sinelaw/fresh/pull/3809
+Last-Update: 2026-11-18
+
+--- a/crates/fresh-editor/resources/fresh.desktop
++++ b/crates/fresh-editor/resources/fresh.desktop
+@@ -7,7 +7,7 @@ Exec=fresh %F
+ Icon=fresh
+ Terminal=true
+ Type=Application
+-Categories=Development;TextEditor;Utility;
++Categories=Development;TextEditor;
+ Keywords=editor;terminal;text;code;programming;lsp;
+ MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-java;text/x-python;text/x-script.python;application/x-python;text/x-rust;text/x-go;text/javascript;application/javascript;text/x-typescript;application/json;text/html;text/css;text/x-shellscript;text/x-lua;text/x-ruby;text/x-php;text/x-csharp;text/markdown;
+ StartupNotify=false
+

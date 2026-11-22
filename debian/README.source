@@ -51,12 +51,18 @@ and install.sh never pick: fresh-editor_<ver>-1_<arch>.debian-testing.deb
 .dsc with its orig and debian tarballs). The package version follows the
 workspace version in Cargo.toml.
 
-To build from a checkout of upstream (https://github.com/sinelaw/fresh):
+To build from a checkout of upstream (https://github.com/sinelaw/fresh), with
+the orig tarball repacked as below:
 
     VERSION=$(dpkg-parsechangelog -S Version | sed 's/-[^-]*$//')
-    git archive --prefix=fresh-editor-$VERSION/ HEAD | xz > ../fresh-editor_$VERSION.orig.tar.xz
-    sudo apt-get build-dep ./
-    dpkg-buildpackage -us -uc
+    EXCLUDED=$(awk '/^Files-Excluded:/ { f = 1; next } f && /^ / { print ":(exclude)" $1; next } { f = 0 }' debian/copyright)
+    git archive --prefix=fresh-editor-$VERSION/ HEAD -- . $EXCLUDED | xz > ../fresh-editor_$VERSION.orig.tar.xz
+    tar -xf ../fresh-editor_$VERSION.orig.tar.xz -C .. && cp -r debian ../fresh-editor-$VERSION/
+    rm -rf ../fresh-editor-$VERSION/debian/patches
+    cd ../fresh-editor-$VERSION && sudo apt-get build-dep ./ && dpkg-buildpackage -us -uc
+
+debian/patches apply to the released orig tarball. Each is upstream already,
+or made unnecessary there, so a build from a checkout leaves them out.
 
 This debian/ is kept the same in upstream's repository and in the Salsa
 repository (https://salsa.debian.org/sinelaw/fresh-editor, git-buildpackage
@@ -67,6 +73,31 @@ upstream's checkout:
 
     scripts/debian-salsa-update.py --repo ../fresh-editor-salsa prepare <version>
     scripts/debian-salsa-update.py --repo ../fresh-editor-salsa release
+
+Source tarball
+--------------
+
+The orig tarball is repacked (version suffix +ds): uscan downloads the upstream
+tag and mk-origtargz deletes what the Files-Excluded field in debian/copyright
+lists. Nothing is edited, only deleted:
+
+ * left out: the website (homepage/), documentation, blog media, CI workflows,
+   other distributions' packaging (packaging/, flatpak, winget, npm, nix), the
+   desktop/ and spikes/ experiments, development scripts, and the fresh-gui
+   crate (the wgpu GUI, not built here);
+ * kept: all crates, the test suites and their fixtures, and the few files
+   outside crates/ that the build or the tests read: Cargo.lock (debian/rules
+   unpacks it), CHANGELOG.md (symlinked from crates/fresh-editor, embedded as
+   the release notes), docs/icons/linux, docs/.vitepress/config.ts and
+   docs/configuration/{actions,keyboard}.md (read by tests, one of which
+   debian/rules runs), and scripts/{debian.py,write-install-receipt.sh,
+   install.sh,fake-devcontainer,fake-lsp}.
+
+Removing fresh-gui leaves the manifests naming it. Up to 0.5.9, patches/0002
+removes those references; later releases' scripts/debian.py patch-manifests
+(run by debian/rules) drops them itself.
+When updating upstream, check that no test starts reading a newly excluded
+file: grep the crates for "../../" and CARGO_MANIFEST_DIR.
 
 Copyright
 ---------
