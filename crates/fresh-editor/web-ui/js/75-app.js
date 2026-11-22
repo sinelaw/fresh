@@ -282,7 +282,9 @@ const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
   tree:"tree", native:"native",
   contextMenu:"contextMenu", auxModal:"auxModal",
   keybindingEditor:"keybindingEditor", settings:"settings",
-  trustDialog:"trustDialog", cursor:"caret", poll:null };
+  trustDialog:"trustDialog", cursor:"caret", poll:null,
+  // Skin values re-bind in place (bindSkinValues, js/15-theme.js), never a rebuild.
+  skinValues:null };
 // Apply a region-diff frame: each changed path replaces its value wholesale
 // (null is a legal value — regions are frequently null). Panes are diffed one
 // level deeper; "regions.panes.len" truncates/extends the array. Then rebuild
@@ -314,6 +316,7 @@ function setRegion(r, key, v){
     case "settings": r.settings=jsonAs(v); break;
     case "cursor": r.cursor=jsonAs(v); break;
     case "poll": r.poll=jsonAs(v); break;
+    case "skinValues": r.skinValues=jsonAs(v); break;
   }
 }
 /** function applyFrame(Dict<FrameValue>) => Undefined */
@@ -353,6 +356,7 @@ function applyFrame(changed){
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(sc.regions);
   syncMacTitle();
+  bindSkinValues();
   fxLayoutSlides();
   layoutShell();   // dock width / grid size may have moved the bezel
 }

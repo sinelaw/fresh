@@ -390,6 +390,7 @@ function render(){
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(sc.regions);
   syncMacTitle();
+  bindSkinValues();
   fxLayoutSlides();
   layoutShell();
 }

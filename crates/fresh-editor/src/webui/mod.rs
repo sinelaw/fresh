@@ -2320,6 +2320,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         // idles (TICK_IDLE, just to pick up async LSP/file events). Kept in
         // the scene so tests (and any polling client) can observe it.
         "poll": json!({ "active": poll_active(editor) }),
+        // Values plugins publish for web skins (`editor.setSkinValue`), by
+        // "plugin:name": a skin's furniture binds to them (`data-bind`).
+        "skinValues": editor.skin_values(),
     });
 
     // The active window id lets the frontend tell a WORKSPACE SWITCH (dock

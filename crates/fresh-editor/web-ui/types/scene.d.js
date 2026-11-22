@@ -99,7 +99,8 @@
     keybindingEditor: KeybindingEditor | Null,
     settings: Settings | Null,
     cursor: CursorPos | Null,
-    poll: Poll
+    poll: Poll,
+    skinValues: Dict<String>
 } */
 
 // view/scene.rs `RectView` (also mod.rs `rect_json`, native.rs rect json!).

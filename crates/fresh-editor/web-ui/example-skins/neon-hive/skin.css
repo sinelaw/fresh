@@ -359,3 +359,93 @@ body.theme-neon-hive:not(.explorer-right):not(.mobile) :is(.fileexplorer, .ctxme
    percentages; a count for errors / warnings, capped by the calc). */
 .theme-neon-hive #device .gz { --gz-p: calc(min(var(--v, 0), 100) * 1%); }
 .theme-neon-hive #device :is(.gz.err, .gz.warn) { --gz-p: calc(min(var(--v, 0) * 10, 100) * 1%); }
+
+/* ---- one column shape -------------------------------------------------------
+   Every hexagon in a side column — the dock's, the explorer's, and the two
+   readout hexagons — has the same shape and the same width: the wider of the
+   two panels, centred on its panel. Only the heights differ. */
+.theme-neon-hive #device { --side-w: calc(max(var(--dock-w), var(--explorer-w)) + 24px); }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) { filter: drop-shadow(0 0 5px var(--hx-c)) drop-shadow(0 0 16px color-mix(in srgb, var(--hx-c) 50%, transparent)); }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) :is(.hx-b, .hx-in) {
+  clip-path: polygon(0 var(--hx-cap), 50% 0, 100% var(--hx-cap), 100% calc(100% - var(--hx-cap)),
+    50% 100%, 0 calc(100% - var(--hx-cap)));
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hx-c) 16%, #0d0618), #0a0513 40%, #0a0513 60%,
+    color-mix(in srgb, var(--hx-c) 12%, #0d0618));
+  padding: calc(var(--hx-cap) - 6px) 30px calc(var(--hx-cap) - 10px); align-items: center;
+}
+.theme-neon-hive #device :is(.hx-dock, .hx-sys) {
+  width: var(--side-w);
+  left: calc(var(--bezel-side) + var(--dock-x) - var(--hx-gap) + var(--dock-w) / 2 - var(--side-w) / 2);
+}
+.theme-neon-hive #device :is(.hx-fx, .hx-diag) { width: var(--side-w); }
+body.theme-neon-hive.explorer-right #device :is(.hx-fx, .hx-diag) {
+  left: calc(var(--bezel-side) + var(--explorer-x) + var(--hx-gap) + var(--explorer-w) / 2 - var(--side-w) / 2);
+}
+body.theme-neon-hive:not(.explorer-right) #device :is(.hx-fx, .hx-diag) {
+  left: calc(var(--bezel-side) + var(--explorer-x) - var(--hx-gap) + var(--explorer-w) / 2 - var(--side-w) / 2);
+}
+/* Readout rows: label and value in two even columns. */
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p {
+  display: grid; grid-template-columns: 7em 9em; gap: 0 10px; font-size: 11.5px; line-height: 1.5;
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p span { width: auto; text-align: right; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz { width: 48px; height: 48px; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz small { margin-top: 5px; white-space: nowrap; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-gauges { gap: 44px; margin: 2px 0 20px; }
+
+/* Room for the wider column: each side frame is as wide as the wider panel,
+   centred on its own, so the editor area is inset by half the difference too. */
+@media (min-width: 1400px) and (min-height: 860px) {
+  body.theme-neon-hive:not(.mobile) #app {
+    left: calc(var(--bezel-side) + 8px + max(0px, (var(--explorer-w) - var(--dock-w)) / 2));
+    right: calc(var(--bezel-side) + 8px + max(0px, (var(--dock-w) - var(--explorer-w)) / 2));
+  }
+}
+
+/* ---- separation: the editor as its own module -------------------------------
+   A wide band of desk between the editor and each side column, cables
+   crossing it, and the editor's frame cut at the corners like the hexagons. */
+:root.theme-neon-hive { --hx-gap: 76px; --bezel-side: 96px; --hx-cut: 22px; }
+.theme-neon-hive #device .hx-main {
+  border-radius: 0; box-shadow: none; background: none;
+  filter: drop-shadow(0 0 6px var(--hive-violet)) drop-shadow(0 0 22px rgba(255,63,180,.45));
+}
+.theme-neon-hive #device .hx-main::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(180deg, var(--hive-pink), var(--hive-violet) 55%, var(--hive-pink));
+  clip-path: polygon(var(--hx-cut) 0, calc(100% - var(--hx-cut)) 0, 100% var(--hx-cut), 100% calc(100% - var(--hx-cut)),
+    calc(100% - var(--hx-cut)) 100%, var(--hx-cut) 100%, 0 calc(100% - var(--hx-cut)), 0 var(--hx-cut));
+}
+.theme-neon-hive #device .hx-main::after {
+  left: 2px; right: 2px; top: 2px; bottom: 2px; border-radius: 0; box-shadow: none;
+  background: linear-gradient(180deg, #1d0d33, #0b0614 var(--bezel-top));
+  clip-path: polygon(calc(var(--hx-cut) - 1px) 0, calc(100% - var(--hx-cut) + 1px) 0, 100% calc(var(--hx-cut) - 1px),
+    100% calc(100% - var(--hx-cut) + 1px), calc(100% - var(--hx-cut) + 1px) 100%, calc(var(--hx-cut) - 1px) 100%,
+    0 calc(100% - var(--hx-cut) + 1px), 0 calc(var(--hx-cut) - 1px));
+}
+.theme-neon-hive #device .hx-main { left: calc(var(--body-l) - 16px); width: calc(var(--body-r) - var(--body-l) + 32px);
+  top: 6px; height: calc(var(--bezel-top) - 6px + var(--grid-h) + 18px); }
+
+/* Cables across the gaps: a bundle of thin glowing lines with a clamp. */
+.theme-neon-hive #device .hx-cables {
+  position: absolute; top: calc(var(--bezel-top) + 18%); height: 42%;
+  width: calc(var(--hx-gap) - 22px);
+  background:
+    linear-gradient(90deg, transparent 0 18%, rgba(255,63,180,.85) 18% 21%, transparent 21% 38%,
+      rgba(155,92,255,.7) 38% 40%, transparent 40% 60%, rgba(79,216,255,.7) 60% 62%, transparent 62% 79%,
+      rgba(255,63,180,.6) 79% 81%, transparent 81%);
+  filter: drop-shadow(0 0 4px rgba(255,63,180,.7));
+  -webkit-mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
+  mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
+}
+.theme-neon-hive #device .hx-cables::before, .theme-neon-hive #device .hx-cables::after {
+  content: ""; position: absolute; left: 8%; right: 8%; height: 14px; border-radius: 2px;
+  background: linear-gradient(180deg, #3a1d5c, #1a0c2c); box-shadow: inset 0 0 0 1px var(--hive-violet), 0 0 8px rgba(155,92,255,.6);
+}
+.theme-neon-hive #device .hx-cables::before { top: 22%; }
+.theme-neon-hive #device .hx-cables::after { bottom: 22%; }
+.theme-neon-hive #device .hx-cables.l { left: calc(var(--body-l) - 16px - var(--hx-gap) + 12px); }
+.theme-neon-hive #device .hx-cables.r { left: calc(var(--body-r) + 16px + 10px); }
+body.theme-neon-hive:not(.has-dock) #device .hx-cables.l, body.theme-neon-hive:not(.has-explorer) #device .hx-cables.r { display: none; }

@@ -58,6 +58,7 @@
     "goto_with_selection.ts",
     "live_diff.ts",
     "live_sessions.ts",
+    "skin_data.ts",
     "live_grep.ts",
     "lsp_help.ts",
     "lsp_navigation.ts",

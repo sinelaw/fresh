@@ -314,12 +314,57 @@ function renderFurniture(/** ResolvedSkin */ sk) {
         const el = document.createElement(tag);
         const cls = n.getAttribute("class");
         if (cls) el.className = cls;
+        // Live values (bindSkinValues): which value, by "plugin:name" — the
+        // only attributes kept besides class, and only in their plain form.
+        const bind = n.getAttribute("data-bind") ?? "";
+        if (SKIN_BIND_RE.test(bind)) { el.dataset.bind = bind; el.dataset.dflt = n.textContent; }
+        const bindVar = n.getAttribute("data-bind-var") ?? "";
+        if (SKIN_BIND_VAR_RE.test(bindVar)) el.dataset.bindVar = bindVar;
         copy(n.childNodes, el);
         parent.appendChild(el);
       }
     }
   };
   if (sk.furniture) copy(parseInertHtml(sk.furniture), host);
+  bindSkinValues();
+}
+
+// ---- live values in furniture -------------------------------------------------
+// Named values for skins: the built-in `skin_data` plugin publishes a fixed set
+// (system load, memory, diagnostics, … — docs/features/web-ui-skins.md), and
+// any installed plugin may add its own (`editor.setSkinValue(name, value)`);
+// the scene carries them as `regions.skinValues`, keyed "plugin:name". A skin
+// itself never brings code. Furniture shows them with
+//   data-bind="plugin:name"            the value as the element's text (its own
+//                                      text is the placeholder until one comes);
+//   data-bind-var="--prop:plugin:name" the value as a custom property on the
+//                                      element, unitless when it is a number —
+//                                      for gauges and bars in CSS.
+// Text only, through textContent; nothing a value says is ever markup.
+const SKIN_BIND_RE = /^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$/;
+const SKIN_BIND_VAR_RE = /^--[A-Za-z0-9_-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$/;
+function bindSkinValues() {
+  const host = document.getElementById("device");
+  if (!host) return;
+  const sc = scene;
+  /** const vals: Dict<String> */
+  const vals = sc && sc.regions.skinValues ? sc.regions.skinValues : {};
+  for (const el of host.querySelectorAll("[data-bind]")) {
+    const key = el.dataset.bind ?? "";
+    const v = vals[key];
+    const text = v !== undefined ? v : (el.dataset.dflt ?? "");
+    if (el.textContent !== text) el.textContent = text;
+  }
+  for (const el of host.querySelectorAll("[data-bind-var]")) {
+    const spec = el.dataset.bindVar ?? "";
+    const i = spec.indexOf(":");
+    const prop = spec.slice(0, i), key = spec.slice(i + 1);
+    const v = vals[key];
+    if (v === undefined) { el.style.removeProperty(prop); continue; }
+    const n = parseFloat(v);
+    const out = String(v) === String(n) || /^-?[0-9.]+$/.test(v.trim()) ? String(n) : v;
+    if (el.style.getPropertyValue(prop) !== out) el.style.setProperty(prop, out);
+  }
 }
 
 // A colour custom property as `#rrggbb`, whatever it is written as

@@ -181,9 +181,38 @@ Decorative markup built inside the `#device` host: title bars, LEDs, screws, sid
 <i class="nn-screw tl"></i><i class="nn-screw tr"></i>
 ```
 
-It is decoration only: it is pointer-transparent and hidden from assistive tech. The page rebuilds it from `div`, `span`, `i`, `b`, `em`, `strong`, `small` and `p` elements, keeping only their `class` attribute and text. Scripts, other elements and every other attribute are dropped. A `@frame bezel` skin can also reuse the Cosmos bezel kit classes (`dv-screen`, `dv-top`, `dv-bottom`, `dv-side`, `dv-label`, `dv-leds`, `dv-screw`) from the base stylesheet.
+It is decoration only: it is pointer-transparent and hidden from assistive tech. The page rebuilds it from `div`, `span`, `i`, `b`, `em`, `strong`, `small` and `p` elements, keeping only their `class` attribute, their `data-bind` / `data-bind-var` attributes (see [Live values](#live-values)) and text. Scripts, other elements and every other attribute are dropped. A `@frame bezel` skin can also reuse the Cosmos bezel kit classes (`dv-screen`, `dv-top`, `dv-bottom`, `dv-side`, `dv-label`, `dv-leds`, `dv-screw`) from the base stylesheet.
 
 A title-bar host, `#mactitle` (with `.mt-lights` and `.mt-name`, which always holds the active document's name), is hidden by default; a skin may show and style it, as macOS does.
+
+## Live values
+
+Furniture can show live data. Fresh's built-in `skin_data` plugin publishes a fixed set of values every two seconds, and a skin binds to them in `furniture.html`:
+
+```html
+<b data-bind="skin_data:load">–</b>                     <!-- the value as text -->
+<span class="gauge" data-bind-var="--v:skin_data:cpu"></span>  <!-- as a CSS custom property -->
+```
+
+```css
+.theme-my-skin .gauge { background: conic-gradient(var(--accent) calc(var(--v, 0) * 1%), transparent 0); }
+```
+
+The element's own text is the placeholder until a value arrives. A number comes through unitless, so CSS can scale it with `calc()`.
+
+| Value | Meaning |
+|---|---|
+| `skin_data:cpu`, `skin_data:mem` | percent of CPU busy and of memory in use, 0–100 |
+| `skin_data:memText` | memory as "used / total G" |
+| `skin_data:load` | 1, 5 and 15-minute load averages |
+| `skin_data:uptime` | how long the machine has been up |
+| `skin_data:errors`, `skin_data:warnings` | diagnostics across open files |
+| `skin_data:buffers` | open files |
+| `skin_data:time` | the time, "HH:MM" |
+
+The system figures (`cpu`, `mem`, `memText`, `load`, `uptime`) are currently available on Linux only; elsewhere the placeholder stays.
+
+A skin never brings code: the data comes from Fresh. A plugin you install yourself can publish values of its own with `editor.setSkinValue(name, value)`; a skin shows them as `data-bind="<plugin name>:<name>"`.
 
 ## Safety
 
