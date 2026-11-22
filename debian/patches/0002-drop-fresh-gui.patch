@@ -1,0 +1,56 @@
+Description: Drop the fresh-gui workspace member and the `gui` feature
+ fresh-gui (wgpu/winit renderer) is not part of what Debian builds, and its
+ sources are removed from the orig tarball (Files-Excluded). The workspace
+ manifest and fresh-editor's manifest still named it, which cargo cannot
+ resolve without the directory, so the references go too.
+ .
+ The `#[cfg(feature = "gui")]` code in fresh-editor is left alone: with the
+ feature gone it is simply never compiled (cargo reports it as an unexpected
+ cfg, a warning only).
+Author: Damian Daniel <damian@danielovci.net>
+Forwarded: not-needed
+Last-Update: 2026-11-19
+
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -4,7 +4,6 @@
+     "crates/fresh-editor",
+     "crates/fresh-editor-core",
+     "crates/fresh-ui",
+-    "crates/fresh-gui",
+     "crates/fresh-core",
+     "crates/fresh-parser-js",
+     "crates/fresh-languages",
+@@ -71,7 +70,6 @@
+ # `fresh-editor --no-default-features` still pulled in this crate's defaults,
+ # and with them the whole bundled tree-sitter grammar set.
+ fresh-editor-core = { version = "0.5.9", path = "crates/fresh-editor-core", default-features = false }
+-fresh-gui = { version = "0.5.9", path = "crates/fresh-gui" }
+ # `default-features = false` on these two so a member can build them without
+ # oxc (their `oxc` feature); members that want it enable it explicitly.
+ fresh-parser-js = { version = "0.5.9", path = "crates/fresh-parser-js", default-features = false }
+--- a/crates/fresh-editor/Cargo.toml
++++ b/crates/fresh-editor/Cargo.toml
+@@ -168,12 +168,6 @@
+ # HTML and pulls in the sha1 WebSocket-handshake dep. Requires the full
+ # editor `runtime`.
+ web = ["runtime", "dep:sha1"]
+-# GUI mode - native window with GPU-accelerated rendering via wgpu
+-# All windowing/GPU dependencies live in the fresh-gui crate.
+-gui = [
+-    "runtime",
+-    "dep:fresh-gui",
+-]
+ # Schema-only feature for minimal builds (just schema generation)
+ schema-only = []
+ # WASM browser build - shared editor core without native dependencies
+@@ -318,9 +312,6 @@
+ open = { version = "5.3", optional = true }
+ vt100 = { version = "0.16", optional = true }
+ 
+-# GUI mode — all windowing/GPU deps are encapsulated in fresh-gui
+-fresh-gui = { workspace = true, optional = true }
+-
+ [dev-dependencies]
+ # Also a normal dependency; declared here so integration tests can reach
+ # TARGET_TRIPLE / archive_ext when driving the built binary against a fake
