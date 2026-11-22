@@ -453,6 +453,11 @@ impl<'a> BodyPainter<'a> {
             // does not scroll.
             shade_pane_edges(self.editor, leaf, buffer_id, rect, buf);
         }
+        // A picture a plugin attached to the buffer goes over its text.
+        #[cfg(feature = "images")]
+        if !live_terminal {
+            self.editor.inline_images.paint(buffer_id, rect, buf);
+        }
     }
 }
 

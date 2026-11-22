@@ -433,6 +433,25 @@ type ScreenSize = {
 	height: number;
 };
 /**
+* How the editor draws pictures (`setBufferImage`). Returned by
+* `editor.getImageSupport()`.
+*/
+type ImageSupport = {
+	/**
+	* `"kitty"`, `"sixel"` or `"iterm2"` (the terminal's own graphics), or
+	* `"halfblocks"` (coloured cells: two pixels per cell).
+	*/
+	protocol: string;
+	/**
+	* A terminal cell's width in pixels.
+	*/
+	cellWidth: number;
+	/**
+	* A terminal cell's height in pixels.
+	*/
+	cellHeight: number;
+};
+/**
 * The latest release's notes. Returned by `editor.releaseNotes()`.
 */
 type ReleaseNotes = {
@@ -7995,6 +8014,54 @@ interface EditorAPI {
 	* navigation) call this with `true` after `createBufferGroup` returns.
 	*/
 	setBufferShowCursors(bufferId: number, show: boolean): boolean;
+	/**
+	* Show a picture (a PNG file) over a buffer's pane, centred.
+	* 
+	* It is shrunk to fit the pane, and enlarged to fill it when `scaleUp`
+	* is true. The terminal's own graphics (Kitty, Sixel, iTerm2) draw it
+	* where available, coloured half blocks elsewhere. It replaces any
+	* picture the buffer had, and goes when the buffer closes.
+	* 
+	* @param bufferId - the buffer whose pane shows the picture
+	* @param path - the picture's file (PNG)
+	* @param scaleUp - also enlarge a picture smaller than the pane (default false)
+	*/
+	setBufferImage(bufferId: number, path: string, scaleUp?: boolean): boolean;
+	/**
+	* Remove the picture `setBufferImage` put over a buffer.
+	* 
+	* @param bufferId - the buffer to clear
+	*/
+	clearBufferImage(bufferId: number): boolean;
+	/**
+	* Show only part of a buffer's picture: zoom in by showing less of it,
+	* pan by moving the part.
+	* 
+	* The part is given as fractions of the picture's width and height:
+	* `(0, 0, 1, 1)` is the whole picture, `(0.5, 0, 0.5, 0.5)` its top
+	* right quarter. A part smaller than the whole is enlarged to fill the
+	* pane, and widened about its centre to the pane's shape where the
+	* picture has more to show; one that sticks out is moved back inside.
+	* The buffer keeps it when `setBufferImage` loads the picture again.
+	* 
+	* @param bufferId - the buffer whose picture to crop
+	* @param x - left edge, a fraction of the picture's width
+	* @param y - top edge, a fraction of the picture's height
+	* @param w - width, a fraction of the picture's width
+	* @param h - height, a fraction of the picture's height
+	*/
+	setBufferImageView(bufferId: number, x: number, y: number, w: number, h: number): boolean;
+	/**
+	* How this editor draws pictures, or null when it can't
+	* (`setBufferImage` then does nothing).
+	* 
+	* `protocol` says whether the terminal's own graphics draw them
+	* (`"kitty"`, `"sixel"`, `"iterm2"`) or coloured half blocks
+	* (`"halfblocks"`), and the cell size in pixels says how many pixels a
+	* pane holds: render a picture (a PDF page, a plot) at about
+	* `columns * cellWidth` by `rows * cellHeight` to be sharp.
+	*/
+	getImageSupport(): ImageSupport | null;
 	/**
 	* Choose the grammar a virtual buffer is highlighted with.
 	* 

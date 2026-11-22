@@ -61,6 +61,39 @@ pub struct ClientHello {
     /// client older than protocol v5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair_token: Option<String>,
+    /// How this client's terminal can show images, probed by the client (the
+    /// daemon has no terminal to ask). `None` from older clients: half blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_caps: Option<ImageCaps>,
+}
+
+/// The image protocol a terminal speaks, for inline images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageProtocol {
+    /// Coloured `▀` cells: works everywhere, pixelated.
+    #[default]
+    Halfblocks,
+    Sixel,
+    Kitty,
+    Iterm2,
+}
+
+/// What a terminal can do with images: its protocol and its cell size in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageCaps {
+    pub protocol: ImageProtocol,
+    /// One cell's width and height in pixels.
+    pub cell_px: (u16, u16),
+}
+
+impl Default for ImageCaps {
+    fn default() -> Self {
+        Self {
+            protocol: ImageProtocol::Halfblocks,
+            cell_px: (10, 20),
+        }
+    }
 }
 
 impl ClientHello {
@@ -76,6 +109,8 @@ impl ClientHello {
             "LC_ALL",
             "FRESH_COLOR_MODE",
             "WT_SESSION",
+            "TERM_PROGRAM",
+            "TMUX",
         ] {
             env.insert(key.to_string(), std::env::var(key).ok());
         }
@@ -91,6 +126,7 @@ impl ClientHello {
                 .ok()
                 .filter(|t| !t.is_empty()),
             pair_token: None,
+            image_caps: None,
         }
     }
 

@@ -776,6 +776,8 @@ impl Editor {
             mouse_capture: parts.mouse_capture,
             time_source: parts.time_source,
             color_capability: parts.color_capability,
+            #[cfg(feature = "images")]
+            inline_images: Default::default(),
             linux_console: false,
             update_checker: parts.update_checker,
             key_translator: parts.key_translator,

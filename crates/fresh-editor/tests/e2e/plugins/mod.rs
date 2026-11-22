@@ -53,6 +53,8 @@ pub mod git_statusbar;
 pub mod goto_with_selection;
 pub mod gutter;
 pub mod init_script;
+#[cfg(feature = "images")]
+mod inline_image;
 pub mod language_pack;
 pub mod live_diff;
 pub mod load_from_buffer;

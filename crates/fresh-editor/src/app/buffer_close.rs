@@ -331,6 +331,8 @@ impl Editor {
         // lifecycle follows the buffer's, like composite source panes.
         #[cfg(feature = "plugins")]
         self.diff_baselines.drop_for_buffer(id);
+        #[cfg(feature = "images")]
+        self.inline_images.remove(id);
 
         // Notify plugins so they can reset any state tied to this buffer
         // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
