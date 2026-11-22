@@ -122,7 +122,7 @@ fn main() {
     }
 }
 
-/// Extract the latest release's bullets from `CHANGELOG.md` into
+/// Copy the latest release's notes, as written, from `CHANGELOG.md` into
 /// `$OUT_DIR/release_notes.rs`, which `src/release_notes/mod.rs` includes.
 ///
 /// The crate carries `CHANGELOG.md` as a symlink to the repository's, which
@@ -146,17 +146,13 @@ fn generate_release_notes() {
         }
     }
     let body = match release {
-        Some(r) => {
-            let items: Vec<String> = r.items.iter().map(|i| format!("    {i:?},")).collect();
-            format!(
-                "pub const LATEST: Option<(&str, &[&str])> = Some((\n    {:?},\n    &[\n{}\n    ],\n));\n",
-                r.version,
-                items.join("\n")
-            )
-        }
+        Some(r) => format!(
+            "pub const LATEST: Option<(&str, &str)> = Some(({:?}, {:?}));\n",
+            r.version, r.markdown
+        ),
         None => {
             println!("cargo::warning=CHANGELOG.md not found or has no release; the welcome screen will have no \"What's new\"");
-            "pub const LATEST: Option<(&str, &[&str])> = None;\n".to_string()
+            "pub const LATEST: Option<(&str, &str)> = None;\n".to_string()
         }
     };
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("release_notes.rs");

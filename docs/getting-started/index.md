@@ -73,11 +73,11 @@ Quote the argument so the shell keeps the `@"..."` part intact. Together with `-
 
 ## First Launch: the Welcome Screen
 
-When you start Fresh with a bare `fresh`, a **Welcome** tab opens behind your other tabs (opening a file, or `fresh --simple`, skips it). It shows what's new in this release, the essential keys (command palette, open and new file, file explorer, settings, terminal, help, quit), a switch for Nerd Font icons, and the Auto Attach setting.
+When you start Fresh with a bare `fresh`, a **Welcome** tab opens behind your other tabs (opening a file, or `fresh --simple`, skips it). It shows a switch for Nerd Font icons, the essential keys (command palette, open and new file, file explorer, settings, terminal, help, quit), the startup options, and then this release's notes, the same Features and Bug Fixes as the published release notes.
 
-![The Welcome tab: what's new in this release, a Nerd Font switch, the essential keys and the startup options](/images/welcome-screen.png)
+![The Welcome tab: a Nerd Font switch, the essential keys, the startup options and what's new in this release](/images/welcome-screen.png)
 
-Close it with `Esc` or the tab's ×, and run **Welcome** from the command palette to bring it back. To stop it from opening at startup, uncheck **Show this screen on startup** at the bottom of the page, or turn it off in the Settings UI under **Plugins → welcome_screen**.
+Close it with `Esc` or the tab's ×, and run **Welcome** from the command palette to bring it back. To stop it from opening at startup, uncheck **Show this screen on startup** on the page, or turn it off in the Settings UI under **Plugins → welcome_screen**.
 
 ## Core Concepts
 

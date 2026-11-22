@@ -434,9 +434,9 @@ impl Editor {
         snapshot.stdin_launch = self.stdin_launch();
         if snapshot.release_notes.is_none() {
             snapshot.release_notes =
-                crate::release_notes::latest().map(|(version, items)| ReleaseNotes {
+                crate::release_notes::latest().map(|(version, markdown)| ReleaseNotes {
                     version: version.to_string(),
-                    items: items.iter().map(|i| i.to_string()).collect(),
+                    markdown: markdown.to_string(),
                 });
         }
         snapshot.diff_launch = self
