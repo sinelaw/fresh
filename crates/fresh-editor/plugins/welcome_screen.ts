@@ -354,7 +354,11 @@ function richPara(segs: StyledSegment[], first: string, rest: string): WidgetSpe
       used = 0;
     }
     if (used > 0) {
-      cur.push({ text: " " });
+      // A space inside a link is part of the link's underline.
+      const before = cur[cur.length - 1]?.style;
+      const after = w.parts[0]?.style;
+      const linked = before?.underline && after?.underline;
+      cur.push(linked ? { text: " ", style: before } : { text: " " });
       used += 1;
     }
     cur.push(...w.parts);
