@@ -2078,6 +2078,10 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let terminal_modes = TerminalModes::enable(Some(&keyboard_config))?;
     tracing::info!("Terminal modes enabled");
 
+    // Ask the terminal how it shows images, before anything reads its input.
+    #[cfg(feature = "images")]
+    fresh::app::inline_image::set_local_caps(fresh::app::inline_image::detect());
+
     #[cfg(target_os = "linux")]
     tracing::info!("Connecting to GPM...");
     #[cfg(target_os = "linux")]
@@ -6035,8 +6039,15 @@ fn run_attach(
 
     let term_size = TermSize::new(cols, rows);
 
-    // Perform handshake
-    conn.send_hello(ClientHello::new(term_size))?;
+    // Perform handshake. The daemon has no terminal, so this client asks its
+    // own how it shows images and passes the answer on.
+    #[cfg_attr(not(feature = "images"), allow(unused_mut))]
+    let mut hello = ClientHello::new(term_size);
+    #[cfg(feature = "images")]
+    {
+        hello.image_caps = Some(fresh::app::inline_image::detect());
+    }
+    conn.send_hello(hello)?;
 
     // Read server response
     let response = conn

@@ -7166,6 +7166,93 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Show a picture (a PNG file) over a buffer's pane, centred.
+    ///
+    /// It is shrunk to fit the pane, and enlarged to fill it when `scaleUp`
+    /// is true. The terminal's own graphics (Kitty, Sixel, iTerm2) draw it
+    /// where available, coloured half blocks elsewhere. It replaces any
+    /// picture the buffer had, and goes when the buffer closes.
+    ///
+    /// @param bufferId - the buffer whose pane shows the picture
+    /// @param path - the picture's file (PNG)
+    /// @param scaleUp - also enlarge a picture smaller than the pane (default false)
+    #[qjs(rename = "setBufferImage")]
+    pub fn set_buffer_image(
+        &self,
+        buffer_id: u32,
+        path: String,
+        scale_up: fresh_js::function::Opt<bool>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferImage {
+                buffer_id: BufferId(buffer_id as usize),
+                path: Some(path),
+                scale_up: scale_up.0.unwrap_or(false),
+            })
+            .is_ok()
+    }
+
+    /// Remove the picture `setBufferImage` put over a buffer.
+    ///
+    /// @param bufferId - the buffer to clear
+    #[qjs(rename = "clearBufferImage")]
+    pub fn clear_buffer_image(&self, buffer_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferImage {
+                buffer_id: BufferId(buffer_id as usize),
+                path: None,
+                scale_up: false,
+            })
+            .is_ok()
+    }
+
+    /// Show only part of a buffer's picture: zoom in by showing less of it,
+    /// pan by moving the part.
+    ///
+    /// The part is given as fractions of the picture's width and height:
+    /// `(0, 0, 1, 1)` is the whole picture, `(0.5, 0, 0.5, 0.5)` its top
+    /// right quarter. A part smaller than the whole is enlarged to fill the
+    /// pane, and widened about its centre to the pane's shape where the
+    /// picture has more to show; one that sticks out is moved back inside.
+    /// The buffer keeps it when `setBufferImage` loads the picture again.
+    ///
+    /// @param bufferId - the buffer whose picture to crop
+    /// @param x - left edge, a fraction of the picture's width
+    /// @param y - top edge, a fraction of the picture's height
+    /// @param w - width, a fraction of the picture's width
+    /// @param h - height, a fraction of the picture's height
+    #[qjs(rename = "setBufferImageView")]
+    pub fn set_buffer_image_view(&self, buffer_id: u32, x: f64, y: f64, w: f64, h: f64) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferImageView {
+                buffer_id: BufferId(buffer_id as usize),
+                x: x as f32,
+                y: y as f32,
+                w: w as f32,
+                h: h as f32,
+            })
+            .is_ok()
+    }
+
+    /// How this editor draws pictures, or null when it can't
+    /// (`setBufferImage` then does nothing).
+    ///
+    /// `protocol` says whether the terminal's own graphics draw them
+    /// (`"kitty"`, `"sixel"`, `"iterm2"`) or coloured half blocks
+    /// (`"halfblocks"`), and the cell size in pixels says how many pixels a
+    /// pane holds: render a picture (a PDF page, a plot) at about
+    /// `columns * cellWidth` by `rows * cellHeight` to be sharp.
+    #[plugin_api(ts_return = "ImageSupport | null")]
+    pub fn get_image_support<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
+        let support = self
+            .state_snapshot
+            .read()
+            .ok()
+            .and_then(|s| s.image_support.clone());
+        fresh_js::serde::to_value(ctx, &support)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     #[plugin_api(section = "Languages & LSP")]
     /// Choose the grammar a virtual buffer is highlighted with.
     ///

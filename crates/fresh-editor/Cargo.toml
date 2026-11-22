@@ -109,8 +109,11 @@ dev-bins = ["dep:ratatui", "dep:vt100"]
 # Builds the `fresh-console-shim` bin (fresh-gui.com). Windows only; pass it
 # alongside `gui` when building the Windows GUI release.
 windows-console-shim = []
+# Inline images (Kitty / Sixel / iTerm2, half blocks otherwise) for plugin buffers
+images = ["dep:ratatui-image", "dep:image", "dep:crossterm", "dep:libc"]
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
+    "images",
     "fresh-editor-core/runtime",
     "dep:crossterm",
     "dep:fresh-input-parser",
@@ -238,6 +241,8 @@ crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
 # ratatui with default-features=false is WASM-compatible (no crossterm backend)
 # Runtime feature adds the crossterm backend for native terminal rendering
 ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"], optional = true }
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
 # tracing is always needed for logging throughout the codebase

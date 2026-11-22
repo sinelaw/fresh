@@ -15,6 +15,7 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | `lsp_help.ts` | Install instructions when a language server is missing (all languages whose helper only offers install help) |
 | `search_replace.ts` | Search and replace functionality |
 | `path_complete.ts` | Path completion in prompts |
+| `image_viewer.ts` | Opens pictures (PNG, JPEG, GIF, WebP, BMP) as pictures: fitted, zoom and pan; terminal graphics or half blocks |
 
 ### Orchestrator
 

@@ -3320,6 +3320,29 @@ type HintEntry = {
 };
 ```
 
+### `ImageSupport`
+
+How the editor draws pictures (`setBufferImage`). Returned by
+`editor.getImageSupport()`.
+
+```typescript
+type ImageSupport = {
+  /**
+  * `"kitty"`, `"sixel"` or `"iterm2"` (the terminal's own graphics), or
+  * `"halfblocks"` (coloured cells: two pixels per cell).
+  */
+  protocol: string;
+  /**
+  * A terminal cell's width in pixels.
+  */
+  cellWidth: number;
+  /**
+  * A terminal cell's height in pixels.
+  */
+  cellHeight: number;
+};
+```
+
 ### `InlineOverlay`
 
 An inline overlay specifying styling for a sub-range within a text entry

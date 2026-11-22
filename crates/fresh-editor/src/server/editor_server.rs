@@ -213,6 +213,8 @@ struct ConnectedClient {
     /// (from `$FRESH_CMD_TOKEN`). Authorizes `RunScript` against the token's
     /// grant; `None` for clients that carry no token.
     cmd_token: Option<String>,
+    /// How this client's terminal draws images (from its hello).
+    image_caps: Option<super::protocol::ImageCaps>,
 }
 
 impl EditorServer {
@@ -1077,6 +1079,7 @@ impl EditorServer {
             gpm_pointer: false,
             control_buf: Vec::new(),
             cmd_token: hello.cmd_token,
+            image_caps: hello.image_caps,
         })
     }
 
@@ -1563,11 +1566,18 @@ impl EditorServer {
         let linux_console = self
             .sizing_client()
             .is_some_and(|c| c.term() == Some("linux"));
+        #[cfg(feature = "images")]
+        let image_caps = self
+            .sizing_client()
+            .and_then(|c| c.image_caps)
+            .unwrap_or_default();
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };
         editor.set_gpm_active(gpm_pointer);
         editor.set_linux_console(linux_console);
+        #[cfg(feature = "images")]
+        editor.inline_images.set_caps(image_caps);
         if let Some(colors) = colors {
             editor.set_color_capability(colors);
         }
@@ -1585,6 +1595,9 @@ impl EditorServer {
             );
             // Force full redraw by invalidating terminal state
             terminal.backend_mut().reset_style_state();
+            // A cleared screen has lost the images uploaded to it.
+            #[cfg(feature = "images")]
+            editor.inline_images.invalidate();
             // Best-effort terminal clear for full redraw
             #[allow(clippy::let_underscore_must_use)]
             let _ = terminal.clear();
@@ -1642,11 +1655,13 @@ impl EditorServer {
                 output.clone()
             };
 
-            if !frame.is_empty() && !client.data_writer.try_write(&frame) {
+            // A dropped frame leaves the client's screen behind the diff the
+            // next frame is computed against, so it gets a full render next.
+            let dropped = !frame.is_empty() && !client.data_writer.try_write(&frame);
+            if dropped {
                 tracing::warn!("Client {} output buffer full, dropping frame", client.id);
             }
-            // Clear full render flag after sending
-            client.needs_full_render = false;
+            client.needs_full_render = dropped;
         }
 
         Ok(())

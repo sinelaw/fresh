@@ -21,13 +21,14 @@ use fresh_core::api::{
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, EditRule, EditRuleSet,
-    EditRuleTrigger, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
-    JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
-    LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
-    PluginAnimationKind, ProcessLimitsPackConfig, ReleaseNotes, RemoteBackendInfo, ReplaceResult,
-    ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
-    TerminalScreen, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    EditRuleTrigger, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, ImageSupport,
+    JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig,
+    LayoutHints, LineDiffHunk, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReleaseNotes,
+    RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult,
+    SplitSnapshot, TerminalResult, TerminalScreen, TextPropertiesAtCursor, TokenColor,
+    TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -62,6 +63,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "CursorInfo" => Some(decl_with_docs::<CursorInfo>(&cfg)),
         "ViewportInfo" => Some(decl_with_docs::<ViewportInfo>(&cfg)),
         "ScreenSize" => Some(decl_with_docs::<ScreenSize>(&cfg)),
+        "ImageSupport" => Some(decl_with_docs::<ImageSupport>(&cfg)),
         "ReleaseNotes" => Some(decl_with_docs::<ReleaseNotes>(&cfg)),
         "KeyEventPayload" => Some(decl_with_docs::<KeyEventPayload>(&cfg)),
         "SplitSnapshot" => Some(decl_with_docs::<SplitSnapshot>(&cfg)),
@@ -383,6 +385,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCreateCompositeBufferOptions",  // Options for createCompositeBuffer
     "ViewportInfo",                    // Used by plugins for viewport queries
     "ScreenSize",                      // Used by editor.getScreenSize()
+    "ImageSupport",                    // Used by editor.getImageSupport()
     "ReleaseNotes",                    // Used by editor.releaseNotes()
     "KeyEventPayload",                 // Used by editor.getNextKey()
     "SplitSnapshot",                   // Used by editor.listSplits()
