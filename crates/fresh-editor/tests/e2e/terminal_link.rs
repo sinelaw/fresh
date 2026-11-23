@@ -25,7 +25,7 @@ use fresh::model::event::BufferId;
 use fresh::services::terminal::TerminalId;
 use portable_pty::{native_pty_system, PtySize};
 
-fn harness_or_skip(
+pub(super) fn harness_or_skip(
     width: u16,
     height: u16,
     working_dir: std::path::PathBuf,
@@ -93,7 +93,7 @@ fn feed_output_until_visible(
 /// terminal mode, and feed `output` into its grid as if a program had printed
 /// it, waiting until `visible_marker` shows on screen. Returns the terminal
 /// and its buffer id.
-fn open_terminal_with_output(
+pub(super) fn open_terminal_with_output(
     harness: &mut EditorTestHarness,
     output: &[u8],
     visible_marker: &str,
@@ -126,7 +126,7 @@ fn open_terminal_with_output(
 /// output survived a render, and a snapshot taken then is blank. So go back
 /// to live mode, feed again, and take another until one holds the output;
 /// once taken, the snapshot is in the file and later repaints leave it be.
-fn enter_scrollback_showing(
+pub(super) fn enter_scrollback_showing(
     harness: &mut EditorTestHarness,
     terminal_id: TerminalId,
     output: &[u8],

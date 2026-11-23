@@ -805,16 +805,10 @@ fn test_terminal_ansi_colors() {
     // Get the first row which should contain the colored text
     let row = state.get_line(0);
 
-    // Find the 'R' cell and verify it has red foreground
+    // The 'R' cell carries palette red, which the host terminal resolves
     let r_cell = &row[0];
     assert_eq!(r_cell.c, 'R');
-    assert!(r_cell.fg.is_some(), "Cell should have foreground color");
-
-    // Red color should be roughly (205, 49, 49) based on the ANSI palette
-    let (r, g, b) = r_cell.fg.unwrap();
-    assert!(r > 150, "Red component should be high");
-    assert!(g < 100, "Green component should be low");
-    assert!(b < 100, "Blue component should be low");
+    assert_eq!(r_cell.fg, Some(ratatui::style::Color::Indexed(1)));
 }
 
 /// Test terminal mode key forwarding via handle_key

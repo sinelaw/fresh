@@ -2866,7 +2866,7 @@ pub mod render {
     use crate::services::terminal::TerminalCell;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::style::{Modifier, Style};
 
     /// Render terminal content to a ratatui buffer
     #[allow(clippy::too_many_arguments)]
@@ -2912,11 +2912,11 @@ pub mod render {
                 // its own takes the theme's default — with that key's text
                 // attributes, which belong to the default, not to the cell.
                 let mut style = match cell.fg {
-                    Some((r, g, b)) => Style::default().fg(Color::Rgb(r, g, b)),
+                    Some(color) => Style::default().fg(color),
                     None => default_fg,
                 };
                 style = match cell.bg {
-                    Some((r, g, b)) => style.bg(Color::Rgb(r, g, b)),
+                    Some(color) => style.bg(color),
                     None => style.patch(default_bg),
                 };
 
@@ -2962,6 +2962,7 @@ pub mod render {
     mod tests {
         use super::*;
         use crate::services::terminal::TerminalCell;
+        use ratatui::style::Color;
 
         #[test]
         fn cells_past_pty_grid_get_theme_bg() {
