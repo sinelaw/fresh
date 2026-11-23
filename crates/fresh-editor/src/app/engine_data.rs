@@ -397,12 +397,39 @@ impl Editor {
                 Label { info } => json!({ "info": info }),
             }
         }
+        // The Alt+letter the keymap binds to opening each menu, so the page
+        // opens a menu only on a key the keymap gives it: a rebinding, or
+        // `menu_bar_mnemonics` off (the resolver then drops the mnemonics),
+        // leaves the key to the core.
+        let mnemonics: Vec<(String, char)> = self
+            .keybindings
+            .read()
+            .map(|kb| {
+                ('a'..='z')
+                    .filter_map(|c| {
+                        let key = crossterm::event::KeyEvent::new(
+                            crossterm::event::KeyCode::Char(c),
+                            crossterm::event::KeyModifiers::ALT,
+                        );
+                        match kb.resolve(&key, crate::input::keybindings::KeyContext::Normal) {
+                            crate::input::keybindings::Action::MenuOpen(name) => Some((name, c)),
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Value::Array(
             self.all_menus_expanded()
                 .iter()
                 .map(|m| {
+                    let mnemonic = mnemonics
+                        .iter()
+                        .find(|(name, _)| crate::config::MenuExt::match_id(m).eq_ignore_ascii_case(name))
+                        .map(|(_, c)| c.to_ascii_uppercase().to_string());
                     json!({
                         "label": m.label,
+                        "mnemonic": mnemonic,
                         "items": m.items.iter()
                         .filter(|i| !matches!(i, fresh_core::menu::MenuItem::Action { action, .. } if action == "calibrate_input"))
                         .map(|i| item(self, i)).collect::<Vec<_>>(),

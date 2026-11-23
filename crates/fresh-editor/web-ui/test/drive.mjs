@@ -510,6 +510,10 @@ await test("menus are driven from the keyboard, submenus included, and give the 
   await p.keyboard.press("ArrowLeft");
   await p.keyboard.press("Escape");
   assert.equal(await p.evaluate(() => [menubar.open, document.activeElement.id].join()), "-1,kb");
+  // Alt+F is the keymap's mnemonic for File.
+  await p.keyboard.press("Alt+f");
+  assert.equal(await p.evaluate(() => core.menus[menubar.open].label), "File");
+  await p.keyboard.press("Escape");
   // The caret did not move while the menu had the keys.
   assert.equal(await p.evaluate(() => core.status.line), line);
 });

@@ -1805,6 +1805,30 @@ mod tests {
     }
 
     #[test]
+    fn a_menus_mnemonic_is_the_keymaps() {
+        let (_dir, mut ed) = editor_with("x\n");
+        let file = |ed: &crate::app::Editor| {
+            ed.engine_menus()
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["label"].as_str().is_some_and(|l| l.contains("File")))
+                .map(|m| m["mnemonic"].clone())
+                .unwrap()
+        };
+        assert_eq!(file(&ed), json!("F"));
+        // Off, the Alt+letters are free: the page must not take them.
+        let mut c = ApiClient::default();
+        c.push(&mut ed);
+        call(
+            &mut c,
+            &mut ed,
+            json!({"op": "settings.set", "changes": {"/editor/menu_bar_mnemonics": false}}),
+        );
+        assert_eq!(file(&ed), Value::Null);
+    }
+
+    #[test]
     fn file_operations_are_the_explorers_and_never_replace_a_file() {
         let (dir, mut ed) = editor_with("precious\n");
         let mut c = ApiClient::default();

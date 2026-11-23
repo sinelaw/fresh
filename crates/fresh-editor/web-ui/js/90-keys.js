@@ -25,9 +25,11 @@ function clientKey(e) {
   if (mod && !e.altKey && !e.shiftKey && e.key === ",") { openSettings(); return true; }
   if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") { toggleExplorer(); return true; }
   if (e.key === "F10" && !mod) { if (menubar.open >= 0) closeMenus(); else openMenu(0, true); return true; }
-  if (e.altKey && !mod && /^Key[A-Z]$/.test(e.code)) {
-    const letter = e.code.slice(3);
-    const i = core.menus.findIndex((m) => m.label.replace(/^&/, "").toUpperCase().startsWith(letter));
+  // A menu opens on the Alt+letter the core's keymap gives it (none while
+  // `menu_bar_mnemonics` is off, or when the key is bound to something else);
+  // any other Alt+letter is the core's. A terminal keeps its keys.
+  if (e.altKey && !mod && /^Key[A-Z]$/.test(e.code) && !(bufferById(core.status && core.status.buffer) || {}).terminal) {
+    const i = core.menus.findIndex((m) => m.mnemonic === e.code.slice(3));
     if (i >= 0) { openMenu(i, true); return true; }
   }
   return false;
