@@ -2418,10 +2418,36 @@ interface DockTree {
 function buildDockTree(filtered: number[]): DockTree {
   dockRemoteThisBuild = null;
   dockRemoteThisBuild = dockHasRemote();
+  dockMissingThisBuild = new Map();
   try {
     return buildDockTreeRows(filtered);
   } finally {
     dockRemoteThisBuild = null;
+    dockMissingThisBuild = null;
+  }
+}
+
+// Whether a workspace's folder on this computer is gone (moved, renamed or
+// deleted since it was last open). Its window still opens, onto nothing, so
+// the dock marks the row and a switch to it says why it is empty. Asked of
+// the filesystem once per row per tree build (see `buildDockTree`). A remote
+// workspace, a pending create and a discovered worktree have no local folder
+// to check.
+let dockMissingThisBuild: Map<number, boolean> | null = null;
+function workspaceFolderMissing(s: AgentSession): boolean {
+  if (s.remote || s.pending || s.discovered || !s.root) return false;
+  const cached = dockMissingThisBuild?.get(s.id);
+  if (cached !== undefined) return cached;
+  const missing = !editor.fileExists(editor.localPath(s.root));
+  dockMissingThisBuild?.set(s.id, missing);
+  return missing;
+}
+
+/// Say why the workspace just switched to is empty, when its folder is gone.
+function noteMissingFolder(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (s && workspaceFolderMissing(s)) {
+    editor.setStatus(`${s.root}: ${editor.t("form.folder_missing")}`);
   }
 }
 
@@ -2731,6 +2757,9 @@ function sessionNodeEntry(id: number): TextPropertyEntry {
   // answer to "which workspace am I in". A second marker on the name
   // could only ever agree with it or contradict it.
   segs.push({ text: s.label, style: { bold: true } });
+  if (workspaceFolderMissing(s)) {
+    segs.push({ text: " ⚠", style: { fg: "diagnostic.warning_fg", bold: true } });
+  }
   // A remote session surfaces its backend target (host / ns·pod), coloured
   // by the connection state — the same detail the pill shows on the right,
   // and skipped when the label already names it (see `remoteDetailSegs`).
@@ -7950,6 +7979,7 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     // any time while it connects.
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
+    noteMissingFolder(id);
   })();
 }
 
@@ -8023,6 +8053,7 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   if (act.windowId !== editor.activeWindow()) {
     if (fromEdge) editor.setActiveWindowAnimated(act.windowId, fromEdge);
     else editor.setActiveWindow(act.windowId);
+    noteMissingFolder(act.windowId);
   }
   // Hand keyboard focus to the activated window (mirror `dock_activate`).
   // Picking a row is not "leaving the dock", so the search filter that

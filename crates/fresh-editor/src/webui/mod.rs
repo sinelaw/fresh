@@ -342,8 +342,8 @@ impl WebBridge {
     /// Sleep up to `timeout`, but wake as soon as a browser sends something,
     /// a connection arrives, a request's bytes come in, or a backlog can be
     /// written: a host loop waits here instead of sleeping, so input is read
-    /// the moment it lands rather than at the next poll. (Elsewhere than
-    /// Unix it sleeps.)
+    /// the moment it lands rather than at the next poll: poll(2) on Unix,
+    /// WSAPoll on Windows.
     pub fn wait(&self, timeout: Duration) {
         #[cfg(unix)]
         {
@@ -367,7 +367,39 @@ impl WebBridge {
                 tracing::trace!("[webui] wait ended early: {e}");
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawSocket;
+            use windows_sys::Win32::Networking::WinSock::{
+                WSAPoll, POLLRDNORM, POLLWRNORM, WSAPOLLFD,
+            };
+            let fd = |socket: u64, events: i16| WSAPOLLFD {
+                fd: socket as usize,
+                events,
+                revents: 0,
+            };
+            let mut fds = Vec::with_capacity(1 + self.ws.len() + self.pending.len());
+            fds.push(fd(self.listener.as_raw_socket(), POLLRDNORM));
+            for s in &self.ws {
+                let mut events = POLLRDNORM;
+                if !s.outbuf.is_empty() {
+                    events |= POLLWRNORM;
+                }
+                fds.push(fd(s.stream.as_raw_socket(), events));
+            }
+            for c in &self.pending {
+                fds.push(fd(c.stream.as_raw_socket(), POLLRDNORM));
+            }
+            let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+            // SAFETY: `fds` is a live, initialised array of `fds.len()`
+            // entries for the duration of the call; WSAPoll only writes their
+            // `revents`. An error or interruption only ends the wait early.
+            let r = unsafe { WSAPoll(fds.as_mut_ptr(), fds.len() as u32, ms) };
+            if r < 0 {
+                tracing::trace!("[webui] wait ended early: WSAPoll error");
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
         std::thread::sleep(timeout);
     }
 
