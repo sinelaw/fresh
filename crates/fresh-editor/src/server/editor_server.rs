@@ -425,6 +425,9 @@ impl EditorServer {
             // Process client messages and get input events
             tracing::trace!("[server] main loop: calling process_clients");
             let (input_events, resize_occurred, input_source) = self.process_clients()?;
+            // Whether a terminal sent input this pass (the events are consumed below).
+            #[cfg(feature = "web")]
+            let terminal_input = !input_events.is_empty();
             if let Some(idx) = input_source {
                 self.last_input_client = Some(idx);
             }
@@ -440,7 +443,9 @@ impl EditorServer {
             // quit the session, and folded into `needs_render` so its effect
             // is broadcast to the attached terminals in this same pass.
             #[cfg(feature = "web")]
-            if self.poll_web()? {
+            let web_input = self.poll_web()?;
+            #[cfg(feature = "web")]
+            if web_input {
                 needs_render = true;
             }
 
@@ -639,13 +644,7 @@ impl EditorServer {
             // for a slow push (`due`): a skin's machine figures and the clock.
             #[cfg(feature = "web")]
             {
-                const WEB_PUSH_INTERVAL: Duration = Duration::from_millis(40);
                 web_dirty |= needs_render || self.web.as_ref().is_some_and(|b| b.due());
-                if web_dirty && last_web_push.elapsed() >= WEB_PUSH_INTERVAL {
-                    self.push_web();
-                    last_web_push = Instant::now();
-                    web_dirty = false;
-                }
             }
 
             if needs_render {
@@ -653,10 +652,28 @@ impl EditorServer {
             }
 
             // Render and broadcast if needed
+            let mut drew_frame = false;
             if needs_render && last_render.elapsed() >= FRAME_DURATION {
-                self.render_and_broadcast()?;
+                drew_frame = self.render_and_broadcast()?;
                 last_render = Instant::now();
                 needs_render = false;
+            }
+
+            // The web clients: what input changed goes out in this same pass,
+            // so a keystroke is not held back; what changes on its own
+            // (animations, the clock, a deferred highlight) at most 25 times
+            // a second. `web_dirty` remembers a change that fell inside that
+            // window so it still lands. The frame just drawn for the
+            // terminals is the one the push needs, so it is not drawn twice.
+            #[cfg(feature = "web")]
+            {
+                const WEB_PUSH_INTERVAL: Duration = Duration::from_millis(40);
+                let input = web_input || terminal_input;
+                if web_dirty && (input || last_web_push.elapsed() >= WEB_PUSH_INTERVAL) {
+                    self.push_web(drew_frame);
+                    last_web_push = Instant::now();
+                    web_dirty = false;
+                }
             }
 
             let mut wait = if last_activity.elapsed() < ACTIVE_WINDOW {
@@ -673,7 +690,16 @@ impl EditorServer {
                         .max(until_frame),
                 );
             }
-            std::thread::sleep(wait.max(Duration::from_millis(1)));
+            let wait = wait.max(Duration::from_millis(1));
+            // A browser's input wakes the loop at once; terminals' and the
+            // editor's own events are picked up at the next poll.
+            #[cfg(feature = "web")]
+            match self.web.as_ref() {
+                Some(bridge) => bridge.wait(wait),
+                None => std::thread::sleep(wait),
+            }
+            #[cfg(not(feature = "web"))]
+            std::thread::sleep(wait);
         }
 
         // The same shutdown sequence as the normal (non-daemon) exit path in
@@ -779,14 +805,20 @@ impl EditorServer {
         Ok(poll.mutated)
     }
 
-    /// Push each connected browser what changed for it.
+    /// Push each connected browser what changed for it. `drew_frame`: the
+    /// editor's frame was just drawn for the terminals, at the same size, so
+    /// the bridge need not draw it again.
     #[cfg(feature = "web")]
-    fn push_web(&mut self) {
+    fn push_web(&mut self, drew_frame: bool) {
         let size = self.term_size;
         let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
             return;
         };
-        bridge.push(editor, size.cols, size.rows);
+        if drew_frame {
+            bridge.push_rendered(editor);
+        } else {
+            bridge.push(editor, size.cols, size.rows);
+        }
     }
 
     /// Build the `Editor` from the current configuration and stored authority.
@@ -1511,7 +1543,9 @@ impl EditorServer {
     }
 
     /// Render the editor and broadcast output to all clients
-    fn render_and_broadcast(&mut self) -> io::Result<()> {
+    /// Draw the editor's frame and send it to the attached terminals.
+    /// Returns whether a frame was drawn (there is an editor and a backend).
+    fn render_and_broadcast(&mut self) -> io::Result<bool> {
         // The pointer is drawn for a GPM console while it is the terminal in
         // use — as the in-process editor does on a console. Set every frame,
         // since it is a property of the active window and windows switch.
@@ -1530,7 +1564,7 @@ impl EditorServer {
             .sizing_client()
             .is_some_and(|c| c.term() == Some("linux"));
         let Some(ref mut editor) = self.editor else {
-            return Ok(());
+            return Ok(false);
         };
         editor.set_gpm_active(gpm_pointer);
         editor.set_linux_console(linux_console);
@@ -1539,7 +1573,7 @@ impl EditorServer {
         }
 
         let Some(ref mut terminal) = self.terminal else {
-            return Ok(());
+            return Ok(false);
         };
 
         // Check if any client needs a full render (e.g., newly connected)
@@ -1588,7 +1622,7 @@ impl EditorServer {
         let output = terminal.backend_mut().take_buffer();
 
         if output.is_empty() && pending_sequences.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
 
         // Broadcast to all clients via non-blocking writer threads (skip waiting clients)
@@ -1615,7 +1649,7 @@ impl EditorServer {
             client.needs_full_render = false;
         }
 
-        Ok(())
+        Ok(true)
     }
 
     /// Disconnect all clients

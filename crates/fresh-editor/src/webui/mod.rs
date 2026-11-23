@@ -306,11 +306,20 @@ impl WebBridge {
     /// for it. Does not tick — the host owns that. A client whose push fails
     /// is dropped.
     pub fn push(&mut self, editor: &mut Editor, cols: u16, rows: u16) {
-        self.last_push = Instant::now();
         if self.ws.is_empty() {
+            self.last_push = Instant::now();
             return;
         }
         render_to_buffer(editor, cols, rows);
+        self.push_rendered(editor);
+    }
+
+    /// [`Self::push`] for a host that has just drawn the editor's own frame
+    /// itself (the session daemon draws it for its terminals): the frame's
+    /// side effects — plugin render hooks, mounted panels — are current, so
+    /// drawing it a second time here would only cost the time.
+    pub fn push_rendered(&mut self, editor: &mut Editor) {
+        self.last_push = Instant::now();
         let mut i = 0;
         while i < self.ws.len() {
             let session = &mut self.ws[i];
@@ -324,6 +333,38 @@ impl WebBridge {
                 i += 1;
             }
         }
+    }
+
+    /// Sleep up to `timeout`, but wake as soon as a browser sends something,
+    /// a connection arrives, a request's bytes come in, or a backlog can be
+    /// written: a host loop waits here instead of sleeping, so input is read
+    /// the moment it lands rather than at the next poll. (Elsewhere than
+    /// Unix it sleeps.)
+    pub fn wait(&self, timeout: Duration) {
+        #[cfg(unix)]
+        {
+            use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+            use std::os::fd::AsFd;
+            let mut fds = Vec::with_capacity(1 + self.ws.len() + self.pending.len());
+            fds.push(PollFd::new(self.listener.as_fd(), PollFlags::POLLIN));
+            for s in &self.ws {
+                let mut flags = PollFlags::POLLIN;
+                if !s.outbuf.is_empty() {
+                    flags |= PollFlags::POLLOUT;
+                }
+                fds.push(PollFd::new(s.stream.as_fd(), flags));
+            }
+            for c in &self.pending {
+                fds.push(PollFd::new(c.stream.as_fd(), PollFlags::POLLIN));
+            }
+            let t = PollTimeout::try_from(timeout).unwrap_or(PollTimeout::MAX);
+            // An interrupted or failed poll only ends the wait early.
+            if let Err(e) = poll(&mut fds, t) {
+                tracing::trace!("[webui] wait ended early: {e}");
+            }
+        }
+        #[cfg(not(unix))]
+        std::thread::sleep(timeout);
     }
 
     /// Heartbeat and drain buffered outbound bytes for each client; a peer
@@ -374,11 +415,13 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
             next_tick = Instant::now() + if active { TICK_ACTIVE } else { TICK_IDLE };
         }
         bridge.maintain();
-        std::thread::sleep(if bridge.is_busy() {
+        // Woken by a browser's input, or at the next tick.
+        let until_tick = next_tick.saturating_duration_since(Instant::now());
+        bridge.wait(until_tick.min(if bridge.is_busy() {
             SLEEP_CONNECTED
         } else {
             SLEEP_IDLE
-        });
+        }));
     }
 }
 
