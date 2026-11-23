@@ -241,21 +241,21 @@ impl Editor {
         let buffer = win.pane_buffer(leaf)?;
         let mut cells = ratatui::buffer::Buffer::empty(area);
         let mut cell_theme_map = Vec::new();
-        let (rows, mut caret) = win
-            .buffers
-            .with_buffer_and_split(buffer, leaf, |state, view| {
-                crate::view::ui::SplitRenderer::render_view(
-                    &mut cells,
-                    state,
-                    view,
-                    area,
-                    style,
-                    session_mode,
-                    highlight_current_column,
-                    &mut cell_theme_map,
-                    area.width,
-                )
-            })?;
+        let (rows, mut caret) =
+            win.buffers
+                .with_buffer_and_split(buffer, leaf, |state, view| {
+                    crate::view::ui::SplitRenderer::render_view(
+                        &mut cells,
+                        state,
+                        view,
+                        area,
+                        style,
+                        session_mode,
+                        highlight_current_column,
+                        &mut cell_theme_map,
+                        area.width,
+                    )
+                })?;
         // A live terminal's grid over the rows the text pass drew, as the
         // terminal's own pane paints it.
         let win = self.windows.get(&window)?;
