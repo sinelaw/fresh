@@ -289,7 +289,7 @@ body.theme-neon-hive.has-sidebar.sidebar-right #device .hx-cables.r {
   background: linear-gradient(90deg, color-mix(in srgb, var(--hive-pink) 70%, transparent), color-mix(in srgb, var(--hive-pink) 12%, transparent));
   box-shadow: 0 0 14px color-mix(in srgb, var(--hive-pink) 50%, transparent);
 }
-.theme-neon-hive .native-panel :is(.w-button, .w-text) { border-radius: 999px; }
+.theme-neon-hive .native-panel :is(.w-button, input.w-text-input) { border-radius: 999px; }
 
 /* Pop-ups: every floating surface in the same neon glass, its rim the
    colour of where it comes from. */
@@ -315,7 +315,9 @@ body.theme-neon-hive.has-sidebar.sidebar-right #device .hx-cables.r {
   text-shadow: 0 0 6px color-mix(in srgb, var(--hl) 80%, transparent);
 }
 .theme-neon-hive :is(.mitem, .ask-row, .popup-item, .settings-cat) { border-radius: 999px; }
-.theme-neon-hive :is(.ask-input, .ui-field) { border-radius: 999px; background: rgba(10,5,19,.7); border-color: color-mix(in srgb, var(--hive-pink) 55%, transparent); }
+/* A one-line field is a capsule; a box of text (and a plugin panel's field
+   wrapper, whose input the field tokens draw) keeps its corners. */
+.theme-neon-hive :is(.ask-input, input.ui-field:not(.native-panel *)) { border-radius: 999px; background: rgba(10,5,19,.7); border-color: color-mix(in srgb, var(--hive-pink) 55%, transparent); }
 .theme-neon-hive .btn { border-radius: 999px; background: rgba(155,92,255,.12); border-color: color-mix(in srgb, var(--hive-violet) 60%, transparent); }
 .theme-neon-hive .btn.primary { background: linear-gradient(90deg, var(--hive-pink), var(--hive-violet)); border-color: transparent; color: #fff; }
 .theme-neon-hive .native-panel .w-button.primary { color: var(--on-ui-accent); }

@@ -259,7 +259,10 @@ body.theme-winamp { --wa-olive:
 .theme-winamp .ask-list, .theme-winamp .popup-list, .theme-winamp .popup-doc, .theme-winamp .settings-list,
 .theme-winamp .kb-body, .theme-winamp .browser-list {
   background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); box-shadow: var(--wa-in); }
-.theme-winamp .ask-input, .theme-winamp .ui-field {
+/* A field's box: the palette's line and the page's own fields. A plugin
+   panel's field is a wrapper around its input, which the field tokens
+   above already draw: styling the wrapper too drew the box twice. */
+.theme-winamp .ask-input, .theme-winamp .ui-field:not(.native-panel *) {
   background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #000; border-radius: 0; box-shadow: var(--wa-in); }
 .theme-winamp .ask-row, .theme-winamp .popup-item { border-radius: 0; }
 .theme-winamp .ask-row:hover:not(.selected) { background: rgba(78,240,127,.05); }
