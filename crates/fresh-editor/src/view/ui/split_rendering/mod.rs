@@ -289,18 +289,10 @@ impl SplitRenderer {
     pub fn render_view(
         buf: &mut ratatui::buffer::Buffer,
         state: &mut EditorState,
-        cursors: &crate::model::cursor::Cursors,
-        viewport: &mut crate::view::viewport::Viewport,
-        folds: &mut crate::view::folding::FoldManager,
+        view: &mut crate::view::split::BufferViewState,
         area: Rect,
         style: RenderStyle<'_>,
-        view_mode: crate::state::ViewMode,
-        compose_width: Option<u16>,
-        compose_column_guides: Option<Vec<u16>>,
         session_mode: bool,
-        rulers: &[usize],
-        show_line_numbers: bool,
-        highlight_current_line: bool,
         highlight_current_column: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
@@ -308,17 +300,35 @@ impl SplitRenderer {
         state
             .margins
             .set_gutter_separator(style.theme.chrome.gutter_separator);
-        viewport.gutter_separator = style.theme.chrome.gutter_separator;
-        orchestration::reconcile::place_pane(
+        // The same reconcile every other pane goes through: the byte pass
+        // (the only thing that follows the cursor in a large file, which has
+        // no row index), the scrollbar clamp, then the row placement. Going
+        // to the row placement alone, a large file's view never followed its
+        // cursor off the screen.
+        orchestration::reconcile::reconcile_pane(
             state,
-            viewport,
-            cursors,
-            folds,
-            &view_mode,
-            compose_width,
-            show_line_numbers,
-            area,
+            view,
+            orchestration::reconcile::ReconcileInputs {
+                content_rect: area,
+                // A pane whose content is pinned to its size does not scroll
+                // to follow the cursor (as the frame's reconcile decides it).
+                pin_to_top: !state.scrollable,
+                show_horizontal_scrollbar: false,
+                gutter_separator: style.theme.chrome.gutter_separator,
+            },
         );
+        let crate::view::split::BufferViewState {
+            cursors,
+            viewport,
+            folds,
+            view_mode,
+            compose_width,
+            compose_column_guides,
+            rulers,
+            show_line_numbers,
+            highlight_current_line,
+            ..
+        } = view;
         let crate::view::ui::EditorRenderConfig {
             estimated_line_length,
             highlight_context_bytes,
@@ -342,16 +352,16 @@ impl SplitRenderer {
             /* is_active */ true,
             style.theme,
             /* lsp_waiting */ false,
-            view_mode,
-            compose_width,
+            view_mode.clone(),
+            *compose_width,
             estimated_line_length,
             highlight_context_bytes,
             relative_line_numbers,
             use_terminal_bg,
             session_mode,
             software_cursor_only,
-            show_line_numbers,
-            highlight_current_line,
+            *show_line_numbers,
+            *highlight_current_line,
             true,
             diagnostics_inline_text,
             /* show_tilde */ false,
@@ -373,7 +383,7 @@ impl SplitRenderer {
             background_fade,
             software_cursor_only,
             rulers,
-            compose_column_guides,
+            compose_column_guides.clone(),
             highlight_current_column,
             caret,
         );

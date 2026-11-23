@@ -651,13 +651,17 @@ impl EditorServer {
                 last_activity = Instant::now();
             }
 
-            // Render and broadcast if needed
-            let mut drew_frame = false;
-            if needs_render && last_render.elapsed() >= FRAME_DURATION {
-                drew_frame = self.render_and_broadcast()?;
+            // Render and broadcast if needed. (Whether a frame was drawn is
+            // read by the web push below.)
+            #[cfg_attr(not(feature = "web"), allow(unused_variables))]
+            let drew_frame = if needs_render && last_render.elapsed() >= FRAME_DURATION {
+                let drew = self.render_and_broadcast()?;
                 last_render = Instant::now();
                 needs_render = false;
-            }
+                drew
+            } else {
+                false
+            };
 
             // The web clients: what input changed goes out in this same pass,
             // so a keystroke is not held back; what changes on its own

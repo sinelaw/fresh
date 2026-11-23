@@ -262,6 +262,14 @@ await test("a terminal is drawn in its view at the view's size", async (p) => {
   await p.keyboard.type("echo $COLUMNS-cols");
   await p.keyboard.press("Enter");
   await until(async () => (await textOf(p)).some((l) => l.trim() === `${cols}-cols`), `the shell sees ${cols} columns`);
+  // Its caret is the terminal's cursor — after the new prompt, below the
+  // output — not the start of the text behind the grid.
+  await until(async () => {
+    const { caret, rows } = await p.evaluate(() => ({ caret: activeView().data.caret, rows: activeView().data.rows.map((r) => rowText(r)) }));
+    if (!caret) return false;
+    const out = rows.findIndex((l) => l.trim() === `${cols}-cols`);
+    return caret[1] > out && caret[0] > 0 && rows[caret[1]].trim().length > 0;
+  }, "the caret at the shell's prompt");
 });
 
 await test("a tab dragged to a pane's edge splits it, and the sash sets the core's ratio", async (p) => {

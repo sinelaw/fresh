@@ -241,31 +241,16 @@ impl Editor {
         let buffer = win.pane_buffer(leaf)?;
         let mut cells = ratatui::buffer::Buffer::empty(area);
         let mut cell_theme_map = Vec::new();
-        let (rows, caret) = win
+        let (rows, mut caret) = win
             .buffers
             .with_buffer_and_split(buffer, leaf, |state, view| {
-                let cursors = view.cursors.clone();
-                let view_mode = view.view_mode.clone();
-                let compose_width = view.compose_width;
-                let guides = view.compose_column_guides.clone();
-                let rulers = view.rulers.clone();
-                let show_line_numbers = view.show_line_numbers;
-                let highlight_current_line = view.highlight_current_line;
                 crate::view::ui::SplitRenderer::render_view(
                     &mut cells,
                     state,
-                    &cursors,
-                    &mut view.viewport,
-                    &mut view.folds,
+                    view,
                     area,
                     style,
-                    view_mode,
-                    compose_width,
-                    guides,
                     session_mode,
-                    &rulers,
-                    show_line_numbers,
-                    highlight_current_line,
                     highlight_current_column,
                     &mut cell_theme_map,
                     area.width,
@@ -274,8 +259,12 @@ impl Editor {
         // A live terminal's grid over the rows the text pass drew, as the
         // terminal's own pane paints it.
         let win = self.windows.get(&window)?;
+        // Its caret is the terminal's cursor, not the cursor of the text
+        // behind the grid (which sits at the start, and blinked there). The
+        // grid does not paint the cursor into the cells: the view draws it
+        // as its caret, so there is one cursor.
         if win.is_terminal_buffer(buffer) && !win.split_terminal_scrollback(leaf, buffer) {
-            win.paint_terminal_grid(&mut cells, leaf, buffer, area, true);
+            caret = win.paint_terminal_grid(&mut cells, leaf, buffer, area, false);
         }
         crate::app::shell_host::settle_pane_view(self, window, leaf, area, rows, caret, true);
         let win = self.windows.get(&window)?;

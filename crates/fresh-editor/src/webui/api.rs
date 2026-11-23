@@ -1617,6 +1617,63 @@ mod tests {
     }
 
     #[test]
+    fn a_large_files_view_follows_the_cursor() {
+        // Past the large-file threshold (lines are not indexed up front).
+        let text: String = (1..=200_000)
+            .map(|i| format!("a fairly ordinary line of text number {i}\n"))
+            .collect();
+        let (_d, mut ed) = editor_with(&text);
+        let mut c = ApiClient::default();
+        c.push(&mut ed);
+        let (view, _) = open_view(&mut c, &mut ed, 80, 20);
+        let rows_of = |c: &mut ApiClient, ed: &mut crate::app::Editor| -> (Vec<String>, Value) {
+            let mut all = vec![String::new(); 20];
+            // Everything sent so far for this view, oldest first.
+            c.sent.remove(&format!("view:{view}"));
+            c.rows.remove(&view);
+            let out = c.push(ed);
+            let ev = out
+                .into_iter()
+                .rev()
+                .find(|v| v["ev"] == "view" && v["view"] == view)
+                .expect("view");
+            for (y, t) in text_of(&ev).into_iter().enumerate() {
+                all[y] = t;
+            }
+            (all, ev["caret"].clone())
+        };
+        for _ in 0..150 {
+            c.handle(
+                &mut ed,
+                &json!({"op": "key", "view": view, "key": "ArrowDown"}),
+            );
+        }
+        let (rows, caret) = rows_of(&mut c, &mut ed);
+        assert!(
+            caret.is_array(),
+            "the caret is in view after 150 lines down: {caret} {rows:?}"
+        );
+        let row = caret[1].as_u64().unwrap() as usize;
+        assert!(
+            rows[row].contains("number 151"),
+            "the caret's row shows line 151: {:?}",
+            rows[row]
+        );
+        c.handle(
+            &mut ed,
+            &json!({"op": "key", "view": view, "key": "End", "ctrl": true}),
+        );
+        let (rows, caret) = rows_of(&mut c, &mut ed);
+        let row = caret[1].as_u64().expect("the caret is in view at the end") as usize;
+        // The text ends with a newline, so the end is the empty line after it.
+        assert!(
+            rows[row].contains("200001 │")
+                && rows[..row].iter().any(|r| r.contains("number 200000")),
+            "the caret's row is the last line: {rows:?} caret {caret}"
+        );
+    }
+
+    #[test]
     fn the_root_follows_the_active_workspace() {
         let (dir, mut ed) = editor_with("x\n");
         let mut c = ApiClient::default();
