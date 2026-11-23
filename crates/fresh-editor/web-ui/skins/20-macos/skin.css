@@ -1,0 +1,135 @@
+/* ==FreshSkin==
+@id           macos
+@name         macOS Light
+@description  Native macOS — light & vibrant
+@author       Fresh
+@version      2.0.0
+@frame        full
+@editor-theme builtin://light
+@keys         symbols
+==/FreshSkin== */
+
+/* A native-feeling Mac window: a title bar with traffic lights and the
+   document's name, the SF system font, a unified toolbar, a source-list
+   sidebar, vibrant menus and accent selections. The colours are a fixed
+   "System" palette (macOS Dark extends this skin and swaps only the tokens),
+   so every rule below is written against tokens. The buffer keeps the
+   editor theme's colours: it reads as the window's content. */
+:root.theme-macos {
+  --fg: #1d1d1f; --muted: #6e6e73;
+  --bg2: #ffffff; --bg3: #f2f2f4; --border: #d3d3d8;
+  --accent: #0064e1; --on-accent: #ffffff; --ui-accent: #0064e1; --on-ui-accent: #ffffff;
+  --hairline: rgba(0,0,0,.085); --hairline-strong: rgba(0,0,0,.13); --hover: rgba(0,0,0,.05);
+  --shadow: 0 11px 34px rgba(0,0,0,.17), 0 2px 7px rgba(0,0,0,.11);
+  --r-sm: 6px; --r-md: 8px; --r-lg: 12px;
+  --mac-shell: #ececec;
+  --mac-titlebar: linear-gradient(180deg, #f5f5f5, #e9e9e9);
+  --mac-title-fg: #4a4a4e;
+  --mac-panel: #f6f6f6;
+  --mac-menu: #f6f6f6;
+  --field-bg: #ffffff; --field-fg: #1d1d1f; --field-border: #c8c8cc;
+  --mac-sidebar: #ececec;
+  --mac-tabs: #e3e3e5;
+  --mac-tab-active: #f6f6f6;
+}
+:root.theme-macos {
+  --menu-bg: var(--mac-shell); --menu-fg: var(--fg);
+  --tab-bg: var(--mac-tabs); --tab-fg: var(--muted); --tab-active-bg: var(--mac-tab-active); --tab-active-fg: var(--fg);
+  --status-bg: var(--mac-shell); --status-fg: var(--muted);
+  --popup-bg: var(--bg2); --popup-fg: var(--fg); --border-c: var(--border);
+  --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif, "Symbols Nerd Font Mono";
+}
+body.theme-macos { background: var(--mac-shell); }
+
+/* ---- the title bar: traffic lights and the document's name; the window
+   starts below it ---- */
+body.theme-macos:not(.mobile) #mactitle { display: flex; position: fixed; left: 0; right: 0; top: 0; height: 28px;
+  z-index: 1; align-items: center; pointer-events: none; font: 13px/1 var(--font-family);
+  color: var(--mac-title-fg); background: var(--mac-titlebar); border-bottom: 1px solid var(--hairline-strong); }
+body.theme-macos:not(.mobile) #app { position: fixed; top: 28px; left: 0; right: 0; bottom: 0; height: auto; }
+/* Three 12px dots on 20px centres, each one radial gradient on its tile. */
+.theme-macos #mactitle .mt-lights { width: 52px; height: 12px; margin-left: 20px; flex: 0 0 auto;
+  background:
+    radial-gradient(circle 6px at 6px 5px, #ff8b83 0%, #fb5b52 52%, #e5473d 82%, transparent 100%) 0 0/12px 12px no-repeat,
+    radial-gradient(circle 6px at 6px 5px, #ffd977 0%, #fdbb2c 52%, #e0a024 82%, transparent 100%) 20px 0/12px 12px no-repeat,
+    radial-gradient(circle 6px at 6px 5px, #63e18b 0%, #29c841 52%, #1eae38 82%, transparent 100%) 40px 0/12px 12px no-repeat; }
+.theme-macos #mactitle .mt-name { margin: 0 auto; padding-right: 72px; font-weight: 600; letter-spacing: .01em;
+  max-width: 56%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- toolbar (the menu bar) ---- */
+.theme-macos #menubar { border-bottom: 1px solid var(--hairline-strong); padding: 3px 8px; }
+.theme-macos .mtop { font-weight: 500; border-radius: 5px; }
+.theme-macos .mtop.open { background: var(--ui-accent); color: #fff; }
+
+/* ---- menus: near-opaque menu material, an inset rounded highlight ---- */
+.theme-macos .dropdown, .theme-macos #thememenu, .theme-macos .popup {
+  background: var(--mac-menu); color: var(--fg); border: 1px solid var(--hairline-strong); }
+/* Native menu metrics: 13px type on 22px rows. */
+.theme-macos .dropdown { padding: 5px; border-radius: 8px; font-size: 13px; min-width: 200px; }
+.theme-macos .mitem { border-radius: 4px; padding: 0 12px; height: 22px; line-height: 22px; }
+.theme-macos .dropdown.checks > .mitem { padding-left: 4px; }
+.theme-macos .mkeys { font-size: 13px; letter-spacing: .04em; }
+.theme-macos .mitem.hi { background: var(--ui-accent); color: #fff; }
+.theme-macos .mitem.hi .mkeys { opacity: .85; }
+
+/* ---- tabs: quiet, with a slim accent underline ---- */
+.theme-macos .tabs { border-bottom: 1px solid var(--hairline-strong); }
+.theme-macos .tab { border-right-color: var(--hairline); }
+.theme-macos .tab:not(.active):hover { background: var(--hover); }
+.theme-macos .pane.active .tab.active { box-shadow: inset 0 -2px 0 var(--ui-accent); }
+.theme-macos .tab-close { border-radius: 50%; width: 15px; height: 15px; line-height: 15px; }
+.theme-macos .tab-close:hover { background: color-mix(in srgb, var(--fg) 16%, transparent); }
+
+/* ---- the sidebar: a source list with a soft neutral selection pill ---- */
+.theme-macos #sidebar { background: var(--mac-sidebar); }
+.theme-macos :is(#sash, #dock-sash) { background: var(--hairline-strong); width: 1px; }
+.theme-macos .ex-head { text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--muted); opacity: 1; }
+.theme-macos .ex-row { margin: 1px 8px; padding: 2px 6px; border-radius: 6px; }
+.theme-macos .ex-row:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.theme-macos .ex-row.selected { background: color-mix(in srgb, var(--fg) 11%, transparent); }
+.theme-macos #dock { background: var(--mac-sidebar); }
+
+/* ---- status bar: a quiet strip matching the frame ---- */
+.theme-macos #statusbar { border-top: 1px solid var(--hairline-strong); }
+.theme-macos .sname { color: var(--fg); }
+.theme-macos button.sitem:hover { background: var(--hover); }
+
+/* ---- sheets: palette, dialogs, settings in translucent vibrancy ---- */
+.theme-macos .ask, .theme-macos .settings, .theme-macos .floating-panel {
+  background: var(--mac-panel); color: var(--fg); border: 1px solid var(--hairline-strong);
+  -webkit-backdrop-filter: blur(60px) saturate(2); backdrop-filter: blur(60px) saturate(2); }
+.theme-macos .scrim { background: rgba(0,0,0,.28); }
+.theme-macos .ask-input { background: var(--bg2); border-color: var(--hairline-strong); border-radius: 6px; }
+.theme-macos .ask-input:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 35%, transparent); }
+.theme-macos .ask-row { border-radius: 6px; }
+.theme-macos .ask-row:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.theme-macos .ask-row.selected, .theme-macos .popup-item.selected, .theme-macos .settings-cat.active {
+  background: var(--ui-accent); color: #fff; }
+
+.theme-macos .btn { background: var(--bg2); border-color: var(--hairline-strong); border-radius: 6px;
+  box-shadow: 0 1px 1px rgba(0,0,0,.06); }
+.theme-macos .btn.primary { background: var(--ui-accent); border-color: var(--ui-accent); color: #fff; }
+/* An alert as a Mac draws one: a sheet that drops from under the toolbar,
+   the app's icon, the destructive answer apart on the left. */
+.theme-macos .scrim:has(> .ask.dialog) { align-items: flex-start; }
+.theme-macos .ask.dialog { position: relative; margin-top: var(--editors-y, 40px); width: min(460px, 92vw);
+  padding: 20px 22px 20px 94px; border-radius: 0 0 12px 12px; border-top: 0; gap: 8px; }
+.theme-macos .ask.dialog::before { content: "F"; position: absolute; left: 22px; top: 20px; width: 52px; height: 52px;
+  border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  font: 700 30px/1 var(--font-family); color: #fff;
+  background: linear-gradient(160deg, #6fd38a, #1c9f5b 55%, #137a46);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 2px 6px rgba(0,0,0,.25); }
+.theme-macos .dlg-title { font-size: 13px; font-weight: 700; }
+.theme-macos .dlg-body { font-size: 12px; }
+.theme-macos .dlg-buttons { margin-top: 10px; }
+.theme-macos .dlg-buttons .btn { min-width: 76px; padding: 3px 14px; }
+.theme-macos .dlg-buttons .btn.danger:not(.primary) { order: -1; margin-right: auto; color: var(--fg); }
+
+.theme-macos #themebtn { border-color: var(--hairline-strong); background: var(--bg2); }
+
+/* Scrollbar: the overlay kind, a rounded thumb in the buffer's own ink, no
+   track, wider under the pointer. */
+.theme-macos .vbar { width: 12px; }
+.theme-macos .thumb { left: 3px; right: 3px; min-height: 36px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ed-fg) 34%, transparent); transition: left .12s, right .12s; }
+.theme-macos .vbar:hover .thumb { left: 2px; right: 2px; background: color-mix(in srgb, var(--ed-fg) 48%, transparent); filter: none; }

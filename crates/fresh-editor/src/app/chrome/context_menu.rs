@@ -141,7 +141,11 @@ impl Editor {
     /// Call the plugin handler of a right-click menu item with what the menu
     /// was opened on. Runs like a palette command: the plugin sees state as
     /// of now, and a handler that throws is logged.
-    fn run_plugin_menu_handler<T: serde::Serialize>(&mut self, handler: &str, target: &T) {
+    pub(crate) fn run_plugin_menu_handler<T: serde::Serialize>(
+        &mut self,
+        handler: &str,
+        target: &T,
+    ) {
         #[cfg(feature = "plugins")]
         {
             let args = match serde_json::to_string(target) {

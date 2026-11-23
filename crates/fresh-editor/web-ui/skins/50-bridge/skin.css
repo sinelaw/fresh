@@ -1,0 +1,284 @@
+/* ==FreshSkin==
+@id           bridge
+@name         Bridge
+@description  A starship console: elbows, pill buttons & live readouts
+@author       Fresh
+@version      1.0.0
+@frame        bezel
+@furniture    furniture.html
+@editor-theme theme.json
+==/FreshSkin== */
+
+/* A web font: the console's tall condensed lettering. Offline, the fallbacks
+   below take over. */
+@import "https://fonts.googleapis.com/css2?family=Antonio:wght@400;600;700&display=swap";
+
+/* Bridge — a starship computer console. Black glass, framed by thick
+   coloured "elbows": a bar across the top that sweeps down into a column of
+   buttons, and a column that sweeps out into the bar along the bottom.
+
+   Like Winamp's separate Orchestrator window, it moves the client's own
+   controls into its frame instead of drawing pictures of them:
+   - the menu bar is the column's stack of buttons, and its menus open
+     beside them (the client does that for any menu bar laid out as a
+     column);
+   - the status bar is the bar along the bottom, its facts the bar's
+     segments;
+   - the document's title is the big lettering at the end of the top bar;
+   - the column's readout blocks below the menus are live values (CPU,
+     memory, load, open files, errors, uptime).
+   Everything else is pills on black: tabs, buttons, highlighted rows. */
+
+/* ---- palette and geometry --------------------------------------------- */
+:root.theme-bridge {
+  --br-orange: #ff9c1a; --br-gold: #ffcc66; --br-tan: #ffcc99; --br-peach: #ff9966;
+  --br-lilac: #cc99cc; --br-lav: #9999ee; --br-blue: #99ccff; --br-red: #dd6666;
+  --br-ink: #000;      --br-text: #ffe2c4; --br-dim: #a99bd8;
+
+  --font-family: "Antonio", "Oswald", "Roboto Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --ui-font-size: 16px;
+  --fg: var(--br-text); --muted: var(--br-dim);
+  --bg2: #000; --bg3: #0b0812; --border: #2a2240; --border-c: #2a2240;
+  --accent: var(--br-orange); --on-accent: #000; --ui-accent: var(--br-orange); --on-ui-accent: #000;
+  --menuhi: var(--br-orange); --on-menuhi: #000; --on-menuhi-dim: #2b1800;
+  --menu-bg: #000; --menu-fg: var(--br-text); --popup-bg: #000; --popup-fg: var(--br-text);
+  --tab-bg: var(--br-lav); --tab-fg: #000; --tab-active-bg: var(--br-orange); --tab-active-fg: #000;
+  --status-bg: var(--br-lav); --status-fg: #000;
+  --hairline: rgba(153,153,238,.22); --hairline-strong: rgba(153,153,238,.45); --hover: rgba(255,156,26,.16);
+  --shadow: 0 0 0 1px #000, 0 18px 50px rgba(0,0,0,.8);
+  --modal-shadow: 0 0 0 1px #000, 0 24px 70px rgba(0,0,0,.85);
+  --r-sm: 999px; --r-md: 14px; --r-lg: 22px;
+
+  /* The frame: the column's width, the bars' thickness, the elbows' arms. */
+  --shell-pad: 12px;
+  --br-col: 128px;         /* the column of buttons                         */
+  --br-bar: 24px;          /* the top bar                                    */
+  --br-foot: 26px;         /* the bottom bar (the status bar)                */
+  --br-arm: 52px;          /* how far an elbow reaches along its bar         */
+  --br-top-h: 92px;        /* how far the top elbow reaches down the column  */
+  --br-bot-h: 76px;        /* how far the bottom elbow reaches up it         */
+  --br-picker: 118px;      /* the skin picker's pill, at the top bar's end   */
+  --bezel-top: calc(var(--br-bar) + 10px);
+  --bezel-bot: calc(var(--br-foot) + 10px);
+  --bezel-side: 8px;
+}
+body.theme-bridge { background: #000; accent-color: var(--br-orange); }
+.theme-bridge #app { letter-spacing: .02em; }
+
+/* ---- the frame (furniture.html) ----------------------------------------- */
+body.theme-bridge.frame-bezel #app { left: calc(var(--shell-pad) + var(--br-col) + 14px); }
+body.theme-bridge #device { background: #000; border-radius: 0; box-shadow: none; color: #000;
+  font-family: var(--font-family); letter-spacing: .04em; }
+body.theme-bridge #device::before { content: none; }
+
+/* An elbow: a block of colour with a wide outer curve, and a small inner
+   curve cut out of it where the bar meets the column. */
+body.theme-bridge #device .br-elbow { position: absolute; left: 0; width: calc(var(--br-col) + var(--br-arm));
+  background: var(--br-orange); display: flex; flex-direction: column; justify-content: flex-end;
+  align-items: flex-end; padding: 0 calc(var(--br-arm) + 8px) 6px 0; line-height: 1; }
+body.theme-bridge #device .br-elbow::after { content: ""; position: absolute; left: var(--br-col); right: 0; background: #000; }
+body.theme-bridge #device .br-elbow-top { top: 0; height: var(--br-top-h); border-top-left-radius: 70px 56px; }
+body.theme-bridge #device .br-elbow-top::after { top: var(--br-bar); bottom: 0; border-top-left-radius: 26px; }
+body.theme-bridge #device .br-elbow-bot { bottom: 0; height: var(--br-bot-h); border-bottom-left-radius: 70px 56px;
+  background: var(--br-lilac); justify-content: flex-start; padding-top: 8px; }
+body.theme-bridge #device .br-elbow-bot::after { bottom: var(--br-foot); top: 0; border-bottom-left-radius: 26px; }
+body.theme-bridge #device .br-elbow b { font-size: 26px; font-weight: 600; }
+body.theme-bridge #device .br-elbow small { font-size: 12px; font-weight: 600; letter-spacing: .12em; }
+
+/* The top bar: segments from the elbow to the title, the picker at its end. */
+body.theme-bridge #device .br-bar-top { position: absolute; top: 0; height: var(--br-bar); display: flex; gap: 4px;
+  left: calc(var(--br-col) + var(--br-arm) + 4px); right: calc(var(--br-picker) + 4px); }
+body.theme-bridge #device .br-bar i { flex: 0 0 64px; }
+body.theme-bridge #device .br-bar i.br-wide { flex: 1 1 auto; }
+body.theme-bridge #device .br-orange { background: var(--br-orange); }
+body.theme-bridge #device .br-tan { background: var(--br-tan); }
+body.theme-bridge #device .br-peach { background: var(--br-peach); }
+body.theme-bridge #device .br-lilac { background: var(--br-lilac); }
+body.theme-bridge #device .br-lav { background: var(--br-lav); }
+body.theme-bridge #device .br-red { background: var(--br-red); }
+@keyframes br-blink { 0%, 64% { opacity: 1; } 70%, 92% { opacity: .35; } 100% { opacity: 1; } }
+body.theme-bridge #device .br-blink { animation: br-blink 3.2s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { body.theme-bridge #device .br-blink { animation: none; } }
+
+/* The column's readouts: from under the last menu button down to the
+   bottom elbow, each a block with its label and its value. */
+body.theme-bridge #device .br-col { position: absolute; left: 0; width: var(--br-col);
+  top: calc(var(--bezel-top) + var(--menubar-y) + var(--menubar-h) + 4px); bottom: calc(var(--br-bot-h) + 4px);
+  display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+body.theme-bridge #device .br-read { margin: 0; flex: 0 0 34px; position: relative; display: flex; align-items: flex-end;
+  justify-content: space-between; padding: 0 8px 3px; line-height: 1; overflow: hidden; white-space: nowrap; }
+body.theme-bridge #device .br-read small { align-self: flex-start; padding-top: 4px; font-size: 10px; font-weight: 600; letter-spacing: .14em; }
+body.theme-bridge #device .br-read b { font-size: 17px; font-weight: 600; }
+body.theme-bridge #device .br-read.br-fill { flex: 1 1 auto; min-height: 0; }
+body.theme-bridge #device .br-gauge b::after { content: "%"; font-size: 12px; margin-left: 1px; }
+/* A percentage fills its block from the left, in a darker shade. */
+body.theme-bridge #device .br-gauge::before { content: ""; position: absolute; left: 0; bottom: 0; height: 5px;
+  width: calc(var(--v, 0) * 1%); background: rgba(0,0,0,.55); transition: width .6s; }
+
+/* ---- the menu bar is the column's buttons ------------------------------ */
+.theme-bridge #menubar { background: #000; }
+.theme-bridge .mtop { font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+body.theme-bridge.frame-bezel #menubar { position: fixed; z-index: 2; left: var(--shell-pad); width: var(--br-col);
+  top: calc(var(--shell-pad) + var(--br-top-h) + 4px); padding: 0; flex-direction: column; align-items: stretch;
+  background: none; border: 0; box-shadow: none; }
+body.theme-bridge.frame-bezel #menus { flex-direction: column; gap: 4px; overflow: visible; }
+body.theme-bridge.frame-bezel .mtop { height: 30px; display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 0 8px 4px; border-radius: 0; color: #000; font-size: 15px; line-height: 1; background: var(--br-tan); }
+body.theme-bridge.frame-bezel .mtop:nth-child(5n+2) { background: var(--br-peach); }
+body.theme-bridge.frame-bezel .mtop:nth-child(5n+3) { background: var(--br-lilac); }
+body.theme-bridge.frame-bezel .mtop:nth-child(5n+4) { background: var(--br-lav); }
+body.theme-bridge.frame-bezel .mtop:nth-child(5n) { background: var(--br-gold); }
+body.theme-bridge.frame-bezel .mtop:hover { filter: brightness(1.12); }
+body.theme-bridge.frame-bezel .mtop.open { background: #fff4e2; filter: none; }
+.theme-bridge .mtop:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+
+/* ---- the title and the picker, at the top bar's end ------------------- */
+body.theme-bridge.frame-bezel #mactitle { display: flex; position: fixed; z-index: 1; pointer-events: none;
+  top: calc(var(--shell-pad) - 4px); height: calc(var(--br-bar) + 8px); right: calc(var(--shell-pad) + var(--br-picker) + 4px);
+  justify-content: flex-end; align-items: center; }
+body.theme-bridge #mactitle .mt-lights { display: none; }
+body.theme-bridge #mactitle .mt-name { background: #000; padding: 0 12px; height: 100%; display: flex; align-items: center;
+  font: 600 30px/1.1 var(--font-family); letter-spacing: .03em; text-transform: uppercase; color: var(--br-orange);
+  white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+body.theme-bridge.frame-bezel #themeswitch { top: var(--shell-pad); right: var(--shell-pad); }
+body.theme-bridge.frame-bezel #themebtn { min-width: var(--br-picker); }
+body.theme-bridge #themebtn { height: var(--br-bar); justify-content: flex-end;
+  padding: 0 14px 0 10px; border: 0; border-radius: 0 999px 999px 0; background: var(--br-blue); color: #000;
+  font: 600 14px/1 var(--font-family); letter-spacing: .08em; text-transform: uppercase; }
+body.theme-bridge #themebtn:hover, body.theme-bridge #themebtn[aria-expanded="true"] { background: #cfe6ff; }
+body.theme-bridge #themebtn .ts-dot { display: none; }
+
+/* ---- the status bar is the bottom bar ---------------------------------- */
+.theme-bridge #statusbar { font-family: var(--font-family); text-transform: uppercase; letter-spacing: .06em; }
+body.theme-bridge.frame-bezel #statusbar { position: fixed; z-index: 2; bottom: var(--shell-pad); height: var(--br-foot);
+  left: calc(var(--shell-pad) + var(--br-col) + var(--br-arm) + 4px); right: var(--shell-pad);
+  padding: 0; gap: 0; border-radius: 0 999px 999px 0; background: var(--br-lav); color: #000; }
+.theme-bridge #statusbar :is(.sleft, .sright) { gap: 0; height: 100%; }
+.theme-bridge .sitem { height: 100%; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 0;
+  color: #000; font: 600 14px/1 var(--font-family); text-transform: inherit; letter-spacing: inherit; border-left: 4px solid #000; background: var(--br-tan); }
+.theme-bridge .sleft > .sitem:first-child { border-left: 0; }
+.theme-bridge .sitem.sname { background: var(--br-orange); }
+.theme-bridge .sitem.smsg { background: #000; color: var(--br-tan); font-weight: 400; opacity: 1; }
+.theme-bridge .sitem.serr { background: var(--br-red); }
+.theme-bridge .sitem.swarn { background: var(--br-gold); }
+.theme-bridge .sright > .sitem:nth-child(4n+1) { background: var(--br-lilac); }
+.theme-bridge .sright > .sitem:nth-child(4n+2) { background: var(--br-peach); }
+.theme-bridge .sright > .sitem:nth-child(4n+3) { background: var(--br-tan); }
+.theme-bridge .sright > .sitem:nth-child(4n) { background: var(--br-blue); }
+.theme-bridge .sright > .sitem:last-child { background: var(--br-orange); padding-right: 16px; }
+.theme-bridge .slsp.lsp-error { background: var(--br-red) !important; }
+.theme-bridge .slsp.lsp-off, .theme-bridge .slsp.lsp-warning { background: var(--br-gold) !important; }
+.theme-bridge button.sitem:hover { filter: brightness(1.15); background-blend-mode: normal; }
+
+/* ---- tabs: pills on black ---------------------------------------------- */
+.theme-bridge .tabs { background: #000; gap: 4px; padding: 0 0 6px; border: 0; box-shadow: none; }
+.theme-bridge .tab { border: 0; border-radius: 999px; padding: 3px 12px 3px 16px; background: var(--br-lav); color: #000;
+  font-family: var(--font-family); font-weight: 600; letter-spacing: .03em; }
+.theme-bridge .tab:not(.active):hover { background: var(--br-blue); }
+.theme-bridge .tab.active { background: var(--br-tan); color: #000; }
+.theme-bridge .pane.active .tab.active { background: var(--br-orange); color: #000; }
+.theme-bridge .tab * { color: inherit; }
+
+/* ---- the explorer and the dock ------------------------------------------ */
+.theme-bridge #sidebar, .theme-bridge #dock { background: #000; color: var(--br-text); }
+.theme-bridge .ex-head { background: var(--br-lilac); color: #000; opacity: 1; text-transform: uppercase; font-weight: 600;
+  letter-spacing: .1em; border-radius: 999px 0 0 999px; margin: 0 0 6px; padding: 3px 10px 3px 16px; text-align: right; }
+.theme-bridge .ex-row.selected { background: var(--br-lav); color: #000; border-radius: 0 999px 999px 0; }
+.theme-bridge .ex-row.selected * { color: #000; }
+.theme-bridge .ex-row.current .ex-name { color: var(--br-orange); }
+.theme-bridge .ex-row.selected.current .ex-name { color: #000; }
+.theme-bridge :is(#sash, #dock-sash) { background: #000; box-shadow: inset 2px 0 0 #1c1730; }
+.theme-bridge .split-sash { background: #1c1730; }
+
+/* The Orchestrator: its own framed panel, an elbow down its left side, its
+   menu the panel's caption in the bar. */
+.theme-bridge #dock { border-left: 14px solid var(--br-peach); border-top: 22px solid var(--br-peach);
+  border-top-left-radius: 40px 30px; padding: 6px 8px 6px 10px; margin-right: 8px; }
+.theme-bridge #dock [data-wkey="dock-menu"] { color: var(--br-orange); font-size: 18px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; background: none; border-radius: 999px; }
+.theme-bridge #dock [data-wkey="dock-menu"]:hover { background: var(--hover); }
+.theme-bridge #dock [data-wkey="dock-close"] { background: var(--br-red); color: #000; border-radius: 999px; min-width: 26px; }
+.theme-bridge #dock [data-wkey="new-session"] { background: var(--br-orange); color: #000; border-radius: 999px 0 0 999px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .06em; border: 0; }
+.theme-bridge #dock :is([data-wkey="search-toggle"], [data-wkey="filter"]) { flex: 1 1 auto; border-radius: 0 999px 999px 0;
+  background: #000; border: 2px solid var(--br-lav); color: var(--br-dim); }
+.theme-bridge #dock [data-wkey="filter"] .w-text-input { color: var(--br-text); background: none; border: 0; outline: none; }
+.theme-bridge #dock .w-divider { border-color: #2a2240; }
+.theme-bridge .native-panel :is(.w-list-row, .w-tree-row).sel { background: var(--br-lav); color: #000; border-radius: 0 999px 999px 0; }
+.theme-bridge .native-panel .w-tree-card { background: #07050c; border: 2px solid #2a2240; border-radius: 0 16px 16px 0;
+  border-left: 8px solid var(--br-lilac); }
+.theme-bridge .native-panel .w-tree-card.sel { border-color: var(--br-orange); background: #170d02; }
+
+/* ---- floating panels: black, framed by an elbow ------------------------ */
+.theme-bridge :is(.dropdown, .popup, .floating-panel, #thememenu) { background: #000; color: var(--br-text);
+  border: 0; border-left: 10px solid var(--br-orange); border-radius: 18px 0 0 18px; box-shadow: var(--shadow); }
+.theme-bridge .dropdown .dropdown { border-left-color: var(--br-lilac); }
+.theme-bridge .mitem { border-radius: 0 999px 999px 0; padding: 4px 14px 4px 10px; }
+.theme-bridge .mitem.hi { background: var(--br-orange); color: #000; }
+.theme-bridge .mitem.hi * { color: #000; }
+.theme-bridge .mitem.disabled { color: #5d5577; }
+.theme-bridge .msep { height: 4px; background: #000; box-shadow: inset 0 -2px 0 #2a2240; margin: 3px 0; }
+.theme-bridge .mkeys { color: var(--br-dim); }
+.theme-bridge .dropdown .mlabel { text-transform: uppercase; letter-spacing: .05em; }
+
+/* Dialogs: the full elbow — a bar along the top sweeping down the left. */
+.theme-bridge :is(.ask, .settings) { background: #000; color: var(--br-text); border: 0; border-radius: 0;
+  border-top: 22px solid var(--br-orange); border-left: 18px solid var(--br-orange); border-top-left-radius: 46px 36px;
+  border-bottom: 8px solid var(--br-lilac); border-bottom-left-radius: 26px 18px; box-shadow: var(--modal-shadow); }
+/* A question with a destructive answer is framed in alert red. */
+.theme-bridge .ask:has(.btn.danger) { border-top-color: var(--br-red); border-left-color: var(--br-red); }
+.theme-bridge :is(.dlg-title, .settings-title, .floating-head, .popup-title) { color: var(--br-orange); text-transform: uppercase;
+  letter-spacing: .06em; font-weight: 600; font-size: 1.15em; }
+.theme-bridge :is(.ask-list, .popup-list, .popup-doc, .settings-list, .kb-body, .browser-list) { background: #000; }
+.theme-bridge :is(.ask-row, .popup-item) { border-radius: 0 999px 999px 0; }
+.theme-bridge :is(.ask-row.selected, .popup-item.selected, .settings-cat.active) { background: var(--br-lav); color: #000; }
+.theme-bridge :is(.ask-row.selected, .popup-item.selected, .settings-cat.active) * { color: #000; }
+.theme-bridge :is(.ask-keys, .ask-desc, .setting-desc) { color: var(--br-dim); opacity: 1; }
+.theme-bridge .ask.palette { border-top-width: 18px; }
+
+/* Buttons: pills with black lettering. */
+.theme-bridge :is(.btn, .chip) { border: 0; border-radius: 999px; background: var(--br-lilac); color: #000;
+  font-family: var(--font-family); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 4px 16px; }
+.theme-bridge :is(.btn, .chip):hover { filter: brightness(1.12); }
+.theme-bridge .btn.primary { background: var(--br-orange); }
+.theme-bridge .btn.danger { background: var(--br-red); color: #000; }
+.theme-bridge .native-panel .w-button:not(.bare) { border: 0; border-radius: 999px; background: var(--br-lilac); color: #000;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.theme-bridge .native-panel .w-button.primary:not(.bare) { background: var(--br-orange); }
+.theme-bridge .native-panel .w-button.bare:hover,
+.theme-bridge .floating-panel.anchored:not(:hover) .w-button.bare.focus { background: var(--br-orange); color: #000; border-radius: 0 999px 999px 0; }
+.theme-bridge .ts-row { border-radius: 0 999px 999px 0; }
+.theme-bridge .ts-row.on, .theme-bridge .ts-row:hover { background: var(--br-orange); color: #000; }
+.theme-bridge .ts-head { color: var(--br-lilac); opacity: 1; }
+
+/* Shared controls (css/62-components.css) read these. */
+body.theme-bridge {
+  --field-bg: #000; --field-fg: var(--br-text); --field-border: var(--br-lav); --field-radius: 0 12px 12px 0;
+  --field-shadow: inset 6px 0 0 var(--br-lav); --field-glow: none;
+  --check-size: 14px; --check-radius: 3px; --check-bg: #000; --check-border: var(--br-lav); --check-shadow: none;
+  --check-on-bg: var(--br-orange); --check-on-border: var(--br-orange); --check-on-fg: #000; --check-on-shadow: none; --check-on-glow: none;
+  --switch-w: 34px; --switch-h: 16px; --switch-pad: 2px; --switch-knob: 12px; --switch-radius: 999px; --switch-knob-radius: 999px;
+  --switch-track: #2a2240; --switch-shadow: none; --switch-track-on: var(--br-orange); --switch-on-shadow: none;
+  --switch-knob-bg: var(--br-tan); --switch-knob-on: #000; --switch-knob-shadow: none;
+  --key-fg: var(--br-dim); --key-bg: #000; --key-border: #2a2240; --key-radius: 999px; --key-shadow: none;
+  --chip-fg: #000; --chip-bg: var(--br-lilac); --chip-border: transparent; --chip-radius: 999px; --chip-shadow: none;
+  --chip-hover-fg: #000; --chip-hover-bg: var(--br-tan);
+  --select-fg: #000; --select-bg: var(--br-lilac); --select-border: transparent; --select-radius: 999px; --select-shadow: none;
+  --select-hover-bg: var(--br-tan); --select-focus-ring: 0 0 0 2px var(--br-orange);
+  --radio-border: var(--br-lav); --radio-bg: #000; --radio-shadow: none;
+  --radio-on-border: var(--br-orange); --radio-on-dot: var(--br-orange); --radio-on-glow: none;
+}
+.theme-bridge :is(.ask-input, .ui-field) { background: #000; color: var(--br-text); border: 2px solid var(--br-lav);
+  border-left-width: 10px; border-radius: 0 999px 999px 0; }
+/* A one-line field is a pill; a box of text keeps square-ish corners. */
+.theme-bridge textarea.ui-field, .theme-bridge .w-text-area { border-radius: 0 12px 12px 0; }
+
+/* ---- scrollbars: a tan pill on a thin rail ------------------------------ */
+.theme-bridge .vbar { width: 12px; background: linear-gradient(90deg, transparent 5px, #1c1730 5px 7px, transparent 7px); }
+.theme-bridge .thumb { left: 2px; right: 2px; min-height: 36px; border-radius: 999px; background: var(--br-tan); }
+.theme-bridge .thumb:hover { background: var(--br-orange); filter: none; }
+.theme-bridge *::-webkit-scrollbar { width: 12px; height: 12px; background: #000; }
+.theme-bridge *::-webkit-scrollbar-thumb { background: var(--br-lav); border-radius: 999px; border: 3px solid #000; }
+.theme-bridge *::-webkit-scrollbar-corner { background: #000; }
+
+.theme-bridge .drop-zone { border-radius: 18px; border-color: var(--br-orange); }

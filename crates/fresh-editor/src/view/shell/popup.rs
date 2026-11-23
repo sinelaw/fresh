@@ -267,6 +267,12 @@ pub fn clear_of_scrollbar_key() -> Key {
     Key::Str("popup_area_clear_of_scrollbar".into())
 }
 
+/// A list row's key: its item's id, so a row is the same row wherever a
+/// re-filter moves it.
+pub fn item_key(id: &str) -> Key {
+    Key::Str(format!("popup_item:{id}").into())
+}
+
 /// The key a placed popup carries, by its index in paint order.
 pub fn popup_key(i: usize) -> Key {
     Key::Pair("popup".into(), i as u64)
@@ -811,7 +817,7 @@ pub fn content(
                 // and its rows must move rather than be rewritten.
                 {
                     let rows = rows.clone();
-                    move |i| Key::Str(format!("popup_item:{}", rows[i].id).into())
+                    move |i| item_key(&rows[i].id)
                 },
                 move |i, st| match for_row.get(i) {
                     Some(it) => list_row(

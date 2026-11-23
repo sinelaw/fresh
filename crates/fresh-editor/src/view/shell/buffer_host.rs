@@ -495,6 +495,13 @@ impl PaneHandle {
         };
     }
 
+    /// Exchange what the pane settled with `other` — a client's own view of
+    /// the pane, swapped in for that client's render and commands
+    /// (`app::client_pane`).
+    pub fn swap_view(&self, other: &mut PaneView) {
+        std::mem::swap(&mut *self.view.borrow_mut(), other);
+    }
+
     /// Forget the rows: what they showed is no longer on screen (a wrap
     /// setting changed under them) and the next frame draws new ones.
     pub fn clear_rows(&self) {

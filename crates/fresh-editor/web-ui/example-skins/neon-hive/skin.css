@@ -1,0 +1,362 @@
+/* ==FreshSkin==
+@id           neon-hive
+@name         Neon Hive
+@description  Editor, dock and explorer as separate neon hexagons, with live system readouts
+@author       Fresh (example skin)
+@version      3.0.0
+@frame        bezel
+@furniture    furniture.html
+@editor-theme theme.json
+@explorer-side right
+==/FreshSkin== */
+
+/* An example skin: everything here is the public skin format — the header,
+   CSS custom properties, CSS scoped under .theme-neon-hive, furniture.html, an
+   SVG image and a bundled editor theme (theme.json). Copy the folder into your
+   skins folder (~/.config/fresh/web-skins/) to try it or start from it.
+
+   The client lays itself out with CSS, so the skin does too: the dock, the
+   editor and the explorer become three columns of a grid, with margins that
+   leave room for the SYSTEM and DIAGNOSTICS hexagons and the cables between
+   the modules. The furniture then only DRAWS into that room, placed from the
+   page's region variables (--editors-*, --sidebar-*, --dock-*, --menubar-*,
+   --statusbar-*). @explorer-side right proposes the explorer on the right
+   when the skin is picked. */
+
+/* ---- palette ---------------------------------------------------------- */
+:root.theme-neon-hive {
+  --hive-pink: #ff3fb4;  --hive-violet: #9b5cff;  --hive-blue: #4fd8ff;  --hive-green: #4dff9a;
+  --fg: #efe4ff;  --muted: #a98fd0;
+  --bg2: #1a0c2c;  --bg3: #150a25;  --border: #47286f;  --border-c: #47286f;
+  --menu-bg: #12081f;  --menu-fg: var(--fg);  --popup-bg: #12081f;  --popup-fg: var(--fg);
+  --tab-bg: transparent;  --tab-fg: var(--muted);  --tab-active-fg: #fff;
+  --status-bg: transparent;  --status-fg: var(--hive-blue);
+  --accent: var(--hive-pink);  --on-accent: #ffffff;  --ui-accent: var(--hive-blue);  --on-ui-accent: #07131a;
+  --hairline: rgba(155,92,255,.18);  --hairline-strong: rgba(255,63,180,.34);
+  --hover: rgba(79,216,255,.10);
+  --shadow: 0 0 0 1px rgba(255,63,180,.45), 0 18px 48px rgba(155,92,255,.3);
+  --r-sm: 8px;  --r-md: 12px;  --r-lg: 18px;
+  --font-family: "Inter", "Segoe UI", "Helvetica Neue", system-ui, sans-serif, "Symbols Nerd Font Mono";
+  /* the frame around the client gives way to one frame per module */
+  --bezel-top: 56px;  --bezel-side: 14px;  --bezel-bot: 18px;
+  --hx-cap: 30px;  --hx-cut: 22px;
+}
+
+/* ---- the desk: dark violet, a faint hex grid, two glows ------------------ */
+body.theme-neon-hive:not(.mobile) {
+  background:
+    radial-gradient(50rem 30rem at 12% 50%, rgba(255,63,180,.16), transparent 70%),
+    radial-gradient(50rem 30rem at 88% 50%, rgba(79,216,255,.13), transparent 70%),
+    url(img/hexgrid.svg) center/84px 145.5px,
+    linear-gradient(180deg, #0c0617, #12081f 55%, #0a0514);
+}
+
+.theme-neon-hive #device .hx-title {
+  position: absolute; left: 0; right: 0; top: 0; height: calc(var(--bezel-top) - 14px);
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  font: 700 12px/1 var(--mono-family); letter-spacing: .55em; color: var(--hive-blue);
+  text-shadow: 0 0 6px var(--hive-blue), 0 0 16px var(--hive-pink);
+}
+.theme-neon-hive #device .hx-dot {
+  width: 12px; height: 10px; background: var(--hive-pink);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  filter: drop-shadow(0 0 4px var(--hive-pink));
+}
+
+/* Generic panel parts. One panel: .hx glows (a filter must sit OUTSIDE the clip, or the clip cuts
+   the glow off), .hx-b is the neon rim, .hx-in the dark glass inside it. */
+.theme-neon-hive #device .hx {
+  --hx-c: var(--hive-violet); --hx-w: 252px; --hx-h: 218px;
+  position: absolute; width: var(--hx-w); height: var(--hx-h);
+  filter: drop-shadow(0 0 6px var(--hx-c)) drop-shadow(0 0 18px color-mix(in srgb, var(--hx-c) 55%, transparent));
+}
+.theme-neon-hive #device .hx-b, .theme-neon-hive #device .hx-in {
+  position: absolute; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+.theme-neon-hive #device .hx-b { inset: 0; background: var(--hx-c); }
+.theme-neon-hive #device .hx-in {
+  inset: 2.5px; padding: 30px 58px 26px;
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--hx-c) 22%, #0d0618), #0b0614 70%);
+  display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  font: 11px/1.35 var(--mono-family); letter-spacing: .02em; color: var(--hive-green);
+}
+.theme-neon-hive #device .hx-pink { --hx-c: var(--hive-pink); }
+.theme-neon-hive #device .hx-blue { --hx-c: var(--hive-blue); }
+.theme-neon-hive #device .hx-ghost { --hx-c: rgba(155,92,255,.55); filter: drop-shadow(0 0 6px rgba(155,92,255,.5)); }
+.theme-neon-hive #device .hx-ghost .hx-in { background: #0a0513; }
+
+/* Panel contents. */
+.theme-neon-hive #device .hx-t {
+  font: 700 10.5px/1 var(--mono-family); letter-spacing: .22em; color: #f3e6ff;
+  text-shadow: 0 0 6px var(--hx-c); margin-bottom: 7px; text-align: center;
+}
+.theme-neon-hive #device .hx-in p { margin: 0; white-space: nowrap; }
+.theme-neon-hive #device .hx-in p span { display: inline-block; width: 4.2em; color: #c9a8ff; }
+.theme-neon-hive #device .hx-in .ok::before { content: "● "; color: var(--hive-green); }
+.theme-neon-hive #device .hx-in .run { color: #ffd23f; }
+.theme-neon-hive #device .hx-in .run::before { content: "◌ "; }
+.theme-neon-hive #device .hx-in .dim { color: #8b78a8; }
+.theme-neon-hive #device .hx-in small {
+  margin-top: 6px; text-align: center; font-size: 9.5px; letter-spacing: .12em; color: #a98fd0;
+}
+
+
+/* Ring gauges. */
+.theme-neon-hive #device .hx-gauges { display: flex; justify-content: space-between; gap: 6px; }
+.theme-neon-hive #device .gz {
+  --gz-c: var(--hive-blue);
+  position: relative; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+}
+.theme-neon-hive #device .gz i {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--gz-c) var(--gz-p), rgba(155,92,255,.22) 0);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%); mask: radial-gradient(circle, transparent 58%, #000 60%);
+  filter: drop-shadow(0 0 4px var(--gz-c));
+}
+.theme-neon-hive #device .gz b { font: 700 11px/1 var(--mono-family); color: #f3e6ff; }
+.theme-neon-hive #device .gz small {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  margin-top: 4px; font-size: 10px; letter-spacing: .14em;
+}
+
+
+/* ---- layout: three modules side by side ---------------------------------
+   #workbench and #center step aside (display: contents) so the dock, the
+   editor column and the explorer are columns of one grid; their margins are
+   the room the hexagons and cables are drawn in. */
+body.theme-neon-hive:not(.mobile) #app {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr) auto;
+}
+body.theme-neon-hive:not(.mobile) :is(#workbench, #center) { display: contents; }
+body.theme-neon-hive:not(.mobile) #menubar { grid-area: 1 / 2; }
+body.theme-neon-hive:not(.mobile) #editors { grid-area: 2 / 2; }
+body.theme-neon-hive:not(.mobile) #statusbar { grid-area: 3 / 2; }
+body.theme-neon-hive:not(.mobile) :is(#sash, #dock-sash) { display: none; }
+/* Each side column: a module as tall as what it holds (up to the room left
+   for its readout), and the readout hexagon right under it. */
+body.theme-neon-hive:not(.mobile) :is(#sidebar, #dock) { align-self: start; height: auto; resize: none; border: 0;
+  min-height: 190px; max-height: calc(100% - 34px - 300px); }
+body.theme-neon-hive:not(.mobile) #sidebar { grid-area: 1 / 3 / 4 / 4; width: 240px; margin: 34px 18px 0 46px; }
+body.theme-neon-hive:not(.mobile) #dock { grid-area: 1 / 1 / 4 / 2; width: 250px; margin: 34px 46px 0 18px; }
+body.theme-neon-hive.sidebar-left:not(.mobile) #sidebar { grid-area: 1 / 1 / 4 / 2; margin: 34px 46px 0 18px; }
+body.theme-neon-hive.sidebar-left:not(.mobile) #dock { grid-area: 1 / 3 / 4 / 4; margin: 34px 18px 0 46px; }
+/* Not enough height for the readouts: the modules take the full column. */
+@media (max-height: 700px) {
+  body.theme-neon-hive:not(.mobile) :is(#sidebar, #dock) { max-height: calc(100% - 68px); }
+  .theme-neon-hive #device :is(.hx-sys, .hx-diag) { display: none !important; }
+}
+/* The parts let their frames show. */
+.theme-neon-hive :is(#sidebar, #dock, #menubar, #statusbar, .tabs) { background: transparent; border-color: transparent; }
+.theme-neon-hive .ex-head { background: transparent; color: var(--hive-blue); letter-spacing: .3em; }
+
+/* ---- the frames, placed from the regions ---------------------------------
+   In #device's coordinates the client starts at (--bezel-side, --bezel-top). */
+.theme-neon-hive #device { background: none; box-shadow: none; border-radius: 0; --ox: var(--bezel-side); --oy: var(--bezel-top); }
+.theme-neon-hive #device::before { display: none; }
+/* The editor module: menu row, panes and status bar, in a frame cut at the
+   corners, with the title strip above. */
+.theme-neon-hive #device .hx-main {
+  position: absolute;
+  left: calc(var(--ox) + var(--editors-x) - 14px); width: calc(var(--editors-w) + 28px);
+  top: 4px; height: calc(var(--oy) - 4px + var(--statusbar-y) + var(--statusbar-h) + 12px);
+  filter: drop-shadow(0 0 6px var(--hive-violet)) drop-shadow(0 0 22px rgba(255,63,180,.45));
+}
+.theme-neon-hive #device .hx-main::before, .theme-neon-hive #device .hx-main::after {
+  content: ""; position: absolute;
+  clip-path: polygon(var(--hx-cut) 0, calc(100% - var(--hx-cut)) 0, 100% var(--hx-cut), 100% calc(100% - var(--hx-cut)),
+    calc(100% - var(--hx-cut)) 100%, var(--hx-cut) 100%, 0 calc(100% - var(--hx-cut)), 0 var(--hx-cut));
+}
+.theme-neon-hive #device .hx-main::before { inset: 0; background: linear-gradient(180deg, var(--hive-pink), var(--hive-violet) 55%, var(--hive-pink)); }
+.theme-neon-hive #device .hx-main::after { inset: 2px; background: linear-gradient(180deg, #1d0d33, #0b0614 calc(var(--oy) - 4px)); }
+.theme-neon-hive #device .hx-title { left: calc(var(--ox) + var(--editors-x)); width: var(--editors-w); right: auto; top: 4px; height: calc(var(--oy) - 10px); }
+
+/* The side modules: a tall hexagon around the panel and a readout hexagon in
+   the room above (dock) or below (explorer), all one width. */
+.theme-neon-hive #device { --side-w: calc(max(var(--dock-w), var(--sidebar-w)) + 22px); }
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) {
+  --hx-c: var(--hive-pink); position: absolute; display: none; width: var(--side-w);
+  filter: drop-shadow(0 0 5px var(--hx-c)) drop-shadow(0 0 16px color-mix(in srgb, var(--hx-c) 50%, transparent));
+}
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) :is(.hx-b, .hx-in) {
+  position: absolute;
+  clip-path: polygon(0 var(--hx-cap), 50% 0, 100% var(--hx-cap), 100% calc(100% - var(--hx-cap)), 50% 100%, 0 calc(100% - var(--hx-cap)));
+}
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) .hx-b { inset: 0; background: var(--hx-c); }
+.theme-neon-hive #device :is(.hx-tall, .hx-sys, .hx-diag) .hx-in {
+  inset: 2.5px; padding: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hx-c) 16%, #0d0618), #0a0513 30%, #0a0513 70%,
+    color-mix(in srgb, var(--hx-c) 12%, #0d0618));
+}
+body.theme-neon-hive.has-dock #device :is(.hx-dock, .hx-sys) { display: block; }
+body.theme-neon-hive.has-sidebar #device :is(.hx-fx, .hx-diag) { display: block; --hx-c: var(--hive-blue); }
+.theme-neon-hive #device :is(.hx-dock, .hx-sys) { left: calc(var(--ox) + var(--dock-x) + var(--dock-w) / 2 - var(--side-w) / 2); }
+.theme-neon-hive #device :is(.hx-fx, .hx-diag) { left: calc(var(--ox) + var(--sidebar-x) + var(--sidebar-w) / 2 - var(--side-w) / 2); }
+.theme-neon-hive #device .hx-dock { top: calc(var(--oy) + var(--dock-y) - var(--hx-cap)); height: calc(var(--dock-h) + 2 * var(--hx-cap)); }
+.theme-neon-hive #device .hx-fx { top: calc(var(--oy) + var(--sidebar-y) - var(--hx-cap)); height: calc(var(--sidebar-h) + 2 * var(--hx-cap)); }
+.theme-neon-hive #device .hx-sys {
+  top: calc(var(--oy) + var(--dock-y) + var(--dock-h) + var(--hx-cap) + 10px);
+  height: min(250px, calc(var(--app-h) - var(--dock-y) - var(--dock-h) - var(--hx-cap) - 12px));
+}
+.theme-neon-hive #device .hx-diag {
+  top: calc(var(--oy) + var(--sidebar-y) + var(--sidebar-h) + var(--hx-cap) + 10px);
+  height: min(250px, calc(var(--app-h) - var(--sidebar-y) - var(--sidebar-h) - var(--hx-cap) - 12px));
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in {
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px;
+  padding: calc(var(--hx-cap) - 8px) 26px calc(var(--hx-cap) - 10px);
+  font: 11.5px/1.5 var(--mono-family); color: var(--hive-green);
+}
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p { margin: 0; display: grid; grid-template-columns: 7em 9em; justify-content: center; gap: 0 10px; white-space: nowrap; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p span { text-align: right; color: #c9a8ff; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-in p em { font-style: normal; color: var(--hive-green); }
+
+/* Cables across the gaps between the modules. */
+.theme-neon-hive #device .hx-cables {
+  position: absolute; display: none; top: calc(var(--oy) + var(--editors-y) + var(--editors-h) * .3); height: calc(var(--editors-h) * .4);
+  background:
+    linear-gradient(90deg, transparent 0 18%, rgba(255,63,180,.85) 18% 21%, transparent 21% 38%,
+      rgba(155,92,255,.7) 38% 40%, transparent 40% 60%, rgba(79,216,255,.7) 60% 62%, transparent 62% 79%,
+      rgba(255,63,180,.6) 79% 81%, transparent 81%);
+  filter: drop-shadow(0 0 4px rgba(255,63,180,.7));
+  -webkit-mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
+  mask: linear-gradient(180deg, transparent, #000 12% 88%, transparent);
+}
+.theme-neon-hive #device .hx-cables::before, .theme-neon-hive #device .hx-cables::after {
+  content: ""; position: absolute; left: 8%; right: 8%; height: 14px; border-radius: 2px;
+  background: linear-gradient(180deg, #3a1d5c, #1a0c2c); box-shadow: inset 0 0 0 1px var(--hive-violet), 0 0 8px rgba(155,92,255,.6);
+}
+.theme-neon-hive #device .hx-cables::before { top: 22%; }
+.theme-neon-hive #device .hx-cables::after { bottom: 22%; }
+body.theme-neon-hive.has-dock.sidebar-right #device .hx-cables.l {
+  display: block; left: calc(var(--ox) + var(--dock-x) + var(--dock-w) / 2 + var(--side-w) / 2 + 8px);
+  width: calc(var(--editors-x) - var(--dock-x) - var(--dock-w) / 2 - var(--side-w) / 2 - 30px);
+}
+body.theme-neon-hive.has-sidebar.sidebar-right #device .hx-cables.r {
+  display: block; left: calc(var(--ox) + var(--editors-x) + var(--editors-w) + 22px);
+  width: calc(var(--sidebar-x) + var(--sidebar-w) / 2 - var(--side-w) / 2 - var(--editors-x) - var(--editors-w) - 30px);
+}
+
+/* Live values drive the rings: --v comes from the bound value (0–100 for a
+   percentage; a count for errors / warnings, ten per full ring). */
+.theme-neon-hive #device .gz { --gz-p: calc(min(var(--v, 0), 100) * 1%); }
+.theme-neon-hive #device :is(.gz.err, .gz.warn) { --gz-p: calc(min(var(--v, 0) * 10, 100) * 1%); }
+.theme-neon-hive #device .gz.cpu { --gz-c: var(--hive-pink); }
+.theme-neon-hive #device .gz.mem { --gz-c: var(--hive-violet); }
+.theme-neon-hive #device .gz.err { --gz-c: #ff5a7a; }
+.theme-neon-hive #device .gz.warn { --gz-c: #ffd23f; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz { width: 48px; height: 48px; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .gz small { margin-top: 5px; white-space: nowrap; }
+.theme-neon-hive #device :is(.hx-sys, .hx-diag) .hx-gauges { display: flex; justify-content: center; gap: 44px; margin: 2px 0 20px; }
+
+/* ---- chrome: nothing outside the buffer is a box ----------------------------
+   Rows, tabs and highlights are pills, separators are light that fades at
+   both ends, floating surfaces are rounded neon glass. */
+.theme-neon-hive :is(#menubar, #statusbar) { text-shadow: 0 0 6px rgba(79,216,255,.35); }
+@keyframes hive-liquid {
+  0%, 100% { border-radius: 62% 38% 46% 54% / 60% 44% 56% 40%; }
+  33%      { border-radius: 40% 60% 58% 42% / 44% 62% 38% 56%; }
+  66%      { border-radius: 54% 46% 36% 64% / 52% 36% 64% 48%; }
+}
+.theme-neon-hive .mtop { border-radius: 999px; padding: 3px 12px; font-weight: 600; letter-spacing: .04em;
+  transition: background .15s, box-shadow .15s; }
+.theme-neon-hive .mtop:hover, .theme-neon-hive .mtop.open {
+  background: color-mix(in srgb, var(--hive-pink) 22%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--hive-pink) 45%, transparent);
+}
+/* Tabs: floating capsules; the active one glows and swells into a drop. */
+.theme-neon-hive .tab { border: 1px solid transparent; border-radius: 999px; margin: 3px 3px; padding: 3px 10px 3px 14px;
+  background: rgba(155,92,255,.08); transition: background .15s, box-shadow .2s; }
+.theme-neon-hive .tab:hover { background: rgba(155,92,255,.18); }
+.theme-neon-hive .tab.active, .theme-neon-hive .pane.active .tab.active {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hive-pink) 40%, transparent), color-mix(in srgb, var(--hive-violet) 30%, transparent));
+  border-color: color-mix(in srgb, var(--hive-pink) 70%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--hive-pink) 45%, transparent);
+}
+.theme-neon-hive .pane.active .tab.active { animation: hive-liquid 6s ease-in-out infinite; }
+/* Status bar: each item a chip. */
+.theme-neon-hive #statusbar { gap: 8px; height: 28px; padding: 0 26px; }
+.theme-neon-hive #statusbar .sright { overflow: hidden; }
+.theme-neon-hive .sitem { border-radius: 999px; background: rgba(79,216,255,.08); box-shadow: 0 0 0 1px rgba(79,216,255,.18); padding: 1px 9px; }
+.theme-neon-hive .sname { color: #fff; background: rgba(255,63,180,.28); box-shadow: 0 0 14px rgba(255,63,180,.5); }
+/* Lists: rows are pills inset from the column. */
+.theme-neon-hive .ex-row { border-radius: 999px; margin: 0 8px 0 4px; transition: background .12s; }
+.theme-neon-hive .ex-row.selected {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hive-blue) 38%, transparent), transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--hive-blue) 35%, transparent);
+}
+.theme-neon-hive .native-panel :is(.w-list-row, .w-tree-row) { border-radius: 999px; padding-left: 10px; }
+.theme-neon-hive .native-panel :is(.w-list-row, .w-tree-row).sel {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hive-pink) 70%, transparent), color-mix(in srgb, var(--hive-pink) 12%, transparent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--hive-pink) 50%, transparent);
+}
+.theme-neon-hive .native-panel :is(.w-button, .w-text) { border-radius: 999px; }
+
+/* Pop-ups: every floating surface in the same neon glass, its rim the
+   colour of where it comes from. */
+/* (#thememenu is listed apart: inside :is() its id would outweigh the
+   per-surface rim colours below.) */
+.theme-neon-hive :is(.dropdown, .ask, .popup, .settings, .floating-panel), .theme-neon-hive #thememenu {
+  --pop-c: var(--hive-pink);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pop-c) 14%, transparent), transparent 42px),
+    repeating-linear-gradient(0deg, rgba(155,92,255,.05) 0 1px, transparent 1px 4px), #12081f;
+  border: 1.5px solid color-mix(in srgb, var(--pop-c) 85%, transparent);
+  border-radius: 18px;
+  box-shadow: inset 0 0 22px color-mix(in srgb, var(--pop-c) 28%, transparent),
+    0 0 18px color-mix(in srgb, var(--pop-c) 45%, transparent), 0 18px 40px rgba(0,0,0,.6);
+}
+.theme-neon-hive :is(.ask.palette, .popup) { --pop-c: var(--hive-violet); }
+.theme-neon-hive .dropdown.context { --pop-c: var(--hive-blue); }
+.theme-neon-hive .msep { background: linear-gradient(90deg, transparent, var(--pop-c, var(--hive-pink)), transparent); opacity: .55; }
+.theme-neon-hive :is(.mitem.hi, .ask-row.selected, .popup-item.selected, .settings-cat.active, .ts-row.on) {
+  --hl: var(--pop-c, var(--hive-pink));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hl) 55%, transparent), color-mix(in srgb, var(--hl) 12%, transparent));
+  color: #fff; border-radius: 999px; box-shadow: 0 0 14px color-mix(in srgb, var(--hl) 40%, transparent);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--hl) 80%, transparent);
+}
+.theme-neon-hive :is(.mitem, .ask-row, .popup-item, .settings-cat) { border-radius: 999px; }
+.theme-neon-hive :is(.ask-input, .ui-field) { border-radius: 999px; background: rgba(10,5,19,.7); border-color: color-mix(in srgb, var(--hive-pink) 55%, transparent); }
+.theme-neon-hive .btn { border-radius: 999px; background: rgba(155,92,255,.12); border-color: color-mix(in srgb, var(--hive-violet) 60%, transparent); }
+.theme-neon-hive .btn.primary { background: linear-gradient(90deg, var(--hive-pink), var(--hive-violet)); border-color: transparent; color: #fff; }
+.theme-neon-hive .native-panel .w-button.primary { color: var(--on-ui-accent); }
+.theme-neon-hive #themebtn { background: rgba(26,12,44,.85); color: var(--fg); border: 1px solid var(--hive-pink);
+  box-shadow: 0 0 12px rgba(255,63,180,.45); }
+@media (prefers-reduced-motion: reduce) {
+  .theme-neon-hive * { animation: none !important; transition: none !important; }
+}
+
+/* Dialogs, the palette, settings: cut-corner modules like the ones around
+   them. The rim and the glass are layers clipped to the shape; the glow is a
+   drop-shadow of the whole, so the cut does not clip it. */
+.theme-neon-hive :is(.ask.dialog, .ask.palette, .settings, .floating-panel) {
+  --cut: 20px; background: none; border: 0; border-radius: 0; box-shadow: none; isolation: isolate;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--pop-c) 60%, transparent)) drop-shadow(0 18px 28px rgba(0,0,0,.55));
+}
+.theme-neon-hive :is(.ask.dialog, .settings, .floating-panel) { position: relative; }
+.theme-neon-hive :is(.ask.dialog, .ask.palette, .settings, .floating-panel)::before,
+.theme-neon-hive :is(.ask.dialog, .ask.palette, .settings, .floating-panel)::after {
+  content: ""; position: absolute; z-index: -1;
+  clip-path: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)),
+    calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
+}
+.theme-neon-hive :is(.ask.dialog, .ask.palette, .settings, .floating-panel)::before {
+  inset: 0; background: linear-gradient(180deg, var(--pop-c), color-mix(in srgb, var(--pop-c) 55%, var(--hive-violet)));
+}
+.theme-neon-hive :is(.ask.dialog, .ask.palette, .settings, .floating-panel)::after {
+  inset: 1.5px; --cut: 19.4px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pop-c) 16%, #12081f), #12081f 48px),
+    repeating-linear-gradient(0deg, rgba(155,92,255,.05) 0 1px, transparent 1px 4px), #12081f;
+}
+.theme-neon-hive .settings-nav, .theme-neon-hive .settings-head { background: transparent; }
+
+/* Scrollbar: a neon capsule on a faint rail. */
+.theme-neon-hive .vbar { width: 12px; background: linear-gradient(90deg, transparent 5px, rgba(155,92,255,.18) 5px 7px, transparent 7px); }
+.theme-neon-hive .thumb { left: 3px; right: 3px; min-height: 40px; border-radius: 999px;
+  background: linear-gradient(180deg, var(--hive-pink), var(--hive-violet));
+  box-shadow: 0 0 8px rgba(255,63,180,.7), inset 0 0 0 1px rgba(255,255,255,.25); }
+.theme-neon-hive .thumb:hover { filter: brightness(1.2); }
+/* The status bar fits its frame: tighter chips, the message gives way. */
+.theme-neon-hive #statusbar { gap: 5px; padding: 0 30px; }
+.theme-neon-hive .sitem { padding: 0 7px; font-size: 11.5px; }
+.theme-neon-hive #statusbar .sleft { flex: 1 1 auto; }
+.theme-neon-hive #statusbar .sright { flex: 0 1 auto; }

@@ -11,6 +11,13 @@ use crossterm::event::KeyEvent;
 impl Editor {
     /// Open the keybinding editor modal
     pub fn open_keybinding_editor(&mut self) {
+        self.keybinding_editor = Some(self.keybinding_model());
+    }
+
+    /// A keybinding editor's model over the current bindings: what the
+    /// terminal's modal edits, and what a web client's screen edits through
+    /// the API.
+    pub(crate) fn keybinding_model(&self) -> KeybindingEditor {
         use crate::config::MenuExt;
         let config_path = self.dir_context.config_path().display().to_string();
         let cmd_registry = self.command_registry.read().unwrap();
@@ -25,14 +32,14 @@ impl Editor {
             .chain(self.menu_state.plugin_menus.iter())
             .map(|m| m.match_id().to_string())
             .collect();
-        self.keybinding_editor = Some(KeybindingEditor::new(
+        KeybindingEditor::new(
             &self.config,
             &keybindings,
             &self.mode_registry,
             &cmd_registry,
             config_path,
             &menu_names,
-        ));
+        )
     }
 
     /// Handle input when keybinding editor is active
@@ -127,21 +134,6 @@ impl Editor {
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to save keybindings: {}", e));
-            }
-        }
-    }
-
-    /// Select a display row by index (and toggle it if it's a section header) —
-    /// the same effect as a TUI click on that table row. Used by the web
-    /// `/kbedit` route so a native row click selects through the real editor.
-    #[cfg(feature = "web")]
-    pub(crate) fn kbedit_select_display_row(&mut self, idx: usize) {
-        if let Some(ed) = self.keybinding_editor.as_mut() {
-            if idx < ed.display_rows.len() {
-                ed.select(idx);
-                if ed.selected_is_section_header() {
-                    ed.toggle_section_at_selected();
-                }
             }
         }
     }

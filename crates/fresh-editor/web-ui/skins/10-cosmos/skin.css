@@ -1,0 +1,64 @@
+/* ==FreshSkin==
+@id           cosmos
+@name         Cosmos
+@description  Wallpaper, glass & hardware bezel
+@author       Fresh
+@version      2.0.0
+@frame        bezel
+@furniture    furniture.html
+==/FreshSkin== */
+
+/* Cosmos sets no colours: the chrome follows the editor theme. It is the
+   wallpaper, the COSMOS-991 bezel (the shared kit, dressed by
+   furniture.html), a little glass, and chrome set in the buffer's own
+   monospace, so the window reads as one instrument. */
+:root.theme-cosmos { --font-family: var(--mono-family); --ui-font-size: 14px; }
+.theme-cosmos #menubar { padding: 3px 10px; }
+.theme-cosmos .mtop { padding: 3px 11px; }
+.theme-cosmos .tabs { border-bottom: 1px solid var(--hairline); }
+.theme-cosmos .tab { border-right-color: var(--hairline); padding: 6px 10px 6px 14px; }
+.theme-cosmos #statusbar { height: 26px; font-size: 13px; }
+.theme-cosmos .sitem { font-size: 13px; }
+
+body.theme-cosmos:not(.mobile) {
+  background:
+    radial-gradient(80rem 55rem at 90% -8%, rgba(255,200,96,.80), rgba(255,160,64,.25) 45%, transparent 65%),
+    radial-gradient(50rem 40rem at 102% 62%, rgba(255,145,60,.50), transparent 60%),
+    radial-gradient(70rem 55rem at 48% -22%, rgba(160,95,235,.50), transparent 60%),
+    radial-gradient(90rem 70rem at -12% 115%, rgba(56,230,246,.70), rgba(40,160,220,.25) 45%, transparent 65%),
+    radial-gradient(60rem 45rem at -8% 22%, rgba(64,140,230,.55), transparent 60%),
+    radial-gradient(55rem 40rem at 55% 122%, rgba(255,130,90,.40), transparent 60%),
+    linear-gradient(135deg, #12233f 0%, #1a2d4e 45%, #0c1930 100%) #0f1c33;
+}
+
+/* The client sits in the screen well with rounded corners. */
+body.theme-cosmos.frame-bezel #app { border-radius: 6px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
+
+/* Menus and dialogs: solid panels in the theme's own colours, with a lit
+   top edge and a glass rim. Solid, because code read through a menu is noise. */
+.theme-cosmos :is(.dropdown, .ask, .popup, .settings, .floating-panel) {
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 10%, transparent), var(--modal-shadow);
+}
+.theme-cosmos #thememenu { border-color: color-mix(in srgb, var(--fg) 16%, transparent); }
+
+/* The skin pill as a glass chip on the wallpaper. */
+body.theme-cosmos #themebtn { border: none; color: #e8f0f8; padding: 5px 13px 5px 10px; font-size: 13px;
+  background: rgba(255,255,255,.10);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.26), inset 0 1px 0 rgba(255,255,255,.34), 0 6px 18px rgba(2,6,14,.45); }
+body.theme-cosmos #themebtn:hover { background: rgba(255,255,255,.17); }
+
+/* Tab drop zones: rounded, glowing glass. */
+.theme-cosmos .drop-zone { border-width: 1px; border-radius: 9px;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent),
+    inset 0 0 14px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* Scrollbar: a glass pill on the buffer, brighter under the pointer. */
+.theme-cosmos .vbar { width: 12px; }
+.theme-cosmos .thumb { left: 3px; right: 3px; min-height: 36px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ed-fg) 26%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ed-fg) 18%, transparent); }
+.theme-cosmos .thumb:hover { background: color-mix(in srgb, var(--ed-fg) 42%, transparent); filter: none; }
+/* The status bar's message gives way before the facts on the right do. */
+.theme-cosmos #statusbar .smsg { opacity: .75; }

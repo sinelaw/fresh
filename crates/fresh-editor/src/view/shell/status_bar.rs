@@ -3,8 +3,7 @@
 //! The bar says what is *on* it — each element's runs, their theme keys, and
 //! the identity it answers to — and layout decides every column: the right
 //! side is reserved by [`yields_last`] and the left elides into the rest. A
-//! popup anchors to an element's key, and `segments` reads the result back for
-//! the web projection.
+//! popup anchors to an element's key.
 //!
 //! Which right-hand elements appear at all is decided in
 //! `Editor::status_bar_description`, from measured text: a description that
@@ -15,7 +14,6 @@ use std::rc::Rc;
 
 use fresh_ui::{gesture, row, text_runs, Elide, Event, GestureKind, Key, Node, Run, Sizing};
 
-use super::rect_of;
 use crate::app::types::HoverTarget;
 use crate::view::ui::status_bar::StatusBarClickable;
 
@@ -47,10 +45,10 @@ pub struct Item {
     /// One piece for most elements; several where an element styles part of
     /// itself (a filename with a modified marker, a diagnostic count).
     pub runs: Vec<(String, String)>,
-    /// The stable semantic name `status_view` projects — "lsp", "warning",
+    /// The element's stable semantic name — "lsp", "warning",
     /// "language", …
     pub name: &'static str,
-    /// Colour role ("error", "warning", "ok", …, or "" for the bar's own); the web reads it.
+    /// Colour role ("error", "warning", "ok", …, or "" for the bar's own).
     pub tone: &'static str,
     /// Set when the element answers a click.
     pub clickable: Option<StatusBarClickable>,
@@ -65,7 +63,7 @@ pub struct Item {
 }
 
 impl Item {
-    /// The element's whole text, for the web projection's segment.
+    /// The element's whole text.
     pub fn text(&self) -> String {
         self.runs.iter().map(|(t, _)| t.as_str()).collect()
     }
@@ -197,7 +195,7 @@ fn element(it: &Item, key: Key, side: Side) -> Node<UiMsg> {
     };
     // What a press on this element means: a built-in indicator names its id, a
     // plugin token names its registry key, and anything else is inert — still
-    // keyed, because the web projection and the theme inspector read every
+    // keyed, because the theme inspector reads every
     // element back, not only the ones that answer a press.
     let fact = match (it.clickable, it.token_key.clone()) {
         (Some(id), _) => UiFact::StatusBarClicked(id),
@@ -470,55 +468,12 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
 
 // ── reading the laid-out bar back ──────────────────────────────────────────
 
-/// Every element with visible text, in screen order, with its name, trimmed
-/// text and cells — the bar's semantic model, which the web renders directly
-/// instead of scraping cells.
-pub fn segments(
-    ui: &fresh_ui::Ui<UiMsg>,
-    bar: &StatusBar,
-    size: ratatui::layout::Rect,
-) -> Vec<crate::view::scene::StatusSegment> {
-    sides(bar)
-        .filter_map(|(side, i, it)| {
-            let text = it.text().trim().to_string();
-            if text.is_empty() {
-                return None;
-            }
-            let r = rect_of(ui, &key_of(side, i, it), size)?;
-            // Laid out narrower than its text: the layout elided it.
-            let cut = (r.width as usize) < crate::primitives::display_width::str_width(&it.text());
-            Some(crate::view::scene::StatusSegment {
-                name: it.name,
-                tone: it.tone,
-                cut,
-                key: it.token_key.clone(),
-                text,
-                x: r.x,
-                w: r.width,
-                side: side.name(),
-            })
-        })
-        .collect()
-}
-
-fn sides(bar: &StatusBar) -> impl Iterator<Item = (Side, usize, &Item)> {
-    bar.left
-        .iter()
-        .enumerate()
-        .map(|(i, it)| (Side::Left, i, it))
-        .chain(
-            bar.right
-                .iter()
-                .enumerate()
-                .map(|(i, it)| (Side::Right, i, it)),
-        )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, region_key, Frame, HostRegion};
+    use crate::view::shell::rect_of;
     use fresh_ui::{Size, Ui};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -903,8 +858,7 @@ mod tests {
     }
 
     /// Every element's rectangle is read back from the tree: a clickable one
-    /// by its id, which is what a popup anchors to, and every one through
-    /// `segments` for the web projection.
+    /// by its id, which is what a popup anchors to.
     #[test]
     fn the_rectangles_come_from_layout() {
         let bar = bar_of(
@@ -925,17 +879,6 @@ mod tests {
         );
         assert_eq!((enc.x, enc.width), (30, 5));
         assert_eq!((le.x, le.width), (38, 2));
-
-        let segs = segments(&ui, &bar, size);
-        assert_eq!(segs.len(), 3, "every element, clickable or not");
-        assert_eq!(
-            (segs[0].text.as_str(), segs[0].x, segs[0].side),
-            ("main.rs", 0, "left")
-        );
-        assert_eq!(
-            (segs[2].text.as_str(), segs[2].x, segs[2].side),
-            ("LF", 38, "right")
-        );
     }
 
     /// A press on a clickable element names it; a press on one that is not

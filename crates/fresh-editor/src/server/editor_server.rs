@@ -631,18 +631,18 @@ impl EditorServer {
                 }
             }
 
-            // Push the browser scene on the web bridge's own (gentler) cadence:
-            // a scene rebuild is a JSON model, not a terminal cell diff, and
-            // 25 fps is what the standalone bridge has always run at. Riding
-            // the same `needs_render` signal keeps the two views in step;
-            // `web_dirty` remembers a frame that fell inside the window so the
-            // last keystroke of a burst still lands.
+            // Push the web clients on the bridge's own (gentler) cadence, at
+            // most 25 times a second. Riding the same `needs_render` signal
+            // keeps them in step with the terminals; `web_dirty` remembers a
+            // frame that fell inside the window so the last keystroke of a
+            // burst still lands. With nothing changing, the bridge still asks
+            // for a slow push (`due`): a skin's machine figures and the clock.
             #[cfg(feature = "web")]
             {
                 const WEB_PUSH_INTERVAL: Duration = Duration::from_millis(40);
-                web_dirty |= needs_render;
+                web_dirty |= needs_render || self.web.as_ref().is_some_and(|b| b.due());
                 if web_dirty && last_web_push.elapsed() >= WEB_PUSH_INTERVAL {
-                    self.push_web_scene();
+                    self.push_web();
                     last_web_push = Instant::now();
                     web_dirty = false;
                 }
@@ -691,26 +691,14 @@ impl EditorServer {
         Ok(())
     }
 
-    /// The size the shared editor renders at: the element-wise MIN of every
-    /// viewport watching it — the terminal that sizes the session (see
-    /// [`Self::sizing_client`]) and, when this daemon hosts the web bridge,
-    /// the smallest connected browser. One editor draws one grid, so the grid
-    /// has to fit them all; a larger window letterboxes rather than being
-    /// shown a grid it can't display.
+    /// The size the shared editor renders at: the terminal that sizes the
+    /// session (see [`Self::sizing_client`]). Browsers do not constrain it —
+    /// each lays out its own views at its own size.
     ///
     /// Returns whether the size actually moved (the caller then pushes it into
     /// the capture backend and the editor via `update_terminal_size`).
     fn recompute_term_size(&mut self) -> bool {
-        // `mut` is exercised only by the `web` branch below.
-        #[cfg_attr(not(feature = "web"), allow(unused_mut))]
-        let mut fit: Option<TermSize> = self.sizing_client().map(|c| c.term_size);
-        #[cfg(feature = "web")]
-        if let Some((wc, wr)) = self.web.as_ref().and_then(|b| b.wanted_size()) {
-            fit = Some(match fit {
-                Some(t) => TermSize::new(t.cols.min(wc), t.rows.min(wr)),
-                None => TermSize::new(wc, wr),
-            });
-        }
+        let fit: Option<TermSize> = self.sizing_client().map(|c| c.term_size);
         match fit {
             Some(t) if t != self.term_size => {
                 self.term_size = t;
@@ -750,12 +738,11 @@ impl EditorServer {
 
     /// Bind the web bridge asked for by `--web`.
     ///
-    /// The editor has to exist first — the bridge seeds its outbound clipboard
-    /// mirror from it — so a web-enabled daemon builds its editor eagerly here
-    /// instead of waiting for a first client the way the TUI-only daemon does.
     /// A browser never speaks the IPC handshake; it has to find a session
-    /// already rendering. The pre-client grid is the bridge's own default
-    /// (`webui::DEFAULT_SIZE`), refit as soon as a real viewport reports in.
+    /// already running, so a web-enabled daemon builds its editor eagerly
+    /// here instead of waiting for a first client the way the TUI-only daemon
+    /// does. Until a terminal attaches, the editor's own frame is laid out at
+    /// `webui::DEFAULT_SIZE`.
     #[cfg(feature = "web")]
     fn start_web_bridge(&mut self) -> io::Result<()> {
         let Some(addr) = self.config.web_addr.clone() else {
@@ -766,61 +753,40 @@ impl EditorServer {
             self.term_size = TermSize::new(cols, rows);
             self.initialize_editor()?;
         }
-        let Some(editor) = self.editor.as_ref() else {
-            return Ok(());
-        };
         // `/reset` rebuilds the editor from scratch — fine for the standalone
         // parity harness that owns its editor, not for a session carrying a
         // recovery log, a restored workspace and attached terminals. Hence
         // `allow_reset: false` (and no file list for it to reopen).
-        let bridge = crate::webui::WebBridge::bind(&addr, editor, &[], false)
+        let bridge = crate::webui::WebBridge::bind(&addr, &[], false)
             .map_err(|e| io::Error::other(format!("failed to serve the web UI on {addr}: {e}")))?;
         tracing::info!("Web UI bridge listening on {}", addr);
         self.web = Some(bridge);
         Ok(())
     }
 
-    /// Apply everything the browsers sent this pass and refit the shared grid.
-    /// Returns whether the editor changed and needs a render.
+    /// Apply everything the browsers sent this pass. Returns whether the
+    /// editor changed and needs a render.
     #[cfg(feature = "web")]
     fn poll_web(&mut self) -> io::Result<bool> {
-        let before = self.term_size;
         let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
             return Ok(false);
         };
-        let mut cols = before.cols;
-        let mut rows = before.rows;
-        let poll = bridge.poll(editor, &mut cols, &mut rows);
-        // Heartbeat/flush here rather than in the render path: reaping a
-        // half-open browser frees a size constraint, and the refit below is
-        // where that gets acted on.
-        let reaped = bridge.maintain();
-        // The `/resize` HTTP route resizes the editor directly. The refit is
-        // the authority on the shared grid, so note the drift and force the
-        // capture backend and the editor back into agreement afterwards.
-        let route_resized = (cols, rows) != (before.cols, before.rows);
-
-        if poll.resize_dirty || reaped || route_resized {
-            let refit = self.recompute_term_size();
-            if refit || route_resized {
-                self.update_terminal_size()?;
-            }
-        }
+        let poll = bridge.poll(editor);
+        bridge.maintain();
         if poll.mutated {
             self.last_client_activity = Instant::now();
         }
-        Ok(poll.mutated || poll.resize_dirty || reaped || route_resized)
+        Ok(poll.mutated)
     }
 
-    /// Build the browser scene once and push each connected browser its own
-    /// region diff.
+    /// Push each connected browser what changed for it.
     #[cfg(feature = "web")]
-    fn push_web_scene(&mut self) {
+    fn push_web(&mut self) {
         let size = self.term_size;
         let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
             return;
         };
-        bridge.push_scene(editor, size.cols, size.rows);
+        bridge.push(editor, size.cols, size.rows);
     }
 
     /// Build the `Editor` from the current configuration and stored authority.

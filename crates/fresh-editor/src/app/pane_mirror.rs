@@ -187,7 +187,7 @@ fn mirror_of(
     root: fresh_ui::ElementId,
     page: Option<fresh_ui::ElementId>,
 ) -> Mirror {
-    use crate::view::shell::fold::{fold_band, Band, Paints, SkipHosts};
+    use crate::view::shell::fold::{fold_band, Band, SkipHosts};
     use unicode_width::UnicodeWidthStr;
 
     // Content space: a page's rows are counted from the top of its content,
@@ -246,7 +246,6 @@ fn mirror_of(
         &palette,
         &mut SkipHosts,
         Band::Background,
-        Paints::All,
         None,
     );
     let rows = (0..extent.h)

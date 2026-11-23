@@ -1,0 +1,420 @@
+/* ==FreshSkin==
+@id           winamp
+@name         Winamp Classic
+@description  Brushed metal, bevels & LCD green
+@author       Fresh
+@version      2.0.0
+@frame        bezel
+@furniture    furniture.html
+==/FreshSkin== */
+
+/* Winamp Classic — copper metal, hard bevels, LCD green. The bezel is the
+   CODE STUDIO player window (furniture.html); inside it the client's frame is
+   metal hardware and its content — the file list, palette lists, input
+   lines — is the LCD. */
+:root.theme-winamp {
+  --fg: #e9d9c2; --muted: #bda88c;
+  --bg2: #4a2d1c; --bg3: #3b2417; --border: #1b1109; --border-c: #1b1109;
+  --accent: #4ef07f; --on-accent: #04140a; --ui-accent: #f6c471; --on-ui-accent: #2a1608;
+  --menuhi: #313c90; --on-menuhi: #ffffff; --on-menuhi-dim: #c9cdf0;
+  --menu-bg: #3c2c23; --menu-fg: #e7d6bd;
+  --popup-bg: #3c2c23; --popup-fg: #e9d9c2;
+  --tab-bg: #3c2c23; --tab-fg: #c2ab90; --tab-active-bg: #070606; --tab-active-fg: #4ef07f;
+  --status-bg: #050705; --status-fg: #1a8f43;
+  --hairline: rgba(255,208,150,.12); --hairline-strong: rgba(255,208,150,.26); --hover: rgba(255,208,150,.10);
+  --shadow: 6px 6px 0 rgba(0,0,0,.5), 0 0 0 1px #1b1109;
+  --r-sm: 2px; --r-md: 3px; --r-lg: 4px;
+  --bezel-side: 17px; --bezel-top: 42px; --bezel-bot: 32px;
+}
+
+  body.theme-winamp{
+    /* Window metal: a MUTED warm taupe-brown (sampled from the reference skin —
+       desaturated, not a saturated copper), with a light sheen along the top and
+       a modest darkening toward the foot so it reads as a machined slab. */
+    --wa-face:linear-gradient(180deg,#503d2f 0%,#3f2e25 46%,#2c2019 100%);
+    --wa-face-flat:#3c2c23;
+    --wa-plate:linear-gradient(180deg,#54402f 0%,#403026 54%,#342820 100%); /* raised parts */
+    --wa-sunken:#070606;                                             /* LCD / code wells */
+    /* Brushed-metal grain: an organic SVG fractal-noise texture stretched into
+       fine vertical streaks (high horizontal / low vertical frequency), grayscale
+       and very low alpha — real brushed metal, not the banded stripes a repeating
+       gradient produces. */
+    --wa-brush:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%27180%27%20height%3D%27180%27%3E%3Cfilter%20id%3D%27b%27%3E%3CfeTurbulence%20type%3D%27fractalNoise%27%20baseFrequency%3D%270.62%200.012%27%20numOctaves%3D%272%27%20seed%3D%2711%27%20stitchTiles%3D%27stitch%27%2F%3E%3CfeColorMatrix%20type%3D%27saturate%27%20values%3D%270%27%2F%3E%3CfeComponentTransfer%3E%3CfeFuncA%20type%3D%27linear%27%20slope%3D%270.07%27%20intercept%3D%270%27%2F%3E%3C%2FfeComponentTransfer%3E%3C%2Ffilter%3E%3Crect%20width%3D%27180%27%20height%3D%27180%27%20filter%3D%27url%28%23b%29%27%2F%3E%3C%2Fsvg%3E");
+    --wa-metal:var(--wa-brush),var(--wa-face);
+    --wa-plate-brush:var(--wa-brush),var(--wa-plate);
+    --wa-lt:rgba(255,232,198,.55);      /* bevel highlight (top-left)     */
+    --wa-dk:rgba(0,0,0,.82);            /* bevel shadow    (bottom-right) */
+    --wa-out:inset 1px 1px 0 var(--wa-lt),inset -1px -1px 0 var(--wa-dk);
+    --wa-in:inset 1px 1px 0 var(--wa-dk),inset -1px -1px 0 var(--wa-lt);
+    /* Chunky raised FRAME bevel for the big windows: a bright 1px rim + a softer
+       2nd highlight, and a dark 1px rim + soft inner shadow — real machined depth. */
+    --wa-frame:inset 1px 1px 0 rgba(255,236,204,.7),inset 2px 2px 0 rgba(255,226,184,.22),
+      inset 0 3px 4px -2px rgba(255,232,196,.28),
+      inset -1px -1px 0 rgba(0,0,0,.82),inset -2px -2px 0 rgba(0,0,0,.45);
+    /* Deep recessed WELL: dark sunken rim + inner shadow bloom. */
+    --wa-well:inset 2px 2px 4px rgba(0,0,0,.85),inset -1px -1px 0 rgba(255,214,158,.12);
+    /* Crisp dark seam that rings each window against the desk (Winamp windows
+       read as cut-outs, not soft cards). */
+    --wa-seam:0 0 0 1px rgba(0,0,0,.6);
+    --wa-amber:#f7c978;                 /* title / caption lettering */
+    --wa-green:#4ef07f;                 /* phosphor readouts */
+    --wa-green-dim:#1a8f43;
+    /* Green sheen line for lit caption-bar top edges (the reference's reflection). */
+    --wa-lit:inset 0 1px 0 rgba(120,240,150,.28);
+    --wa-drop:6px 8px 0 rgba(0,0,0,.42),0 30px 74px rgba(0,0,0,.72);
+    /* Subtle top sheen for raised controls — a soft highlight, kept matte to
+       match the reference's chips (not a glassy shine). */
+    --wa-gloss:linear-gradient(180deg,rgba(255,248,232,.1) 0%,rgba(255,248,232,.02) 46%,
+      rgba(0,0,0,.07) 100%);
+    /* Control chrome: a dark groove ring ALL AROUND the chip (the reference cuts
+       each button into the metal), then a TOP-LIT bevel (bright top edge, dark
+       bottom edge — left/right symmetric, mirrored about the vertical axis), then
+       a soft drop shadow so it floats off the panel. */
+    --wa-ring:0 0 0 1px rgba(0,0,0,.62);
+    --wa-vbevel:inset 0 1px 0 var(--wa-lt),inset 0 -1px 0 var(--wa-dk);
+    --wa-ctl:var(--wa-ring),var(--wa-vbevel),0 2px 4px rgba(0,0,0,.45);
+    --wa-ctl-press:var(--wa-ring),inset 0 1px 0 var(--wa-dk),inset 0 -1px 0 var(--wa-lt),
+      0 1px 2px rgba(0,0,0,.4);
+    /* Dramatic top-lit sheen across the big panels: a warm glow high-centre that
+       falls off to the darker edges + foot (the reference's lighting). */
+    --wa-light:radial-gradient(64% 46% at 50% -5%,rgba(255,234,188,.34),transparent 60%),
+      linear-gradient(180deg,transparent 30%,rgba(0,0,0,.10) 78%,rgba(0,0,0,.18) 100%),
+      radial-gradient(120% 60% at 50% 118%,rgba(78,240,127,.055),transparent 58%);
+    /* The SAME light, but painted as an OVERLAY on top of the panel's content so
+       the caption + control chips in the lit zone are lifted too — not just the
+       bare metal behind them (a real light falls on everything). */
+    --wa-light-top:radial-gradient(60% 42% at 50% -6%,rgba(255,236,197,.36),transparent 62%);
+    --wa-light-bot:linear-gradient(180deg,transparent 44%,rgba(0,0,0,.32) 100%)}
+
+  /* ---- the desk: near-black with a warm bloom under the windows ---- */
+  body.theme-winamp:not(.mobile){background:
+    radial-gradient(70rem 45rem at 20% -12%, rgba(255,150,60,.10), transparent 62%),
+    radial-gradient(55rem 42rem at 110% 110%, rgba(78,240,127,.07), transparent 60%),
+    repeating-linear-gradient(135deg,rgba(255,255,255,.016) 0 2px,transparent 2px 5px),
+    linear-gradient(180deg,#1a1512,#0b0a09) #0b0a09}
+
+  /* ==================== CODE STUDIO — the player window ================== */
+  body.theme-winamp #device{border-radius:8px;letter-spacing:normal;
+    background:var(--wa-light),var(--wa-metal);
+    box-shadow:var(--wa-drop),var(--wa-seam),var(--wa-frame)}
+  /* Lighting overlays — painted ABOVE the bezel furniture (title bar, edges) so
+     the light falls on them too. Screen brightens the top, multiply shades the
+     foot. Pointer-transparent, clipped to the rounded window. */
+  body.theme-winamp #device::before,body.theme-winamp #device::after{content:"";
+    position:absolute;inset:0;pointer-events:none;border-radius:inherit;z-index:4}
+  body.theme-winamp #device::after{background:var(--wa-light-top);mix-blend-mode:screen}
+  body.theme-winamp #device::before{background:var(--wa-light-bot);mix-blend-mode:multiply}
+  /* The code well: a black screen recessed into the metal, framed the way the
+     reference frames it — a bright LIT rim on the metal side, a dark groove, then
+     the recessed black with a faint phosphor bloom. */
+  body.theme-winamp #device .dv-screen{border-radius:4px;background:var(--wa-sunken);
+    box-shadow:
+      /* machined groove channel engraved in the metal frame (bright/dark/bright),
+         then the lit screen rim — the reference's framed-screen look. */
+      0 0 0 1px rgba(0,0,0,.6),                     /* dark line hugging the screen   */
+      0 0 0 2px rgba(255,230,190,.34),              /* bright bevel on the metal      */
+      0 0 0 4px rgba(0,0,0,.42),                    /* dark groove                     */
+      0 0 0 5px rgba(255,228,186,.22),              /* faint outer bright             */
+      inset 2px 2px 0 rgba(255,236,198,.34),        /* inner lit rim, top-left         */
+      inset -2px -2px 0 rgba(0,0,0,.5),            /* inner shade, bottom-right       */
+      inset 6px 6px 11px rgba(0,0,0,.85),           /* recessed screen depth           */
+      inset 0 0 90px rgba(78,240,127,.05)}
+
+  /* ---- title bar: pinstripe rails either side of the caption ---- */
+  body.theme-winamp #device .wa-title{position:absolute;left:6px;right:6px;top:5px;
+    height:calc(var(--bezel-top) - 13px);
+    display:flex;align-items:center;gap:9px;padding:0 7px;border-radius:3px;
+    background:var(--wa-brush),linear-gradient(180deg,#4c3928 0%,#3a2a1e 55%,#2a1e15 100%);
+    box-shadow:var(--wa-out),var(--wa-lit)}
+  /* Pinstripe rails: a fine gold-on-black grille flanking the caption (the
+     classic Winamp titlebar texture — many thin lines, not a few fat ones). */
+  body.theme-winamp #device .wa-rail{flex:1;height:11px;border-radius:1px;
+    background:repeating-linear-gradient(180deg,
+      rgba(247,205,135,.6) 0 1px,rgba(0,0,0,.55) 1px 2px);
+    box-shadow:var(--wa-in)}
+  body.theme-winamp #device .wa-title-text{flex:0 0 auto;font-size:11px;font-weight:700;
+    letter-spacing:.26em;color:var(--wa-amber);
+    text-shadow:0 1px 0 rgba(0,0,0,.9),0 0 9px rgba(247,201,120,.3)}
+  /* Window buttons: thin cream line-icons (minimise / shade / close), no plate —
+     matching the reference's minimal titlebar controls. */
+  body.theme-winamp #device .wa-wbtns{display:flex;gap:7px;flex:0 0 auto;
+    align-items:center;padding-left:3px}
+  body.theme-winamp #device .wa-wbtns i{position:relative;width:13px;height:13px;
+    border-radius:0;background:none;box-shadow:none}
+  body.theme-winamp #device .wa-wbtns i::before,
+  body.theme-winamp #device .wa-wbtns i::after{content:"";position:absolute;
+    background:#efe0c8;box-shadow:0 1px 0 rgba(0,0,0,.6)}
+  body.theme-winamp #device .wa-min::before{left:2px;right:2px;bottom:2px;height:1.5px}
+  body.theme-winamp #device .wa-min::after{display:none}
+  body.theme-winamp #device .wa-shade::before{left:2px;right:2px;top:3px;height:1.5px}
+  body.theme-winamp #device .wa-shade::after{display:none}
+  body.theme-winamp #device .wa-close::before,
+  body.theme-winamp #device .wa-close::after{left:1px;right:1px;top:6px;height:1.5px;
+    background:#f6ddd2}
+  body.theme-winamp #device .wa-close::before{transform:rotate(45deg)}
+  body.theme-winamp #device .wa-close::after{transform:rotate(-45deg)}
+
+  /* ---- foot: a plain rail across the bottom bar (no transport, no meters) ---- */
+  body.theme-winamp #device .wa-foot{position:absolute;left:6px;right:6px;bottom:6px;
+    height:calc(var(--bezel-bot) - 14px);display:flex;align-items:center;
+    padding:0 10px;border-radius:3px;background:var(--wa-metal);box-shadow:var(--wa-out)}
+  body.theme-winamp #device .wa-foot .wa-rail{flex:1}
+
+  /* ---- side edges: hidden. The #device metal already fills the side margins,
+     and the frame around the code is the recessed, lit .dv-screen bevel — so the
+     old raised side rails (which covered the screen's lit rim and left a seam)
+     are dropped, matching the reference's single solid bevelled frame. ---- */
+  body.theme-winamp #device .wa-edge{display:none}
+
+  /* ==================== LCD content and shared controls ====================
+     Frames are metal hardware; content is the LCD. The shared controls
+     (css/62-components.css) read the variables set here. */
+  body.theme-winamp{
+    --wa-scan:repeating-linear-gradient(180deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px);
+    --wa-lcd:var(--wa-scan),var(--wa-sunken);
+    --wa-lcd-fg:#7fe8a0;--wa-lcd-dim:#2fa55a;
+    --wa-glow:0 0 6px rgba(78,240,127,.45);
+    --wa-lcd-sel:linear-gradient(90deg,rgba(78,240,127,.30),rgba(78,240,127,.12));
+    --wa-muted:#b49c7e;
+    /* Checkbox: a black LCD well cut into the metal; on, a green glowing tick. */
+    --check-size:13px;--check-radius:0;--check-bg:var(--wa-sunken);--check-border:#120b06;
+    --check-shadow:var(--wa-in);--check-on-bg:var(--wa-sunken);--check-on-border:#120b06;
+    --check-on-fg:var(--wa-green);--check-on-shadow:var(--wa-in),inset 0 0 6px rgba(78,240,127,.35);
+    --check-on-glow:0 0 5px rgba(78,240,127,.9);
+    /* Switch: the same LCD track with a metal knob; on, the track lights. */
+    --switch-w:30px;--switch-h:14px;--switch-pad:2px;--switch-knob:10px;--switch-radius:0;--switch-knob-radius:0;
+    --switch-track:var(--wa-sunken);--switch-shadow:var(--wa-in);
+    --switch-track-on:linear-gradient(90deg,rgba(78,240,127,.55),rgba(78,240,127,.25)),var(--wa-sunken);
+    --switch-on-shadow:var(--wa-in),0 0 8px rgba(78,240,127,.35);
+    --switch-knob-bg:linear-gradient(180deg,#8a7058,#4d392a);--switch-knob-on:linear-gradient(180deg,#a68a6e,#5c4532);
+    --switch-knob-shadow:var(--wa-vbevel),0 1px 2px rgba(0,0,0,.6);
+    /* Key hint: a small recessed slot, dim phosphor. */
+    --key-fg:var(--wa-lcd-dim);--key-bg:#0b0907;--key-border:#000;--key-radius:0;--key-shadow:var(--wa-in);
+    /* Small button: the raised metal chip every dialog button is. */
+    --chip-fg:#f0dcc2;--chip-bg:var(--wa-gloss),var(--wa-plate);--chip-border:transparent;--chip-radius:2px;
+    --chip-shadow:var(--wa-ctl);--chip-hover-fg:var(--wa-amber);
+    --chip-hover-bg:var(--wa-gloss),linear-gradient(180deg,#67503b,#4d392a);
+    /* Text field: an LCD slot. */
+    --field-bg:var(--wa-lcd);--field-fg:var(--wa-green);--field-border:#000;--field-radius:0;
+    --field-shadow:var(--wa-in);--field-glow:var(--wa-glow);
+    /* Dropdown button: a raised metal switch, as every button on the skin. */
+    --select-fg:#f0dcc2;--select-bg:var(--wa-gloss),var(--wa-plate);--select-border:transparent;
+    --select-radius:2px;--select-shadow:var(--wa-ctl);
+    --select-hover-bg:var(--wa-gloss),linear-gradient(180deg,#67503b,#4d392a);
+    --select-focus-ring:0 0 0 1px var(--wa-green),0 0 8px rgba(78,240,127,.4);
+    /* Radio: a round LCD well; chosen, a phosphor dot. */
+    --radio-border:#120b06;--radio-bg:var(--wa-sunken);--radio-shadow:var(--wa-in);
+    --radio-on-border:#120b06;--radio-on-dot:var(--wa-green);--radio-on-glow:0 0 6px rgba(78,240,127,.6)}
+
+  /* Content: the LCD. */
+body.theme-winamp { --wa-olive:
+    radial-gradient(90% 130% at 50% -22%, rgba(255,255,214,.35), transparent 62%),
+    linear-gradient(180deg, #96a04c 0%, #7f8a3e 46%, #565c29 100%); }
+
+/* ===================== the client, inside the code well ===================== */
+:root.theme-winamp { --font-family: var(--mono-family); --ui-font-size: 14px; }
+.theme-winamp #app { letter-spacing: normal; }
+.theme-winamp .mtop { padding: 3px 11px; }
+.theme-winamp #statusbar .sitem { font-size: 13px; }
+
+/* The menu bar and tab strips: metal rails. */
+.theme-winamp #menubar { background: var(--wa-metal); box-shadow: var(--wa-out); border-bottom: none; }
+.theme-winamp .mtop { color: #e7d6bd; text-shadow: 0 1px 0 rgba(0,0,0,.7); border-radius: 0; }
+.theme-winamp .mtop:hover { background: rgba(255,208,150,.12); }
+.theme-winamp .mtop.open { background: var(--wa-olive); color: #f6f2df; }
+.theme-winamp .msep { background: rgba(0,0,0,.6); box-shadow: 0 1px 0 rgba(255,214,158,.16); margin: 4px 8px; }
+.theme-winamp .tabs { background: var(--wa-face-flat); box-shadow: inset 0 -1px 0 rgba(0,0,0,.85); }
+.theme-winamp .tab { color: #c2ab90; background: var(--wa-plate); box-shadow: var(--wa-out); border-right: 1px solid #241509; }
+.theme-winamp .tab:not(.active):hover { background: linear-gradient(180deg, #8d5c36, #65401f); }
+/* The active tab is the lit display: pressed in, black, phosphor label. */
+.theme-winamp .tab.active, .theme-winamp .pane.active .tab.active { background: var(--wa-sunken); color: var(--wa-green);
+  text-shadow: 0 0 7px rgba(78,240,127,.6); box-shadow: var(--wa-in); }
+.theme-winamp .group-title { background: var(--wa-face-flat); color: var(--wa-amber); }
+
+/* The status bar: the kbps/kHz readout — black LCD with scanlines. */
+/* One LCD brightness across the readout. */
+.theme-winamp #statusbar { background: var(--wa-lcd); color: var(--wa-green); text-shadow: var(--wa-glow); box-shadow: var(--wa-in); }
+.theme-winamp button.sitem { border-radius: 0; }
+.theme-winamp button.sitem:hover { background: rgba(78,240,127,.16); color: var(--wa-green); }
+
+/* The file explorer and the dock: sunken playlist panes behind a copper rail. */
+.theme-winamp #sidebar, .theme-winamp #dock { background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); }
+.theme-winamp :is(#sash, #dock-sash, .split-sash) { background: var(--wa-metal); box-shadow: var(--wa-out); }
+.theme-winamp .ex-head { color: var(--wa-amber); text-transform: uppercase; opacity: 1; text-shadow: none; }
+.theme-winamp .ex-row.selected { background: var(--wa-lcd-sel); }
+.theme-winamp .ex-row.current .ex-name { color: #fff; filter: none; }
+
+/* Floating windows: skin windows, not frosted glass; their lists are the LCD. */
+.theme-winamp .dropdown, .theme-winamp .ask, .theme-winamp .popup, .theme-winamp .settings,
+.theme-winamp .floating-panel, .theme-winamp #thememenu {
+  background: var(--wa-metal); color: #e9d9c2; border: none; border-radius: 3px;
+  box-shadow: var(--wa-seam), var(--wa-out), 6px 8px 0 rgba(0,0,0,.5); }
+/* Menus: each row its own plate, the rows parted by an engraved groove (a
+   dark line over a lit one), the one under the pointer the lit olive plate. */
+.theme-winamp .dropdown { padding: 3px; }
+.theme-winamp .mitem { border-radius: 0; padding: 3px 10px; }
+.theme-winamp .dropdown > .mitem + .mitem { box-shadow: inset 0 1px 0 rgba(0,0,0,.5), inset 0 2px 0 rgba(255,214,158,.09); }
+.theme-winamp .dropdown > .mitem.hi { box-shadow: var(--wa-vbevel); }
+.theme-winamp .mitem.hi { background: var(--wa-olive); color: #f6f2df; }
+.theme-winamp .ask-list, .theme-winamp .popup-list, .theme-winamp .popup-doc, .theme-winamp .settings-list,
+.theme-winamp .kb-body, .theme-winamp .browser-list {
+  background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); box-shadow: var(--wa-in); }
+.theme-winamp .ask-input, .theme-winamp .ui-field {
+  background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #000; border-radius: 0; box-shadow: var(--wa-in); }
+.theme-winamp .ask-row, .theme-winamp .popup-item { border-radius: 0; }
+.theme-winamp .ask-row:hover:not(.selected) { background: rgba(78,240,127,.05); }
+.theme-winamp .ask-row.selected, .theme-winamp .popup-item.selected, .theme-winamp .settings-cat.active {
+  background: var(--wa-lcd-sel); color: #eafff0; }
+.theme-winamp .ask-keys { color: var(--wa-lcd-dim); opacity: 1; }
+.theme-winamp .ask-desc, .theme-winamp .setting-desc { color: var(--wa-lcd-dim); opacity: 1; }
+.theme-winamp .dlg-title, .theme-winamp .settings-title, .theme-winamp .floating-head, .theme-winamp .popup-title {
+  color: var(--wa-amber); letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 1px 0 rgba(0,0,0,.6); }
+
+/* Buttons: bevelled hardware switches that press in; the Enter answer is the
+   lit olive plate. */
+.theme-winamp .btn, .theme-winamp #themebtn, .theme-winamp .chip {
+  background: var(--wa-gloss), var(--wa-plate); color: #f0dcc2; border: none; border-radius: 3px;
+  box-shadow: var(--wa-ctl); text-shadow: 0 1px 0 rgba(0,0,0,.5); }
+.theme-winamp .btn:hover, .theme-winamp #themebtn:hover, .theme-winamp .chip:hover {
+  background: var(--wa-gloss), linear-gradient(180deg, #67503b, #4d392a); }
+.theme-winamp .btn:active { box-shadow: var(--wa-ctl-press); }
+.theme-winamp .btn.primary { background: var(--wa-olive); color: #f4f6df;
+  box-shadow: var(--wa-ring), var(--wa-vbevel), inset 0 1px 0 rgba(255,255,255,.32), 0 2px 4px rgba(0,0,0,.45); }
+.theme-winamp .btn.danger { color: #ff8a7a; }
+.theme-winamp .ts-row.on, .theme-winamp .ts-row:hover { background: var(--wa-olive); color: #f6f2df; }
+
+/* Plugin panels (the dock): the list is the LCD, its selection a lit band;
+   the panel's primary button is the olive plate. */
+.theme-winamp .native-panel :is(.w-list-row, .w-tree-row).sel { background: var(--wa-lcd-sel); color: #eafff0; text-shadow: var(--wa-glow);
+  box-shadow: inset 2px 0 0 var(--wa-green); }
+/* A panel's real buttons are metal switches; its bare ones (a menu's
+   options, a header's dropdown) are flat until pointed at. */
+.theme-winamp .native-panel .w-button:not(.bare) { background: var(--wa-gloss), var(--wa-plate); color: #f0dcc2; border: none; border-radius: 2px;
+  box-shadow: var(--wa-ctl); text-shadow: 0 1px 0 rgba(0,0,0,.5); }
+.theme-winamp .native-panel .w-button.bare { border-radius: 0; color: #e9d9c2; }
+.theme-winamp .native-panel .w-button.bare:hover { background: rgba(255,208,150,.10); }
+/* A plugin's menu: rows parted by an engraved groove, the lit row the olive
+   plate, section heads in the amber of the title lettering. */
+.theme-winamp .floating-panel.anchored { padding: 3px; }
+.theme-winamp .floating-panel.anchored .w-button.bare { box-shadow: inset 0 -1px 0 rgba(0,0,0,.5), inset 0 -2px 0 rgba(255,214,158,.08); }
+.theme-winamp .floating-panel.anchored .w-button.bare:hover, .theme-winamp .floating-panel.anchored:not(:hover) .w-button.bare.focus {
+  background: var(--wa-olive); color: #f6f2df; box-shadow: var(--wa-vbevel); }
+.theme-winamp .floating-panel.anchored .w-th { color: var(--wa-amber); opacity: 1; text-shadow: 0 1px 0 rgba(0,0,0,.6); }
+.theme-winamp .floating-panel.anchored .w-vrule { background: rgba(0,0,0,.5); box-shadow: 1px 0 0 rgba(255,214,158,.1); }
+.theme-winamp .native-panel .w-button.primary:not(.bare) { background: var(--wa-olive); color: #f4f6df; }
+
+/* Scrollbars: a metal slider in a sunken track. */
+/* The track a groove cut into the metal, the thumb a ridged slider. */
+.theme-winamp .vbar { width: 14px; background: repeating-linear-gradient(90deg, #241610 0 1px, #140c07 1px 2px);
+  box-shadow: inset 1px 0 0 rgba(0,0,0,.8), inset -1px 0 0 rgba(255,214,158,.08); }
+.theme-winamp .thumb { left: 2px; right: 2px; min-height: 28px; border-radius: 0; box-shadow: var(--wa-out);
+  background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(0,0,0,.35) 3px 4px, rgba(255,232,198,.18) 4px 5px) center / 100% 11px no-repeat,
+    var(--wa-plate-brush); }
+.theme-winamp .thumb:hover { filter: brightness(1.15); }
+.theme-winamp *::-webkit-scrollbar { width: 14px; height: 14px; background: repeating-linear-gradient(90deg, #241610 0 1px, #140c07 1px 2px); }
+.theme-winamp *::-webkit-scrollbar-thumb { background: var(--wa-plate-brush); border-radius: 0; box-shadow: var(--wa-out); }
+.theme-winamp *::-webkit-scrollbar-corner { background: #140c07; }
+
+/* Native checkboxes and radios light in LCD green, not the amber accent. */
+body.theme-winamp { accent-color: #4ef07f; }
+
+/* The palette is a skin window too: metal around an inset LCD. */
+.theme-winamp .ask.palette { padding: 6px; }
+.theme-winamp .ask.palette .ask-head { padding: 2px 2px 6px; }
+
+/* Title-bar buttons: three equal bevelled plates with drawn icons. */
+body.theme-winamp #device .wa-wbtns { gap: 3px; }
+body.theme-winamp #device .wa-wbtns i { width: 11px; height: 11px;
+  background: var(--wa-gloss), var(--wa-plate); box-shadow: var(--wa-ring), var(--wa-vbevel); }
+body.theme-winamp #device .wa-wbtns i::before, body.theme-winamp #device .wa-wbtns i::after { box-shadow: none; }
+body.theme-winamp #device .wa-min::before { left: 3px; right: 3px; top: auto; bottom: 3px; height: 1px; }
+body.theme-winamp #device .wa-shade::before { left: 3px; right: 3px; top: 3px; bottom: auto; height: 1px; }
+body.theme-winamp #device .wa-close::before, body.theme-winamp #device .wa-close::after { left: 2px; right: 2px; top: 5px; height: 1px; }
+
+/* The dock's cards: LCD wells; the selected one lit, with a phosphor rim. */
+.theme-winamp .native-panel .w-tree-card { background: var(--wa-sunken); border-color: #000; border-radius: 0; box-shadow: var(--wa-in); }
+.theme-winamp .native-panel .w-tree-card.sel { background: var(--wa-lcd-sel), var(--wa-sunken); border-color: var(--wa-green-dim); }
+.theme-winamp .native-panel .w-tree-card.sel .w-tree-xrow { color: #eafff0; }
+
+/* ==================== ORCHESTRATOR — its own window ====================
+   While the dock is open it is not a column of the player: it is a second
+   skin window beside it, as Winamp's playlist is, with its own title bar
+   and well. The player moves over to make room; the window itself is
+   furniture (furniture.html .wa-dockwin, drawn left of #device), and the
+   dock's panel is placed in its well. */
+:root.theme-winamp { --wa-dock-w: 330px; --wa-dock-gap: 10px; }
+body.theme-winamp.frame-bezel.has-dock #device { left: calc(var(--shell-pad) + var(--wa-dock-w) + var(--wa-dock-gap)); }
+body.theme-winamp.frame-bezel.has-dock #app { left: calc(var(--shell-pad) + var(--wa-dock-w) + var(--wa-dock-gap) + var(--bezel-side)); }
+body.theme-winamp.frame-bezel #dock { position: fixed; z-index: 1; padding: 6px 8px;
+  left: calc(var(--shell-pad) + var(--bezel-side)); width: calc(var(--wa-dock-w) - 2 * var(--bezel-side));
+  top: calc(var(--shell-pad) + var(--bezel-top)); bottom: calc(var(--shell-pad) + var(--bezel-bot)); }
+body.theme-winamp.frame-bezel #dock-sash { display: none; }
+body.theme-winamp #device .wa-dockwin { display: none; }
+body.theme-winamp.frame-bezel.has-dock #device .wa-dockwin { display: block; position: absolute; top: 0; bottom: 0;
+  left: calc(-1 * (var(--wa-dock-w) + var(--wa-dock-gap))); width: var(--wa-dock-w); border-radius: 8px;
+  background: var(--wa-light), var(--wa-metal); box-shadow: var(--wa-drop), var(--wa-seam), var(--wa-frame); }
+body.theme-winamp #device .wa-dockwin .wa-foot { gap: 8px; }
+body.theme-winamp #device .wa-foot-text { flex: 0 0 auto; font-size: 10px; font-weight: 700; letter-spacing: .26em;
+  color: var(--wa-amber); text-shadow: 0 1px 0 rgba(0,0,0,.9), 0 0 9px rgba(247,201,120,.3); }
+
+/* ---- the Orchestrator's controls, by what they are --------------------
+   The dock's panel names its controls (data-wkey): its menu, its close,
+   New, the search toggle and field, the sessions list. Dressed as the
+   window's hardware: a menu plate and a close switch in the header, an
+   LCD search slot beside New, an engraved groove under them. */
+.theme-winamp #dock .w-col { gap: 6px; }
+/* The dock's menu is the window's caption: moved up into the title bar
+   (the furniture reserves its width with the same lettering), it reads as
+   the title and opens the menu under it. The header row it leaves is
+   collapsed. */
+.theme-winamp #dock [data-wkey="dock-menu"] { padding: 1px 6px; border-radius: 2px; color: var(--wa-amber);
+  font-size: 11px; font-weight: 700; letter-spacing: .26em; text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(0,0,0,.9), 0 0 9px rgba(247,201,120,.3); background: none; box-shadow: none; }
+.theme-winamp #dock [data-wkey="dock-menu"]:hover { color: #ffe2a8; background: rgba(0,0,0,.25); box-shadow: var(--wa-in); }
+body.theme-winamp.frame-bezel #dock [data-wkey="dock-menu"] { position: fixed; z-index: 2; white-space: nowrap;
+  top: calc(var(--shell-pad) + 5px + (var(--bezel-top) - 13px) / 2 - 9px);
+  /* the slot's centre: the title bar's content runs from 13px in to 13px
+     from the right, less the close slot and its gap (30px) */
+  left: calc(var(--shell-pad) + (var(--wa-dock-w) - 30px) / 2); transform: translateX(-50%); }
+body.theme-winamp.frame-bezel #dock .w-row:has(> [data-wkey="dock-menu"]) { height: 0; min-height: 0; padding: 0; margin: 0; overflow: visible; }
+body.theme-winamp #device .wa-menuslot { visibility: hidden; padding: 1px 6px; }
+/* The dock's close is the window's: one real button, moved up into the
+   title bar where a window's close belongs (the furniture leaves it room). */
+.theme-winamp #dock [data-wkey="dock-close"] { width: 15px; height: 15px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; font-size: 0; color: transparent; border-radius: 1px; position: relative;
+  background: var(--wa-gloss), var(--wa-plate); box-shadow: var(--wa-ctl); }
+body.theme-winamp.frame-bezel #dock [data-wkey="dock-close"] { position: fixed; z-index: 2;
+  top: calc(var(--shell-pad) + 5px + (var(--bezel-top) - 13px) / 2 - 7.5px);
+  left: calc(var(--shell-pad) + var(--wa-dock-w) - 6px - 7px - 15px); }
+body.theme-winamp #device .wa-closeslot { flex: 0 0 21px; }
+.theme-winamp #dock [data-wkey="dock-close"]::before, .theme-winamp #dock [data-wkey="dock-close"]::after {
+  content: ""; position: absolute; left: 3px; right: 3px; top: 7px; height: 1.5px; background: #f6ddd2;
+  box-shadow: 0 1px 0 rgba(0,0,0,.6); transform: rotate(45deg); }
+.theme-winamp #dock [data-wkey="dock-close"]::after { transform: rotate(-45deg); }
+.theme-winamp #dock [data-wkey="dock-close"]:hover { background: var(--wa-gloss), linear-gradient(180deg, #b0503e, #62231a); }
+.theme-winamp #dock [data-wkey="dock-close"]:active, .theme-winamp #dock [data-wkey="dock-menu"]:active { box-shadow: var(--wa-ctl-press); }
+/* New and the search slot share the row; the search is an LCD well that
+   fills it, its "/" the key that opens it. */
+.theme-winamp #dock .w-row:has(> [data-wkey="search-toggle"]) > .w-spacer { flex: 0 0 8px !important; }
+.theme-winamp #dock [data-wkey="new-session"] { padding: 2px 12px; font-weight: 700; letter-spacing: .06em; }
+.theme-winamp #dock [data-wkey="search-toggle"], .theme-winamp #dock [data-wkey="filter"] {
+  flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-height: 22px; padding: 1px 8px; border-radius: 0;
+  background: var(--wa-lcd); border: 1px solid #000; box-shadow: var(--wa-in); color: var(--wa-lcd-dim); text-shadow: var(--wa-glow); }
+.theme-winamp #dock [data-wkey="search-toggle"]::before, .theme-winamp #dock [data-wkey="filter"]::before {
+  content: "⌕"; color: var(--wa-green); font-size: 14px; line-height: 1; }
+.theme-winamp #dock [data-wkey="search-toggle"]:hover { color: var(--wa-green); background: var(--wa-lcd-sel), var(--wa-sunken); }
+.theme-winamp #dock [data-wkey="filter"] .w-text-label { color: var(--wa-lcd-dim); }
+.theme-winamp #dock [data-wkey="filter"] .w-text-input { color: var(--wa-green); background: none; caret-color: var(--wa-green); }
+.theme-winamp #dock [data-wkey="filter"].focus { outline: none; box-shadow: var(--wa-in), 0 0 0 1px var(--wa-green-dim), 0 0 8px rgba(78,240,127,.25); }
+.theme-winamp #dock .w-divider { height: 2px; border: 0; color: transparent; overflow: hidden;
+  background: none; box-shadow: inset 0 1px 0 rgba(0,0,0,.6), inset 0 -1px 0 rgba(255,214,158,.1); }
+/* The sessions: rows of the LCD, the selected one a lit band. */
+.theme-winamp #dock [data-wkey="sessions"] .w-tree-row { padding-top: 2px; padding-bottom: 2px; }
+/* The open search: the field fills its row; its input is the LCD's own text. */
+.theme-winamp #dock .w-row:has(> [data-wkey="filter"]) > .w-spacer { display: none; }
+.theme-winamp #dock .w-row:has(> [data-wkey="filter"]) > .w-label-row { flex: 0 0 auto; color: var(--wa-lcd-dim); }
+.theme-winamp #dock [data-wkey="filter"] .w-text-input { flex: 1; min-width: 0; border: 0; outline: none; box-shadow: none; padding: 0; font: inherit; }
+.theme-winamp #dock [data-wkey="filter"] .w-text-input::placeholder { color: var(--wa-lcd-dim); opacity: .8; }
+/* Title-bar controls show focus pressed in, not ringed. */
+.theme-winamp #dock :is([data-wkey="dock-menu"], [data-wkey="dock-close"]).focus { outline: none; }
+.theme-winamp #dock [data-wkey="dock-menu"].focus { color: #ffe2a8; background: rgba(0,0,0,.25); box-shadow: var(--wa-in); }

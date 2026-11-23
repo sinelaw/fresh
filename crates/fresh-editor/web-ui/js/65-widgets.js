@@ -1,6 +1,25 @@
-// Plugin widget tree (WidgetSpec) + Settings / keybinding editor / aux modals.
-// (web-ui/js — concatenated in filename order into the page's single
-// <script> by crates/fresh-editor/build.rs; all files share one scope.)
+// Plugin widgets: a panel's WidgetSpec drawn as DOM controls. A press goes
+// back to the core as the control's identity (`panel.event`: widget key, the
+// event its kind answers, the payload) and the core rebuilds the event the
+// plugin receives — the same one a terminal press produces.
+
+/** The panel slot being drawn: its pop-overs are reaped when it redraws. */
+let popoverRegionOwner = null;
+function sendWidget(o) {
+  if (o.surface !== "panel") return;
+  const { surface, section, pane, ...rest } = o;
+  api.send("panel.event", rest);
+}
+function sendKey(d) { api.send("key", d); }
+function sendPaste(text) { api.send("paste", { text }); }
+function focusSink() { focusKeyboard(); }
+/** The cell under a pointer event, within the panel it is over. */
+function cellAt(ev) {
+  const host = ev.target && ev.target.closest ? ev.target.closest(".panel-body") : null;
+  const r = host ? host.getBoundingClientRect() : { left: 0, top: 0 };
+  return { col: Math.max(0, Math.floor((ev.clientX - r.left) / CW)), row: Math.max(0, Math.floor((ev.clientY - r.top) / CH)) };
+}
+
 // ---- native plugin widgets (WidgetSpec tree) ----------------------------
 // Renders the serialized WidgetSpec natively (Row/Col→flex, Toggle/Button→
 // native controls, …). Toggle/Button clicks route back to the owning plugin
@@ -280,7 +299,8 @@ function rowCells(s){ return s.kind==="row"?s.children:[]; }
 function widgetNode(spec, ctx){
   const el=widgetNodeOf(spec, ctx);
   const k=spec?specKey(spec):undefined;
-  if(k&&el.nodeType===1&&el.dataset.wkey===undefined) el.dataset.wkey=k;
+  if(k===undefined||k==="") return el;
+  if(el.nodeType===1&&el.dataset.wkey===undefined) el.dataset.wkey=k;
   return el;
 }
 // Lines a terminal layout wrapped to its measure, one row per line, read as
@@ -313,8 +333,9 @@ function paragraphs(kids){
     /** const same: (WidgetSpec | Null) => Boolean */
     const same=b=>b!==null&&b.kind==="button"&&b.key===first.key&&b.focusable===first.focusable
       &&!!b.disabled===!!first.disabled
-      &&JSON.stringify(b.style??null)===JSON.stringify(first.style??null)
-      &&JSON.stringify(b.hoverStyle??null)===JSON.stringify(first.hoverStyle??null);
+      &&(b.style===undefined?"":JSON.stringify(b.style))===(first.style===undefined?"":JSON.stringify(first.style))
+      &&(b.hoverStyle===undefined?"":JSON.stringify(b.hoverStyle))
+        ===(first.hoverStyle===undefined?"":JSON.stringify(first.hoverStyle));
     // The first line's leading spaces stay: they are the paragraph's indent.
     let j=i+1, text=(first.label||"").trimEnd();
     while(j<kids.length&&same(line(kids[j]))){ const b=line(kids[j]); text+=" "+((b&&b.kind==="button"?b.label:"")||"").trim(); j++; }
@@ -323,8 +344,11 @@ function paragraphs(kids){
   }
   return out;
 }
-/** function widgetNodeOf(WidgetSpec, WCtx) => El */
-function widgetNodeOf(spec, ctx){
+// An arrow, so the checker sees a function that never reads `this`: it is
+// called recursively (through widgetNode), and a `function` declaration in
+// that cycle gets its `this` unified with "called detached".
+/** const widgetNodeOf: (WidgetSpec, WCtx) => El */
+const widgetNodeOf = (spec, ctx) => {
   if(!spec) return document.createTextNode("");
   const kind=spec.kind, fk=ctx.focusKey, wkey=specKey(spec);
   const focused = !!wkey && wkey===fk;
@@ -725,7 +749,7 @@ function widgetNodeOf(spec, ctx){
       const row=aria(div("w-tree-row"+(i===sel?" sel":"")), "treeitem",
         {selected:i===sel, level:d+1, expanded:n.hasChildren?isOpen:null,
          checked:spec.checkable&&n.checked!=null?!!n.checked:null});
-      row.style.paddingLeft=`${d*2}ch`;
+      row.style.paddingLeft=`calc(${d*2}ch + .6em)`;
       // Right-click anywhere on the row (disclosure/checkbox included, like
       // the TUI's cell hit-test) fires `context` instead of the cell's own
       // event — the plugin raises a context menu anchored at the click cell.
@@ -836,327 +860,12 @@ function widgetNodeOf(spec, ctx){
     return el;
   }
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
-}
+};
 
 // A tree row press by identity: the tree's key, the event, the row.
-// `cell`: the cell a right-click landed on (a `context` press), else null.
-/** function routeTree<T>(WCtx, String | Undefined, String, T, {col: Number, row: Number} | Null) => Undefined */
 function routeTree(ctx, treeKey, eventType, payload, cell){
   if(ctx.kind!=="panel") return;
   const msg={...panelBase(ctx),widgetKey:treeKey||"",eventType,payload};
   if(cell) sendWidget({...msg,col:cell.col,row:cell.row});
   else sendWidget(msg);
 }
-
-// Native Settings — a control's value rendered semantically (read from the
-// shared model; keyboard drives edits via handle_key).
-const SET_LIST_KINDS = new Set(["textList","map","objectArray","dualList"]);
-// Inline control (toggle/number/dropdown/text/json/complex). `idx` = item index;
-// `live` enables click routing (false inside the entry dialog, which is keyboard).
-/** function settingControlEl(SettingControl, Number, Boolean) => El */
-function settingControlEl(c, idx, live){
-  const k=c.kind, el=document.createElement("span"); el.className="set-ctl set-"+k;
-  if(c.kind==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch ui-switch"+(c.checked?" on":""); aria(sw,"switch",{checked:!!c.checked}); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx,undefined); }
-  else if(c.kind==="number"){
-    const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit!=="")b.onmousedown=setHit(hit,idx,undefined);return b;};
-    // The value as the JSON carries it, shown the way the TUI's cell shows it:
-    // a percent ×100, an integer whole.
-    const disp=c.percent?`${Math.round(c.value*100)}%`:c.integer?String(Math.round(c.value)):String(Number(toFixed(c.value, 3)));
-    el.appendChild(mk("−","set-step","controlDecrement")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=disp; el.appendChild(v); el.appendChild(mk("+","set-step","controlIncrement"));
-  }
-  else if(c.kind==="dropdown"){ const p=document.createElement("span"); p.className="set-pill ui-select"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx,undefined); el.appendChild(p);
-    const sel=c.selected;
-    if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===sel?" sel":""));r.textContent=o;if(live)r.onmousedown=setHit("controlDropdownOption",idx,i);d.appendChild(r);});
-      // Portal to the body-level host (same as the plugin Dropdown): the
-      // Settings dialog is a transformed, overflow-clipping box with a
-      // scrolling list, so an in-place list is cut off at the dialog edge (a
-      // long option set — e.g. Default Language — is far wider than the compact
-      // pill). Out of the modal it grows to fit the widest option and shifts to
-      // stay in view (right-aligning under the flush-right control).
-      mountPopover(d);
-      requestAnimationFrame(()=>positionFloatingPopover(p, d, {align:"end"})); } }
-  else if(c.kind==="text"){ const f=document.createElement("span"); f.className="set-field ui-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
-  else if(c.kind==="json"){ const f=document.createElement("span"); f.className="set-field ui-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
-  // The field is `type_name`: the enum's rename_all renames variants, not fields.
-  else if(c.kind==="complex"){ el.textContent=`‹${c.type_name}›`; el.classList.add("set-dim"); }
-  return el;
-}
-// Full-width list block for composite controls (rows + an Add affordance).
-/** function settingListEl(SettingControl, Number, Boolean) => El */
-function settingListEl(c, idx, live){
-  const k=c.kind;
-  // DualList has its own two-column layout (Available | Included) plus the
-  // add/remove/move buttons; render it natively and route each click to the
-  // matching SettingsHit (same dispatch the TUI uses).
-  if(c.kind==="dualList") return dualListEl(c, idx, live);
-  const el=div("set-list");
-  /** let rows: {label: String, sub: String, focused: Boolean}[] */
-  let rows=[];
-  // rowHit: the SettingsHit kind for clicking a row (b = the row); addHit/addB
-  // the hit for "＋ Add" ("" = none).
-  let rowHit="", addHit="";
-  /** let addB: Number | Undefined */
-  let addB=undefined;
-  if(c.kind==="textList"){ const f=c.focused; rows=c.items.map((t,i)=>({label:t, sub:"", focused:i===f})); rowHit="controlTextListRow"; addHit="controlTextListRow"; addB=c.items.length; }
-  else if(c.kind==="map"){ const f=c.focused; rows=c.entries.map((e,i)=>({label:e.key, sub:e.display, focused:i===f})); rowHit="controlMapRow"; if(!c.noAdd) addHit="controlMapAddNew"; }
-  else if(c.kind==="objectArray"){ const f=c.focused; rows=c.entries.map((t,i)=>({label:t, sub:"", focused:i===f})); rowHit="controlMapRow"; }   // select item; Enter edits
-  // Column header (`Name │ <column>`), mirroring the TUI's dimmed header row.
-  const column=c.kind==="map"?c.column:null;
-  if(column!=null&&column!==""&&rows.length>0){ const h=div("set-list-row set-list-head");
-    const l=document.createElement("span"); l.className="set-list-label"; l.textContent="Name"; h.appendChild(l);
-    const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=column; h.appendChild(s);
-    el.appendChild(h); }
-  if(!rows.length){ const e=div("set-list-empty"); e.textContent="No entries"; el.appendChild(e); }
-  rows.forEach((r,i)=>{ const row=div("set-list-row"+(r.focused?" sel":""));
-    const l=document.createElement("span"); l.className="set-list-label"; l.textContent=r.label; row.appendChild(l);
-    if(r.sub){ const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=r.sub; row.appendChild(s); }
-    if(r.focused&&(k==="map"||k==="objectArray")){ const h=document.createElement("span"); h.className="set-list-hint"; h.textContent="[Enter to edit]"; row.appendChild(h); }
-    if(live&&rowHit!=="") row.onmousedown=setHit(rowHit,idx,i);
-    el.appendChild(row); });
-  // Auto-managed maps (noAdd, e.g. Languages/LSP) hide the add row like the TUI.
-  // (A text list has no add-row focus.)
-  const addSel=c.kind==="map"?c.addFocused:c.kind==="objectArray"?c.addFocused:false;
-  if(!(c.kind==="map"&&c.noAdd)){ const add=div("set-list-add"+(addSel?" sel":"")); add.textContent="＋ Add…"; if(live&&addHit!=="") add.onmousedown=setHit(addHit,idx,addB); el.appendChild(add); }
-  return el;
-}
-// Two-column dual list (Available ⇄ Included) with native add/remove/move
-// buttons. `idx` is the settings item index; row indices line up with the
-// scene's `available`/`included` arrays (which mirror the control's own
-// enumerations), so the dispatch hits select the right entry.
-function dualListEl(c, idx, live){
-  const el=div("set-dual");
-  const col=(title, items, activeWhen, cursor, hitKind)=>{
-    const cl=div("set-dual-col"+(c.activeColumn===activeWhen?" active":""));
-    const h=div("set-dual-coltitle"); h.textContent=title; cl.appendChild(h);
-    const list=div("set-dual-list");
-    if(!items.length){ const e=div("set-list-empty"); e.textContent="—"; list.appendChild(e); }
-    items.forEach((t,i)=>{ const r=div("set-dual-row"+(c.activeColumn===activeWhen&&i===cursor?" sel":""));
-      r.textContent=t; if(live) r.onmousedown=setHit(hitKind,idx,i); list.appendChild(r); });
-    cl.appendChild(list); return cl;
-  };
-  el.appendChild(col("Available", c.available, "available", c.availableCursor, "controlDualListAvailable"));
-  // middle: add/remove + reorder buttons
-  const mid=div("set-dual-mid");
-  const mkb=(t,hit,title)=>{ const b=div("set-dual-btn"); b.textContent=t; b.title=title; if(live) b.onmousedown=setHit(hit,idx,undefined); return b; };
-  mid.appendChild(mkb("→","controlDualListAdd","Add to included"));
-  mid.appendChild(mkb("←","controlDualListRemove","Remove from included"));
-  mid.appendChild(mkb("↑","controlDualListMoveUp","Move up"));
-  mid.appendChild(mkb("↓","controlDualListMoveDown","Move down"));
-  el.appendChild(mid);
-  el.appendChild(col("Included", c.included, "included", c.includedCursor, "controlDualListIncluded"));
-  return el;
-}
-// `entry` flag: rows belong to the add/edit sub-dialog, whose interaction is
-// "select the item then keyboard-edit it". A row click routes to the entry
-// dialog's own dispatch (kind "entryItem") and inner controls are display-only
-// (live=false), matching the TUI's entry-dialog click behavior.
-/** function settingItemRows(SettingItem[], El, Boolean, Boolean) => Undefined */
-function settingItemRows(items, container, live, entry){
-  for(const it of items){
-    const sec=it.section;
-    if(it.sectionStart && sec!=null && sec!==""){ const h=div("set-section"); h.textContent=sec; container.appendChild(h); }
-    const isList=SET_LIST_KINDS.has(it.control.kind);
-    const row=aria(div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(it.modified?" modified":"")+(isList?" set-item-block":"")),
-      "group", {label:it.name, current:it.selected?"true":null, readonly:it.readOnly||null});
-    const head=div("set-item-head");
-    const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); head.appendChild(nm);
-    const selectHit = entry
-      ? (it.readOnly ? null : e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryItem", a:it.index}); })
-      : (live ? setHit("item",it.index,undefined) : null);  // click the row label = select item
-    if(selectHit){ nm.onmousedown=selectHit; }
-    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live&&!entry));
-      for(const named of ctl.querySelectorAll("[role]")) named.setAttribute("aria-label", it.name); head.appendChild(ctl); if(entry&&selectHit) ctl.onmousedown=selectHit; }
-    row.appendChild(head);
-    const desc=it.description;
-    if(desc){ const d=div("set-desc ui-dim"); d.textContent=desc; row.appendChild(d); }
-    if(isList) row.appendChild(settingListEl(it.control,it.index,live&&!entry));
-    container.appendChild(row);
-  }
-}
-/** function settingsEls(Settings) => El[] */
-function settingsEls(s){
-  const out=settingsWindowEls(s);
-  const d=s.dialog;
-  if(d) out.push(...settingsDialogEls(d));
-  return out;
-}
-/** function settingsWindowEls(Settings) => El[] */
-function settingsWindowEls(s){
-  const out=[]; const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
-  const el=aria(div("region settings-modal"), "dialog", {modal:true, label:s.title});
-  const title=div("set-title"); title.textContent=s.title+"  —  layer: "+s.targetLayer; el.appendChild(title);
-  const body=div("set-body");
-  // left: category tree
-  const cats=aria(div("set-cats ui-well"+(s.focus==="categories"?" focus":"")), "tree", {label:"Categories"});
-  for(const c of s.categories){ const r=aria(div("set-cat"+(c.selected?" sel":"")), "treeitem",
-      {selected:!!c.selected, level:c.nested?2:1, expanded:c.expandable?!!c.expanded:null, label:c.name});
-    if(c.nested) r.appendChild(document.createTextNode("    "));
-    else if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index,undefined); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
-    const nm=document.createElement("span"); nm.textContent=c.name; r.appendChild(nm);
-    r.onmousedown=setHit("category",c.index,undefined); cats.appendChild(r);
-    if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=aria(div("set-cat-sec"),"treeitem",{selected:false,level:2,label:sec}); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
-  body.appendChild(cats);
-  // right: items, or search results
-  const right=div("set-items ui-well"+(s.focus==="settings"?" focus":""));
-  if(s.searchActive){ const sb=div("set-search ui-field"); sb.textContent="Search: "+s.searchQuery+"▌"; right.appendChild(sb);
-    s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;rr.onmousedown=setHit("searchResult",i,undefined);right.appendChild(rr);}); }
-  else { settingItemRows(s.items, right, true, false); }
-  body.appendChild(right);
-  el.appendChild(body);
-  // footer
-  const ft=div("set-footer"); const fkinds=["layer","reset","save","cancel"];
-  s.footerButtons.forEach((b,i)=>{
-    const sel=i===s.footerSelected&&s.focus==="footer";
-    // `set-<kind>` names each footer button for skins.
-    const kind=fkinds[i]||"cancel";
-    const bb=aria(div("btn set-"+kind+(b==="Save"?" primary":"")+(kind==="reset"?" danger":"")+(sel?" sel":"")),"button",{}); bb.textContent=b; bb.onmousedown=setHit(kind,undefined,undefined); ft.appendChild(bb);
-  }); el.appendChild(ft);
-  // entry dialog (Map/ObjectArray add/edit): rows are clickable (select+edit),
-  // controls keyboard-driven, buttons routed by name to the entry dispatch.
-  const d=s.entryDialog;
-  if(d){ const dlg=aria(div("set-overlay set-entry"),"dialog",{modal:true,label:d.title});
-    const dt=div("set-entry-title"); dt.textContent=d.title; dlg.appendChild(dt);
-    const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di, true, true); dlg.appendChild(di);
-    const db=div("set-dlg-btns");
-    // Button focus index follows the TUI order [Save, Cancel, Delete]; the
-    // visual order here puts Delete in the middle but each routes by name.
-    /** const tuiIdx: Dict<Number> */
-    const tuiIdx={Save:0,Cancel:1,Delete:2};
-    const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
-    btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=aria(div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")),"button",{}); bb.textContent=b;
-      bb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryButton", button:b.toLowerCase()}); }; db.appendChild(bb);}); dlg.appendChild(db);
-    el.appendChild(dlg); }
-  // The shortcuts help is drawn by settingsDialogEls.
-  out.push(el);
-  return out;
-}
-
-// Native keybinding editor — full modal (header/search/filters, table, footer,
-// help, add/edit dialog, confirm). Keyboard-driven: keystrokes are forwarded
-// globally to handle_key, which the editor's own dispatch handles. The scrim
-// swallows stray clicks so nothing mis-routes.
-/** function keybindingEditorEls(KeybindingEditor) => El[] */
-function keybindingEditorEls(kb){
-  const out=[];
-  const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
-  const el=div("region kbedit");
-  const title=div("kb-title"); title.textContent=kb.title; el.appendChild(title);
-
-  // header: config path + search + filters
-  const hdr=div("kb-header");
-  const cfg=div("kb-cfg"); cfg.textContent="Config: "+kb.configPath+(kb.keymaps.length>0?("   Maps: "+kb.keymaps.join(", ")):""); hdr.appendChild(cfg);
-  if(kb.search.active){
-    const sb=div("kb-search ui-field"+(kb.search.focused?" focus":""));
-    const lbl=document.createElement("b"); lbl.textContent=kb.search.mode==="recordKey"?"REC KEY ":"SEARCH "; sb.appendChild(lbl);
-    const val=document.createElement("span");
-    val.textContent=kb.search.mode==="recordKey"?(kb.search.keyDisplay||"Press a key…"):(kb.search.query+(kb.search.focused?"▌":""));
-    sb.appendChild(val); hdr.appendChild(sb);
-  }
-  const flt=div("kb-filters");
-  const cf=document.createElement("span"); cf.className="kb-chip"+(kb.contextFiltered?" on":""); cf.textContent="Context: "+kb.contextFilter; flt.appendChild(cf);
-  const sf=document.createElement("span"); sf.className="kb-chip"+(kb.sourceFiltered?" on":""); sf.textContent="Source: "+kb.sourceFilter; flt.appendChild(sf);
-  const cnt=document.createElement("span"); cnt.className="kb-count"; cnt.textContent=kb.count+" bindings"+(kb.hasChanges?"  • modified":""); flt.appendChild(cnt);
-  hdr.appendChild(flt);
-  el.appendChild(hdr);
-
-  // table
-  const tbl=div("kb-table ui-well");
-  const head=div("kb-row kb-head"); for(const c of ["Key","Action","Description","Context","Source"]){ const s=document.createElement("span"); s.className="kb-col kb-"+c.toLowerCase(); s.textContent=c; head.appendChild(s); } tbl.appendChild(head);
-  const start=kb.scrollOffset||0, n=kb.viewport||kb.rows.length;
-  const kbHit=i=>e=>{ e.preventDefault(); e.stopPropagation(); sendKbedit({a:i}); };
-  for(let j=0;j<n;j++){ const idx=start+j, r=kb.rows[idx]; if(!r) break;
-    if(r.type==="section"){ const row=div("kb-row kb-section"+(r.selected?" sel":"")); row.textContent=`${r.collapsed?"▶ ":"▼ "}${r.name} (${r.count})`; row.onmousedown=kbHit(idx); tbl.appendChild(row); continue; }
-    const row=div("kb-row"+(r.selected?" sel":""));
-    const cols=[["key",r.key],["action",r.action],["description",r.description],["context",r.context],["source",r.source]];
-    for(const [cls,txt] of cols){ const s=document.createElement("span"); s.className="kb-col kb-"+cls; s.textContent=txt||""; row.appendChild(s); }
-    row.onmousedown=kbHit(idx);
-    tbl.appendChild(row);
-  }
-  el.appendChild(tbl);
-
-  // footer (static hints)
-  const ft=div("kb-footer");
-  ft.textContent="Enter Edit · a Add · d Delete · / Search · r Record · c Context · s Source · ? Help · Ctrl+S Save · Esc Close";
-  el.appendChild(ft);
-
-  // help overlay
-  if(kb.showingHelp){
-    const h=div("kb-overlay kb-help");
-    h.innerHTML="<b>Keybinding editor</b><br>↑↓ navigate · Enter edit · a add · d delete<br>/ search · r record-key · Tab toggle mode<br>c context filter · s source filter<br>Ctrl+S save · Esc close · ? toggle help";
-    el.appendChild(h);
-  }
-
-  // edit / add dialog
-  const d=kb.editDialog;
-  if(d){
-    const dlg=div("kb-overlay kb-dialog");
-    const dt=div("kb-dlg-title"); dt.textContent=d.title; dlg.appendChild(dt);
-    const fld=(label,val,focused,extra)=>{ const f=div("kb-field"+(focused?" focus":"")); const l=document.createElement("span"); l.className="kb-field-l"; l.textContent=label; f.appendChild(l);
-      const v=document.createElement("span"); v.className="kb-field-v"; v.textContent=val; f.appendChild(v); if(extra){ const e2=document.createElement("span"); e2.className="kb-field-x"; e2.textContent=extra; f.appendChild(e2);} return f; };
-    dlg.appendChild(fld("Key:", d.keyDisplay||(d.keyCapturing?"Press a key…":"(none)"), d.focusArea===0, d.keyCapturing?"(capturing)":""));
-    const af=fld("Action:", d.actionText+(d.focusArea===1?"▌":""), d.focusArea===1, "");
-    const aerr=d.actionError;
-    if(aerr){ const e2=document.createElement("span"); e2.className="kb-err"; e2.textContent="✗ "+aerr; af.appendChild(e2); }
-    dlg.appendChild(af);
-    if(d.autocomplete.length>0){ const ac=div("kb-autocomplete");
-      d.autocomplete.forEach((s,i)=>{ const r=div("kb-ac-row"+(i===d.autocompleteSelected?" sel":"")); r.textContent=s; ac.appendChild(r); }); dlg.appendChild(ac); }
-    dlg.appendChild(fld("Context:", "["+d.context+"]", d.focusArea===2, d.focusArea===2?"(← → cycle)":""));
-    if(d.conflicts.length>0){ const cf2=div("kb-conflicts"); cf2.innerHTML="<b>Conflicts:</b>"; for(const c of d.conflicts){ const cr=document.createElement("div"); cr.textContent="  "+c; cf2.appendChild(cr);} dlg.appendChild(cf2); }
-    const btns=div("kb-dlg-btns");
-    const sb=div("kb-btn"+(d.saveFocused?" focus":"")); sb.textContent="[ Save ]"; btns.appendChild(sb);
-    const cb=div("kb-btn"+(d.cancelFocused?" focus":"")); cb.textContent="[ Cancel ]"; btns.appendChild(cb);
-    dlg.appendChild(btns);
-    el.appendChild(dlg);
-  }
-
-  // confirm dialog
-  const kc=kb.confirm;
-  if(kc){ const cbox=div("kb-overlay kb-confirm");
-    const m=div("kb-confirm-msg"); m.textContent="Save changes before closing?"; cbox.appendChild(m);
-    const b=div("kb-dlg-btns"); kc.buttons.forEach((label,i)=>{ const bb=div("kb-btn"+(i===kc.selected?" focus":"")); bb.textContent="[ "+label+" ]"; b.appendChild(bb); }); cbox.appendChild(b);
-    el.appendChild(cbox);
-  }
-
-  out.push(el);
-  return out;
-}
-
-// Native auxiliary modals (keybinding editor / event-debug / theme-info). A
-// titled list of lines; anchored (theme-info) or centered. Interaction (nav /
-// Esc / rebind) already flows through handle_key, so this is render-only.
-/** function auxModalEls(AuxModal) => El[] */
-function auxModalEls(m){
-  const out=[];
-  const rect=m.rect;
-  const anchored = rect!==null && (rect.x!==0 || rect.y!==0);
-  if(!anchored){ const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim); }
-  const el=div("region auxmodal "+(anchored?"anchored":"centered")+" am-"+m.kind);
-  if(rect!==null&&anchored){ el.style.left=`${px(rect.x,CW)}px`; el.style.top=`${px(rect.y,CH)}px`; }
-  const title=div("am-title"); title.textContent=m.title; el.appendChild(title);
-  const body=div("am-body ui-well");
-  for(const ln of m.lines){ const r=div("am-line"+(ln.selected?" sel":"")); r.textContent=ln.text||" "; body.appendChild(r); }
-  el.appendChild(body);
-  const footer=m.footer;
-  if(footer){ const f=div("am-footer"); f.textContent=footer; el.appendChild(f); }
-  out.push(el);
-  return out;
-}
-
-// Native right-click / new-tab context menu. Rendered at the menu's cell
-// position; clicking item i forwards a click at (x+1, y+1+i) — the cell the
-// editor's hit-test resolves to that item (`item_idx = row - y - 1`).
-/** function contextMenuEl(ContextMenu) => El */
-function contextMenuEl(cm){
-  const el=div("region ctxmenu ctx-"+cm.kind);
-  el.style.left=`${px(cm.x,CW)}px`; el.style.top=`${px(cm.y,CH)}px`;
-  cm.items.forEach((it,i)=>{
-    const row=div("ctxitem"+(i===cm.highlighted?" sel":"")+(it.destructive?" destructive":"")+(it.disabled?" disabled":""));
-    row.textContent=it.label; row.dataset.id=it.id;
-    const cell={col:cm.x+1,row:cm.y+1+i};
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); };
-    row.onmouseenter=()=>sendMouse({kind:"moved",col:cell.col,row:cell.row});
-    el.appendChild(row);
-  });
-  return el;
-}
-

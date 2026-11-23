@@ -1750,6 +1750,15 @@ impl Editor {
         }
     }
 
+    /// The prompt's second button: dismiss it, and quit when it is the
+    /// startup gate rather than a palette-invoked prompt.
+    pub(crate) fn decline_workspace_trust(&mut self) {
+        self.hide_popup();
+        if !self.workspace_trust_prompt_cancellable {
+            self.should_quit = true;
+        }
+    }
+
     /// Record the trust decision for radio `index` and dismiss the modal.
     pub(crate) fn confirm_workspace_trust(&mut self, index: usize) {
         let key = match index {

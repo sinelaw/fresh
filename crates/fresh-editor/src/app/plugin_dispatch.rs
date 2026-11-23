@@ -1457,6 +1457,9 @@ impl Editor {
             } => {
                 self.handle_set_status_bar_value(buffer_id, key, value);
             }
+            PluginCommand::SetSkinValue { key, value } => {
+                self.set_skin_value(key, value);
+            }
             PluginCommand::UnregisterCommand { name, plugin_name } => {
                 self.handle_unregister_command(name, plugin_name);
             }

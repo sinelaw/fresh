@@ -1,0 +1,144 @@
+/* ==FreshSkin==
+@id           compact
+@name         Compact
+@description  Quiet IDE frame that follows your editor theme
+@author       Fresh
+@version      2.0.0
+@frame        full
+@scale        0.92
+==/FreshSkin== */
+
+/* A quiet, dense IDE frame. The frame sits one shade off the buffer —
+   lighter on a dark editor theme, darker on a light one — with neutral inks
+   and one calm accent, so the window reads as one surface under any editor
+   theme. `--bg` (the buffer's ground) stays the editor theme's.
+   `:where()` keeps the two adaptive blocks as specific as the first, so a
+   skin that extends Compact overrides them with a plain `:root.theme-<id>`. */
+:root.theme-compact {
+  --shell: #1d1d1e;
+  --fg: #d4d7dd; --muted: #8b919b;
+  --accent: #4d8ff5; --on-accent: #ffffff; --ui-accent: #4d8ff5; --on-ui-accent: #ffffff;
+  --danger: #f47067;
+  --r-sm: 2px; --r-md: 3px; --r-lg: 4px;
+  /* Dense: 12px chrome, the buffer a notch under the default. */
+  --ui-font-size: 12px;
+}
+:root.theme-compact:where(.editor-dark) {
+  --shell: color-mix(in srgb, var(--bg), #ffffff 3.5%);
+  --bg2: color-mix(in srgb, var(--bg), #ffffff 7.5%);
+  --bg3: color-mix(in srgb, var(--bg), #ffffff 10%);
+  --border: color-mix(in srgb, var(--bg), #ffffff 14%);
+  --fg: #d4d7dd; --muted: #8b919b; --status-fg: #9aa0aa;
+  /* Fills under white text need a deeper blue than the focus accent. */
+  --accent: #2f6fd6; --ui-accent: #2f6fd6;
+  --hairline: rgba(255,255,255,.075); --hairline-strong: rgba(255,255,255,.13); --hover: rgba(255,255,255,.06);
+  --shadow: 0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+}
+:root.theme-compact:where(.editor-light) {
+  --shell: color-mix(in srgb, var(--bg), #000000 4%);
+  --bg2: color-mix(in srgb, var(--bg), #ffffff 70%);
+  --bg3: color-mix(in srgb, var(--bg), #000000 6%);
+  --border: color-mix(in srgb, var(--bg), #000000 14%);
+  --fg: #1f2328; --muted: #5f6670; --status-fg: #4b525c;
+  --accent: #1a6fd9; --ui-accent: #1a6fd9;
+  --danger: #cf222e;
+  --hairline: rgba(0,0,0,.085); --hairline-strong: rgba(0,0,0,.15); --hover: rgba(0,0,0,.05);
+  --shadow: 0 12px 32px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08);
+}
+/* The frame's surfaces all come from --shell and --bg2 / --bg3. */
+:root.theme-compact {
+  --menu-bg: var(--shell); --menu-fg: var(--fg);
+  --tab-bg: var(--shell); --tab-fg: var(--muted); --tab-active-bg: var(--bg); --tab-active-fg: var(--ed-fg);
+  --status-bg: var(--shell); --status-fg: var(--muted);
+  --popup-bg: var(--bg2); --popup-fg: var(--fg); --border-c: var(--border);
+  /* One selection language: a quiet tint of the accent, everywhere. */
+  --menuhi: color-mix(in srgb, var(--ui-accent) 32%, var(--bg3)); --on-menuhi: var(--fg); --on-menuhi-dim: var(--muted);
+  --field-bg: var(--bg); --field-fg: var(--fg); --field-border: var(--hairline-strong);
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI",
+    Inter, Ubuntu, Cantarell, "Noto Sans", "Helvetica Neue", Arial, sans-serif, "Symbols Nerd Font Mono";
+}
+body.theme-compact { background: var(--shell); }
+
+/* ---- menu bar: quiet labels, a soft pill under the pointer ---- */
+.theme-compact #menubar { padding: 1px 4px; border-bottom: 1px solid var(--hairline); }
+.theme-compact .mtop { padding: 2px 8px; color: color-mix(in srgb, var(--fg) 78%, var(--shell)); }
+.theme-compact .mtop:hover { color: var(--fg); }
+.theme-compact .mtop.open { background: color-mix(in srgb, var(--fg) 12%, transparent); color: var(--fg); }
+.theme-compact .dropdown { background: var(--bg3); border-color: var(--hairline-strong); border-radius: var(--r-lg); }
+.theme-compact .mitem { padding: 2px 10px 2px 6px; }
+.theme-compact .mitem.hi { background: var(--menuhi); color: var(--fg); }
+.theme-compact #themebtn { border-color: var(--hairline-strong); color: var(--muted); }
+.theme-compact #themebtn:hover { color: var(--fg); }
+
+/* ---- tabs: inactive ones recede into the frame; the active one is part of
+   the buffer below it, marked by one accent edge ---- */
+.theme-compact .tabs { border-bottom: 1px solid var(--hairline); }
+.theme-compact .tab { padding: 4px 8px 4px 12px; border-right-color: var(--hairline); }
+.theme-compact .tab:not(.active):hover { background: var(--hover); color: var(--fg); }
+.theme-compact .pane.active .tab.active { box-shadow: inset 0 2px 0 var(--ui-accent); }
+.theme-compact .group-title { background: var(--shell); }
+
+/* ---- side panels: the frame's shade, hairline walls ---- */
+.theme-compact #sidebar { background: var(--shell); }
+.theme-compact :is(#sash, #dock-sash, .split-sash) { background: var(--hairline); }
+.theme-compact :is(#sash, #dock-sash, .split-sash):hover { background: var(--ui-accent); }
+.theme-compact .ex-head { text-transform: uppercase; font-size: 10.5px; color: var(--muted); opacity: 1; }
+.theme-compact .ex-row { margin: 0 4px; padding: 1px 6px; border-radius: var(--r-sm); }
+.theme-compact .ex-row.selected { background: color-mix(in srgb, var(--ui-accent) 24%, transparent); }
+.theme-compact #dock { background: var(--shell); }
+
+/* ---- status bar: one quiet line ---- */
+.theme-compact #statusbar { height: 22px; border-top: 1px solid var(--hairline); }
+.theme-compact button.sitem:hover { background: var(--hover); color: var(--fg); }
+.theme-compact .sname { color: var(--fg); }
+
+/* ---- palette, dialogs, popups: one card language ---- */
+.theme-compact .ask, .theme-compact .popup, .theme-compact .settings, .theme-compact .floating-panel {
+  border-color: var(--hairline-strong); border-radius: var(--r-lg); }
+.theme-compact .ask-row { padding: 2px 10px; }
+.theme-compact .setting { padding: 7px 0; }
+.theme-compact .settings-cat { padding: 3px 10px; }
+.theme-compact .ask-row.selected { background: color-mix(in srgb, var(--ui-accent) 24%, transparent); color: var(--fg); }
+.theme-compact .popup-item.selected { background: color-mix(in srgb, var(--ui-accent) 30%, transparent); color: var(--popup-fg); }
+.theme-compact .settings-nav { background: var(--shell); }
+.theme-compact .settings-cat.active { background: color-mix(in srgb, var(--ui-accent) 24%, transparent); color: var(--fg); }
+.theme-compact .btn { background: var(--bg2); border-color: var(--hairline-strong); }
+.theme-compact .btn.primary { background: var(--ui-accent); border-color: var(--ui-accent); color: var(--on-ui-accent); }
+
+/* ---- density: what makes Compact compact ----
+   22px menu and list rows, 24px palette rows, 26px tabs, one-line setting
+   descriptions (the rest on hover), flat cards with a hairline and a small
+   shadow, square corners. */
+.theme-compact .dropdown { padding: 3px; box-shadow: 0 6px 16px rgba(0,0,0,.35); }
+.theme-compact .mitem { height: 22px; padding: 0 10px; gap: 6px; }
+.theme-compact .dropdown.checks > .mitem { padding-left: 4px; }
+.theme-compact .mkeys { font-size: 11px; }
+.theme-compact .msep { margin: 3px 4px; }
+.theme-compact .tab { height: 26px; padding: 0 6px 0 10px; font-size: 12px; }
+.theme-compact .tab-new { height: 22px; }
+.theme-compact .ex-row { height: 22px; padding-top: 0; padding-bottom: 0; }
+.theme-compact .ask.palette { width: min(560px, calc(var(--editors-w, 100vw) - 24px)); }
+.theme-compact .ask-head { padding: 6px; }
+.theme-compact .ask-input { padding: 4px 8px; }
+.theme-compact .ask-row { height: 24px; padding: 0 8px; }
+.theme-compact .ask-desc { font-size: 11px; }
+.theme-compact .ask, .theme-compact .settings, .theme-compact .floating-panel { box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+.theme-compact .ask.dialog { padding: 12px 14px; gap: 6px; width: min(380px, 92vw); }
+.theme-compact .dlg-title { font-size: 13px; }
+.theme-compact .btn { padding: 2px 12px; }
+.theme-compact .settings-head { padding: 6px 10px; }
+.theme-compact .settings-title { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.theme-compact .settings-nav { width: 170px; padding: 4px; }
+.theme-compact .settings-list { padding: 4px 12px 16px; }
+.theme-compact .setting { padding: 5px 0; gap: 16px; align-items: center; }
+.theme-compact .setting:has(textarea) { align-items: flex-start; }
+.theme-compact .setting-desc { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.theme-compact .setting:hover .setting-desc { white-space: pre-wrap; }
+.theme-compact .setting .ui-field, .theme-compact .setting .ui-select { width: 240px; min-height: 24px; padding: 2px 6px; }
+.theme-compact .settings-section { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+
+/* Scrollbar: thin and square, a hairline track, the accent under the pointer. */
+.theme-compact .vbar { width: 8px; box-shadow: inset 1px 0 0 var(--hairline); }
+.theme-compact .thumb { left: 2px; right: 1px; min-height: 28px; border-radius: 0;
+  background: color-mix(in srgb, var(--ed-fg) 22%, transparent); }
+.theme-compact .thumb:hover { background: var(--ui-accent); filter: none; }

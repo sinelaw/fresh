@@ -1,0 +1,121 @@
+/* What every skin builds on (js/15-skins.js; docs/features/web-ui-skins.md):
+   the two frames, the bezel kit, the title-bar host and the skin picker.
+   A skin's own stylesheet (<style id="skin-css">) comes after all of this. */
+
+/* ---- frames ----
+   `@frame full`: the client fills the window. `@frame bezel`: it sits inset
+   in #device, with the page's background (a skin's wallpaper) around it.
+   Furniture inside #device finds the client at --bezel-side / --bezel-top. */
+:root { --shell-pad: 44px; --bezel-top: 48px; --bezel-bot: 58px; --bezel-side: 34px; }
+#device { display: none; }
+/* The kit's own rules are written at the weight of a bare `#device`, so a
+   skin's `.theme-<id> #device …` always wins. */
+:where(body.frame-bezel) #device { display: block; position: fixed; pointer-events: none;
+  left: var(--shell-pad); right: var(--shell-pad); top: var(--shell-pad); bottom: var(--shell-pad); }
+body.frame-bezel #app { position: fixed; height: auto;
+  left: calc(var(--shell-pad) + var(--bezel-side)); right: calc(var(--shell-pad) + var(--bezel-side));
+  top: calc(var(--shell-pad) + var(--bezel-top)); bottom: calc(var(--shell-pad) + var(--bezel-bot)); }
+
+/* ---- the explorer's side (the editor's setting) ---- */
+
+/* ---- the title-bar host: hidden unless a skin shows it (macOS does) ---- */
+#mactitle { display: none; }
+
+/* ---- the bezel kit: a machined device any `@frame bezel` skin gets, and
+   the .dv-* pieces its furniture can use. A skin restyles or replaces it. ---- */
+:where(body.frame-bezel) #device { border-radius: 28px;
+  font-family: var(--font-family); font-size: 12px; letter-spacing: .16em; color: #c3cad3;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 10%),
+    linear-gradient(0deg, rgba(255,255,255,.05), rgba(255,255,255,0) 8%),
+    linear-gradient(180deg, #383c44, #262931 30%, #1d2026 66%, #2b2e35);
+  box-shadow: 0 70px 160px rgba(2,6,14,.7), 0 24px 60px rgba(2,6,14,.55),
+    inset 0 1px 0 rgba(255,255,255,.28), inset 0 -1px 0 rgba(255,255,255,.07); }
+/* the machined-metal rim: a 3px gradient ring masked out of a padded overlay */
+:where(body.frame-bezel) #device::before { content: ""; position: absolute; inset: 0; border-radius: 28px; padding: 3px;
+  background: linear-gradient(180deg, #eef1f5, #a9b0ba 14%, #565b64 40%, #3a3e46 58%, #7c828d 86%, #d6dbe2);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude; }
+/* the screen glass: a dark well a little larger than the client */
+#device .dv-screen { position: absolute;
+  top: calc(var(--bezel-top) - 7px); bottom: calc(var(--bezel-bot) - 7px);
+  left: calc(var(--bezel-side) - 7px); right: calc(var(--bezel-side) - 7px);
+  border-radius: 12px; background: #070b12;
+  box-shadow: inset 0 2px 12px rgba(0,0,0,.9), inset 0 0 0 1px rgba(255,255,255,.05), 0 1px 0 rgba(255,255,255,.07); }
+#device .dv-top, #device .dv-bottom { position: absolute; left: 50px; right: 50px; display: flex; align-items: center; gap: 12px; }
+#device .dv-top { top: 0; height: var(--bezel-top); }
+#device .dv-bottom { bottom: 0; height: var(--bezel-bot); }
+#device .dv-grow { flex: 1; }
+#device .dv-label { white-space: nowrap; text-shadow: 0 1px 0 rgba(0,0,0,.6); }
+#device .dv-leds { display: flex; gap: 9px; align-items: center; margin-right: 4px; }
+#device .dv-leds i { width: 7px; height: 7px; border-radius: 50%; }
+#device .dv-leds .g { background: #4ade7b; box-shadow: 0 0 8px rgba(74,222,123,.8), inset 0 1px 1px rgba(255,255,255,.55); }
+#device .dv-leds .y { background: #c7e05a; box-shadow: 0 0 8px rgba(199,224,90,.7), inset 0 1px 1px rgba(255,255,255,.55); }
+#device .dv-leds .a { background: #e8a14e; box-shadow: 0 0 8px rgba(232,161,78,.7), inset 0 1px 1px rgba(255,255,255,.55); }
+#device .dv-side { position: absolute; top: var(--bezel-top); bottom: var(--bezel-bot); width: var(--bezel-side);
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 14px; padding: 14px 0; }
+#device .dv-side.dv-l { left: 0; }
+#device .dv-side.dv-r { right: 0; }
+#device .dv-side span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
+  color: #9aa2ad; letter-spacing: .2em; font-size: 11px; }
+#device .dv-side i { width: 7px; height: 7px; border-radius: 50%; background: #4ade7b; box-shadow: 0 0 7px rgba(74,222,123,.85); }
+#device .dv-screw { position: absolute; width: 19px; height: 19px; border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #dee2e8, #949aa4 55%, #42474f);
+  box-shadow: inset 0 -2px 3px rgba(0,0,0,.7), inset 0 1px 1px rgba(255,255,255,.65), 0 1px 3px rgba(0,0,0,.65); }
+#device .dv-screw::after { content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px;
+  transform: translateY(-50%) rotate(38deg); background: rgba(20,23,28,.85); border-radius: 1px; }
+#device .dv-screw.tl { left: 14px; top: 14px; }
+#device .dv-screw.tr { right: 14px; top: 14px; }
+#device .dv-screw.tr::after { transform: translateY(-50%) rotate(-24deg); }
+#device .dv-screw.bl { left: 14px; bottom: 17px; }
+#device .dv-screw.bl::after { transform: translateY(-50%) rotate(74deg); }
+#device .dv-screw.br { right: 14px; bottom: 17px; }
+#device .dv-screw.br::after { transform: translateY(-50%) rotate(8deg); }
+
+/* ---- the skin picker: a pill at the end of the menu bar, or, around a
+   bezel, on the wallpaper in the window's corner ---- */
+#themeswitch { position: relative; margin-left: auto; flex: 0 0 auto; display: flex; align-items: center; }
+body.frame-bezel #themeswitch { position: fixed; top: 10px; right: 14px; z-index: 45; }
+#themebtn { display: inline-flex; align-items: center; gap: 7px; cursor: default;
+  padding: 2px 10px 2px 8px; border-radius: 999px; font-size: 12px; line-height: 1.4;
+  color: inherit; background: transparent; border: 1px solid var(--hairline-strong); }
+#themebtn:hover, #themebtn[aria-expanded="true"] { background: var(--hover); }
+#themebtn .ts-name { font-weight: 600; }
+#themebtn .ts-dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%;
+  background: conic-gradient(from 210deg, var(--ui-accent), var(--accent) 40%, #3fb950 72%, var(--ui-accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 20%, transparent); }
+#thememenu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 260px; max-width: 340px;
+  max-height: 80vh; overflow: auto; padding: 6px; color: var(--menu-fg); background: var(--menu-bg);
+  border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow); }
+.ts-head { padding: 5px 10px 7px; opacity: .65; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.ts-head.ts-sub { padding-top: 9px; border-top: 1px solid var(--hairline); margin-top: 4px; }
+.ts-row { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-radius: var(--r-sm); cursor: default; }
+.ts-row:hover { background: var(--hover); }
+.ts-row.on { background: color-mix(in srgb, var(--ui-accent) 16%, transparent); }
+.ts-check { width: 14px; flex: 0 0 auto; text-align: center; font-weight: 700; line-height: 1.35; }
+.ts-rows { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ts-label { font-weight: 600; line-height: 1.25; }
+.ts-desc { opacity: .65; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }
+.ts-tools { margin-left: auto; display: flex; gap: 4px; flex: 0 0 auto; align-self: center; }
+.ts-tool, .ts-act, .ts-go { font: inherit; color: inherit; background: none; border: 0; cursor: default; }
+.ts-tool { padding: 2px 6px; border-radius: var(--r-sm); opacity: .7; font-size: 12px; }
+.ts-tool:hover { background: var(--hover); opacity: 1; }
+.ts-tool.ts-danger { opacity: 1; color: #fff; background: var(--danger); }
+.ts-opt { display: flex; align-items: center; gap: 8px; margin: -2px 0 4px; padding: 4px 10px 6px 32px;
+  cursor: default; opacity: .8; font-size: 12px; border-radius: var(--r-sm); }
+.ts-opt:hover { background: var(--hover); opacity: 1; }
+.ts-opt b { font-weight: 600; }
+.ts-box { width: 13px; height: 13px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; line-height: 1; border-radius: 3px; border: 1px solid var(--hairline-strong); }
+.ts-opt[aria-checked="true"] .ts-box { background: var(--ui-accent); color: var(--on-ui-accent); border-color: transparent; }
+.ts-sep { height: 1px; margin: 6px 4px; background: var(--hairline); }
+.ts-act { display: block; width: 100%; text-align: left; padding: 5px 10px 5px 32px; border-radius: var(--r-sm); }
+.ts-act:hover { background: var(--hover); }
+.ts-file { display: none; }
+.ts-url { display: flex; gap: 6px; padding: 4px 10px 6px 32px; }
+.ts-url input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 3px 7px; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: var(--r-sm); }
+.ts-go { padding: 3px 10px; border-radius: var(--r-sm); background: var(--ui-accent); color: var(--on-ui-accent); font-weight: 600; }
+.ts-note { padding: 6px 10px 4px 32px; opacity: .75; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
+.ts-note.err { color: var(--danger); opacity: 1; }
+.skin-probe { position: absolute; width: 0; height: 0; visibility: hidden; }

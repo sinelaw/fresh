@@ -119,7 +119,7 @@ pub enum Band {
 /// When the last region is native this collapses into [`fold`], whose
 /// `HostPainter` is the general form, and both bands become one pass again.
 pub fn fold_native(spec: &LayoutSpec, buf: &mut Buffer, palette: &dyn Palette, band: Band) {
-    fold_band(spec, buf, palette, &mut SkipHosts, band, Paints::All, None)
+    fold_band(spec, buf, palette, &mut SkipHosts, band, None)
 }
 
 /// A [`HostPainter`] that paints no host region.
@@ -145,11 +145,10 @@ pub fn fold(
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
 ) {
-    fold_all(spec, buf, palette, host, Paints::All, None);
+    fold_all(spec, buf, palette, host, None);
 }
 
-/// [`fold`], with which items a pass writes and one provenance sink over
-/// both bands: **the frame's one paint** (design §3.3). Every cell the
+/// [`fold`], with one provenance sink over both bands: **the frame's one paint** (design §3.3). Every cell the
 /// frame shows is written here — the tree's own surfaces in display-list
 /// order, the panes and embeds through `host` where their leaves are — so
 /// nothing paints between the in-flow content and the layers, and what
@@ -160,44 +159,18 @@ pub fn fold_all(
     buf: &mut Buffer,
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
-    paints: Paints,
     provenance: Option<&mut dyn ProvenanceSink>,
 ) {
     match provenance {
         Some(p) => {
-            fold_band(
-                spec,
-                buf,
-                palette,
-                host,
-                Band::Background,
-                paints,
-                Some(&mut *p),
-            );
-            fold_band(spec, buf, palette, host, Band::Overlay, paints, Some(p));
+            fold_band(spec, buf, palette, host, Band::Background, Some(&mut *p));
+            fold_band(spec, buf, palette, host, Band::Overlay, Some(p));
         }
         None => {
-            fold_band(spec, buf, palette, host, Band::Background, paints, None);
-            fold_band(spec, buf, palette, host, Band::Overlay, paints, None);
+            fold_band(spec, buf, palette, host, Band::Background, None);
+            fold_band(spec, buf, palette, host, Band::Overlay, None);
         }
     }
-}
-
-/// Which of the display list's items a pass writes.
-///
-/// A frontend that draws the tree's own surfaces itself — the web projects the
-/// menu bar, the status bar and the explorer as DOM — still needs the host
-/// regions painted into cells, because the panes *are* cells there. That is
-/// one distinction, and it is this one: `HostsOnly` runs every `Draw::Host`
-/// callback and writes nothing else.
-///
-/// It replaces skipping the fold outright, which skipped the body with it —
-/// so the pass that fed the web its pane cells had to be a second, separate
-/// call to the split renderer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Paints {
-    All,
-    HostsOnly,
 }
 
 /// [`fold`], restricted to one band. See [`Band`].
@@ -207,7 +180,6 @@ pub fn fold_band(
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
     band: Band,
-    paints: Paints,
     mut provenance: Option<&mut dyn ProvenanceSink>,
 ) {
     let frame = buf.area;
@@ -222,9 +194,6 @@ pub fn fold_band(
         Band::Overlay => spec.layers(),
     };
     for item in items {
-        if paints == Paints::HostsOnly && !matches!(item.draw, Draw::Host(_)) {
-            continue;
-        }
         // From a reset, not a patch. An item's theme says what its cells look
         // like *outright* — a display list is not a diff over whatever was
         // there before. `Cell::set_style` patches, so without the reset an

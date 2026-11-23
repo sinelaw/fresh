@@ -53,8 +53,10 @@ stays on the editor.
 ## Life of an input event
 
 This is the path a keystroke or a click takes from the terminal to an `Action`.
-It is one path — the same for the TUI, the web bridge, the GUI shell and the
-daemon — because all four call the same two entry points.
+It is one path — the same for the TUI, the GUI shell and the daemon — because
+all three call the same two entry points. (The web client is not a frontend of
+the shell; its keys reach `handle_key` as editing commands, see
+[web-ui.md](web-ui.md).)
 
 ### Ingestion
 
@@ -69,8 +71,8 @@ dispatches on the kind:
 - **Mouse** → `Editor::handle_mouse`.
 - **Resize / Paste** → their own paths.
 
-The other frontends enter at the same two functions: the web bridge and the GUI
-call `handle_key`/`handle_mouse` directly, and the daemon's server calls
+The other frontends enter at the same two functions: the GUI calls
+`handle_key`/`handle_mouse` directly, and the daemon's server calls
 `handle_key_press`/`handle_mouse`.
 
 ### The stale-tree rule
@@ -303,7 +305,6 @@ Its remaining members are listed under *Smaller residue*.
 | Settings, keybinding editor, calibration, trust | `view::shell::settings`, `keybinding`, `modal` |
 | Confirmations (quit, close, delete, overwrite, …) | `view::shell::confirm` — a `Modality::Exclusive` card over a `Scrim::Dim`, driven by `app::confirm_dialog` |
 | Popups, context menus, theme inspector | `view::shell::popup`, `context_menu`, `theme_info` |
-| The web's projections | `view::scene` — reads rectangles off the tree by key |
 
 `app/chrome/` is no longer a chrome system, and no longer a registry either:
 what is left there is the handlers those nodes dispatch *to*, two of which are
@@ -335,8 +336,8 @@ the shape is what stops it growing back.
 - **Instrumentation** — no purity check, no `BuildCx`-cannot-see-geometry type
   guard, no frame-level reconcile count, and no `benches/` at all, so every
   claim about frame cost is unmeasured.
-- **The web** — `view::scene`'s region views retire one at a time, as each
-  surface's rows reach the display list.
+- **The web** — not this document's: the web client is a separate app on the
+  core's data and commands and uses none of the shell ([web-ui.md](web-ui.md)).
 - **The shell's stylesheet** — shipped, with three named gaps left: class-keyed
   *metrics*, the indented-card box, and per-side padding.
 - **Smaller residue** — `Paint::Lit`, no palette-resolve cache,
@@ -837,9 +838,8 @@ only users.
 ### The keyed geometry index
 
 `Ui::find_by_key` is a depth-first walk of the element tree, and
-`view::shell::rect_of` wraps it. There are ~180 call sites in the editor, some
-inside per-item loops (the web's dropdown projection does one full walk per
-row). The design has always called for the library to publish `Key → Rect` as an
+`view::shell::rect_of` wraps it. There are many call sites in the editor, some
+inside per-item loops. The design has always called for the library to publish `Key → Rect` as an
 O(1) read after layout; nothing has been built. This is the live asymptotic hole.
 
 **The caches it was going to retire are gone ahead of it, and the roster is
@@ -847,16 +847,14 @@ now empty.** `popup_areas` and `global_popup_areas` both read the popup's box
 off the tree and then re-derived the content rect from it by hand, in two
 copy-pasted blocks of border arithmetic — so they were a second *statement*,
 not merely a cache. The content slot carries `popup::popup_content_key` now and
-`popup::inner_rects_of` reads it, the web's projection and the transient-popup
-probe ask the tree directly, and three of `PopupAreaLayout`'s seven fields
+`popup::inner_rects_of` reads it, the transient-popup probe asks the tree
+directly, and three of `PopupAreaLayout`'s seven fields
 turned out to have no reader at all. `prompt_toolbar_boxes`, the roster's third
 entry, named a field that had not existed for some time.
 
 The last two, `suggestions_area` and `suggestions_outer_area`, were a copy of
-`shell::prompt::{suggestions_list_rect, suggestions_rect}` — already a read of
-the tree — kept for one reader, the web `Scene`, which now asks for them the
-way it already asked `overlay_prompt::regions_of` for the card's bands in the
-same function. The count beside them was `prompt.suggestions.len()` copied, and
+a read of the tree (`shell::prompt::suggestions_rect`) kept for one reader
+that is gone. The count beside them was `prompt.suggestions.len()` copied, and
 the doc comment listed a third consumer, `cursor_obscured_by_overlay`, which
 exists nowhere.
 
@@ -921,32 +919,22 @@ one that frame settled. What *is* reachable is the gutter as its **own leaf**
 next to the content's, painted by the same pass — worth doing on its own, since
 the content leaf's rectangle would stop including a margin it subtracts back out
 of every byte-at-cell answer, and a press in the gutter would become the gutter
-node's. The run form waits on the same thing the web does: a pane's rows
-reaching the display list.
+node's.
 
 ### The web
 
-The DOM fold of the display list ships for plugin panels. `view::scene`'s
-remaining region views are a redundant projection layer — they read rectangles
-off the tree rather than re-deriving them, so they are not a second geometry
-system — and each retires as its surface's rows reach the display list.
-
-**And a second reading of the same surfaces ships beside it.** Themes that lay
-the shell out natively (`docs/internal/web-ui.md` §1.1) read the confirmation
-card and the plugin panels as content — their models and specs, `view::native`
-— instead of as the display list's cells, and hide those cells. That is not a
-second router: a native control presses its tree node by key
-(`Editor::node_rect`), or names its widget so `app::native_panels` rebuilds the
-tree's own `WidgetEvent` for it. The display list stays the only geometry and
-the tree the only answer to what a press means; what differs is who draws.
+**The web does not use the shell.** It is a client-side app on the core's data
+and commands — buffers served as views of visual lines, editing as commands —
+and owns all of its UI; the descriptions, elements, layout and display list
+here are the terminal's. See [web-ui.md](web-ui.md).
 
 ### The shell's stylesheet
 
 *(Folded in from the retired `shell-stylesheet-design.md`.)*
 
 **A class names what a thing is; each backend owns a table from class to
-appearance.** The terminal's table is Rust (`app::shell_style`), the web's is
-CSS, and the description carries the naked label with no decoration at all. A
+appearance.** The terminal's table is Rust (`app::shell_style`), and the
+description carries the naked label with no decoration at all. A
 node carries a *list* of classes, space-separated, as CSS does — `button primary
 focused`, not one name per combination.
 
@@ -955,10 +943,7 @@ it inherits the theme, and every `Item` carries a `Classes` beside its
 `ThemeKey` — an opaque string the library stores and never interprets. `Rule`
 carries `border: Sides` and `pad_x`; `shell::widgets::button_node` builds a
 button from the naked label with the frame reserved, and the fold's `Draw::Fill`
-arm draws the glyphs. The web reads it: `TreeItemView::classes` → `data-class`
-→ a pill in CSS, on the same item the terminal draws `[` and `]` on. That is the
-payoff — the web is no longer re-colouring a bracketed string, because there is
-no bracketed string to re-colour.
+arm draws the glyphs.
 
 **And the fill is a width now, not a longer label.** `full_width` used to be
 spelled by padding the label out to the enclosing panel's columns
@@ -1311,7 +1296,7 @@ Named here so it is not rediscovered as a gap in this arc:
 - `LspFeature::DocumentSymbols` exposed to plugins — the code-outline half of
   #1791, which turns the Markdown contents section into an outline section with
   a different scan.
-- Plugin sections on the web (returns with *The web*).
+- Plugin sections on the web (see [web-ui.md](web-ui.md)).
 - The scrollbar-markers plugin API, which `Draw::Scrollbar`'s marks unblocked.
 - The LSP hover tooltip that cannot be dismissed through the gutter
   (pre-existing, identical on master).

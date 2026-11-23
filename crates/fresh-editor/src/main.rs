@@ -3571,7 +3571,7 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     // session. Sessions are keyed by working directory unless named, which is
     // exactly how `-a` resolves them.
     if let Some(addr) = &web_addr {
-        eprintln!("fresh web bridge on http://{addr}  (WS push on /ws)");
+        eprintln!("fresh web on http://{addr}");
         match &args.session_name {
             Some(name) => eprintln!("attach a terminal to this session: fresh -a {name}"),
             None => eprintln!(

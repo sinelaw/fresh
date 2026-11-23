@@ -1780,6 +1780,12 @@ impl Editor {
                 self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
                     != Some(value.as_str())
             }
+            // Visual only when it changes what a skin shows (same reasoning as
+            // the status bar: a plugin re-publishing on a timer must not spin
+            // the render loop).
+            Pc::SetSkinValue { key, value } => {
+                self.skin_values.get(key).map(String::as_str).unwrap_or("") != value
+            }
             _ => true,
         }
     }

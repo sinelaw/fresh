@@ -1540,18 +1540,15 @@ impl Window {
         }
     }
 
-    /// The open native context menu's rows, in display order — the single
-    /// source for both the TUI renderer and the web projection.
-    pub(crate) fn context_menu_items(
-        &self,
-    ) -> Option<Vec<crate::view::scene::ContextMenuItemView>> {
-        use crate::app::types::ContextMenuKind;
-        use crate::view::scene::ContextMenuItemView as V;
-        macro_rules! view {
+    /// The open native context menu's rows, in display order — the editor's
+    /// own, then any plugins added (the explorer's and the tabs' menus).
+    pub(crate) fn context_menu_items(&self) -> Option<Vec<crate::app::types::ContextMenuRow>> {
+        use crate::app::types::{ContextMenuKind, ContextMenuRow};
+        macro_rules! own {
             ($items:expr) => {
                 $items
                     .iter()
-                    .map(|i| V {
+                    .map(|i| ContextMenuRow {
                         label: i.label(),
                         id: i.id().to_string(),
                         destructive: i.destructive(),
@@ -1560,22 +1557,12 @@ impl Window {
                     .collect()
             };
         }
-        let rows = |rows: Vec<crate::app::types::ContextMenuRow>| -> Vec<V> {
-            rows.into_iter()
-                .map(|r| V {
-                    label: r.label,
-                    id: r.id,
-                    destructive: r.destructive,
-                    disabled: r.disabled,
-                })
-                .collect()
-        };
         let (kind, _) = self.open_context_menu()?;
         Some(match kind {
-            ContextMenuKind::FileExplorer => rows(self.file_explorer_context_menu.as_ref()?.rows()),
-            ContextMenuKind::NewTab => view!(self.new_tab_menu.as_ref()?.items()),
-            ContextMenuKind::Tab => rows(self.tab_context_menu.as_ref()?.rows()),
-            ContextMenuKind::CloseSplit => view!(self.close_split_menu.as_ref()?.items()),
+            ContextMenuKind::FileExplorer => self.file_explorer_context_menu.as_ref()?.rows(),
+            ContextMenuKind::NewTab => own!(self.new_tab_menu.as_ref()?.items()),
+            ContextMenuKind::Tab => self.tab_context_menu.as_ref()?.rows(),
+            ContextMenuKind::CloseSplit => own!(self.close_split_menu.as_ref()?.items()),
         })
     }
 
@@ -3188,22 +3175,6 @@ impl Window {
         )
     }
 
-    /// `leaf`'s tab model, as `pane_strips` builds it, for the web scene.
-    pub(crate) fn pane_tabs(&self, leaf: LeafId) -> Vec<crate::view::shell::tabs::Tab> {
-        use crate::view::split::TabTarget;
-        let Some((mgr, vs_map)) = self.buffers.splits() else {
-            return Vec::new();
-        };
-        let targets = match vs_map.get(&leaf) {
-            Some(vs) => vs.open_buffers.clone(),
-            None => mgr
-                .buffer_for_split(leaf)
-                .map(|b| vec![TabTarget::Buffer(b)])
-                .unwrap_or_default(),
-        };
-        self.strip_tabs(&targets, &self.group_names())
-    }
-
     /// The tab model for a strip of `targets`.
     fn strip_tabs(
         &self,
@@ -3256,7 +3227,7 @@ impl Window {
 
     /// Each pane's tab strip, as content — what the tab painter read off the
     /// window on its way to the cells, read once into a value the tree lays
-    /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
+    /// out (`shell::tabs::strip`).
     ///
     /// Only panes with a strip row: an inner leaf of a buffer group has none
     /// (`PaneChrome::resolve`), and its group's tabs are on the pane that

@@ -1686,16 +1686,14 @@ mod integration_tests {
         result.expect("startup-auth test failed");
     }
 
-    /// `fresh --web` hosts the web bridge INSIDE the session daemon, so a
-    /// browser and a `fresh -a` terminal drive one editor. This is the whole
-    /// contract in one test:
+    /// `fresh --web` hosts the web host INSIDE the session daemon, so a
+    /// browser and a `fresh -a` terminal drive one editor:
     ///
     ///   1. a daemon with `web_addr` set boots its editor eagerly (a browser
-    ///      can't be waited for the way a first IPC client can);
-    ///   2. an attaching terminal's viewport becomes the shared grid the
-    ///      browser is served at;
-    ///   3. input over the browser transport reaches the attached terminal;
-    ///   4. input over the terminal transport reaches the browser's scene.
+    ///      can't be waited for the way a first IPC client can), and a client
+    ///      of the API is served before any terminal attaches;
+    ///   2. input over the API reaches the attached terminal;
+    ///   3. input over the terminal reaches the browser's view.
     #[cfg(feature = "web")]
     #[test]
     fn test_web_bridge_and_tui_client_share_one_editor() {
@@ -1706,59 +1704,85 @@ mod integration_tests {
         use std::net::{TcpListener, TcpStream};
         use std::sync::mpsc;
 
-        /// One HTTP exchange against the bridge, returning the response body —
-        /// or `None` while the listener isn't bound yet (the daemon builds its
-        /// editor before it binds, so early callers retry). No `Origin` header:
-        /// the same posture as curl or the Playwright request API, which the
-        /// bridge's CSRF guard deliberately allows.
-        fn try_http(port: u16, method: &str, path: &str, body: &str) -> Option<String> {
-            let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
-                return None;
-            };
-            let req = format!(
-                "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: \
-                 application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(req.as_bytes()).ok()?;
-            let mut raw = String::new();
-            drop(stream.read_to_string(&mut raw));
-            Some(
-                raw.split_once("\r\n\r\n")
-                    .map(|(_, b)| b.to_string())
-                    .unwrap_or_default(),
-            )
-        }
-
-        fn http(port: u16, method: &str, path: &str, body: &str) -> String {
-            try_http(port, method, path, body).expect("bridge should answer")
-        }
-
-        /// Poll `/state` until `f` accepts it. No timeout — the test runner
-        /// provides one, and a hang here is a real regression.
-        fn state_until(port: u16, f: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
-            loop {
-                if let Some(body) = try_http(port, "GET", "/state", "") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                        if f(&v) {
-                            return v;
-                        }
+        /// A minimal WebSocket client of `/api`: the upgrade, masked text
+        /// frames out, unmasked frames in.
+        struct Api(TcpStream);
+        impl Api {
+            fn connect(port: u16) -> Option<Api> {
+                let mut s = TcpStream::connect(("127.0.0.1", port)).ok()?;
+                let req = format!(
+                    "GET /api HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
+                     Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                     Sec-WebSocket-Version: 13\r\n\r\n"
+                );
+                s.write_all(req.as_bytes()).ok()?;
+                let mut head = Vec::new();
+                let mut b = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    s.read_exact(&mut b).ok()?;
+                    head.push(b[0]);
+                }
+                String::from_utf8_lossy(&head)
+                    .starts_with("HTTP/1.1 101")
+                    .then_some(Api(s))
+            }
+            fn send(&mut self, v: serde_json::Value) {
+                let payload = v.to_string().into_bytes();
+                let mut f = vec![0x81u8];
+                match payload.len() {
+                    n if n < 126 => f.push(0x80 | n as u8),
+                    n => {
+                        f.push(0x80 | 126);
+                        f.extend_from_slice(&(n as u16).to_be_bytes());
                     }
                 }
-                thread::sleep(Duration::from_millis(20));
+                let mask = [1u8, 2, 3, 4];
+                f.extend_from_slice(&mask);
+                f.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+                self.0.write_all(&f).unwrap();
+            }
+            /// The next text message.
+            fn recv(&mut self) -> serde_json::Value {
+                loop {
+                    let mut h = [0u8; 2];
+                    self.0.read_exact(&mut h).unwrap();
+                    let mut len = (h[1] & 0x7f) as usize;
+                    if len == 126 {
+                        let mut l = [0u8; 2];
+                        self.0.read_exact(&mut l).unwrap();
+                        len = u16::from_be_bytes(l) as usize;
+                    } else if len == 127 {
+                        let mut l = [0u8; 8];
+                        self.0.read_exact(&mut l).unwrap();
+                        len = u64::from_be_bytes(l) as usize;
+                    }
+                    let mut body = vec![0u8; len];
+                    self.0.read_exact(&mut body).unwrap();
+                    if h[0] & 0x0f == 0x1 {
+                        return serde_json::from_slice(&body).unwrap();
+                    }
+                }
+            }
+            /// Read until a message `f` accepts. No timeout — the test runner
+            /// provides one, and a hang here is a real regression.
+            fn until(&mut self, f: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+                loop {
+                    let v = self.recv();
+                    if f(&v) {
+                        return v;
+                    }
+                }
             }
         }
 
-        /// The joined text of the first pane's cells — what the browser draws
-        /// as buffer interior (chrome is a separate semantic region).
-        fn pane_text(state: &serde_json::Value) -> String {
+        fn view_text(v: &serde_json::Value) -> String {
             let mut out = String::new();
-            let Some(rows) = state["regions"]["panes"][0]["cells"].as_array() else {
-                return out;
-            };
-            for row in rows {
-                for cell in row.as_array().into_iter().flatten() {
-                    out.push_str(cell["t"].as_str().unwrap_or(" "));
+            // The rows the event carries: the ones that changed.
+            for row in v["rows"].as_array().into_iter().flatten() {
+                for span in row[1].as_array().into_iter().flatten() {
+                    for g in span["t"].as_array().into_iter().flatten() {
+                        out.push_str(g.as_str().unwrap_or(""));
+                    }
                 }
                 out.push('\n');
             }
@@ -1812,21 +1836,21 @@ mod integration_tests {
         let socket_paths = paths_rx.recv().unwrap();
         let shutdown_handle = shutdown_rx.recv().unwrap();
 
-        // (1) The bridge answers before any terminal has ever attached — the
-        //     editor was built for the browser's sake, at the bridge's default
-        //     grid.
-        let booted = state_until(port, |v| v["w"].as_u64().is_some());
-        assert_eq!(
-            (
-                booted["w"].as_u64().unwrap() as u16,
-                booted["h"].as_u64().unwrap() as u16
-            ),
-            crate::webui::DEFAULT_SIZE,
-            "a web-enabled daemon should boot its editor at the bridge's default grid"
-        );
+        // (1) The API answers before any terminal has ever attached.
+        let mut api = loop {
+            if let Some(a) = Api::connect(port) {
+                break a;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        api.send(serde_json::json!({"op": "commands.list", "id": 0}));
+        let layout = api.until(|v| v["ev"] == "layout");
+        let leaf = layout["layout"]["active"].clone();
+        api.send(serde_json::json!({"id": 1, "op": "view.open", "leaf": leaf, "width": 60, "height": 10}));
+        let opened = api.until(|v| v["re"] == 1);
+        let view = opened["view"].clone();
+        assert!(view.is_u64(), "a view: {opened}");
 
-        // (2) A terminal attaches at 80x24; the shared grid refits to it, so
-        //     the browser is served the size the terminal can display.
         let conn = ClientConnection::connect(&socket_paths).expect("connect terminal client");
         let hello = ClientHello::new(TermSize::new(80, 24));
         conn.send_hello(hello).unwrap();
@@ -1835,50 +1859,22 @@ mod integration_tests {
             ServerControl::Hello(h) => assert_eq!(h.protocol_version, PROTOCOL_VERSION),
             other => panic!("expected Hello, got {other:?}"),
         }
-        let fitted = state_until(port, |v| v["w"] == 80 && v["h"] == 24);
-        assert_eq!(fitted["h"], 24);
 
-        // (3) Browser input reaches the attached terminal's rendered frames.
-        let from_browser = http(port, "POST", "/paste", r#"{"text":"typed-in-the-browser"}"#);
-        assert!(
-            !from_browser.is_empty(),
-            "the /paste route should answer with the post-tick scene"
-        );
+        // (2) Browser input reaches the attached terminal's rendered frames.
+        api.send(serde_json::json!({"op": "paste", "view": view, "text": "typed-in-the-browser"}));
         let mut term_output = Vec::new();
         read_until_contains(&conn, &mut term_output, "typed-in-the-browser");
 
-        // (4) Terminal input reaches the browser's scene.
+        // (3) Terminal input reaches the browser's view.
         conn.write_data(b"typed-in-the-terminal").unwrap();
-        let shared = state_until(port, |v| pane_text(v).contains("typed-in-the-terminal"));
+        let shared =
+            api.until(|v| v["ev"] == "view" && view_text(v).contains("typed-in-the-terminal"));
         assert!(
-            pane_text(&shared).contains("typed-in-the-browser"),
+            view_text(&shared).contains("typed-in-the-browser"),
             "both transports write to the same buffer"
         );
 
-        // (5) The terminal in use sizes the session, so when it goes away the
-        //     oldest remaining one inherits that role and the grid refits to
-        //     IT. Without
-        //     the refit on disconnect the survivor keeps being rendered at the
-        //     dead client's size and shows a clipped screen until it happens to
-        //     send a resize of its own.
-        let second = ClientConnection::connect(&socket_paths).expect("connect second terminal");
-        let hello = ClientHello::new(TermSize::new(60, 18));
-        second.send_hello(hello).unwrap();
-        drop(second.read_control().unwrap());
-        // A second client that has only said Hello (a one-shot `fresh FILE`,
-        // say) is not in use — it must not resize the session.
-        thread::sleep(Duration::from_millis(300));
-        let still = state_until(port, |v| v["w"].as_u64().is_some());
-        assert_eq!(
-            (still["w"].clone(), still["h"].clone()),
-            (serde_json::json!(80), serde_json::json!(24)),
-            "a non-primary terminal must not resize the shared grid"
-        );
-        // Drop the primary; the survivor's 60x18 becomes the fit.
         drop(conn);
-        let refitted = state_until(port, |v| v["w"] == 60 && v["h"] == 18);
-        assert_eq!(refitted["h"], 18);
-
         shutdown_handle.store(true, Ordering::SeqCst);
         drop(server_handle.join());
         drop(socket_paths.cleanup());
