@@ -71,6 +71,9 @@ impl Editor {
             }
         }
         json!({
+            // Leaf ids are numbered per window: the window says which
+            // workspace's panes these are.
+            "window": self.active_window_id().0,
             "active": mgr.active_split().0 .0,
             "root": node(mgr.root(), states),
         })

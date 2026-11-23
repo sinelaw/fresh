@@ -139,10 +139,16 @@ function focusExplorer() {
   document.getElementById("explorer").focus();
 }
 
-api.on("hello", async () => {
+// The tree is the workspace's: a new root (the first, or the one the
+// Orchestrator switched to) is listed afresh. Expanded folders are kept by
+// path, so going back to a workspace finds its tree as it was left.
+api.on("root", async () => {
+  const root = core.root;
   explorer.children.clear();
-  await loadDir(core.root);
-  renderExplorer();
+  if (explorer.selected && !explorer.selected.startsWith(root)) explorer.selected = null;
+  await loadDir(root);
+  // A later switch has its own listing on the way.
+  if (core.root === root) renderExplorer();
 });
 api.on("status", () => {
   // Keep the open file marked.

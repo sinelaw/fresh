@@ -21,7 +21,7 @@ use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 use serde_json::{json, Map, Value};
 
-use crate::app::client_pane::{ClientPane, PaneRender};
+use crate::app::client_pane::{ClientPane, ClientPaneState, PaneRender};
 use crate::app::Editor;
 use crate::model::event::{BufferId, LeafId, SplitId};
 
@@ -35,8 +35,10 @@ pub struct ApiClient {
     sent: HashMap<String, u64>,
     /// Replies to send with the next push.
     replies: Vec<Value>,
-    /// Whether the client has been sent its `hello`.
-    greeted: bool,
+    /// This client's views of panes in workspaces switched away from, which
+    /// it closed: its scroll and cursors there, for when it opens the pane
+    /// again. Dropped when the window or the pane is gone.
+    away: HashMap<(fresh_core::WindowId, LeafId), ClientPane>,
     /// The editor's clipboard as last seen; a change is sent so the browser
     /// can put it on the system clipboard. Seeded on the first push, so what
     /// was copied before the client came is not replayed.
@@ -115,9 +117,10 @@ impl ApiClient {
             .buffers
             .splits()
             .map(|(m, _)| m.active_split())?;
+        let window = editor.active_window_id();
         self.views
             .iter()
-            .find(|(_, p)| p.leaf == active)
+            .find(|(_, p)| p.window == window && p.leaf == active)
             .map(|(&id, _)| id)
     }
 
@@ -154,7 +157,17 @@ impl ApiClient {
                     .ok_or("no such pane")?;
                 self.next_view += 1;
                 let id = self.next_view;
-                self.views.insert(id, ClientPane::new(leaf, w, h));
+                // A pane this client viewed before its workspace was switched
+                // away from comes back with the client's scroll and cursors.
+                let window = editor.active_window_id();
+                let pane = match self.away.remove(&(window, leaf)) {
+                    Some(mut pane) => {
+                        pane.resize(w, h);
+                        pane
+                    }
+                    None => ClientPane::new(window, leaf, w, h),
+                };
+                self.views.insert(id, pane);
                 let mut m = Map::new();
                 m.insert("view".into(), json!(id));
                 Ok(m)
@@ -168,7 +181,13 @@ impl ApiClient {
             }
             "view.close" => {
                 let id = u(msg, "view").ok_or("missing view")?;
-                self.views.remove(&id);
+                // Closed because its workspace was switched away from: kept
+                // for when the client opens that pane again.
+                if let Some(pane) = self.views.remove(&id) {
+                    if editor.client_pane_state(&pane) == ClientPaneState::Away {
+                        self.away.insert((pane.window, pane.leaf), pane);
+                    }
+                }
                 self.sent.remove(&format!("view:{id}"));
                 self.rows.remove(&id);
                 ok()
@@ -609,6 +628,14 @@ impl ApiClient {
                 out.push(ev);
             }
         }
+        // The project root: the active window's, so it changes when the
+        // Orchestrator switches workspaces, and the explorer follows.
+        topic(
+            &mut self.sent,
+            &mut out,
+            "root".into(),
+            json!({ "ev": "root", "root": editor.engine_root() }),
+        );
         topic(
             &mut self.sent,
             &mut out,
@@ -632,10 +659,6 @@ impl ApiClient {
             out.push(json!({ "ev": "clipboard", "text": clip }));
         }
         self.clipboard = Some(h);
-        if !self.greeted {
-            self.greeted = true;
-            out.push(json!({ "ev": "hello", "root": editor.engine_root() }));
-        }
         // The status is this client's: its active view's cursor.
         let status = match self.active_view(editor) {
             Some(id) => {
@@ -671,7 +694,21 @@ impl ApiClient {
             json!({ "ev": "keybindings", "keybindings": keys }),
         );
         let mut gone = Vec::new();
+        // Kept until the client opens the pane again, whether its workspace
+        // is still away or active again; dropped once the pane is gone.
+        self.away
+            .retain(|_, pane| editor.client_pane_state(pane) != ClientPaneState::Gone);
         for (&id, pane) in self.views.iter_mut() {
+            match editor.client_pane_state(pane) {
+                ClientPaneState::Shown => {}
+                // Not drawn while its workspace is away; the client closes it
+                // once it has the new layout.
+                ClientPaneState::Away => continue,
+                ClientPaneState::Gone => {
+                    gone.push(id);
+                    continue;
+                }
+            }
             match editor.render_client_pane(pane) {
                 Some(r) => {
                     let sent_rows = self.rows.entry(id).or_default();
@@ -1526,6 +1563,78 @@ mod tests {
             .find(|v| v["ev"] == "skinValues")
             .expect("changed, so sent");
         assert!(ev["skinValues"].get("probe:level").is_none());
+    }
+
+    #[test]
+    fn the_root_follows_the_active_workspace() {
+        let (dir, mut ed) = editor_with("x\n");
+        let mut c = ApiClient::default();
+        let roots = |out: &[Value]| -> Vec<String> {
+            out.iter()
+                .filter(|v| v["ev"] == "root")
+                .map(|v| v["root"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let first = roots(&c.push(&mut ed));
+        assert_eq!(first, vec![ed.working_dir().to_string_lossy().to_string()]);
+        // The Orchestrator switches to another workspace: the client hears
+        // the new root, once.
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).expect("mkdir");
+        let other = other.canonicalize().expect("canonical");
+        let w = ed.create_window_at(other.clone(), "other".into());
+        ed.set_active_window(w);
+        assert_eq!(
+            roots(&c.push(&mut ed)),
+            vec![other.to_string_lossy().to_string()]
+        );
+        assert!(roots(&c.push(&mut ed)).is_empty(), "not resent unchanged");
+    }
+
+    #[test]
+    fn a_clients_place_in_a_workspace_survives_switching_away_and_back() {
+        let text: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+        let (dir, mut ed) = editor_with(&text);
+        let home = ed.active_window_id();
+        let mut c = ApiClient::default();
+        c.push(&mut ed);
+        let (view, _) = open_view(&mut c, &mut ed, 60, 10);
+        let leaf = ed.engine_layout()["active"].clone();
+        for _ in 0..5 {
+            c.handle(
+                &mut ed,
+                &json!({"op": "key", "view": view, "key": "ArrowDown"}),
+            );
+        }
+        let line = |c: &mut ApiClient, ed: &mut crate::app::Editor| {
+            event(&c.push(ed), "status").map(|s| s["status"]["line"].clone())
+        };
+        assert_eq!(line(&mut c, &mut ed), Some(json!(6)));
+        // The Orchestrator switches to another workspace: the layout names
+        // it, the old view is not drawn, and the client closes it.
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).expect("mkdir");
+        let w = ed.create_window_at(other.canonicalize().unwrap(), "other".into());
+        ed.set_active_window(w);
+        let out = c.push(&mut ed);
+        let layout = event(&out, "layout").expect("the other workspace's layout");
+        assert_eq!(layout["layout"]["window"], json!(w.0));
+        assert!(
+            !out.iter().any(|v| v["ev"] == "view" && v["view"] == view),
+            "not drawn while away"
+        );
+        c.handle(&mut ed, &json!({"op": "view.close", "view": view}));
+        // Back again: opening that pane finds the client's cursor where it was.
+        ed.set_active_window(home);
+        c.push(&mut ed);
+        let (r, out) = call_all(
+            &mut c,
+            &mut ed,
+            json!({"op": "view.open", "leaf": leaf, "width": 60, "height": 10}),
+        );
+        assert!(r["view"].is_u64(), "{r}");
+        let status = event(&out, "status").expect("the status, from the client's view");
+        assert_eq!(status["status"]["line"], 6, "the cursor kept its line");
     }
 
     #[test]

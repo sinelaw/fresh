@@ -23,7 +23,10 @@ use std::collections::HashMap;
 
 /// A client's view of one pane. See the module docs.
 pub struct ClientPane {
-    /// The pane (split leaf) of the active window it views.
+    /// The window (workspace) whose pane it views. Leaf ids are numbered
+    /// per window, so a leaf alone does not name a pane.
+    pub window: fresh_core::WindowId,
+    /// The pane (split leaf) it views.
     pub leaf: LeafId,
     /// The client's size for it, in cells.
     pub width: u16,
@@ -99,8 +102,9 @@ pub struct PaneRender {
 }
 
 impl ClientPane {
-    pub fn new(leaf: LeafId, width: u16, height: u16) -> Self {
+    pub fn new(window: fresh_core::WindowId, leaf: LeafId, width: u16, height: u16) -> Self {
         ClientPane {
+            window,
             leaf,
             width: width.max(1),
             height: height.max(1),
@@ -121,14 +125,45 @@ impl ClientPane {
     }
 }
 
+/// Where a client view's pane stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientPaneState {
+    /// In the active window: drawn and edited in.
+    Shown,
+    /// In a window that is not active (the Orchestrator switched away from
+    /// it): kept, not drawn, until its window is active again.
+    Away,
+    /// Its window or its pane is gone.
+    Gone,
+}
+
 impl Editor {
+    /// Where `pane`'s pane stands: shown, in a window switched away from,
+    /// or gone.
+    pub fn client_pane_state(&self, pane: &ClientPane) -> ClientPaneState {
+        match self.windows.get(&pane.window) {
+            Some(w) if w.pane_buffer(pane.leaf).is_some() => {
+                if pane.window == self.active_window {
+                    ClientPaneState::Shown
+                } else {
+                    ClientPaneState::Away
+                }
+            }
+            _ => ClientPaneState::Gone,
+        }
+    }
+
     /// Run `f` with `pane`'s scroll and rows in force for its leaf, then put
-    /// the pane's own back. `None` when the leaf is gone.
+    /// the pane's own back. `None` when the leaf is gone, or its window is
+    /// not the active one (see [`Self::client_pane_state`]).
     pub fn with_client_pane<T>(
         &mut self,
         pane: &mut ClientPane,
         f: impl FnOnce(&mut Editor) -> T,
     ) -> Option<T> {
+        if pane.window != self.active_window {
+            return None;
+        }
         let leaf = pane.leaf;
         let buffer = self.active_window().pane_buffer(leaf)?;
         let (w, h) = (pane.width, pane.height);

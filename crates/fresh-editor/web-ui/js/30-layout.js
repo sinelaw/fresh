@@ -233,9 +233,22 @@ function layoutNode(node, live) {
   return box;
 }
 
+/** The window (workspace) the panes are of: leaf ids are numbered per
+ *  window, so another window's panes are all new ones. */
+let layoutWindow = null;
+
 function renderLayout() {
   const host = document.getElementById("editors");
   if (!core.layout || !core.layout.root) { host.replaceChildren(); return; }
+  if (core.layout.window !== layoutWindow) {
+    // The Orchestrator switched workspaces. Closing a view of the one left
+    // has the core keep this client's scroll and cursors there for when it
+    // comes back.
+    layoutWindow = core.layout.window;
+    for (const p of panes.values()) p.view.close();
+    views.clear();
+    panes.clear();
+  }
   const live = new Set();
   const tree = layoutNode(core.layout.root, live);
   tree.style.flex = "1";

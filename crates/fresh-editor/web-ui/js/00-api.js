@@ -88,7 +88,9 @@ const core = {
 for (const t of ["layout", "buffers", "status", "menus", "ask", "popups", "panels", "settings", "theme"]) {
   api.on(t, (v) => { core[t] = v[t]; });
 }
-api.on("hello", (v) => { core.root = v.root; });
+// The project root: the active workspace's, so it changes when the
+// Orchestrator switches workspaces.
+api.on("root", (v) => { core.root = v.root; });
 
 // ---- small DOM helpers ----------------------------------------------------
 function el(tag, cls, text) {

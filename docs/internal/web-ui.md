@@ -138,6 +138,14 @@ writes carry over from today's bridge unchanged.
   client's width; the client gets styled runs per visual row and the caret.
   The editor's own frame is still laid out headlessly each pass at the
   editor's size, because plugin render hooks and mounted panels run in it.
+- **Workspaces.** A `ClientPane` names its window as well as its leaf: leaf
+  ids are numbered per window, and the Orchestrator switches the active
+  window. The `root` and `layout` events carry the active window's root and
+  id. A view of a window switched away from is not drawn; the client, seeing
+  another window in `layout`, closes its views and opens the new window's.
+  A view closed while its window is merely inactive is kept by the
+  `ApiClient`, keyed by window and leaf, and handed back when the client
+  opens that pane again, so its scroll and cursors survive the round trip.
 - **Data** is `app/engine_data.rs`: layout, buffers, status facts, commands,
   menus, the question being asked, popups, plugin panels, settings, files.
 - **Editing** goes through the same entry points the terminal uses: keys
