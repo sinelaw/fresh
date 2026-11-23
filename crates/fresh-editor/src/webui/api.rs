@@ -148,7 +148,7 @@ impl ApiClient {
     fn dispatch(&mut self, editor: &mut Editor, op: &str, msg: &Value) -> Reply {
         match op {
             "view.open" => {
-                let leaf = LeafId(SplitId(u(msg, "leaf").ok_or("missing leaf")? as usize));
+                let leaf = pane_id(editor, msg, "leaf")?;
                 let w = u(msg, "width").unwrap_or(80) as u16;
                 let h = u(msg, "height").unwrap_or(24) as u16;
                 editor
@@ -250,23 +250,26 @@ impl ApiClient {
             }
             "paste" => self.in_view(editor, msg, |ed| super::apply_paste(ed, msg)),
             "split.focus" => {
-                let leaf = LeafId(SplitId(u(msg, "leaf").ok_or("missing leaf")? as usize));
+                let leaf = pane_id(editor, msg, "leaf")?;
                 editor.focus_pane(leaf);
                 ok()
             }
             "tab.show" => {
-                let leaf = LeafId(SplitId(u(msg, "leaf").ok_or("missing leaf")? as usize));
+                let leaf = pane_id(editor, msg, "leaf")?;
                 let buffer = BufferId(u(msg, "buffer").ok_or("missing buffer")? as usize);
                 editor.show_in_pane(leaf, buffer);
                 ok()
             }
             "tab.drop" => {
-                let leaf = |k: &str| u(msg, k).map(|i| LeafId(SplitId(i as usize)));
+                let (from, to) = (
+                    pane_id(editor, msg, "leaf")?,
+                    pane_id(editor, msg, "target")?,
+                );
                 editor
                     .engine_tab_drop(
                         BufferId(u(msg, "buffer").ok_or("missing buffer")? as usize),
-                        leaf("leaf").ok_or("missing leaf")?,
-                        leaf("target").ok_or("missing target")?,
+                        from,
+                        to,
                         msg.get("zone").and_then(Value::as_str).unwrap_or("center"),
                         u(msg, "index").map(|i| i as usize),
                     )
@@ -285,7 +288,7 @@ impl ApiClient {
                 Ok(m)
             }
             "split.ratio" => {
-                let id = u(msg, "split").ok_or("missing split")? as usize;
+                let id = pane_id(editor, msg, "split")?.0 .0;
                 let ratio = msg
                     .get("ratio")
                     .and_then(Value::as_f64)
@@ -296,7 +299,7 @@ impl ApiClient {
                 ok()
             }
             "tab.close" => {
-                let leaf = LeafId(SplitId(u(msg, "leaf").ok_or("missing leaf")? as usize));
+                let leaf = pane_id(editor, msg, "leaf")?;
                 let buffer = BufferId(u(msg, "buffer").ok_or("missing buffer")? as usize);
                 // As the terminal's tab ×: unsaved work is asked about first.
                 editor.close_tab_in_split(buffer, leaf);
@@ -305,15 +308,18 @@ impl ApiClient {
             // A right-click menu's rows, and choosing one: the terminal's
             // menus for the place (see `WebMenu`).
             "menu.rows" => {
-                let at = web_menu(msg)?;
+                let at = web_menu(editor, msg)?;
                 let mut m = Map::new();
                 m.insert("rows".into(), Value::Array(editor.engine_menu_rows(&at)));
                 Ok(m)
             }
             "menu.choose" => {
-                let at = web_menu(msg)?;
-                let index = u(msg, "index").ok_or("missing index")? as usize;
-                editor.engine_menu_choose(&at, index)?;
+                let at = web_menu(editor, msg)?;
+                let id = msg
+                    .get("row")
+                    .and_then(Value::as_str)
+                    .ok_or("missing row")?;
+                editor.engine_menu_choose(&at, id)?;
                 ok()
             }
             "file.open" => {
@@ -424,6 +430,7 @@ impl ApiClient {
                     None if slot == "floating" => Slot::Floating,
                     Some(("sidebar", i)) => Slot::Sidebar(i.parse().map_err(|_| "bad slot")?),
                     Some(("pane", i)) => {
+                        in_window(editor, msg)?;
                         Slot::Pane(LeafId(SplitId(i.parse().map_err(|_| "bad slot")?)))
                     }
                     _ => return Err(format!("bad slot {slot:?}")),
@@ -767,15 +774,33 @@ fn keybindings_json(k: &crate::app::keybinding_editor::KeybindingEditor) -> Valu
 /// Whether `op` acts on the cursors where the client is: every editing
 /// command that does not name a view itself. Views, the keybinding screen,
 /// settings and files do not.
+/// A request naming a pane, tab or split names it by id, and ids are
+/// numbered per window (workspace): it must also say which window it means,
+/// and that window must still be the active one. A request sent from a pane
+/// just before the Orchestrator switched workspaces is refused, rather than
+/// acted on in the same-numbered pane of the workspace switched to.
+fn in_window(editor: &Editor, msg: &Value) -> Result<(), String> {
+    let window = u(msg, "window").ok_or("missing window")?;
+    if window != editor.active_window_id().0 {
+        return Err("the workspace changed".into());
+    }
+    Ok(())
+}
+
+/// The pane (or split) `key` of a request, in the window it names
+/// (see [`in_window`]).
+fn pane_id(editor: &Editor, msg: &Value, key: &str) -> Result<LeafId, String> {
+    in_window(editor, msg)?;
+    u(msg, key)
+        .map(|i| LeafId(SplitId(i as usize)))
+        .ok_or_else(|| format!("missing {key}"))
+}
+
 /// Where a `menu.*` request's menu is: `{at: "tab", leaf, buffer}`,
 /// `{at: "newTab", leaf}` or `{at: "explorer", path, dir}`.
-fn web_menu(msg: &Value) -> Result<crate::app::WebMenu, String> {
+fn web_menu(editor: &Editor, msg: &Value) -> Result<crate::app::WebMenu, String> {
     use crate::app::WebMenu;
-    let leaf = || {
-        u(msg, "leaf")
-            .map(|l| LeafId(SplitId(l as usize)))
-            .ok_or("missing leaf")
-    };
+    let leaf = || pane_id(editor, msg, "leaf");
     Ok(match msg.get("at").and_then(Value::as_str) {
         Some("tab") => WebMenu::Tab {
             leaf: leaf()?,
@@ -1043,11 +1068,12 @@ mod tests {
     }
 
     fn open_view(c: &mut ApiClient, ed: &mut crate::app::Editor, w: u64, h: u64) -> (u64, Value) {
+        let win = ed.active_window_id().0;
         let leaf = ed.engine_layout()["active"].clone();
         let (r, out) = call_all(
             c,
             ed,
-            json!({"op": "view.open", "leaf": leaf, "width": w, "height": h}),
+            json!({"op": "view.open", "window": win, "leaf": leaf, "width": w, "height": h}),
         );
         let id = r["view"].as_u64().expect("view id");
         let view = out
@@ -1378,6 +1404,7 @@ mod tests {
     #[test]
     fn a_tab_dropped_on_an_edge_splits_and_the_split_takes_a_ratio() {
         let (d, mut ed) = editor_with("one\n");
+        let win = ed.active_window_id().0;
         std::fs::write(d.path().join("b.txt"), "two\n").unwrap();
         ed.open_file(&d.path().join("b.txt")).unwrap();
         let mut c = ApiClient::default();
@@ -1387,7 +1414,7 @@ mod tests {
         call(
             &mut c,
             &mut ed,
-            json!({"op": "tab.drop", "buffer": buffer, "leaf": leaf, "target": leaf, "zone": "right"}),
+            json!({"op": "tab.drop", "window": win, "buffer": buffer, "leaf": leaf, "target": leaf, "zone": "right"}),
         );
         let root = ed.engine_layout()["root"].clone();
         assert_eq!(root["stack"], false, "split side by side: {root}");
@@ -1395,7 +1422,7 @@ mod tests {
         let r = call(
             &mut c,
             &mut ed,
-            json!({"op": "split.ratio", "split": split, "ratio": 0.3}),
+            json!({"op": "split.ratio", "window": win, "split": split, "ratio": 0.3}),
         );
         assert_eq!(r["ok"], true, "{r}");
         let ratio = ed.engine_layout()["root"]["ratio"].as_f64().unwrap();
@@ -1619,6 +1646,7 @@ mod tests {
     fn a_clients_place_in_a_workspace_survives_switching_away_and_back() {
         let text: String = (1..=50).map(|i| format!("line {i}\n")).collect();
         let (dir, mut ed) = editor_with(&text);
+        let win = ed.active_window_id().0;
         let home = ed.active_window_id();
         let mut c = ApiClient::default();
         c.push(&mut ed);
@@ -1654,7 +1682,7 @@ mod tests {
         let (r, out) = call_all(
             &mut c,
             &mut ed,
-            json!({"op": "view.open", "leaf": leaf, "width": 60, "height": 10}),
+            json!({"op": "view.open", "window": win, "leaf": leaf, "width": 60, "height": 10}),
         );
         assert!(r["view"].is_u64(), "{r}");
         let status = event(&out, "status").expect("the status, from the client's view");
@@ -1664,6 +1692,7 @@ mod tests {
     #[test]
     fn a_tabs_menu_is_the_terminals_and_runs_there() {
         let (_dir, mut ed) = editor_with("x\n");
+        let win = ed.active_window_id().0;
         let mut c = ApiClient::default();
         let out = c.push(&mut ed);
         let layout = &out.iter().find(|v| v["ev"] == "layout").expect("layout")["layout"];
@@ -1672,7 +1701,7 @@ mod tests {
         let r = call(
             &mut c,
             &mut ed,
-            json!({"op": "menu.rows", "at": "tab", "leaf": leaf, "buffer": buffer}),
+            json!({"op": "menu.rows", "window": win, "at": "tab", "leaf": leaf, "buffer": buffer}),
         );
         let rows = r["rows"].as_array().expect("rows");
         let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
@@ -1680,25 +1709,58 @@ mod tests {
             ids.contains(&"closeOthers") && ids.contains(&"copyFullPath"),
             "{ids:?}"
         );
-        // Choosing "Close" closes the tab, as the terminal's menu does.
-        let close = ids.iter().position(|i| *i == "close").unwrap();
+        // Choosing "Close" (by its id) closes the tab, as the terminal's menu does.
         let r = call(
             &mut c,
             &mut ed,
-            json!({"op": "menu.choose", "at": "tab", "leaf": leaf, "buffer": buffer, "index": close}),
+            json!({"op": "menu.choose", "window": win, "at": "tab", "leaf": leaf, "buffer": buffer, "row": "close"}),
         );
         assert_eq!(r["ok"], json!(true), "{r}");
         let r = call(
             &mut c,
             &mut ed,
-            json!({"op": "menu.rows", "at": "newTab", "leaf": leaf}),
+            json!({"op": "menu.rows", "window": win, "at": "newTab", "leaf": leaf}),
         );
         assert_eq!(r["rows"].as_array().unwrap().len(), 2);
         let r = call(
             &mut c,
             &mut ed,
-            json!({"op": "menu.choose", "at": "tab", "leaf": leaf, "buffer": buffer, "index": 999}),
+            json!({"op": "menu.choose", "window": win, "at": "tab", "leaf": leaf, "buffer": buffer, "row": "plugin:0:gone"}),
         );
-        assert!(r["error"].is_string());
+        assert!(
+            r["error"].as_str().is_some_and(|e| e.contains("gone")),
+            "a row the menu no longer has is refused, not another run: {r}"
+        );
+    }
+
+    #[test]
+    fn a_pane_request_from_a_workspace_switched_away_from_is_refused() {
+        let (dir, mut ed) = editor_with("x\n");
+        let mut c = ApiClient::default();
+        c.push(&mut ed);
+        let home = ed.active_window_id();
+        let leaf = ed.engine_layout()["active"].clone();
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).expect("mkdir");
+        let w = ed.create_window_at(other.canonicalize().unwrap(), "other".into());
+        ed.set_active_window(w);
+        c.push(&mut ed);
+        // A click sent from the old workspace's pane just before the switch:
+        // its leaf id may well exist in the new workspace too.
+        for msg in [
+            json!({"op": "split.focus", "window": home.0, "leaf": leaf}),
+            json!({"op": "tab.close", "window": home.0, "leaf": leaf, "buffer": 1}),
+            json!({"op": "menu.rows", "window": home.0, "at": "newTab", "leaf": leaf}),
+            json!({"op": "view.open", "window": home.0, "leaf": leaf, "width": 40, "height": 5}),
+        ] {
+            let r = call(&mut c, &mut ed, msg.clone());
+            assert_eq!(r["error"], json!("the workspace changed"), "{msg}: {r}");
+        }
+        let r = call(&mut c, &mut ed, json!({"op": "split.focus", "leaf": leaf}));
+        assert_eq!(
+            r["error"],
+            json!("missing window"),
+            "a pane is never named without its window"
+        );
     }
 }

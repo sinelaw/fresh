@@ -9,13 +9,15 @@
 //
 // An item is {label, run, keys?, checked?, disabled?, items?} (`items` makes
 // a submenu), or {separator: true}, or {info: text}; `null` is a separator.
+// The items may also be a promise of them (rows the core is asked for): the
+// menu opens at once and has the keyboard; keys pressed before the rows
+// arrive are kept and replayed on them, and Escape closes it meanwhile.
 
 class Menu {
   /** `opts`: `onSide(dir)` — Left/Right past the menu's edge (the menu bar
    *  switches menus); `onClose()`; `ignore` — a selector whose presses do
    *  not close it (the menu bar's titles); `parent` — a submenu's menu. */
   constructor(items, opts = {}) {
-    this.items = items;
     this.opts = opts;
     this.parent = opts.parent || null;
     this.sub = null;
@@ -23,7 +25,34 @@ class Menu {
     this.el = div("dropdown" + (opts.className ? " " + opts.className : ""));
     this.el.setAttribute("role", "menu");
     this.el.tabIndex = -1;
-    if (items.some((it) => it && it.checked !== undefined && it.checked !== null)) this.el.classList.add("checks");
+    this.el.addEventListener("keydown", (e) => { if (this.key(e)) { e.preventDefault(); e.stopPropagation(); } });
+    if (items && typeof items.then === "function") {
+      this.waiting = [];
+      this.el.setAttribute("aria-busy", "true");
+      this.setItems([{ info: "…" }]);
+      items.then((it) => this.arrived(it), () => this.arrived([]));
+    } else {
+      this.setItems(items);
+    }
+  }
+
+  /** The rows came: show them, keep the menu in its place, replay the keys
+   *  pressed while it waited. */
+  arrived(items) {
+    if (this.closed) return;
+    const keys = this.waiting;
+    this.waiting = null;
+    this.el.removeAttribute("aria-busy");
+    this.setItems(items);
+    if (this.anchor) keepInside(this.el, true, this.anchor);
+    for (const e of keys) this.key(e);
+  }
+
+  /** Build the rows for `items`. */
+  setItems(items) {
+    this.items = items;
+    this.el.replaceChildren();
+    this.el.classList.toggle("checks", items.some((it) => it && it.checked !== undefined && it.checked !== null));
     this.rows = [];
     for (const it of items) {
       if (!it || it.separator) { this.el.appendChild(div("msep")); continue; }
@@ -43,7 +72,7 @@ class Menu {
       this.rows.push({ row, it });
       this.el.appendChild(row);
     }
-    this.el.addEventListener("keydown", (e) => { if (this.key(e)) { e.preventDefault(); e.stopPropagation(); } });
+    if (this.hi >= this.rows.length) this.hi = -1;
   }
 
   root() { return this.parent ? this.parent.root() : this; }
@@ -110,6 +139,12 @@ class Menu {
   }
 
   key(e) {
+    // Waiting for the rows: Escape closes; other keys are kept for them.
+    if (this.waiting) {
+      if (e.key === "Escape") { this.close(); return true; }
+      this.waiting.push({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey });
+      return true;
+    }
     const it = this.hi >= 0 ? this.rows[this.hi].it : null;
     switch (e.key) {
       case "ArrowDown": this.step(1); return true;
@@ -204,7 +239,7 @@ class Menu {
   }
 }
 
-/** A context menu at (x, y). */
+/** A context menu at (x, y); `items` may be a promise of them. */
 function contextMenu(x, y, items) {
   new Menu(items, { className: "context" }).openAt(x, y, "context");
 }
@@ -215,8 +250,10 @@ function contextMenu(x, y, items) {
 async function coreMenuItems(at) {
   let rows = [];
   try { rows = (await api.call("menu.rows", at)).rows; } catch (e) { showError(e); }
-  return rows.map((r, index) => ({
+  return rows.map((r) => ({
     label: r.label, disabled: r.disabled,
-    run: () => api.call("menu.choose", { ...at, index }).catch(showError),
+    // By the row's id: if the menu changed meanwhile, a row that is gone is
+    // refused rather than another one run.
+    run: () => api.call("menu.choose", { ...at, row: r.id }).catch(showError),
   }));
 }

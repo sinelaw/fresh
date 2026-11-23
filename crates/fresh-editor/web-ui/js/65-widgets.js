@@ -8,6 +8,8 @@ let popoverRegionOwner = null;
 function sendWidget(o) {
   if (o.surface !== "panel") return;
   const { surface, section, pane, ...rest } = o;
+  // A panel in a pane names the pane, so it names its window too.
+  if (String(rest.slot).startsWith("pane:")) rest.window = layoutWindow;
   api.send("panel.event", rest);
 }
 function sendKey(d) { api.send("key", d); }

@@ -27,13 +27,18 @@ function paneFor(leaf) {
   body.appendChild(panel);
   body.appendChild(zone);
   root.append(tabs, body);
-  const view = new EditorView(leaf);
+  // A pane belongs to the window (workspace) it was built for, and every
+  // request it sends names it: a request from a workspace switched away
+  // from is refused by the core, not acted on in the same-numbered pane of
+  // the new one.
+  const win = layoutWindow;
+  const view = new EditorView(leaf, win);
   body.insertBefore(view.root, panel);
   views.set(leaf, view);
   root.addEventListener("mousedown", () => {
-    if (core.layout && core.layout.active !== leaf) api.send("split.focus", { leaf });
+    if (core.layout && core.layout.active !== leaf) api.send("split.focus", { window: win, leaf });
   }, true);
-  p = { leaf, root, tabs, body, panel, view, zone };
+  p = { leaf, window: win, root, tabs, body, panel, view, zone };
   dropTarget(p);
   panes.set(leaf, p);
   return p;
@@ -72,10 +77,10 @@ function dropTarget(p) {
     const tab = e.dataTransfer.getData(DRAG_TAB);
     if (tab) {
       const t = JSON.parse(tab);
-      api.send("tab.drop", { buffer: t.buffer, leaf: t.leaf, target: p.leaf, zone: zoneAt(p.body, e) });
+      api.send("tab.drop", { window: t.window, buffer: t.buffer, leaf: t.leaf, target: p.leaf, zone: zoneAt(p.body, e) });
       return;
     }
-    dropFiles(p.leaf, e);
+    dropFiles(p, e);
   });
   // On the tab strip: a tab between tabs, a file as a new tab.
   p.tabs.addEventListener("dragover", (e) => {
@@ -91,10 +96,10 @@ function dropTarget(p) {
     const tab = e.dataTransfer.getData(DRAG_TAB);
     if (tab) {
       const t = JSON.parse(tab);
-      api.send("tab.drop", { buffer: t.buffer, leaf: t.leaf, target: p.leaf, zone: "bar", index });
+      api.send("tab.drop", { window: t.window, buffer: t.buffer, leaf: t.leaf, target: p.leaf, zone: "bar", index });
       return;
     }
-    dropFiles(p.leaf, e);
+    dropFiles(p, e);
   });
 }
 
@@ -116,10 +121,10 @@ function markInsert(p, e, at) {
   return tabs[index] ? Number(tabs[index].dataset.index) : null;
 }
 
-/** Files dropped on a pane: from the explorer by path, from the computer by contents. */
-async function dropFiles(leaf, e) {
+/** Files dropped on pane `p`: from the explorer by path, from the computer by contents. */
+async function dropFiles(p, e) {
   const path = e.dataTransfer.getData(DRAG_PATH);
-  if (core.layout && core.layout.active !== leaf) api.send("split.focus", { leaf });
+  if (core.layout && core.layout.active !== p.leaf) api.send("split.focus", { window: p.window, leaf: p.leaf });
   if (path) { api.send("file.open", { path }); return; }
   for (const f of e.dataTransfer.files) {
     // In the desktop app a dropped file has a path, and opens as itself.
@@ -146,7 +151,7 @@ function renderTabs(p, node) {
     t.title = b.path || b.name;
     t.draggable = true;
     t.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData(DRAG_TAB, JSON.stringify({ buffer: id, leaf: p.leaf }));
+      e.dataTransfer.setData(DRAG_TAB, JSON.stringify({ window: p.window, buffer: id, leaf: p.leaf }));
       e.dataTransfer.effectAllowed = "move";
     });
     const name = el("span", "tab-name", baseName(b.name));
@@ -154,16 +159,17 @@ function renderTabs(p, node) {
     mark.classList.toggle("modified", b.modified);
     mark.title = "Close";
     mark.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
-    mark.addEventListener("click", (e) => { e.stopPropagation(); api.send("tab.close", { leaf: p.leaf, buffer: id }); });
+    const tab = { window: p.window, leaf: p.leaf, buffer: id };
+    mark.addEventListener("click", (e) => { e.stopPropagation(); api.send("tab.close", tab); });
     t.addEventListener("mousedown", (e) => {
-      if (e.button === 1) { e.preventDefault(); api.send("tab.close", { leaf: p.leaf, buffer: id }); return; }
-      if (e.button === 0) api.send("tab.show", { leaf: p.leaf, buffer: id });
+      if (e.button === 1) { e.preventDefault(); api.send("tab.close", tab); return; }
+      if (e.button === 0) api.send("tab.show", tab);
     });
     // The terminal's tab menu: close this, others, to the side, all; copy
     // its path; move it to a workspace of its own.
-    t.addEventListener("contextmenu", async (e) => {
+    t.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      contextMenu(e.clientX, e.clientY, await coreMenuItems({ at: "tab", leaf: p.leaf, buffer: id }));
+      contextMenu(e.clientX, e.clientY, coreMenuItems({ at: "tab", ...tab }));
     });
     t.append(name, mark);
     frag.push(t);
@@ -174,9 +180,9 @@ function renderTabs(p, node) {
   add.setAttribute("aria-label", "New file or terminal");
   add.setAttribute("aria-haspopup", "menu");
   add.addEventListener("mousedown", (e) => e.preventDefault());
-  add.addEventListener("click", async () => {
+  add.addEventListener("click", () => {
     const r = add.getBoundingClientRect();
-    contextMenu(r.left, r.bottom + 2, await coreMenuItems({ at: "newTab", leaf: p.leaf }));
+    contextMenu(r.left, r.bottom + 2, coreMenuItems({ at: "newTab", window: p.window, leaf: p.leaf }));
   });
   frag.push(add);
   p.tabs.replaceChildren(...frag);
@@ -208,6 +214,7 @@ function layoutNode(node, live) {
   const sash = div("split-sash");
   sash.setAttribute("role", "separator");
   sash.setAttribute("aria-orientation", node.stack ? "horizontal" : "vertical");
+  const win = layoutWindow;
   sash.addEventListener("mousedown", (e) => {
     e.preventDefault();
     const r = box.getBoundingClientRect();
@@ -223,7 +230,7 @@ function layoutNode(node, live) {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       // The ratio is the core's: the terminal's panes take it too.
-      api.call("split.ratio", { split: node.id, ratio: v }).catch(showError)
+      api.call("split.ratio", { window: win, split: node.id, ratio: v }).catch(showError)
         .finally(() => ratioDrag.delete(node.id));
     };
     window.addEventListener("mousemove", move);

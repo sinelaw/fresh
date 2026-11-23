@@ -481,7 +481,8 @@ await test("tabs and the editor have their context menus", async (p) => {
   await p.click(".tab:has-text('Welcome')", { button: "right" }).catch(async () => {
     await p.click(".tab:has-text('other.txt')", { button: "right" });
   });
-  await p.waitForSelector(".dropdown.context .mitem");
+  // At once: the menu has the keyboard before its rows arrive, and keeps
+  // what was pressed for them.
   await p.keyboard.press("ArrowDown");
   await p.keyboard.press("ArrowDown");
   await p.keyboard.press("Enter");

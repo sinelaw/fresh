@@ -84,7 +84,15 @@ impl Editor {
     /// plugins'), the tab bar's "+" — or, for an explorer entry, the
     /// plugins' items (the web's explorer has its own for files).
     pub fn engine_menu_rows(&self, at: &WebMenu) -> Vec<Value> {
-        let rows = match at {
+        self.web_menu_rows(at)
+            .into_iter()
+            .map(|r| json!({ "label": r.label, "id": r.id, "destructive": r.destructive, "disabled": r.disabled }))
+            .collect()
+    }
+
+    /// The rows of the menu at `at`, each with its stable id.
+    fn web_menu_rows(&self, at: &WebMenu) -> Vec<crate::app::types::ContextMenuRow> {
+        match at {
             WebMenu::Tab { leaf, buffer } => self.tab_menu_for(*leaf, *buffer, 0, 0).rows(),
             WebMenu::NewTab { .. } => crate::app::types::NewTabMenuItem::all()
                 .iter()
@@ -109,17 +117,22 @@ impl Editor {
                     })
                     .collect()
             }
-        };
-        rows.into_iter()
-            .map(|r| json!({ "label": r.label, "id": r.id, "destructive": r.destructive, "disabled": r.disabled }))
-            .collect()
+        }
     }
 
-    /// Choose row `index` of that menu, through the path the terminal's
+    /// Choose the row `id` of that menu, through the path the terminal's
     /// choice takes: the menu is built, its row highlighted and activated
     /// at once (a disabled row does nothing), so the terminal never shows it.
-    pub fn engine_menu_choose(&mut self, at: &WebMenu, index: usize) -> Result<(), String> {
+    /// By id, not place: if the menu changed since the client was given its
+    /// rows (a plugin's item came or went), a row that is gone is refused
+    /// rather than another one run.
+    pub fn engine_menu_choose(&mut self, at: &WebMenu, id: &str) -> Result<(), String> {
         use crate::app::types::ContextMenuKind;
+        let index = self
+            .web_menu_rows(at)
+            .iter()
+            .position(|r| r.id == id)
+            .ok_or_else(|| format!("that menu item is gone ({id})"))?;
         let kind = match at {
             WebMenu::Tab { leaf, buffer } => {
                 let mut menu = self.tab_menu_for(*leaf, *buffer, 0, 0);

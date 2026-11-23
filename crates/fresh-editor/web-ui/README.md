@@ -81,13 +81,19 @@ the session daemon, so a browser and `fresh -a` terminals share one editor.
   `action`, `command.run`, `commands.list`, `menu.run`, `split.focus`,
   `split.ratio`, `tab.show`, `tab.close`, `tab.drop`, `buffer.new`,
   `menu.rows|choose` (a tab's, the "+"'s or an explorer entry's menu: the
-  terminal's, plugins' items included),
+  terminal's, plugins' items included; a row is chosen by its `id`, and one
+  the menu no longer has is refused),
   `file.open|rename|create|delete`, `dir.list`,
   `prompt.set|select|confirm|cancel`, `browser.select|cd|hidden`,
   `confirm.choose`, `trust.select|confirm|decline`,
   `keys.open|set|delete|disable|conflicts|save|close`,
   `popup.select|confirm|cancel`, `panel.event`, `settings.schema`,
   `settings.set`, `skin.theme`, `quit`.
+- A request that names a pane, tab or split (`view.open`, `split.*`,
+  `tab.*`, a tab's or the "+"'s `menu.*`, a pane's `panel.event`) also names
+  its `window` (the layout's): ids are numbered per window, and a request
+  for a window that is no longer active is refused ("the workspace
+  changed"), not acted on in the workspace switched to.
 - Besides `/api`, the host serves the page, its font, and the skins folder
   (`/skins/index.json`, `/skins/<id>/<file>`).
 

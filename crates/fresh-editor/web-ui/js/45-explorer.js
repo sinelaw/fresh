@@ -88,7 +88,7 @@ async function activateEntry(path, isDir) {
 }
 
 /** The explorer's context menu for one entry. */
-async function entryMenu(ev, path, isDir, parent) {
+function entryMenu(ev, path, isDir, parent) {
   const dir = isDir ? path : parent;
   const items = [
     { label: "New File…", run: async () => {
@@ -122,10 +122,11 @@ async function entryMenu(ev, path, isDir, parent) {
     } });
   }
   items.push({ label: "Refresh", run: () => refreshDir(dir) });
-  // Then what plugins offer for this entry (the terminal's explorer menu
-  // shows them after its own, too).
-  const plugin = parent !== null ? await coreMenuItems({ at: "explorer", path, dir: isDir }) : [];
-  contextMenu(ev.clientX, ev.clientY, plugin.length ? [...items, null, ...plugin] : items);
+  // Then what plugins offer for this entry, as the terminal's explorer menu
+  // shows them after its own: the core's rows, which the menu (open at once)
+  // takes when they come.
+  contextMenu(ev.clientX, ev.clientY, parent === null ? items
+    : coreMenuItems({ at: "explorer", path, dir: isDir }).then((plugin) => plugin.length ? [...items, null, ...plugin] : items));
 }
 
 function toggleExplorer() {

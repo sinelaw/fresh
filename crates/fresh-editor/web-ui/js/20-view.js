@@ -34,8 +34,10 @@ const views = new Map();
 const viewById = new Map();
 
 class EditorView {
-  constructor(leaf) {
+  /** The view of pane `leaf` of window (workspace) `win`. */
+  constructor(leaf, win) {
     this.leaf = leaf;
+    this.window = win;
     this.id = null;
     this.size = null;
     this.data = null;
@@ -68,7 +70,7 @@ class EditorView {
     if (this.id === null) {
       if (this.opening) return;
       this.opening = true;
-      api.call("view.open", { leaf: this.leaf, width, height }).then((v) => {
+      api.call("view.open", { window: this.window, leaf: this.leaf, width, height }).then((v) => {
         this.opening = false;
         this.id = v.view;
         viewById.set(this.id, this);
