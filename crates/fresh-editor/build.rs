@@ -551,8 +551,29 @@ fn assemble_webui() {
             .replacen("/*@SKINS@*/[]", &skins, 1),
         1,
     );
+    // The page's build: a hash of the page itself, stamped into it and handed
+    // to the server, which sends it on every connection. A page left open
+    // across an upgrade sees another build and reloads, so a client never
+    // talks to a server whose API it was not built for.
+    assert!(
+        page.contains("@BUILD@"),
+        "web-ui/index.html must contain the @BUILD@ marker (its fresh-build meta)"
+    );
+    let build = format!("{:016x}", fnv1a64(page.as_bytes()));
+    let page = page.replacen("@BUILD@", &build, 1);
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
     fs::write(Path::new(&out_dir).join("webui-index.html"), page).expect("write webui-index.html");
+    fs::write(Path::new(&out_dir).join("webui-build.txt"), build).expect("write webui-build.txt");
+}
+
+/// FNV-1a, 64-bit: a stable hash with no dependency, for the page's build.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 /// Whether every `/*` in a stylesheet is closed and no `*/` stands outside a

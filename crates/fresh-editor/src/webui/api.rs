@@ -628,6 +628,14 @@ impl ApiClient {
                 out.push(ev);
             }
         }
+        // The build first: a client from another build reloads before it
+        // reads anything else.
+        topic(
+            &mut self.sent,
+            &mut out,
+            "build".into(),
+            json!({ "ev": "build", "build": super::PAGE_BUILD }),
+        );
         // The project root: the active window's, so it changes when the
         // Orchestrator switches workspaces, and the explorer follows.
         topic(
@@ -1563,6 +1571,22 @@ mod tests {
             .find(|v| v["ev"] == "skinValues")
             .expect("changed, so sent");
         assert!(ev["skinValues"].get("probe:level").is_none());
+    }
+
+    #[test]
+    fn a_client_hears_the_pages_build_first() {
+        let (_dir, mut ed) = editor_with("x\n");
+        let mut c = ApiClient::default();
+        let out = c.push(&mut ed);
+        assert_eq!(
+            out[0],
+            json!({ "ev": "build", "build": super::super::PAGE_BUILD })
+        );
+        assert_eq!(super::super::PAGE_BUILD.len(), 16, "a 64-bit hash, in hex");
+        assert!(
+            !c.push(&mut ed).iter().any(|v| v["ev"] == "build"),
+            "once per connection"
+        );
     }
 
     #[test]

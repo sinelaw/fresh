@@ -61,6 +61,10 @@ pub const DEFAULT_SIZE: (u16, u16) = (140, 44);
 /// behaves identically wherever the binary runs. Editing the frontend
 /// therefore requires a rebuild.
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/webui-index.html"));
+/// The page's build, stamped into it by build.rs (its `fresh-build` meta) and
+/// sent to every client as the `build` event: a page from another build
+/// reloads itself.
+pub(crate) const PAGE_BUILD: &str = include_str!(concat!(env!("OUT_DIR"), "/webui-build.txt"));
 /// Must match `web-ui/css/10-base.css` `@font-face` and the `shell.html`
 /// preload. Versioned, so it can be cached forever.
 const NERD_FONT_PATH: &str = "/fonts/symbols-nerd-font-mono-3.5.1.woff2";
@@ -572,10 +576,12 @@ fn serve_request(
     }
     let mutated = match (req.method.as_str(), path) {
         ("GET", "/") => {
-            respond(
+            // Never kept: the page must be the one this server was built with.
+            respond_with(
                 &mut stream,
                 "200 OK",
                 "text/html; charset=utf-8",
+                "Cache-Control: no-store\r\n",
                 INDEX_HTML.as_bytes(),
             )?;
             false
@@ -1357,6 +1363,19 @@ mod tests {
     use super::{
         digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
     };
+
+    #[test]
+    fn the_page_carries_its_build() {
+        let meta = format!(
+            r#"<meta name="fresh-build" content="{}">"#,
+            super::PAGE_BUILD
+        );
+        assert!(
+            super::INDEX_HTML.contains(&meta),
+            "the page is stamped with its build"
+        );
+        assert!(!super::INDEX_HTML.contains("@BUILD@"));
+    }
 
     /// The CSS `@font-face` and the preload name `NERD_FONT_PATH`, which serves WOFF2.
     #[test]

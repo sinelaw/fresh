@@ -71,7 +71,8 @@ the session daemon, so a browser and `fresh -a` terminals share one editor.
   drawn there, or `""` for a column the grapheme before it covers. The
   client draws each grapheme at its own column on a canvas, so no width is
   ever computed from a font.
-- Events `{"ev": topic, …}` arrive when a topic changed: `root` (the project
+- Events `{"ev": topic, …}` arrive when a topic changed: `build` (first, on every
+  connection: the page's build; a page from another reloads), `root` (the project
   root, the active workspace's), `layout`,
   `buffers`, `status`, `menus`, `ask`, `popups`, `panels`, `settings`,
   `theme`, `skinValues`, `clipboard`, `keybindings` (while the shortcuts

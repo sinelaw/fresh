@@ -15,6 +15,7 @@ let failures = 0;
 async function page() {
   await fetch(URL + "/reset", { method: "POST" });
   const p = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+
   p.errors = [];
   p.on("pageerror", (e) => p.errors.push(e.message));
   p.on("console", (m) => { if (m.type() === "error") p.errors.push(m.text()); });
@@ -55,6 +56,26 @@ async function test(name, f) {
     await p.close();
   }
 }
+
+await test("a page from another build reloads into the server's", async (p) => {
+  // A page stamped with another build (one left open across an upgrade) hears
+  // the server's build on connecting and reloads into the server's page. The
+  // first load's stamp is rewritten before the page's script reads it.
+  await p.addInitScript(() => {
+    const loads = Number(sessionStorage.getItem("loads") || 0) + 1;
+    sessionStorage.setItem("loads", String(loads));
+    if (loads !== 1) return;
+    new MutationObserver((_, obs) => {
+      const m = document.querySelector('meta[name="fresh-build"]');
+      if (m) { m.content = "0000000000000000"; obs.disconnect(); }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  await p.evaluate(() => sessionStorage.clear());
+  await p.reload();
+  await until(() => p.evaluate(() => sessionStorage.getItem("loads") === "2"), "reloaded into the server's build", 8000);
+  await p.waitForFunction(() => typeof views !== "undefined" && [...views.values()].some((v) => v.data));
+  assert.notEqual(await p.evaluate(() => PAGE_BUILD), "0000000000000000", "running the server's build");
+});
 
 await test("the file's text is drawn from the core's lines", async (p) => {
   const lines = await textOf(p);

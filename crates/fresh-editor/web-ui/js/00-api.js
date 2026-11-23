@@ -88,6 +88,12 @@ const core = {
 for (const t of ["layout", "buffers", "status", "menus", "ask", "popups", "panels", "settings", "theme"]) {
   api.on(t, (v) => { core[t] = v[t]; });
 }
+// The client this page carries is the server's own build (build.rs stamps
+// both). A page left open while the editor was upgraded reconnects to a
+// server it was not built for, so it reloads into the one that server serves.
+const PAGE_BUILD = (document.querySelector('meta[name="fresh-build"]') || {}).content || "";
+api.on("build", (v) => { if (PAGE_BUILD && v.build !== PAGE_BUILD) location.reload(); });
+
 // The project root: the active workspace's, so it changes when the
 // Orchestrator switches workspaces.
 api.on("root", (v) => { core.root = v.root; });
