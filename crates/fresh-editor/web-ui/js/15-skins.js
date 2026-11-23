@@ -814,7 +814,9 @@ function renderThemeSwitch() {
     });
     box.append(input, tsButton("ts-go", "Install", go));
     menu.appendChild(box);
-    setTimeout(() => input.focus({ preventScroll: true }), 0);
+    // At once, not on a timer: keys typed straight after the click land in
+    // the field, not in the editor behind the picker.
+    if (document.activeElement !== input) input.focus({ preventScroll: true });
   }
   if (skinState.note.text) {
     const note = div("ts-note" + (skinState.note.error ? " err" : ""));

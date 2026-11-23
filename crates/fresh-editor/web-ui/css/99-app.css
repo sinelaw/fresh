@@ -250,10 +250,13 @@ button.sitem:hover { background: rgba(255,255,255,.14); }
 .floating-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px;
   border-bottom: 1px solid var(--hairline); font-weight: 600; }
 .floating-close { background: none; border: 0; font-size: 18px; line-height: 1; cursor: default; opacity: .7; }
-.floating-panel > .panel-body { overflow: auto; padding: 10px 12px; }
+/* (Doubled to outweigh the reset of panels laid out in the page below,
+   which a floating panel's body is too: without it the panel's content
+   touched its border.) */
+.floating-panel > .panel-body.panel-body { overflow: auto; padding: 10px 14px 12px; }
 /* A plugin's menu, dropped from what opened it: content-sized, like a menu. */
 .floating-panel.anchored { position: fixed; width: auto; max-width: min(720px, 90vw); }
-.floating-panel.anchored > .panel-body { padding: 6px 8px; }
+.floating-panel.anchored > .panel-body.panel-body { padding: 6px 8px; }
 /* Its options are menu rows, not buttons. */
 .floating-panel.anchored .w-button.bare { display: flex; align-items: center; gap: 8px; width: 100%;
   padding: 3px 10px; border-radius: var(--r-sm); }

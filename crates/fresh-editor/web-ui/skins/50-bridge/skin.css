@@ -54,7 +54,7 @@
   --hairline: rgba(153,153,238,.22); --hairline-strong: rgba(153,153,238,.45); --hover: rgba(255,156,26,.16);
   --shadow: 0 0 0 1px #000, 0 18px 50px rgba(0,0,0,.8);
   --modal-shadow: 0 0 0 1px #000, 0 24px 70px rgba(0,0,0,.85);
-  --r-sm: 999px; --r-md: 14px; --r-lg: 22px;
+  --r-sm: 4px; --r-md: 12px; --r-lg: 20px;
 
   /* The frame: the column's width, the bars' thickness, the elbows' arms. */
   --shell-pad: 12px;
@@ -260,8 +260,8 @@ body.theme-bridge.frame-bezel #statusbar { position: fixed; z-index: 2; bottom: 
 
 /* Shared controls (css/62-components.css) read these. */
 body.theme-bridge {
-  --field-bg: #000; --field-fg: var(--br-text); --field-border: var(--br-lav); --field-radius: 0 12px 12px 0;
-  --field-shadow: inset 6px 0 0 var(--br-lav); --field-glow: none;
+  --field-bg: #000; --field-fg: var(--br-text); --field-border: var(--br-lav); --field-radius: 0 10px 10px 0;
+  --field-shadow: inset 5px 0 0 var(--br-lav); --field-glow: none;
   --check-size: 14px; --check-radius: 3px; --check-bg: #000; --check-border: var(--br-lav); --check-shadow: none;
   --check-on-bg: var(--br-orange); --check-on-border: var(--br-orange); --check-on-fg: #000; --check-on-shadow: none; --check-on-glow: none;
   --switch-w: 34px; --switch-h: 16px; --switch-pad: 2px; --switch-knob: 12px; --switch-radius: 999px; --switch-knob-radius: 999px;
@@ -275,10 +275,12 @@ body.theme-bridge {
   --radio-border: var(--br-lav); --radio-bg: #000; --radio-shadow: none;
   --radio-on-border: var(--br-orange); --radio-on-dot: var(--br-orange); --radio-on-glow: none;
 }
-.theme-bridge :is(.ask-input, .ui-field) { background: #000; color: var(--br-text); border: 2px solid var(--br-lav);
+/* A field's text clears the bar inside its left edge. */
+.theme-bridge :is(.native-panel .w-text .w-text-input, .ui-field:not(.native-panel *)) { padding-left: 14px; }
+/* The palette's line is a pill; every other field takes the field tokens
+   above (a box of text keeps its corners). */
+.theme-bridge .ask-input { background: #000; color: var(--br-text); border: 2px solid var(--br-lav);
   border-left-width: 10px; border-radius: 0 999px 999px 0; }
-/* A one-line field is a pill; a box of text keeps square-ish corners. */
-.theme-bridge textarea.ui-field, .theme-bridge .w-text-area { border-radius: 0 12px 12px 0; }
 
 /* ---- scrollbars: a tan pill on a thin rail ------------------------------ */
 .theme-bridge .vbar { width: 12px; background: linear-gradient(90deg, transparent 5px, #1c1730 5px 7px, transparent 7px); }

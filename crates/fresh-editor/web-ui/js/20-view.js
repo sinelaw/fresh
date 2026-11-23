@@ -180,7 +180,11 @@ class EditorView {
   placeCaret() {
     const d = this.data;
     const active = core.layout && core.layout.active === this.leaf;
-    const show = !!(d && d.caret && active && !core.ask);
+    // Drawn only while the editor has the keyboard: a dialog, a panel (the
+    // core's keys going to it, or a field of its own), the palette or another
+    // window typing must not leave a second caret blinking in the text.
+    const typing = document.activeElement === kb && document.hasFocus() && !panelHasKeyboard();
+    const show = !!(d && d.caret && active && !core.ask && typing);
     this.caret.hidden = !show;
     this.root.classList.toggle("active", !!active);
     if (!show) return;

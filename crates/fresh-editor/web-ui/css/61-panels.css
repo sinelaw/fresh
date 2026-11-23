@@ -106,8 +106,11 @@
    The box is the input itself, in the chrome font. */
 .native-panel .w-text{border:0;background:none;padding:0;gap:.55em;align-items:center}
 .native-panel .w-text .w-text-label{flex:0 0 auto;color:var(--muted);white-space:nowrap}
+/* Dressed by the same field tokens as every other text field
+   (css/62-components.css), so a skin's fields are one decision. */
 .native-panel .w-text .w-text-input{font:inherit;color:var(--field-fg);background:var(--field-bg);
-  border:1px solid var(--hairline-strong,var(--border));border-radius:var(--r-sm,4px);padding:.28em .5em;outline:none}
+  border:1px solid var(--field-border);border-radius:var(--field-radius);box-shadow:var(--field-shadow);
+  text-shadow:var(--field-glow);padding:.28em .5em;outline:none}
 .native-panel .w-text.focus .w-text-input{border-color:var(--ui-accent,var(--accent));
   box-shadow:0 0 0 2px color-mix(in srgb,var(--ui-accent,var(--accent)) 25%,transparent)}
 .native-panel .w-text.focus{outline:none;box-shadow:none}

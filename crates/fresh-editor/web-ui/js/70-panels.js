@@ -129,3 +129,6 @@ function panelHasKeyboard() {
 }
 
 api.on("panels", renderPanels);
+// A panel taking or giving back the editor's keyboard shows or hides the
+// editor's caret.
+api.on("panels", () => { for (const v of views.values()) v.placeCaret(); });

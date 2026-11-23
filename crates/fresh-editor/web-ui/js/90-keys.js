@@ -4,6 +4,11 @@
 // plugin panel, a popup), which the core knows.
 
 const kb = document.getElementById("kb");
+// The editor's caret is drawn only while the editor has the keyboard
+// (`EditorView.placeCaret`): it follows the keyboard in and out.
+for (const [target, ev] of [[kb, "focus"], [kb, "blur"], [window, "focus"], [window, "blur"]]) {
+  target.addEventListener(ev, () => { for (const v of views.values()) v.placeCaret(); });
+}
 
 function focusKeyboard() {
   const a = document.activeElement;

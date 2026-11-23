@@ -91,6 +91,22 @@ await test("typing edits the buffer and marks it modified", async (p) => {
   await until(() => p.$eval(".tab.active .tab-close", (e) => e.textContent === "●"), "modified mark");
 });
 
+await test("the editor's caret shows only while the editor has the keyboard", async (p) => {
+  const shown = () => p.evaluate(() => !activeView().caret.hidden);
+  await p.click(".view .lines", { position: { x: 120, y: 4 } });
+  await until(shown, "the caret while editing");
+  // A field elsewhere takes the keyboard: no second caret blinks in the text.
+  await p.click("#themebtn");
+  await p.click('#thememenu .ts-act:text-is("Install from URL…")');
+  await p.keyboard.type("abc");
+  assert.equal(await p.$eval("#thememenu .ts-url input", (i) => i.value), "abc", "typed into the field at once");
+  await until(async () => !(await shown()), "no caret in the text while the field has the keys");
+  await p.keyboard.press("Escape");
+  await p.keyboard.press("Escape");
+  await p.click(".view .lines", { position: { x: 120, y: 4 } });
+  await until(shown, "the caret back with the keyboard");
+});
+
 await test("the menus are the core's and run its actions", async (p) => {
   const labels = await p.$$eval("#menubar .mtop", (b) => b.map((x) => x.textContent));
   for (const l of ["File", "Edit", "View"]) assert.ok(labels.includes(l), labels.join(","));

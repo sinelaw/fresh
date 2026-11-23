@@ -53,6 +53,17 @@
   .ui-check.ui-check.on{background:var(--check-on-bg);border-color:var(--check-on-border);
     color:var(--check-on-fg);box-shadow:var(--check-on-shadow);text-shadow:var(--check-on-glow)}
   .w-tree-check.ui-check{margin-right:.45em}
+  /* The page's own checkboxes (a setting, the file browser's "Hidden files")
+     are the same control: drawn from the same tokens, not the browser's. */
+  input[type="checkbox"]{appearance:none;-webkit-appearance:none;margin:0;display:inline-grid;place-content:center;
+    flex:0 0 auto;box-sizing:border-box;width:var(--check-size);height:var(--check-size);vertical-align:middle;
+    border:1px solid var(--check-border);border-radius:var(--check-radius);
+    background:var(--check-bg);box-shadow:var(--check-shadow);cursor:default}
+  input[type="checkbox"]::after{content:"✓";font-family:var(--font-family);font-weight:700;line-height:1;
+    font-size:calc(var(--check-size) * .74);color:transparent}
+  input[type="checkbox"]:checked{background:var(--check-on-bg);border-color:var(--check-on-border);box-shadow:var(--check-on-shadow)}
+  input[type="checkbox"]:checked::after{color:var(--check-on-fg);text-shadow:var(--check-on-glow)}
+  input[type="checkbox"]:focus-visible{outline:2px solid var(--ui-accent,var(--accent));outline-offset:1px}
 
   /* ---- switch ---- */
   .ui-switch.ui-switch{position:relative;display:inline-block;flex:0 0 auto;box-sizing:border-box;
