@@ -650,12 +650,14 @@ impl ApiClient {
             }
         }
         // The build first: a client from another build reloads before it
-        // reads anything else.
+        // reads anything else. With it, the largest message the server
+        // reads: the client refuses to send a larger one rather than be
+        // disconnected for it.
         topic(
             &mut self.sent,
             &mut out,
             "build".into(),
-            json!({ "ev": "build", "build": super::PAGE_BUILD }),
+            json!({ "ev": "build", "build": super::PAGE_BUILD, "maxMessage": super::WS_PAYLOAD_CAP }),
         );
         // The project root: the active window's, so it changes when the
         // Orchestrator switches workspaces, and the explorer follows.
@@ -1468,10 +1470,20 @@ mod tests {
     fn a_dropped_file_becomes_a_named_unsaved_buffer() {
         let (_d, mut ed) = editor_with("");
         let mut c = ApiClient::default();
+        // A prompt open at the time does not take the dropped text.
+        ed.handle_action(crate::input::keybindings::Action::CommandPalette)
+            .unwrap();
+        let before = ed.prompt_input().map(str::to_string);
+        assert!(before.is_some(), "a prompt is open");
         let r = call(
             &mut c,
             &mut ed,
             json!({"op": "buffer.new", "name": "notes.md", "text": "# hi\n"}),
+        );
+        assert_eq!(
+            ed.prompt_input().map(str::to_string),
+            before,
+            "the prompt's input is untouched"
         );
         let id = r["buffer"].as_u64().unwrap();
         let b = ed
@@ -1621,7 +1633,7 @@ mod tests {
         let out = c.push(&mut ed);
         assert_eq!(
             out[0],
-            json!({ "ev": "build", "build": super::super::PAGE_BUILD })
+            json!({ "ev": "build", "build": super::super::PAGE_BUILD, "maxMessage": super::super::WS_PAYLOAD_CAP })
         );
         assert_eq!(super::super::PAGE_BUILD.len(), 16, "a 64-bit hash, in hex");
         assert!(

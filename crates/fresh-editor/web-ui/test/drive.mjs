@@ -336,6 +336,16 @@ await test("the explorer's menu creates and renames files through the core", asy
   await until(async () => (await p.$$eval("#explorer .ex-row", (r) => r.map((x) => x.textContent))).every((t) => !t.includes(name) || t.includes("renamed-")), "the old name gone");
 });
 
+await test("a message over the server's cap is refused here, and the connection stays", async (p) => {
+  assert.equal(await p.evaluate(() => api.maxMessage), 16 << 20, "the server said its cap");
+  await p.evaluate(() => { api.maxMessage = 1000; });
+  const err = await p.evaluate(() => api.call("buffer.new", { name: "big.txt", text: "x".repeat(2000) }).then(() => "", (e) => e.message));
+  assert.match(err, /too large/);
+  p.errors.length = 0;
+  assert.equal(await p.evaluate(() => document.body.classList.contains("disconnected")), false);
+  assert.ok(await p.evaluate(() => api.call("commands.list").then(() => true)), "the connection still answers");
+});
+
 await test("a file dropped from the computer opens as a named buffer", async (p) => {
   await p.evaluate(() => {
     const dt = new DataTransfer();

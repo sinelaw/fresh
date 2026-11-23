@@ -651,17 +651,32 @@ fn serve_request(
             false
         }
         ("GET", p) if p.starts_with("/skins/") => {
+            // A skin's images and fonts can be large: read and written from
+            // their own thread, as the font is, so the editor loop never
+            // waits on the disk or a slow link.
             let dir = skins::skins_dir(&editor.dir_context().config_dir);
-            match skins::read_file(&dir, &p["/skins/".len()..]) {
-                Some((ctype, bytes)) => respond_with(
-                    &mut stream,
-                    "200 OK",
-                    ctype,
-                    "Cache-Control: no-store\r\n",
-                    &bytes,
-                )?,
-                None => respond(&mut stream, "404 Not Found", "text/plain", b"not found")?,
-            }
+            let rel = p["/skins/".len()..].to_string();
+            let mut file_stream = stream.try_clone()?;
+            std::thread::Builder::new()
+                .name("webui-skin-file".into())
+                .spawn(move || {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = match skins::read_file(&dir, &rel) {
+                        Some((ctype, bytes)) => respond_with(
+                            &mut file_stream,
+                            "200 OK",
+                            ctype,
+                            "Cache-Control: no-store\r\n",
+                            &bytes,
+                        ),
+                        None => respond(
+                            &mut file_stream,
+                            "404 Not Found",
+                            "text/plain",
+                            b"not found",
+                        ),
+                    };
+                })?;
             false
         }
         ("GET", "/favicon.ico") => {
@@ -836,7 +851,7 @@ struct WsFrame {
 
 /// Cap on a single inbound frame / fragmented message (a paste is the biggest
 /// legitimate payload).
-const WS_PAYLOAD_CAP: usize = 16 << 20;
+pub(crate) const WS_PAYLOAD_CAP: usize = 16 << 20;
 
 /// Parse one frame from the front of `buf`, returning it and the bytes
 /// consumed. `None` = incomplete (wait for more bytes); `Err` = malformed.

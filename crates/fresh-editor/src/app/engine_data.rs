@@ -798,9 +798,12 @@ impl Editor {
         if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&id) {
             meta.display_name = name.to_string();
         }
-        self.paste_text(text.to_string());
-        if let Err(e) = self.handle_action(crate::input::keybindings::Action::MoveDocumentStart) {
-            tracing::warn!("new buffer: {e}");
+        // Into the new buffer itself, not through paste: an open prompt
+        // would take a paste, and the text is the buffer's to begin with
+        // (unsaved; there is nothing to undo back to).
+        if let Some(state) = self.buffers_mut().get_mut(&id) {
+            state.buffer.insert(0, text);
+            state.buffer.set_modified(!text.is_empty());
         }
         id
     }

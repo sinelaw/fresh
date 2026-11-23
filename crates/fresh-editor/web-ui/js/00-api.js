@@ -46,8 +46,15 @@ const api = (() => {
     }
   }
 
+  // The largest message the server reads (its `build` event says); a
+  // larger one would cost the connection, so it is refused here instead.
+  let maxMessage = 16 << 20;
   function raw(obj) {
     const s = JSON.stringify(obj);
+    // UTF-8 is at most 3 bytes per UTF-16 unit: count only when it could matter.
+    if (s.length * 3 > maxMessage && new TextEncoder().encode(s).length > maxMessage) {
+      throw new Error(`too large to send (over ${Math.floor(maxMessage / 1048576)} MiB)`);
+    }
     if (open) ws.send(s); else queue.push(s);
   }
 
@@ -58,11 +65,15 @@ const api = (() => {
       const id = ++nextId;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        raw({ id, op, ...args });
+        try { raw({ id, op, ...args }); } catch (e) { pending.delete(id); reject(e); }
       });
     },
     /** Send a command whose reply nobody waits for. */
-    send(op, args = {}) { raw({ op, ...args }); },
+    send(op, args = {}) {
+      try { raw({ op, ...args }); } catch (e) { showError(e); }
+    },
+    get maxMessage() { return maxMessage; },
+    set maxMessage(n) { if (n > 0) maxMessage = n; },
     on(ev, f) {
       if (!handlers.has(ev)) handlers.set(ev, []);
       handlers.get(ev).push(f);
@@ -92,7 +103,10 @@ for (const t of ["layout", "buffers", "status", "menus", "ask", "popups", "panel
 // both). A page left open while the editor was upgraded reconnects to a
 // server it was not built for, so it reloads into the one that server serves.
 const PAGE_BUILD = (document.querySelector('meta[name="fresh-build"]') || {}).content || "";
-api.on("build", (v) => { if (PAGE_BUILD && v.build !== PAGE_BUILD) location.reload(); });
+api.on("build", (v) => {
+  if (PAGE_BUILD && v.build !== PAGE_BUILD) location.reload();
+  api.maxMessage = v.maxMessage;
+});
 
 // The project root: the active workspace's, so it changes when the
 // Orchestrator switches workspaces.

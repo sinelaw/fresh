@@ -132,7 +132,8 @@ async function dropFiles(p, e) {
     if (local) { api.send("file.open", { path: local }); continue; }
     // A browser hands over contents, not paths: the file becomes a new,
     // unsaved buffer under its name, which Save As puts somewhere.
-    if (f.size > 20 * 1024 * 1024) { showError(`${f.name} is too large to open from here`); continue; }
+    // Over the server's message cap the text cannot reach it at all.
+    if (f.size > api.maxMessage) { showError(`${f.name} is too large to open from here`); continue; }
     const text = await f.text();
     if (text.includes("\u0000")) { showError(`${f.name} looks binary`); continue; }
     await api.call("buffer.new", { name: f.name, text }).catch(showError);
