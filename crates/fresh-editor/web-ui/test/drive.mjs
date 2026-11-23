@@ -341,8 +341,13 @@ await test("the skin picker switches skins, and the pick is remembered", async (
 await test("a skin can make the menu bar a column: its menus open beside it", async (p) => {
   await p.evaluate(() => setSkin("bridge"));
   await until(() => p.$("body.theme-bridge.frame-bezel"), "Bridge");
-  // Its web font's @import is first in the sheet, where a browser keeps it.
-  assert.ok(await p.$eval("#skin-css", (s) => s.textContent.trimStart().startsWith("@import")), "the @import leads");
+  // Its lettering is bundled with it: no request leaves the host for it.
+  await until(() => p.evaluate(() => document.fonts.check("600 15px Antonio")), "its bundled font");
+  // A skin's @import (a web font) is moved ahead of every rule, where a
+  // browser keeps it, even in a skin that extends another.
+  const split = await p.evaluate(() => leadingImports('/* a */\n@import "x.css";\n@import url(y.css);\n.r { color: red }'));
+  assert.equal(split.imports, '@import "x.css";\n@import url(y.css);\n');
+  assert.ok(!split.rest.includes("@import") && split.rest.includes(".r"), split.rest);
   const view = await p.locator("#menus .mtop:text-is('View')").boundingBox();
   const file = await p.locator("#menus .mtop:text-is('File')").boundingBox();
   assert.ok(view.y > file.y && Math.abs(view.x - file.x) < 1, "the titles are a column");

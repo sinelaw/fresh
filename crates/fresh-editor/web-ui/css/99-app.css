@@ -46,7 +46,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .mono, .view, .lines { font-family: var(--mono-family); font-size: calc(var(--mono-font-size) * var(--ui-scale, 1)); }
 button { font: inherit; color: inherit; }
 #app { display: flex; flex-direction: column; height: 100%; }
-body.disconnected #app { opacity: .55; filter: grayscale(.6); }
+/* Disconnected: the whole window grays and dims under a veil. Not a filter
+   or opacity on #app: a filter makes #app the box its position: fixed
+   descendants are placed in, so the controls a skin moves into its frame
+   (Bridge's menu column and bottom bar, Winamp's Orchestrator title) would
+   jump while the connection is down. */
+body.disconnected::after { content: ""; position: fixed; inset: 0; z-index: 90; pointer-events: none;
+  backdrop-filter: grayscale(.6); background: color-mix(in srgb, var(--bg, #000) 45%, transparent); }
 #kb { position: fixed; left: -1000px; top: 0; width: 1px; height: var(--ch); opacity: 0; pointer-events: none;
   border: 0; padding: 0; resize: none; overflow: hidden; }
 #preedit { position: fixed; z-index: 30; font: calc(var(--mono-font-size) * var(--ui-scale, 1))/var(--ch) var(--mono-family); height: var(--ch); white-space: pre;

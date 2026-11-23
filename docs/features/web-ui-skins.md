@@ -129,7 +129,7 @@ body.theme-neon-night:not(.mobile) { background: url(img/wallpaper.jpg) center/c
 .theme-neon-night #statusbar { height: 28px; }
 ```
 
-A web font comes in with `@import` at the top of `skin.css`, as Bridge brings its condensed lettering; give a local fallback for when there is no network. Each skin's `@import`s are moved ahead of every rule, so they work in a skin that `@extends` another, too:
+A font can come with the skin: an `@font-face` whose `src` is a file in the skin's folder (inlined when the skin is installed) or a `data:` URL, as Bridge bundles its condensed lettering. That works offline and asks nothing of any other site. A font from the web comes in with `@import` at the top of `skin.css`; give a local fallback for when there is no network, and keep in mind that picking the skin then makes a request to that site. Each skin's `@import`s are moved ahead of every rule, so they work in a skin that `@extends` another, too:
 
 ```css
 @import "https://fonts.googleapis.com/css2?family=Antonio:wght@400;600&display=swap";
