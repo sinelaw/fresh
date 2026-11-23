@@ -222,7 +222,12 @@ for (const { name, fn } of cases) {
     for (const pid of editorsIn(sb.project)) {
       try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
     }
-    fs.rmSync(sb.root, { recursive: true, force: true });
+    // A kill and an app's exit are asynchronous: the editors, and Electron
+    // writing its profile into the sandbox as it shuts down, may still be at
+    // work. Wait for the editors, and let the removal retry while the last
+    // writes land, rather than race them.
+    await until(() => editorsIn(sb.project).length === 0, 'the editors to exit', 5_000).catch(() => {});
+    fs.rmSync(sb.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 console.log(failed ? `\n${failed} failed` : '\nall passed');
