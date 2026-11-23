@@ -787,9 +787,6 @@ fn keybindings_json(k: &crate::app::keybinding_editor::KeybindingEditor) -> Valu
     })
 }
 
-/// Whether `op` acts on the cursors where the client is: every editing
-/// command that does not name a view itself. Views, the keybinding screen,
-/// settings and files do not.
 /// A request naming a pane, tab or split names it by id, and ids are
 /// numbered per window (workspace): it must also say which window it means,
 /// and that window must still be the active one. A request sent from a pane
@@ -835,6 +832,9 @@ fn web_menu(editor: &Editor, msg: &Value) -> Result<crate::app::WebMenu, String>
     })
 }
 
+/// Whether `op` acts on the cursors where the client is: every editing
+/// command that does not name a view itself. Views, the keybinding screen,
+/// settings and files do not.
 fn acts_on_cursors(op: &str, msg: &Value) -> bool {
     msg.get("view").is_none()
         && !op.starts_with("view.")
@@ -963,6 +963,9 @@ fn drawn_rows(buf: &Buffer) -> Vec<Vec<(u16, &ratatui::buffer::Cell)>> {
     rows
 }
 
+/// A cell's style as a run compares it: foreground, background, modifiers.
+type RunStyle = (Color, Color, Modifier);
+
 /// A row as runs of cells that share a style. A run is `{x, t, …style}`:
 /// `t` holds one entry per column from `x` — the cell's grapheme where a
 /// cell is drawn, `""` for each column it covers — so a run is exactly as
@@ -970,7 +973,7 @@ fn drawn_rows(buf: &Buffer) -> Vec<Vec<(u16, &ratatui::buffer::Cell)>> {
 /// its own column.
 fn runs(cells: &[(u16, &ratatui::buffer::Cell)], width: u16) -> Value {
     let mut out: Vec<Value> = Vec::new();
-    let mut cur: Option<(u16, Vec<String>, (Color, Color, Modifier))> = None;
+    let mut cur: Option<(u16, Vec<String>, RunStyle)> = None;
     for (i, &(x, cell)) in cells.iter().enumerate() {
         let end = cells.get(i + 1).map_or(width, |&(next, _)| next);
         let style = (cell.fg, cell.bg, cell.modifier);

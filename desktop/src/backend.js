@@ -475,9 +475,14 @@ class Backend {
     // that client first probes whether the daemon is alive, and an editor
     // still busy starting can lose the probe — the client then starts a
     // second, headless daemon and hands *it* the files.
-    const absolute = files.map((f) => path.resolve(this.workingDir, f));
-    Promise.all(absolute.map((f) => apiCall(this.url, 'file.open', { path: f })))
-      .catch(() => this.openFilesBySession(files));
+    // Only the files the API did not take go the other way: those it opened
+    // must not be opened twice.
+    Promise.all(files.map((f) =>
+      apiCall(this.url, 'file.open', { path: path.resolve(this.workingDir, f) }).then(() => null, () => f)))
+      .then((failed) => {
+        const left = failed.filter((f) => f !== null);
+        if (left.length > 0) this.openFilesBySession(left);
+      });
   }
 
   /** The session-socket hand-off, for an editor whose API is not answering. */

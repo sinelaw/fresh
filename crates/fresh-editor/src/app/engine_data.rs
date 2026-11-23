@@ -9,6 +9,7 @@
 use super::Editor;
 use crate::model::event::{BufferId, LeafId};
 use crate::view::split::SplitNode;
+use fresh_i18n::t;
 use serde_json::{json, Value};
 
 impl Editor {
@@ -326,9 +327,7 @@ impl Editor {
     /// Close the calibration wizard a web request opened, saying why.
     pub fn engine_refuse_calibration(&mut self) {
         self.calibration_wizard = None;
-        self.set_status_message(
-            "Keyboard calibration is for terminals; a browser reports keys directly".to_string(),
-        );
+        self.set_status_message(t!("calibration.tui_only").to_string());
     }
 
     /// Every command, with its keybinding.

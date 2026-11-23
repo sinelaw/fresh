@@ -2891,9 +2891,11 @@ pub mod render {
         // `set_string` can add text attributes but not clear them, so the
         // default keys' attributes here would reach cells that carry colors
         // of their own. Those go on default-colored cells, below.
-        let mut ground = Style::default();
-        ground.fg = default_fg.fg;
-        ground.bg = default_bg.bg;
+        let ground = Style {
+            fg: default_fg.fg,
+            bg: default_bg.bg,
+            ..Style::default()
+        };
         buf.set_style(area, ground);
 
         for (row_idx, row) in content.iter().enumerate() {

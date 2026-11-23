@@ -460,7 +460,10 @@ fn assemble_webui() {
         "the `web` feature needs the web-ui/ sources at {}",
         root.display()
     );
-    println!("cargo::rerun-if-changed={}", root.display());
+    // Only what the page is built from: watching web-ui/ itself would scan
+    // test/ (its node_modules, a failed case's screenshots) and rebuild for
+    // them. The css/, js/ and skins/ folders and index.html are watched where
+    // they are read.
     let concat_dir = |dir: &str| -> String {
         let d = root.join(dir);
         println!("cargo::rerun-if-changed={}", d.display());
