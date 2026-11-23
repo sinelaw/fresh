@@ -395,12 +395,18 @@ function loadThemeSections(): ThemeSection[] {
       kind: FieldKind,
       fallbackDesc: string,
     ): ThemeFieldDef => {
-      // Numbered indent-rainbow fields share one translated template. Keeping
-      // the level as data avoids twelve near-identical locale keys and lets
-      // translators place the number where their language expects it.
+      // Numbered indent-rainbow and terminal-color fields share one
+      // translated template each. Keeping the number as data avoids dozens
+      // of near-identical locale keys and lets translators place the number
+      // where their language expects it.
       const indentRainbow = /^indent_rainbow_([1-6])$/.exec(key);
-      const i18nKey = indentRainbow ? "indent_rainbow" : key;
-      const params = indentRainbow ? { level: indentRainbow[1] } : undefined;
+      const terminalAnsi = /^terminal_ansi_([0-9]|1[0-5])$/.exec(key);
+      const i18nKey = indentRainbow ? "indent_rainbow" : terminalAnsi ? "terminal_ansi" : key;
+      const params = indentRainbow
+        ? { level: indentRainbow[1] }
+        : terminalAnsi
+          ? { index: terminalAnsi[1] }
+          : undefined;
       // A missing translation comes back as the key itself; treat it as none.
       const tr = (k: string, p?: Record<string, string>): string | undefined => {
         const s = editor.t(k, p);

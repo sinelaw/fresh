@@ -9,8 +9,13 @@
 //! Program output is fed straight into the grid, as in `terminal_link.rs`
 //! (whose helpers these tests share).
 
-use super::terminal_link::{enter_scrollback_showing, harness_or_skip, open_terminal_with_output};
-use crate::common::harness::EditorTestHarness;
+use super::terminal_link::{
+    enter_scrollback_showing, harness_or_skip, open_terminal_with_output, pty_available,
+};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
 use ratatui::style::Color;
 
 /// The colors the renderer gave the first cell of `text` on screen, as
@@ -67,4 +72,98 @@ fn palette_colors_stay_palette_numbers_live_and_in_scrollback() {
 
     enter_scrollback_showing(&mut harness, terminal_id, PALETTE_OUTPUT, "BLUEBG");
     assert_palette_numbers(&harness, "scrollback");
+}
+
+/// A user theme on top of `dark` that gives the terminal its own red and
+/// leaves the other 15 colors to the host.
+const RED_OVERRIDE_THEME: &str = r##"{
+    "name": "palette-red",
+    "extends": "builtin://dark",
+    "ui": { "terminal_ansi_1": "#123456" }
+}"##;
+const OVERRIDDEN_RED: Color = Color::Rgb(0x12, 0x34, 0x56);
+
+/// An editor whose active theme is `RED_OVERRIDE_THEME`, working in
+/// `temp_dir`. `None` when the terminal tests cannot run here.
+fn harness_with_red_override(temp_dir: &std::path::Path) -> Option<EditorTestHarness> {
+    if !pty_available() {
+        return None;
+    }
+    let themes_dir = temp_dir.join("config").join("themes");
+    std::fs::create_dir_all(&themes_dir).unwrap();
+    std::fs::write(themes_dir.join("palette-red.json"), RED_OVERRIDE_THEME).unwrap();
+    let project_root = temp_dir.join("project_root");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let config = Config {
+        theme: "palette-red".to_string().into(),
+        // The theme switch below starts a color crossfade; the assertions
+        // read settled colors.
+        editor: fresh::config::EditorConfig {
+            animations: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Some(
+        EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_root)
+                .with_shared_dir_context(DirectoryContext::for_testing(temp_dir)),
+        )
+        .unwrap(),
+    )
+}
+
+/// A theme's `ui.terminal_ansi_1` is the terminal's red, live and in the
+/// scrollback. It is applied when drawing, so choosing another theme
+/// recolors scrollback written under the old one.
+#[test]
+fn theme_key_sets_terminal_red_live_and_in_scrollback() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let Some(mut harness) = harness_with_red_override(temp_dir.path()) else {
+        return;
+    };
+    let output = b"\x1b[31mREDMARK\x1b[0m plain";
+    let (terminal_id, _) = open_terminal_with_output(&mut harness, output, "REDMARK");
+    assert_eq!(
+        colors_of(&harness, "REDMARK").0,
+        Some(OVERRIDDEN_RED),
+        "live"
+    );
+
+    enter_scrollback_showing(&mut harness, terminal_id, output, "REDMARK");
+    assert_eq!(
+        colors_of(&harness, "REDMARK").0,
+        Some(OVERRIDDEN_RED),
+        "scrollback"
+    );
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Select Theme").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("Select theme").unwrap();
+    for _ in 0..20 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("dark").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        colors_of(&harness, "REDMARK").0,
+        Some(Color::Indexed(1)),
+        "under `dark`, which sets no terminal colors, the scrollback's red is the host's again"
+    );
 }

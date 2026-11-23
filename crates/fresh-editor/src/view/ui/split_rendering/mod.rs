@@ -255,6 +255,7 @@ impl SplitRenderer {
             indentation_guide_glyph,
             rainbow_indentation,
             bracket_highlight,
+            /* is_terminal */ false,
             Some((cell_theme_map, screen_width)),
         );
         let _ = (event_log, highlight_current_column, buffer_id);
@@ -511,6 +512,7 @@ mod tests {
             indentation_guide,
             indentation_guide_glyph: &indentation_guide_glyph,
             rainbow_indentation: false,
+            is_terminal: false,
             cell_theme_map: &mut dummy_theme_map,
             screen_width: 0,
         });
@@ -624,6 +626,7 @@ mod tests {
             indentation_guide: IndentationGuideMode::All,
             indentation_guide_glyph: &glyph,
             rainbow_indentation: false,
+            is_terminal: false,
             cell_theme_map: &mut dummy_theme_map,
             screen_width: 0,
         })
@@ -3293,6 +3296,7 @@ mod tests {
             indentation_guide: IndentationGuideMode::None,
             indentation_guide_glyph: "▏",
             rainbow_indentation: false,
+            is_terminal: false,
             cell_theme_map: &mut Vec::new(),
             screen_width: 0,
         })

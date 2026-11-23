@@ -208,6 +208,7 @@ pub(crate) fn compute_buffer_layout(
     indentation_guide_glyph: &str,
     rainbow_indentation: bool,
     bracket_highlight: BracketHighlightSettings,
+    is_terminal: bool,
     cell_theme_map: Option<(&mut Vec<CellThemeInfo>, u16)>,
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
@@ -508,6 +509,7 @@ pub(crate) fn compute_buffer_layout(
         indentation_guide,
         indentation_guide_glyph,
         rainbow_indentation,
+        is_terminal,
         cell_theme_map: map_ref,
         screen_width: sw,
     });

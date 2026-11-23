@@ -30,19 +30,27 @@ pub(super) fn harness_or_skip(
     height: u16,
     working_dir: std::path::PathBuf,
 ) -> Option<EditorTestHarness> {
-    if native_pty_system()
+    if !pty_available() {
+        return None;
+    }
+    EditorTestHarness::with_working_dir(width, height, working_dir).ok()
+}
+
+/// Whether a PTY can be opened here; says so on stderr when it cannot, as
+/// the terminal tests are then skipped.
+pub(super) fn pty_available() -> bool {
+    let available = native_pty_system()
         .openpty(PtySize {
             rows: 1,
             cols: 1,
             pixel_width: 0,
             pixel_height: 0,
         })
-        .is_err()
-    {
-        eprintln!("Skipping terminal-link test: PTY not available in this environment");
-        return None;
+        .is_ok();
+    if !available {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
     }
-    EditorTestHarness::with_working_dir(width, height, working_dir).ok()
+    available
 }
 
 /// Feed program output directly into the terminal grid, exactly as the PTY

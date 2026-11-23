@@ -2793,6 +2793,7 @@ impl Window {
             buf,
             Style::default().theme_fg(&theme, "ui.terminal_fg"),
             Style::default().theme_bg(&theme, "ui.terminal_bg"),
+            |color| theme.terminal_color(color),
             link_highlight,
         );
     }
@@ -2866,7 +2867,7 @@ pub mod render {
     use crate::services::terminal::TerminalCell;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
     /// Render terminal content to a ratatui buffer
     #[allow(clippy::too_many_arguments)]
@@ -2878,6 +2879,7 @@ pub mod render {
         buf: &mut Buffer,
         default_fg: Style,
         default_bg: Style,
+        recolor: impl Fn(Color) -> Color,
         link_highlight: Option<(u16, std::ops::Range<usize>)>,
     ) {
         // Fill the rendered area with the theme's terminal bg first so any
@@ -2912,11 +2914,11 @@ pub mod render {
                 // its own takes the theme's default — with that key's text
                 // attributes, which belong to the default, not to the cell.
                 let mut style = match cell.fg {
-                    Some(color) => Style::default().fg(color),
+                    Some(color) => Style::default().fg(recolor(color)),
                     None => default_fg,
                 };
                 style = match cell.bg {
-                    Some(color) => style.bg(color),
+                    Some(color) => style.bg(recolor(color)),
                     None => style.patch(default_bg),
                 };
 
@@ -2962,7 +2964,6 @@ pub mod render {
     mod tests {
         use super::*;
         use crate::services::terminal::TerminalCell;
-        use ratatui::style::Color;
 
         #[test]
         fn cells_past_pty_grid_get_theme_bg() {
@@ -2986,6 +2987,7 @@ pub mod render {
                 &mut buf,
                 Style::default().fg(default_fg),
                 Style::default().bg(default_bg),
+                |color| color,
                 None,
             );
 
@@ -3024,6 +3026,7 @@ pub mod render {
                 &mut buf,
                 Style::default().fg(Color::White),
                 Style::default().bg(Color::Black),
+                |color| color,
                 Some((0, 2..5)), // underline columns 2,3,4
             );
 

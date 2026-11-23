@@ -74,6 +74,8 @@ pub(super) struct CellPassInput<'a, 'c> {
     /// In active mode, the one guide column to draw for this line when it is
     /// inside the active cursor's indentation block.
     pub active_indentation_guide_col: Option<usize>,
+    /// The buffer is a built-in terminal's scrollback.
+    pub is_terminal: bool,
 }
 
 /// Per-line results the later passes consume.
@@ -1017,11 +1019,21 @@ impl CellPass<'_, '_, '_> {
 
     /// Run `ch` through the line's ANSI parser; `None` means the char is
     /// part of an escape sequence. Lines without ESC use the fast path.
+    ///
+    /// In a terminal's scrollback the palette colors are the terminal's, so
+    /// they take the theme's terminal colors here, at draw time, as on the
+    /// live screen: a theme switch recolors output already written.
     fn parse_ansi(&mut self, ch: char) -> Option<Style> {
-        match self.ansi_parser.as_mut() {
-            Some(parser) => parser.parse_char(ch),
-            None => Some(Style::default()),
+        let mut style = match self.ansi_parser.as_mut() {
+            Some(parser) => parser.parse_char(ch)?,
+            None => return Some(Style::default()),
+        };
+        if self.input.is_terminal {
+            let theme = self.input.theme;
+            style.fg = style.fg.map(|c| theme.terminal_color(c));
+            style.bg = style.bg.map(|c| theme.terminal_color(c));
         }
+        Some(style)
     }
 
     /// Screen x of the current cell (gutter + column, after horizontal scroll).

@@ -575,6 +575,7 @@ fn text_pane_content(
         indentation_guide_glyph,
         rainbow_indentation,
         bracket_highlight,
+        active_buf_is_terminal,
         Some((cell_theme_map, screen_width)),
     );
     let has_caret = is_active && state.show_cursors;

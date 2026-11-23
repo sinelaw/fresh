@@ -96,6 +96,9 @@ pub(crate) struct LineRenderInput<'a> {
     /// Color indentation guides by indent level (palette slot picked from the
     /// guide's column, one slot per tab stop).
     pub rainbow_indentation: bool,
+    /// The buffer is a built-in terminal's scrollback, whose palette colors
+    /// take the theme's terminal colors (`ui.terminal_ansi_N`).
+    pub is_terminal: bool,
     /// Per-cell theme key map for the theme inspector (screen_width used for indexing)
     pub cell_theme_map: &'a mut Vec<crate::app::types::CellThemeInfo>,
     /// Screen width for cell_theme_map indexing
@@ -509,6 +512,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         indentation_guide,
         indentation_guide_glyph,
         rainbow_indentation,
+        is_terminal,
         cell_theme_map,
         screen_width,
     } = input;
@@ -888,6 +892,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 rainbow_indentation,
                 indentation_guide_columns: &guide_columns_buf,
                 active_indentation_guide_col: active_guide_col,
+                is_terminal,
             },
             &mut selection_sweep,
             &mut overlay_sweep,
