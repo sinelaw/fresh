@@ -4,23 +4,27 @@ const editor = getEditor();
 /**
  * Image Viewer
  *
- * Opening a picture (PNG, JPEG, GIF, WebP, BMP) shows the picture instead of
- * its bytes. The editor draws it (`setBufferImage`) with the terminal's own
- * graphics where it has them (Kitty, Sixel, iTerm2) and coloured half blocks
- * everywhere else, fitted to the pane.
+ * Shows a picture file (PNG, JPEG, GIF, WebP, BMP) as a picture, in the
+ * file's own tab: the tab stays the file's tab in every way (`createBufferGroup`
+ * with `inTabOf`), and only what it shows changes. The editor draws the
+ * picture (`setBufferImage`) with the terminal's own graphics where it has
+ * them (Kitty, Sixel, iTerm2) and coloured half blocks everywhere else,
+ * fitted to the pane.
+ *
+ * A picture file shows as a picture when it opens. "Show as Text" (`t`)
+ * goes back to the file's text, and "View as Image" (the tab's right-click
+ * menu, or the palette) to the picture.
  *
  * Keys in the viewer:
  *   + / =   zoom in          -   zoom out         0   fit the pane
  *   h j k l or arrows: move around a zoomed picture
- *   r   load the file again  t   show the file as text   q   close
+ *   r   load the file again  t   show the file as text   q   close the tab
  *
  * It redraws when the file changes on disk (a plot a script rewrites shows
- * the new one). Browsing pictures in the file explorer reuses one viewer
- * tab, as the explorer's preview tabs do; zooming in it, or opening the file
- * for real, keeps it.
+ * the new one), for files on this computer.
  *
  * A build without image support (`getImageSupport()` is null) leaves
- * picture files to open as text.
+ * picture files as text.
  */
 
 const MODE = "image-viewer";
@@ -30,27 +34,30 @@ const ZOOM_STEP = 1.5;
 const ZOOM_MAX = 64;
 
 interface Viewer {
-  path: string;
+  /** The file's own buffer, whose tab shows the picture. */
+  fileBuffer: number;
+  windowId: number;
+  groupId: number;
+  /** The panel above the picture, with the file's name and the keys. */
+  captionPanel: number;
+  /** The picture's file, on its window's filesystem. */
+  path: WindowPath;
   watch: number | null;
   /** 1 shows the whole picture; 2 half its width and height; … */
   zoom: number;
   /** The centre of the part shown, as fractions of the picture. */
   cx: number;
   cy: number;
-  /** Opened from an explorer preview and not used since: the next preview replaces it. */
-  preview: boolean;
 }
+/** Viewers by the buffer of their panel (the buffer in focus while one is shown). */
 const viewers = new Map<number, Viewer>();
-/** Files the user asked to see as text (`t`): left as text from then on. */
-const asText = new Set<string>();
+/** File buffers the user asked to see as text (`t`): left as text from then on. */
+const asText = new Set<number>();
+/** File buffers a viewer is being made for. */
+const opening = new Set<number>();
 
 function basename(path: string): string {
-  return path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
-}
-
-function dirname(path: string): string {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i > 0 ? path.slice(0, i) : "/";
+  return editor.pathBasename(path) || path;
 }
 
 function isImage(path: string): boolean {
@@ -58,10 +65,15 @@ function isImage(path: string): boolean {
   return EXTENSIONS.includes(ext);
 }
 
-/** The text under the picture: visible around it when it doesn't fill the pane. */
+function viewerOf(fileBuffer: number): [number, Viewer] | null {
+  for (const [panel, v] of viewers) if (v.fileBuffer === fileBuffer) return [panel, v];
+  return null;
+}
+
+/** The caption above the picture: the file's name and the keys. */
 function caption(v: Viewer): TextPropertyEntry[] {
   return [
-    { text: ` ${basename(v.path)}\n`, style: { fg: "ui.help_key_fg", bold: true } },
+    { text: ` ${basename(v.path.value)}\n`, style: { fg: "ui.help_key_fg", bold: true } },
     {
       text: " +/- zoom  0 fit  hjkl move  r reload  t text  q close\n",
       style: { fg: "editor.line_number_fg" },
@@ -70,81 +82,100 @@ function caption(v: Viewer): TextPropertyEntry[] {
 }
 
 /** Tell the editor which part of the picture to show. */
-function applyView(id: number, v: Viewer): void {
+function applyView(panel: number, v: Viewer): void {
   const size = 1 / v.zoom;
   v.cx = Math.min(Math.max(v.cx, size / 2), 1 - size / 2);
   v.cy = Math.min(Math.max(v.cy, size / 2), 1 - size / 2);
-  editor.setBufferImageView(id, v.cx - size / 2, v.cy - size / 2, size, size);
+  editor.setBufferImageView(panel, v.cx - size / 2, v.cy - size / 2, size, size);
 }
 
-/** Caption, picture and view. A file that can't be read is reported on the status bar. */
-function draw(id: number, v: Viewer): void {
-  editor.setVirtualBufferContent(id, caption(v));
-  editor.setBufferImage(id, v.path, true);
-  applyView(id, v);
-}
-
-/** Make `id` the viewer of `path`, and watch its folder (a rewrite may replace the file). */
-async function attach(id: number, path: string, preview: boolean): Promise<void> {
-  const v: Viewer = { path, watch: null, zoom: 1, cx: 0.5, cy: 0.5, preview };
-  viewers.set(id, v);
-  editor.setBufferShowCursors(id, false);
-  draw(id, v);
-  try {
-    v.watch = await editor.watchPath(dirname(path));
-  } catch {
-    v.watch = null;
+/** Caption, picture and view. */
+function draw(panel: number, v: Viewer): void {
+  editor.setVirtualBufferContent(v.captionPanel, caption(v));
+  if (!editor.setBufferImage(panel, v.path, true)) {
+    editor.setStatus(`Image: cannot read ${basename(v.path.value)}`);
   }
+  applyView(panel, v);
 }
 
-/** The viewer left over from the last explorer preview, if any. */
-function previewViewer(): number | null {
-  for (const [id, v] of viewers) if (v.preview) return id;
-  return null;
+/** Whether a window's files are on this computer, where a watch can see them. */
+function isLocalWindow(windowId: number): boolean {
+  const w = editor.listWindows().find((w) => w.id === windowId);
+  return w === undefined || !w.remote;
 }
 
 /**
- * Show a viewer of `path` in `splitId` (or the active split): an open one, or
- * a new one. A preview replaces the last preview's viewer.
+ * Show the file of `fileBuffer` as a picture in its own tab. Nothing happens
+ * for a file that already shows one, or has unsaved changes.
  */
-async function show(path: string, splitId: number | undefined, preview: boolean): Promise<void> {
-  for (const [id, v] of viewers) {
-    if (v.path === path) {
-      if (!preview) v.preview = false;
-      if (splitId !== undefined) editor.setSplitBuffer(splitId, id);
-      else editor.showBuffer(id);
-      return;
+async function view(fileBuffer: number): Promise<void> {
+  if (opening.has(fileBuffer) || viewerOf(fileBuffer) !== null) return;
+  const info = editor.getBufferInfo(fileBuffer);
+  if (!info || !info.path || info.modified) return;
+  opening.add(fileBuffer);
+  try {
+    const group = await editor.createBufferGroup(
+      basename(info.path),
+      MODE,
+      JSON.stringify({
+        type: "split",
+        direction: "v",
+        ratio: 0.1,
+        first: { type: "fixed", id: "caption", height: 2 },
+        second: { type: "scrollable", id: "picture" },
+      }),
+      { inTabOf: fileBuffer },
+    );
+    const panel = group.panels.picture;
+    const v: Viewer = {
+      fileBuffer,
+      windowId: info.window_id,
+      groupId: group.groupId,
+      captionPanel: group.panels.caption,
+      path: editor.windowPath(info.window_id, info.path),
+      watch: null,
+      zoom: 1,
+      cx: 0.5,
+      cy: 0.5,
+    };
+    viewers.set(panel, v);
+    editor.focusBufferGroupPanel(group.groupId, "picture");
+    draw(panel, v);
+    // A plot a script rewrites: watch the folder, as a rewrite may replace
+    // the file. Watches see this computer's files only.
+    if (isLocalWindow(v.windowId)) {
+      try {
+        v.watch = await editor.watchPath(editor.pathDirname(info.path));
+      } catch {
+        v.watch = null;
+      }
     }
+  } finally {
+    opening.delete(fileBuffer);
   }
-  const replaced = preview ? previewViewer() : null;
-  const r = await editor.createVirtualBuffer({
-    name: basename(path),
-    mode: MODE,
-    readOnly: true,
-    showLineNumbers: false,
-    showCursors: false,
-    editingDisabled: true,
-    ...(splitId !== undefined ? { splitId } : {}),
-  });
-  await attach(r.bufferId, path, preview);
-  if (replaced !== null) editor.closeBuffer(replaced);
+}
+
+/** Show a file as a picture when it opens, unless the user wants it as text. */
+function viewOnOpen(fileBuffer: number, path: string): void {
+  if (!path || !isImage(path) || asText.has(fileBuffer)) return;
+  if (editor.getImageSupport() === null) return;
+  void view(fileBuffer).catch((e) => editor.error(`image_viewer: ${e}`));
 }
 
 function active(): [number, Viewer] | null {
-  const id = editor.getActiveBufferId();
-  const v = viewers.get(id);
-  return v ? [id, v] : null;
+  const panel = editor.getActiveBufferId();
+  const v = viewers.get(panel);
+  return v ? [panel, v] : null;
 }
 
-/** Run `f` on the active viewer and redraw its view; using a viewer keeps it. */
+/** Run `f` on the active viewer and redraw its view. */
 function onView(f: (v: Viewer) => void): () => void {
   return () => {
     const a = active();
     if (!a) return;
-    const [id, v] = a;
-    v.preview = false;
+    const [panel, v] = a;
     f(v);
-    applyView(id, v);
+    applyView(panel, v);
     editor.setStatus(v.zoom === 1 ? "Image: fit" : `Image: zoom ${Math.round(v.zoom * 100)}%`);
   };
 }
@@ -178,13 +209,35 @@ registerHandler("image_viewer_reload", () => {
 });
 registerHandler("image_viewer_close", () => {
   const a = active();
-  if (a) editor.closeBuffer(a[0]);
+  if (a) editor.closeBuffer(a[1].fileBuffer);
 });
-registerHandler("image_viewer_text", async () => {
+/** Back to the file's text: closing the group shows the file again. */
+registerHandler("image_viewer_text", () => {
   const a = active();
   if (!a) return;
-  asText.add(a[1].path);
-  await editor.openFile(a[1].path, null, null);
+  asText.add(a[1].fileBuffer);
+  editor.closeBufferGroup(a[1].groupId);
+});
+
+/** "View as Image" on a file's buffer, from the tab menu or the palette. */
+function viewAsImage(fileBuffer: number): void {
+  const path = editor.getBufferPath(fileBuffer);
+  if (!path) {
+    editor.setStatus("Image: this tab has no file");
+    return;
+  }
+  if (editor.getImageSupport() === null) {
+    editor.setStatus("Image: this build cannot show pictures");
+    return;
+  }
+  asText.delete(fileBuffer);
+  void view(fileBuffer).catch((e) => editor.error(`image_viewer: ${e}`));
+}
+registerHandler("image_viewer_view_tab", (target: TabMenuTarget) => {
+  viewAsImage(target.bufferId);
+});
+registerHandler("image_viewer_view_active", () => {
+  viewAsImage(editor.getActiveBufferId());
 });
 
 editor.defineMode(
@@ -212,69 +265,35 @@ editor.registerCommand("Image: Zoom In", "Show the picture larger", "image_viewe
 editor.registerCommand("Image: Zoom Out", "Show more of the picture", "image_viewer_zoom_out", MODE);
 editor.registerCommand("Image: Fit", "Show the whole picture", "image_viewer_fit", MODE);
 editor.registerCommand("Image: Reload", "Load the picture from disk again", "image_viewer_reload", MODE);
-editor.registerCommand("Image: Show as Text", "Open the picture's file as text", "image_viewer_text", MODE);
+editor.registerCommand("Image: Show as Text", "Show the picture's file as text", "image_viewer_text", MODE);
+editor.registerCommand("Image: View as Image", "Show the active file as a picture", "image_viewer_view_active", null);
+editor.addTabMenuItem({ label: "View as Image", scope: "fileTab", handler: "image_viewer_view_tab" });
 
-type Openers = {
-  registerFileOpener?: (o: { id: string; label: string; extensions: string[]; handler: string }) => void;
-};
-const openers = editor as unknown as Openers;
-
-if (typeof openers.registerFileOpener === "function") {
-  // An editor with file openers hands the viewer a buffer for the file.
-  registerHandler("image_viewer_open", async (req: { bufferId: number; path: string }) => {
-    await attach(Number(req.bufferId), req.path, false);
-  });
-  openers.registerFileOpener({
-    id: MODE,
-    label: "Image Viewer",
-    extensions: EXTENSIONS,
-    handler: "image_viewer_open",
-  });
-} else {
-  // The editor opened the file as text: put a viewer in its place. An
-  // explorer click opens a *preview* tab, which gets no `after_file_open`
-  // until it is kept, so `buffer_activated` catches those.
-  const swapping = new Set<number>();
-  const swap = async (bufferId: number, path: string): Promise<void> => {
-    if (!path || !isImage(path) || asText.has(path)) return;
-    if (viewers.has(bufferId) || swapping.has(bufferId) || editor.isBufferModified(bufferId)) return;
-    if (editor.getImageSupport() === null) return;
-    swapping.add(bufferId);
-    try {
-      const preview = editor.getBufferInfo(bufferId)?.is_preview ?? false;
-      const split = editor.listSplits().find((s) => Number(s.bufferId) === bufferId)?.splitId;
-      await show(path, split, preview);
-      await editor.flush();
-      editor.closeBuffer(bufferId);
-    } finally {
-      swapping.delete(bufferId);
-    }
-  };
-  editor.on("after_file_open", (d) => {
-    void swap(d.buffer_id, d.path).catch(() => {});
-    return true;
-  });
-  editor.on("buffer_activated", (d) => {
-    const path = editor.getBufferPath(d.buffer_id) ?? "";
-    if (isImage(path)) {
-      void swap(d.buffer_id, path).catch(() => {});
-    } else if (!viewers.has(d.buffer_id) && editor.getBufferInfo(d.buffer_id)?.is_preview) {
-      // Browsing went on to another file: the preview viewer goes, as a preview tab would.
-      const old = previewViewer();
-      if (old !== null) editor.closeBuffer(old);
-    }
-    return true;
-  });
-}
+// A picture shows as a picture when it opens. An explorer click opens a
+// *preview* tab, which gets no `after_file_open` until it is kept, so
+// `buffer_activated` catches those; the viewer goes with the preview tab.
+editor.on("after_file_open", (d) => {
+  viewOnOpen(d.buffer_id, d.path);
+  return true;
+});
+editor.on("buffer_activated", (d) => {
+  if (!viewers.has(d.buffer_id)) viewOnOpen(d.buffer_id, editor.getBufferPath(d.buffer_id) ?? "");
+  return true;
+});
 
 editor.on("path_changed", (d) => {
-  for (const [id, v] of viewers) if (v.watch === d.handle && d.path === v.path) draw(id, v);
+  for (const [panel, v] of viewers) if (v.watch === d.handle && d.path === v.path.value) draw(panel, v);
+  return true;
+});
+editor.on("buffer_group_closed", (d) => {
+  for (const [panel, v] of viewers) {
+    if (v.groupId !== d.group_id || v.windowId !== d.window_id) continue;
+    if (v.watch !== null) editor.unwatchPath(v.watch);
+    viewers.delete(panel);
+  }
   return true;
 });
 editor.on("buffer_closed", (d) => {
-  const v = viewers.get(d.buffer_id);
-  if (!v) return true;
-  if (v.watch !== null) editor.unwatchPath(v.watch);
-  viewers.delete(d.buffer_id);
+  asText.delete(d.buffer_id);
   return true;
 });

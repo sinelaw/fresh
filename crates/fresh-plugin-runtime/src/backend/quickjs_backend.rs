@@ -7170,27 +7170,39 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Show a picture (a PNG file) over a buffer's pane, centred.
+    /// Show a picture (PNG, JPEG, GIF, WebP or BMP) over a buffer's pane,
+    /// centred.
     ///
     /// It is shrunk to fit the pane, and enlarged to fill it when `scaleUp`
     /// is true. The terminal's own graphics (Kitty, Sixel, iTerm2) draw it
     /// where available, coloured half blocks elsewhere. It replaces any
     /// picture the buffer had, and goes when the buffer closes.
     ///
+    /// The file is read from the path's filesystem, as `readFile` reads: a
+    /// `WindowPath` of a remote window is read on its host. Returns false,
+    /// showing nothing, when the file cannot be read; a file that is not a
+    /// picture this build decodes is reported in the status bar.
+    ///
     /// @param bufferId - the buffer whose pane shows the picture
-    /// @param path - the picture's file (PNG)
+    /// @param path - the picture's file: a `WindowPath` (as a file explorer
+    /// or tab menu item's handler receives), a `LocalPath`, or a path of the
+    /// active window
     /// @param scaleUp - also enlarge a picture smaller than the pane (default false)
     #[qjs(rename = "setBufferImage")]
     pub fn set_buffer_image(
         &self,
         buffer_id: u32,
-        path: String,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        path: fresh_core::api::PluginPath,
         scale_up: fresh_js::function::Opt<bool>,
     ) -> bool {
+        let Some(image) = self.fs_for(&path).read_file(Path::new(path.as_str())) else {
+            return false;
+        };
         self.command_sender
             .send(PluginCommand::SetBufferImage {
                 buffer_id: BufferId(buffer_id as usize),
-                path: Some(path),
+                image: Some(image),
                 scale_up: scale_up.0.unwrap_or(false),
             })
             .is_ok()
@@ -7204,7 +7216,7 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::SetBufferImage {
                 buffer_id: BufferId(buffer_id as usize),
-                path: None,
+                image: None,
                 scale_up: false,
             })
             .is_ok()

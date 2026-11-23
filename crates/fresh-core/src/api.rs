@@ -5647,11 +5647,16 @@ pub enum PluginCommand {
     /// `createBufferGroup` returns.
     SetBufferShowCursors { buffer_id: BufferId, show: bool },
     /// Show a picture over a buffer's pane, centred and shrunk to fit (and
-    /// enlarged too with `scale_up`), or remove it with `path: None`. Drawn
+    /// enlarged too with `scale_up`), or remove it with `image: None`. Drawn
     /// with the terminal's image protocol, or half blocks.
+    ///
+    /// `image` is the file's encoded bytes (PNG, JPEG, …), read by the
+    /// plugin runtime through the path's own filesystem, as `readFile` reads:
+    /// a remote window's picture is read on its host, and the editor never
+    /// opens a path itself.
     SetBufferImage {
         buffer_id: BufferId,
-        path: Option<String>,
+        image: Option<Vec<u8>>,
         scale_up: bool,
     },
     /// Show only part of a buffer's picture: `x`, `y`, `w`, `h` are fractions

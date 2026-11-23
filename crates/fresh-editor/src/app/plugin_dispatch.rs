@@ -1011,10 +1011,10 @@ impl Editor {
             }
             PluginCommand::SetBufferImage {
                 buffer_id,
-                path,
+                image,
                 scale_up,
             } => {
-                self.handle_set_buffer_image(buffer_id, path, scale_up);
+                self.handle_set_buffer_image(buffer_id, image, scale_up);
             }
             PluginCommand::SetBufferImageView {
                 buffer_id,
@@ -5359,13 +5359,13 @@ impl Editor {
     fn handle_set_buffer_image(
         &mut self,
         buffer_id: BufferId,
-        path: Option<String>,
+        image: Option<Vec<u8>>,
         scale_up: bool,
     ) {
         #[cfg(feature = "images")]
-        match path {
-            Some(path) => {
-                if let Err(e) = self.inline_images.set(buffer_id, &path, scale_up) {
+        match image {
+            Some(bytes) => {
+                if let Err(e) = self.inline_images.set(buffer_id, &bytes, scale_up) {
                     tracing::warn!("setBufferImage: {e}");
                     self.set_status_message(format!("setBufferImage: {e}"));
                 }
@@ -5373,7 +5373,10 @@ impl Editor {
             None => self.inline_images.remove(buffer_id),
         }
         #[cfg(not(feature = "images"))]
-        tracing::warn!("setBufferImage: this build has no image support");
+        {
+            let _ = (buffer_id, image, scale_up);
+            tracing::warn!("setBufferImage: this build has no image support");
+        }
     }
 
     fn handle_set_buffer_show_cursors(&mut self, buffer_id: BufferId, show: bool) {

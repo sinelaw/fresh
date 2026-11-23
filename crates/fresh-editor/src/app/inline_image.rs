@@ -352,15 +352,16 @@ impl InlineImages {
         }
     }
 
-    /// Attach the picture at `path` to `buffer`, replacing any other. The
-    /// buffer keeps the view it had (a reload stays zoomed in).
+    /// Attach the picture encoded in `bytes` (a file's contents, read where
+    /// the file lives) to `buffer`, replacing any other. The buffer keeps the
+    /// view it had (a reload stays zoomed in).
     pub(crate) fn set(
         &mut self,
         buffer: BufferId,
-        path: &str,
+        bytes: &[u8],
         scale_up: bool,
     ) -> Result<(), String> {
-        let image = image::open(path).map_err(|e| format!("{path}: {e}"))?;
+        let image = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
         let view = self.images.get(&buffer).map_or(View::WHOLE, |i| i.view);
         self.images.insert(
             buffer,

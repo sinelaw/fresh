@@ -8015,18 +8015,26 @@ interface EditorAPI {
 	*/
 	setBufferShowCursors(bufferId: number, show: boolean): boolean;
 	/**
-	* Show a picture (a PNG file) over a buffer's pane, centred.
+	* Show a picture (PNG, JPEG, GIF, WebP or BMP) over a buffer's pane,
+	* centred.
 	* 
 	* It is shrunk to fit the pane, and enlarged to fill it when `scaleUp`
 	* is true. The terminal's own graphics (Kitty, Sixel, iTerm2) draw it
 	* where available, coloured half blocks elsewhere. It replaces any
 	* picture the buffer had, and goes when the buffer closes.
 	* 
+	* The file is read from the path's filesystem, as `readFile` reads: a
+	* `WindowPath` of a remote window is read on its host. Returns false,
+	* showing nothing, when the file cannot be read; a file that is not a
+	* picture this build decodes is reported in the status bar.
+	* 
 	* @param bufferId - the buffer whose pane shows the picture
-	* @param path - the picture's file (PNG)
+	* @param path - the picture's file: a `WindowPath` (as a file explorer
+	* or tab menu item's handler receives), a `LocalPath`, or a path of the
+	* active window
 	* @param scaleUp - also enlarge a picture smaller than the pane (default false)
 	*/
-	setBufferImage(bufferId: number, path: string, scaleUp?: boolean): boolean;
+	setBufferImage(bufferId: number, path: string | LocalPath | WindowPath | AuthorityPath, scaleUp?: boolean): boolean;
 	/**
 	* Remove the picture `setBufferImage` put over a buffer.
 	* 

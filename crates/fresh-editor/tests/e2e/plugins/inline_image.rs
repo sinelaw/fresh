@@ -20,8 +20,10 @@ async function imgOpen(): Promise<void> {
     const res = await editor.createVirtualBuffer({ name: "*picture*", readOnly: true });
     bufferId = res.bufferId;
     editor.setVirtualBufferContent(bufferId, [{ text: "under the picture\n" }]);
+    const missing = editor.setBufferImage(bufferId, editor.getCwd() + "/missing.png");
     editor.setBufferImage(bufferId, editor.getCwd() + "/red-blue.png", true);
-    editor.setStatus("img: opened with " + editor.getImageSupport()?.protocol);
+    // Short: the status bar has room for about 25 characters.
+    editor.setStatus("img: " + editor.getImageSupport()?.protocol + (missing ? " read" : " skip"));
 }
 registerHandler("img_open", imgOpen);
 
@@ -86,7 +88,8 @@ fn a_plugin_shows_part_of_a_picture_and_clears_it() {
     // would take at their own size.
     h.wait_until(|h| cells(h, RED) > 200 && cells(h, BLUE) > 200)
         .unwrap();
-    h.wait_for_screen_contains("img: opened with halfblocks")
+    // A file that cannot be read shows nothing and says so.
+    h.wait_for_screen_contains("img: halfblocks skip")
         .unwrap();
 
     // The top left corner, enlarged and widened to the pane's shape (to
@@ -132,8 +135,22 @@ fn the_image_viewer_opens_a_picture_and_zooms_into_it() {
     h.send_key(KeyCode::Char('0'), KeyModifiers::NONE).unwrap();
     h.wait_until(|h| cells(h, BLUE) > 200).unwrap();
 
+    // Show as Text: the same tab shows the file's text again, and the
+    // picture goes.
+    h.send_key(KeyCode::Char('t'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| cells(h, RED) == 0 && cells(h, BLUE) == 0)
+        .unwrap();
+    // The tab is the file's own: one tab for it, never a second one.
+    assert_eq!(h.screen_to_string().matches("red-blue.png").count(), 1);
+
+    // View as Image: the picture is back, in that tab.
+    h.run_palette_command("Image: View as Image").unwrap();
+    h.wait_until(|h| cells(h, RED) > 200 && cells(h, BLUE) > 200)
+        .unwrap();
+
     // Close: the picture goes with its tab.
     h.send_key(KeyCode::Char('q'), KeyModifiers::NONE).unwrap();
     h.wait_until(|h| cells(h, RED) == 0 && cells(h, BLUE) == 0)
         .unwrap();
+    assert!(!h.screen_to_string().contains("red-blue.png"));
 }
