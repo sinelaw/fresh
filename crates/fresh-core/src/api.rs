@@ -1780,6 +1780,10 @@ pub struct EditorStateSnapshot {
     /// `"trusted"` as "do not execute".
     #[serde(default)]
     pub workspace_trust_level: String,
+    /// How pictures are drawn on the terminal frames are made for; `None`
+    /// when this build has no image support. Read via `getImageSupport()`.
+    #[serde(default)]
+    pub image_support: Option<ImageSupport>,
     /// Whether an environment is currently active (the env-manager has set a
     /// recipe via `editor.setEnv`). Plugins read this via `editor.envActive()`
     /// to reflect activation in the status bar and re-establish file watches
@@ -1997,6 +2001,21 @@ pub struct ScreenSize {
     pub height: u16,
 }
 
+/// How the editor draws pictures (`setBufferImage`). Returned by
+/// `editor.getImageSupport()`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct ImageSupport {
+    /// `"kitty"`, `"sixel"` or `"iterm2"` (the terminal's own graphics), or
+    /// `"halfblocks"` (coloured cells: two pixels per cell).
+    pub protocol: String,
+    /// A terminal cell's width in pixels.
+    pub cell_width: u16,
+    /// A terminal cell's height in pixels.
+    pub cell_height: u16,
+}
+
 impl EditorStateSnapshot {
     pub fn new() -> Self {
         Self {
@@ -2019,6 +2038,7 @@ impl EditorStateSnapshot {
             active_window_id: WindowId(1),
             authority_label: String::new(),
             workspace_trust_level: String::new(),
+            image_support: None,
             env_active: false,
             orchestrator_mode: false,
             file_launch: false,
@@ -5626,6 +5646,29 @@ pub enum PluginCommand {
     /// buffer (e.g. for magit-style row navigation) flip this to `true` after
     /// `createBufferGroup` returns.
     SetBufferShowCursors { buffer_id: BufferId, show: bool },
+    /// Show a picture over a buffer's pane, centred and shrunk to fit (and
+    /// enlarged too with `scale_up`), or remove it with `image: None`. Drawn
+    /// with the terminal's image protocol, or half blocks.
+    ///
+    /// `image` is the file's encoded bytes (PNG, JPEG, …), read by the
+    /// plugin runtime through the path's own filesystem, as `readFile` reads:
+    /// a remote window's picture is read on its host, and the editor never
+    /// opens a path itself.
+    SetBufferImage {
+        buffer_id: BufferId,
+        image: Option<Vec<u8>>,
+        scale_up: bool,
+    },
+    /// Show only part of a buffer's picture: `x`, `y`, `w`, `h` are fractions
+    /// of its width and height (`0, 0, 1, 1` is all of it). A part smaller
+    /// than the whole is enlarged to fill the pane, widened to its shape.
+    SetBufferImageView {
+        buffer_id: BufferId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
     /// Pick a virtual buffer's grammar by name. `name` is resolved the
     /// same way a virtual buffer's own name is, so an extension in it
     /// (`"stream.diff"`) selects the grammar.

@@ -420,6 +420,11 @@ impl Editor {
         // lockstep with the canonical seat.
         snapshot.authority_label = self.authority().display_label.clone();
 
+        #[cfg(feature = "images")]
+        {
+            snapshot.image_support = Some(self.inline_images.support());
+        }
+
         // Surface the active project's Workspace Trust level so plugins that
         // run repo-controlled work can gate on it.
         snapshot.workspace_trust_level = self
@@ -1003,6 +1008,33 @@ impl Editor {
             }
             PluginCommand::SetBufferShowCursors { buffer_id, show } => {
                 self.handle_set_buffer_show_cursors(buffer_id, show);
+            }
+            PluginCommand::SetBufferImage {
+                buffer_id,
+                image,
+                scale_up,
+            } => {
+                self.handle_set_buffer_image(buffer_id, image, scale_up);
+            }
+            PluginCommand::SetBufferImageView {
+                buffer_id,
+                x,
+                y,
+                w,
+                h,
+            } => {
+                #[cfg(feature = "images")]
+                {
+                    let view = super::inline_image::View::new(x, y, w, h);
+                    if !self.inline_images.set_view(buffer_id, view) {
+                        tracing::warn!("setBufferImageView: {buffer_id:?} has no picture");
+                    }
+                }
+                #[cfg(not(feature = "images"))]
+                {
+                    let _ = (buffer_id, x, y, w, h);
+                    tracing::warn!("setBufferImageView: this build has no image support");
+                }
             }
 
             // ==================== View/Layout Commands ====================
@@ -5320,6 +5352,30 @@ impl Editor {
             }
         } else {
             tracing::warn!("SetBufferDiffGutter: buffer {:?} not found", buffer_id);
+        }
+    }
+
+    #[cfg_attr(not(feature = "images"), allow(unused_variables))]
+    fn handle_set_buffer_image(
+        &mut self,
+        buffer_id: BufferId,
+        image: Option<Vec<u8>>,
+        scale_up: bool,
+    ) {
+        #[cfg(feature = "images")]
+        match image {
+            Some(bytes) => {
+                if let Err(e) = self.inline_images.set(buffer_id, &bytes, scale_up) {
+                    tracing::warn!("setBufferImage: {e}");
+                    self.set_status_message(format!("setBufferImage: {e}"));
+                }
+            }
+            None => self.inline_images.remove(buffer_id),
+        }
+        #[cfg(not(feature = "images"))]
+        {
+            let _ = (buffer_id, image, scale_up);
+            tracing::warn!("setBufferImage: this build has no image support");
         }
     }
 
