@@ -483,25 +483,40 @@ impl ApiClient {
                 );
                 Ok(m)
             }
-            "file.rename" => {
-                let from = msg
-                    .get("from")
+            // Files are created, renamed and deleted exactly as the explorer
+            // does it, through its own operations: a name that is `.`/`..`,
+            // absolute, outside the project or already taken is refused (a
+            // rename or create never replaces a file); a rename moves the open
+            // buffers with it; a delete goes to the trash and closes what was
+            // open from there. The outcome is reported in the status bar.
+            "file.create" => {
+                let parent = msg.get("in").and_then(Value::as_str).ok_or("missing in")?;
+                let name = msg
+                    .get("name")
                     .and_then(Value::as_str)
-                    .ok_or("missing from")?;
-                let to = msg.get("to").and_then(Value::as_str).ok_or("missing to")?;
-                editor
-                    .engine_rename(std::path::Path::new(from), std::path::Path::new(to))
-                    .map_err(|e| e.to_string())?;
+                    .ok_or("missing name")?;
+                editor.perform_file_explorer_create(
+                    std::path::PathBuf::from(parent),
+                    flag(msg, "dir"),
+                    name.to_string(),
+                );
                 ok()
             }
-            "file.create" => {
+            "file.rename" => {
                 let path = msg
                     .get("path")
                     .and_then(Value::as_str)
                     .ok_or("missing path")?;
-                editor
-                    .engine_create(std::path::Path::new(path), flag(msg, "dir"))
-                    .map_err(|e| e.to_string())?;
+                let name = msg
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or("missing name")?;
+                let path = std::path::PathBuf::from(path);
+                let original = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .ok_or("no name to rename")?;
+                editor.perform_file_explorer_rename(path, original, name.to_string());
                 ok()
             }
             "file.delete" => {
@@ -510,8 +525,7 @@ impl ApiClient {
                     .and_then(Value::as_str)
                     .ok_or("missing path")?;
                 editor
-                    .engine_delete(std::path::Path::new(path))
-                    .map_err(|e| e.to_string())?;
+                    .perform_file_explorer_delete(std::path::PathBuf::from(path), flag(msg, "dir"));
                 ok()
             }
             "keys.open" => {
@@ -1787,6 +1801,86 @@ mod tests {
         assert!(
             r["error"].as_str().is_some_and(|e| e.contains("gone")),
             "a row the menu no longer has is refused, not another run: {r}"
+        );
+    }
+
+    #[test]
+    fn file_operations_are_the_explorers_and_never_replace_a_file() {
+        let (dir, mut ed) = editor_with("precious\n");
+        let mut c = ApiClient::default();
+        c.push(&mut ed);
+        let root = dir.path().to_string_lossy().to_string();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&b, "other\n").unwrap();
+        // "New File" with a taken name leaves the file as it was.
+        call(
+            &mut c,
+            &mut ed,
+            json!({"op": "file.create", "in": root, "name": "a.txt", "dir": false}),
+        );
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "precious\n");
+        // A rename onto a taken name is refused; both files stay.
+        call(
+            &mut c,
+            &mut ed,
+            json!({"op": "file.rename", "path": b.to_string_lossy(), "name": "a.txt"}),
+        );
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "precious\n");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "other\n");
+        // Renaming the open file moves its buffer with it.
+        call(
+            &mut c,
+            &mut ed,
+            json!({"op": "file.rename", "path": a.to_string_lossy(), "name": "c.txt"}),
+        );
+        let c_path = dir.path().join("c.txt");
+        assert!(c_path.exists() && !a.exists(), "renamed");
+        let open = ed.engine_buffers();
+        assert!(
+            open.as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["path"].as_str().is_some_and(|p| p.ends_with("c.txt"))),
+            "the open buffer follows the rename: {open}"
+        );
+    }
+
+    #[test]
+    fn a_workspace_switch_from_a_view_leaves_both_workspaces_panes_whole() {
+        let text: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+        let (dir, mut ed) = editor_with(&text);
+        let home = ed.active_window_id();
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).expect("mkdir");
+        ed.create_window_at(other.canonicalize().unwrap(), "other".into());
+        ed.set_active_window(home);
+        let mut c = ApiClient::default();
+        c.push(&mut ed);
+        let (view, _) = open_view(&mut c, &mut ed, 60, 10);
+        let own = ed.active_cursors().primary().position;
+        for _ in 0..5 {
+            c.handle(
+                &mut ed,
+                &json!({"op": "key", "view": view, "key": "ArrowDown"}),
+            );
+        }
+        assert_eq!(
+            ed.active_cursors().primary().position,
+            own,
+            "the client's cursor is its own"
+        );
+        // The action switches workspaces while the client's state is in the pane.
+        c.handle(
+            &mut ed,
+            &json!({"op": "action", "view": view, "name": "next_window"}),
+        );
+        assert_ne!(ed.active_window_id(), home, "switched");
+        ed.set_active_window(home);
+        assert_eq!(
+            ed.active_cursors().primary().position,
+            own,
+            "the pane's own cursor is back, not the client's"
         );
     }
 

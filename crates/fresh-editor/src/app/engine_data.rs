@@ -737,47 +737,6 @@ impl Editor {
         ))
     }
 
-    /// Rename (or move) a file or directory.
-    pub fn engine_rename(
-        &self,
-        from: &std::path::Path,
-        to: &std::path::Path,
-    ) -> anyhow::Result<()> {
-        use crate::model::host_path::HostPathBuf;
-        let (a, b) = (
-            HostPathBuf::from_path_buf(from.to_path_buf()),
-            HostPathBuf::from_path_buf(to.to_path_buf()),
-        );
-        self.authority()
-            .filesystem
-            .rename(a.as_host_path(), b.as_host_path())?;
-        Ok(())
-    }
-
-    /// Create an empty file, or a directory.
-    pub fn engine_create(&self, path: &std::path::Path, dir: bool) -> anyhow::Result<()> {
-        let p = crate::model::host_path::HostPathBuf::from_path_buf(path.to_path_buf());
-        let fs = &self.authority().filesystem;
-        if dir {
-            fs.create_dir(p.as_host_path())?;
-        } else {
-            fs.write_file(p.as_host_path(), b"")?;
-        }
-        Ok(())
-    }
-
-    /// Delete a file, or an empty directory.
-    pub fn engine_delete(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let p = crate::model::host_path::HostPathBuf::from_path_buf(path.to_path_buf());
-        let fs = &self.authority().filesystem;
-        if fs.is_dir(p.as_host_path())? {
-            fs.remove_dir(p.as_host_path())?;
-        } else {
-            fs.remove_file(p.as_host_path())?;
-        }
-        Ok(())
-    }
-
     /// Drop `buffer`'s tab, dragged from `source`, onto `target`: into its
     /// tab bar (`zone` "bar", before tab `index` or at the end), its middle
     /// ("center"), or one of its sides, which splits it ("left", "right",

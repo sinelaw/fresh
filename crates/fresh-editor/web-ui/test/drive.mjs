@@ -310,6 +310,32 @@ await test("the explorer is driven from the keyboard", async (p) => {
   await until(() => p.$eval(".tab.active .tab-name", (e) => e.textContent === "notes.md"), "notes.md opened");
 });
 
+await test("the explorer's menu creates and renames files through the core", async (p) => {
+  // The project's files outlive /reset, so the case works on a file it made.
+  const pick = async (row, label) => {
+    await p.click(`#explorer .ex-row:has-text('${row}')`, { button: "right" });
+    await p.click(`.dropdown.context .mlabel:text-is("${label}")`);
+    await p.waitForSelector(".ask-input");
+  };
+  const name = `made-${Date.now()}.txt`;
+  await pick("notes.md", "New File…");
+  await p.fill(".ask-input", name);
+  await p.press(".ask-input", "Enter");
+  await until(() => p.$eval(".tab.active .tab-name", (e, n) => e.textContent === n, name), "the new file opened");
+  await until(() => p.$(`#explorer .ex-row:has-text('${name}')`), "the new file listed");
+  // A name that is taken is refused, and nothing is replaced.
+  await pick(name, "Rename…");
+  await p.fill(".ask-input", "notes.md");
+  await p.press(".ask-input", "Enter");
+  await until(() => p.$(`#explorer .ex-row:has-text('${name}')`), "the new file kept");
+  await pick(name, "Rename…");
+  await p.fill(".ask-input", "renamed-" + name);
+  await p.press(".ask-input", "Enter");
+  await until(() => p.$(`#explorer .ex-row:has-text('renamed-${name}')`), "the renamed file listed");
+  await until(() => p.$eval(".tab.active .tab-name", (e, n) => e.textContent === "renamed-" + n, name), "its tab follows");
+  await until(async () => (await p.$$eval("#explorer .ex-row", (r) => r.map((x) => x.textContent))).every((t) => !t.includes(name) || t.includes("renamed-")), "the old name gone");
+});
+
 await test("a file dropped from the computer opens as a named buffer", async (p) => {
   await p.evaluate(() => {
     const dt = new DataTransfer();

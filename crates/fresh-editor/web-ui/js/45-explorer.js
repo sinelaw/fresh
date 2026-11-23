@@ -94,16 +94,16 @@ function entryMenu(ev, path, isDir, parent) {
     { label: "New File…", run: async () => {
       const name = await askText("New file in " + baseName(dir), "");
       if (!name) return;
-      const p = joinPath(dir, name);
-      await api.call("file.create", { path: p, dir: false }).catch(showError);
+      // The core creates it as the explorer does (refusing a name that is
+      // taken) and opens it.
+      await api.call("file.create", { in: dir, name, dir: false }).catch(showError);
       explorer.expanded.add(dir);
       await refreshDir(dir);
-      api.send("file.open", { path: p });
     } },
     { label: "New Folder…", run: async () => {
       const name = await askText("New folder in " + baseName(dir), "");
       if (!name) return;
-      await api.call("file.create", { path: joinPath(dir, name), dir: true }).catch(showError);
+      await api.call("file.create", { in: dir, name, dir: true }).catch(showError);
       explorer.expanded.add(dir);
       await refreshDir(dir);
     } },
@@ -112,12 +112,12 @@ function entryMenu(ev, path, isDir, parent) {
     items.push({ label: "Rename…", run: async () => {
       const name = await askText("Rename " + baseName(path), baseName(path));
       if (!name || name === baseName(path)) return;
-      await api.call("file.rename", { from: path, to: joinPath(parent, name) }).catch(showError);
+      await api.call("file.rename", { path, name }).catch(showError);
       await refreshDir(parent);
     } });
     items.push({ label: "Delete", run: async () => {
       if (!(await askConfirm(`Delete ${baseName(path)}?`, isDir ? "The folder must be empty." : "This cannot be undone.", "Delete"))) return;
-      await api.call("file.delete", { path }).catch(showError);
+      await api.call("file.delete", { path, dir: isDir }).catch(showError);
       await refreshDir(parent);
     } });
   }

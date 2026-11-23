@@ -183,7 +183,12 @@ impl Editor {
             .pane_handle_for(leaf)
             .swap_view(&mut pane.rows);
         let out = f(self);
-        let win = self.active_window_mut();
+        // Swapped back into the window swapped out of: `f` may have switched
+        // workspaces (`next_window` from a web view), and the active window
+        // is then another, whose same-numbered pane is not this one.
+        let Some(win) = self.windows.get_mut(&pane.window) else {
+            return Some(out);
+        };
         win.pane_handle_for(leaf).swap_view(&mut pane.rows);
         win.buffers
             .with_buffer_and_split(buffer, leaf, |state, view| {
@@ -409,6 +414,11 @@ impl Editor {
         pane: &mut ClientPane,
         f: impl FnOnce(&mut Editor) -> T,
     ) -> Option<T> {
+        // A view of a workspace switched away from is refused before
+        // anything moves: its leaf id may name another pane in the active one.
+        if pane.window != self.active_window {
+            return None;
+        }
         let leaf = pane.leaf;
         let buffer = self.active_window().pane_buffer(leaf)?;
         pane.fit_terminal = true;
