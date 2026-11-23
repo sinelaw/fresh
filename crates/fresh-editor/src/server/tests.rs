@@ -1846,7 +1846,9 @@ mod integration_tests {
         api.send(serde_json::json!({"op": "commands.list", "id": 0}));
         let layout = api.until(|v| v["ev"] == "layout");
         let leaf = layout["layout"]["active"].clone();
-        api.send(serde_json::json!({"id": 1, "op": "view.open", "leaf": leaf, "width": 60, "height": 10}));
+        // A pane is named with its window (pane ids are numbered per window).
+        let window = layout["layout"]["window"].clone();
+        api.send(serde_json::json!({"id": 1, "op": "view.open", "window": window, "leaf": leaf, "width": 60, "height": 10}));
         let opened = api.until(|v| v["re"] == 1);
         let view = opened["view"].clone();
         assert!(view.is_u64(), "a view: {opened}");
