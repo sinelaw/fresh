@@ -2028,7 +2028,7 @@
   "settings.field.sidebar.accordion": "Acordeão",
   "settings.field.sidebar.accordion_desc": "Abre as seções livremente (`free`, padrão) ou uma de cada vez (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Ir ao fim com nova saída",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Volta ao terminal ao vivo quando chega nova saída enquanto você está no histórico de rolagem (padrão: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Volta ao terminal ao vivo quando chega nova saída enquanto a visualização do histórico de rolagem está no fim (padrão: true). Uma visualização rolada para cima no histórico mantém sua posição; rolar de volta até o fim retoma o acompanhamento.",
   "settings.field.terminal.mouse_drag_selects": "Arrastar o mouse seleciona",
   "settings.field.terminal.mouse_drag_selects_desc": "Arrastar em um terminal seleciona texto para Ctrl+C, passando para o histórico de rolagem (Ctrl+Space volta). Um clique apenas dá foco. Padrão: true",
   "settings.field.terminal.mouse_forwarding": "Encaminhamento do mouse",

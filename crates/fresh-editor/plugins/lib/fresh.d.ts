@@ -5568,8 +5568,9 @@ interface StatusBarConfig {
 	*/
 interface TerminalConfig {
 		/**
-		* Jump back to the live terminal when new output arrives while you're in
-		* scrollback (default: true).
+		* Return to the live terminal when new output arrives while your
+		* scrollback view is at its end (default: true). A view scrolled up into
+		* history keeps its place; scrolling back to the end resumes.
 		*
 		* Default: `true`
 		*/

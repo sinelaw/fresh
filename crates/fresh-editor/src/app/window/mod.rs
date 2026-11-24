@@ -296,6 +296,97 @@ impl TerminalBuffer {
     }
 }
 
+/// Scroll one view of a buffer by `delta` lines (negative = up, positive =
+/// down) — the body of [`Window::scroll_split_by_lines`]. After scrolling,
+/// skips ensure_visible and snaps the viewport top to a fold boundary if the
+/// new top byte landed inside a collapsed fold.
+fn scroll_view_by_lines(
+    state: &mut crate::state::EditorState,
+    view_state: &mut crate::view::split::BufferViewState,
+    delta: i32,
+) {
+    let top_byte_before = view_state.viewport.top_byte();
+    if let Some(rows) = flat_scroll_rows(view_state, state) {
+        view_state
+            .viewport
+            .scroll_flat_rows(&rows, &state.buffer, delta as isize);
+        view_state.viewport.set_skip_ensure_visible();
+        return;
+    }
+    let soft_breaks = state.collect_soft_break_positions(view_state.is_page_view());
+    let virtual_lines = state.collect_virtual_line_positions(view_state.is_page_view());
+    // Resolved before the mutable buffer borrow below: the
+    // row-space path needs only `&Buffer`.
+    let scroll_geometry = wrap_scroll_geometry(view_state, state);
+    let hidden_ranges = collapsed_hidden_ranges(view_state, state);
+    if let Some(geometry) = scroll_geometry {
+        // Row arithmetic off the wrap index: no text is read, so a
+        // wheel event on a file that is one enormous line costs the
+        // same as on any other. The byte-walking fallback below only
+        // runs before the index has been built for this geometry.
+        let index = state
+            .wrap_indices
+            .get(&geometry)
+            .expect("geometry resolved from a built index");
+        view_state
+            .viewport
+            .scroll_visual_rows(index, &state.buffer, delta as isize);
+    } else if delta < 0 {
+        let lines_to_scroll = delta.unsigned_abs() as usize;
+        view_state.viewport.scroll_up(
+            &mut state.buffer,
+            &soft_breaks,
+            &virtual_lines,
+            &hidden_ranges,
+            lines_to_scroll,
+        );
+    } else {
+        let lines_to_scroll = delta as usize;
+        view_state.viewport.scroll_down(
+            &mut state.buffer,
+            &soft_breaks,
+            &virtual_lines,
+            &hidden_ranges,
+            lines_to_scroll,
+        );
+    }
+    view_state.viewport.set_skip_ensure_visible();
+
+    let buffer = &mut state.buffer;
+    // Resolved first, from the folds and viewport as they are;
+    // the viewport is written after.
+    let snap_to = (!view_state.folds.is_empty())
+        .then(|| {
+            let top_line = buffer.get_line_number(view_state.viewport.top_byte());
+            let range = view_state
+                .folds
+                .resolved_ranges(buffer, &state.marker_list)
+                .into_iter()
+                .find(|r| top_line >= r.start_line && top_line <= r.end_line)?;
+            let target_line = if delta >= 0 {
+                range.end_line.saturating_add(1)
+            } else {
+                range.header_line
+            };
+            Some(
+                buffer
+                    .line_start_offset(target_line)
+                    .unwrap_or_else(|| buffer.len()),
+            )
+        })
+        .flatten();
+    if let Some(target_byte) = snap_to {
+        view_state.viewport.set_top_byte(target_byte);
+        view_state.viewport.set_top_view_line_offset(0);
+    }
+    tracing::trace!(
+        "scroll_split_by_lines: delta={}, top_byte {} -> {}",
+        delta,
+        top_byte_before,
+        view_state.viewport.top_byte()
+    );
+}
+
 /// An LSP completion candidate together with the server that offered it.
 ///
 /// A language can be served by several servers at once and their results
@@ -2316,88 +2407,27 @@ impl Window {
     pub fn scroll_split_by_lines(&mut self, buffer_id: BufferId, leaf_id: LeafId, delta: i32) {
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
-                let top_byte_before = view_state.viewport.top_byte();
-                if let Some(rows) = flat_scroll_rows(view_state, state) {
-                    view_state
-                        .viewport
-                        .scroll_flat_rows(&rows, &state.buffer, delta as isize);
-                    view_state.viewport.set_skip_ensure_visible();
-                    return;
-                }
-                let soft_breaks = state.collect_soft_break_positions(view_state.is_page_view());
-                let virtual_lines = state.collect_virtual_line_positions(view_state.is_page_view());
-                // Resolved before the mutable buffer borrow below: the
-                // row-space path needs only `&Buffer`.
-                let scroll_geometry = wrap_scroll_geometry(view_state, state);
-                let hidden_ranges = collapsed_hidden_ranges(view_state, state);
-                if let Some(geometry) = scroll_geometry {
-                    // Row arithmetic off the wrap index: no text is read, so a
-                    // wheel event on a file that is one enormous line costs the
-                    // same as on any other. The byte-walking fallback below only
-                    // runs before the index has been built for this geometry.
-                    let index = state
-                        .wrap_indices
-                        .get(&geometry)
-                        .expect("geometry resolved from a built index");
-                    view_state
-                        .viewport
-                        .scroll_visual_rows(index, &state.buffer, delta as isize);
-                } else if delta < 0 {
-                    let lines_to_scroll = delta.unsigned_abs() as usize;
-                    view_state.viewport.scroll_up(
-                        &mut state.buffer,
-                        &soft_breaks,
-                        &virtual_lines,
-                        &hidden_ranges,
-                        lines_to_scroll,
-                    );
-                } else {
-                    let lines_to_scroll = delta as usize;
-                    view_state.viewport.scroll_down(
-                        &mut state.buffer,
-                        &soft_breaks,
-                        &virtual_lines,
-                        &hidden_ranges,
-                        lines_to_scroll,
-                    );
-                }
-                view_state.viewport.set_skip_ensure_visible();
-
-                let buffer = &mut state.buffer;
-                // Resolved first, from the folds and viewport as they are;
-                // the viewport is written after.
-                let snap_to = (!view_state.folds.is_empty())
-                    .then(|| {
-                        let top_line = buffer.get_line_number(view_state.viewport.top_byte());
-                        let range = view_state
-                            .folds
-                            .resolved_ranges(buffer, &state.marker_list)
-                            .into_iter()
-                            .find(|r| top_line >= r.start_line && top_line <= r.end_line)?;
-                        let target_line = if delta >= 0 {
-                            range.end_line.saturating_add(1)
-                        } else {
-                            range.header_line
-                        };
-                        Some(
-                            buffer
-                                .line_start_offset(target_line)
-                                .unwrap_or_else(|| buffer.len()),
-                        )
-                    })
-                    .flatten();
-                if let Some(target_byte) = snap_to {
-                    view_state.viewport.set_top_byte(target_byte);
-                    view_state.viewport.set_top_view_line_offset(0);
-                }
-                tracing::trace!(
-                    "scroll_split_by_lines: delta={}, top_byte {} -> {}",
-                    delta,
-                    top_byte_before,
-                    view_state.viewport.top_byte()
-                );
+                scroll_view_by_lines(state, view_state, delta)
             });
         self.scroll_sync_driver = Some(leaf_id);
+    }
+
+    /// Whether `leaf_id`'s view of `buffer_id` is scrolled all the way down:
+    /// one more line down would not move it. Asks the same motion the wheel
+    /// makes, on a copy of the viewport, so "the end" is exactly where
+    /// scrolling stops — wrapping, folds and the last-line clamp included.
+    /// `false` when the split doesn't show the buffer.
+    pub fn split_view_at_end(&mut self, buffer_id: BufferId, leaf_id: LeafId) -> bool {
+        self.buffers
+            .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
+                let saved = view_state.viewport.clone();
+                scroll_view_by_lines(state, view_state, 1);
+                let at_end = view_state.viewport.top_byte() == saved.top_byte()
+                    && view_state.viewport.top_view_line_offset() == saved.top_view_line_offset();
+                view_state.viewport = saved;
+                at_end
+            })
+            .unwrap_or(false)
     }
 
     /// Scroll the Live Grep overlay's preview pane by `delta` lines

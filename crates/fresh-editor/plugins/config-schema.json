@@ -1413,7 +1413,7 @@
       "type": "object",
       "properties": {
         "jump_to_end_on_output": {
-          "description": "Jump back to the live terminal when new output arrives while you're in\nscrollback (default: true).",
+          "description": "Return to the live terminal when new output arrives while your\nscrollback view is at its end (default: true). A view scrolled up into\nhistory keeps its place; scrolling back to the end resumes.",
           "type": "boolean",
           "default": true
         },

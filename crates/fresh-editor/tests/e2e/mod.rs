@@ -145,6 +145,7 @@ pub mod issue_3074_terminal_name_restore;
 pub mod issue_3077_tab_padding_markers;
 pub mod issue_3079_guide_and_tab_marker;
 pub mod issue_3090_angle_brackets_not_rainbow;
+pub mod issue_3138_terminal_wheel_scrollback;
 pub mod issue_3148_block_selection_tabs;
 pub mod issue_3150_block_selection_offset;
 pub mod issue_3189_multi_workspace_quit;

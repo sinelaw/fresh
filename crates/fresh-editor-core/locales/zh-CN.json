@@ -2021,7 +2021,7 @@
   "settings.field.sidebar.accordion": "手风琴模式",
   "settings.field.sidebar.accordion_desc": "可同时展开多个分区（`free`，默认），或一次只展开一个（`exclusive`）。",
   "settings.field.terminal.jump_to_end_on_output": "有输出时跳到末尾",
-  "settings.field.terminal.jump_to_end_on_output_desc": "在回滚缓冲区中浏览时，若有新输出到达，则跳回实时终端（默认：true）。",
+  "settings.field.terminal.jump_to_end_on_output_desc": "当回滚视图位于末尾时，若有新输出到达，则跳回实时终端（默认：true）。向上滚动查看历史的视图会保持位置；滚动回末尾即恢复跟随。",
   "settings.field.terminal.mouse_drag_selects": "鼠标拖动选择",
   "settings.field.terminal.mouse_drag_selects_desc": "在终端中拖动会选择文本以供 Ctrl+C 复制，并切换到回滚缓冲区（按 Ctrl+Space 返回）。单击只会聚焦。默认：true",
   "settings.field.terminal.mouse_forwarding": "鼠标转发",

@@ -2021,7 +2021,7 @@
   "settings.field.sidebar.accordion": "アコーディオン",
   "settings.field.sidebar.accordion_desc": "セクションを自由に開く（`free`、既定）か、一度に 1 つだけ開く（`exclusive`）かを指定します。",
   "settings.field.terminal.jump_to_end_on_output": "出力時に末尾へ移動",
-  "settings.field.terminal.jump_to_end_on_output_desc": "スクロールバック中に新しい出力があると、ライブのターミナル表示に戻ります（既定: true）。",
+  "settings.field.terminal.jump_to_end_on_output_desc": "スクロールバックの表示が末尾にあるときに新しい出力があると、ライブのターミナル表示に戻ります（既定: true）。履歴を上にスクロールした表示はその位置を保ち、末尾までスクロールし直すと追従を再開します。",
   "settings.field.terminal.mouse_drag_selects": "ドラッグで選択",
   "settings.field.terminal.mouse_drag_selects_desc": "ターミナル内でドラッグすると Ctrl+C 用にテキストを選択し、スクロールバックに切り替わります（Ctrl+Space で戻ります）。クリックはフォーカスのみ行います。既定: true",
   "settings.field.terminal.mouse_forwarding": "マウスイベントの転送",

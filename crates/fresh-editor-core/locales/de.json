@@ -2028,7 +2028,7 @@
   "settings.field.sidebar.accordion": "Akkordeon",
   "settings.field.sidebar.accordion_desc": "Abschnitte frei öffnen (`free`, Standard) oder nur einzeln (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Bei Ausgabe ans Ende springen",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Zum Live-Terminal zurückspringen, wenn neue Ausgabe eintrifft, während der Scrollback angezeigt wird (Standard: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Zum Live-Terminal zurückkehren, wenn neue Ausgabe eintrifft, während die Scrollback-Ansicht am Ende steht (Standard: true). Eine in den Verlauf hochgescrollte Ansicht behält ihre Position; zurück ans Ende scrollen setzt das Folgen fort.",
   "settings.field.terminal.mouse_drag_selects": "Auswahl per Mausziehen",
   "settings.field.terminal.mouse_drag_selects_desc": "Ziehen in einem Terminal wählt Text für Ctrl+C aus und wechselt dabei in den Scrollback (Ctrl+Space kehrt zurück). Ein Klick setzt nur den Fokus. Standard: true",
   "settings.field.terminal.mouse_forwarding": "Mausweiterleitung",

@@ -1060,8 +1060,15 @@ impl Editor {
         // Terminal output received - check if we should auto-jump back to terminal mode
         tracing::trace!("Terminal output received for {}", terminal);
 
-        // If the focused split is viewing this terminal in scrollback and
-        // jump_to_end_on_output is enabled, snap it back to the live grid.
+        // If the focused split is viewing this terminal in scrollback at its
+        // end and jump_to_end_on_output is enabled, snap it back to the live
+        // grid, so it keeps following the output.
+        //
+        // Only a view at its end. One the user scrolled up into history
+        // (wheel, scrollbar, PageUp) holds its place, as in any terminal
+        // emulator; scrolling back down to the end resumes following
+        // (fresh#3138). Yanking it made history unreadable under a program
+        // that keeps printing — an agent CLI streaming at the normal screen.
         //
         // Only while the editor pane owns the keyboard. The file explorer, a
         // prompt or a popup can hold focus with this terminal still the active
@@ -1069,38 +1076,18 @@ impl Editor {
         // late shell prompt used to steal focus from an explorer the user had
         // just clicked into.
         //
-        // ...but never yank the view away from a text selection: a drag that
-        // just started on the live grid (`PointerDrag::TerminalPress`), an
-        // in-progress selection drag, or a completed selection waiting to be
-        // copied all pin the scrollback view. A chatty program would
-        // otherwise destroy the selection the instant its next output
-        // arrived — the exact case drag-to-select exists for. Output keeps
-        // streaming underneath; the auto-jump resumes once the selection is
-        // gone (Ctrl+Space, typing, or a click that collapses it).
-        let selection_active = {
-            let win = self.active_window();
-            matches!(
-                win.mouse_state.drag,
-                Some(
-                    crate::app::types::PointerDrag::Selection(_)
-                        | crate::app::types::PointerDrag::TerminalPress { .. }
-                )
-            ) || (win.buffers.splits().is_some() && {
-                let c = win.focused_view().cursors.primary();
-                c.anchor.is_some_and(|a| a != c.position)
-            })
-        };
-        if self.config.terminal.jump_to_end_on_output
-            && self.active_window().key_context == crate::input::keybindings::KeyContext::Normal
-            && !selection_active
-        {
-            // Check if active buffer is this terminal
-            if let Some(active_terminal_id) =
-                self.active_window().get_terminal_id(self.active_buffer())
+        // ...and never away from a text selection (see
+        // `terminal_selection_pins_view`): a chatty program would otherwise
+        // destroy the selection the instant its next output arrived — the
+        // exact case drag-to-select exists for. Output keeps streaming
+        // underneath; the auto-jump resumes once the selection is gone
+        // (Ctrl+Space, typing, or a click that collapses it).
+        if self.config.terminal.jump_to_end_on_output {
+            let active = self.active_buffer();
+            if self.active_window().get_terminal_id(active) == Some(terminal_id)
+                && self.focused_terminal_scrollback_at_end(active)
             {
-                if active_terminal_id == terminal_id {
-                    self.enter_terminal_mode();
-                }
+                self.enter_terminal_mode();
             }
         }
 

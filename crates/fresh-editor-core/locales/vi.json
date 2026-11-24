@@ -2021,7 +2021,7 @@
   "settings.field.sidebar.accordion": "Chế độ accordion",
   "settings.field.sidebar.accordion_desc": "Mở các phần tự do (`free`, mặc định) hoặc mỗi lần chỉ một phần (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Nhảy xuống cuối khi có đầu ra",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Nhảy về cuối terminal khi có đầu ra mới trong lúc bạn đang xem scrollback (mặc định: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Quay về terminal trực tiếp khi có đầu ra mới trong lúc khung xem scrollback đang ở cuối (mặc định: true). Khung xem đã cuộn lên trong lịch sử sẽ giữ nguyên vị trí; cuộn xuống lại đến cuối sẽ tiếp tục theo dõi.",
   "settings.field.terminal.mouse_drag_selects": "Kéo chuột để chọn",
   "settings.field.terminal.mouse_drag_selects_desc": "Kéo chuột trong terminal sẽ chọn văn bản để sao chép bằng Ctrl+C, đồng thời chuyển sang scrollback (Ctrl+Space để quay lại). Nhấp chuột chỉ chuyển focus. Mặc định: true",
   "settings.field.terminal.mouse_forwarding": "Chuyển tiếp chuột",

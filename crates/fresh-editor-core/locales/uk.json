@@ -2042,7 +2042,7 @@
   "settings.field.sidebar.accordion": "Акордеон",
   "settings.field.sidebar.accordion_desc": "Відкривати секції довільно (`free`, типово) або лише по одній (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "До кінця при новому виводі",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Повертатися до живого виводу термінала, коли надходить новий вивід, поки ви переглядаєте історію прокрутки (типово: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Повертатися до живого виводу термінала, коли надходить новий вивід, поки перегляд історії прокрутки знаходиться в кінці (типово: true). Перегляд, прокручений угору історією, лишається на місці; прокрутка назад до кінця відновлює стеження.",
   "settings.field.terminal.mouse_drag_selects": "Виділення перетягуванням",
   "settings.field.terminal.mouse_drag_selects_desc": "Перетягування в терміналі виділяє текст для Ctrl+C і перемикає в історію прокрутки (Ctrl+Space повертає назад). Клацання лише передає фокус. Типово: true",
   "settings.field.terminal.mouse_forwarding": "Передавання подій миші",

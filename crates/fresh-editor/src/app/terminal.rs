@@ -2135,6 +2135,65 @@ impl Editor {
         }
     }
 
+    /// A wheel-down that leaves the focused terminal's scrollback view at its
+    /// end resumes following the live grid: the bottom of the snapshot is
+    /// where the grid was when the view was taken, and the grid has moved on
+    /// since — this is how a terminal emulator's scrolled-up view returns to
+    /// the live output.
+    ///
+    /// Only for the focused split, and only while the editor pane owns the
+    /// keyboard — [`Editor::enter_terminal_mode`] acts on the focused split
+    /// and takes the keyboard, so resuming while the file explorer or a
+    /// prompt has focus would steal it. Never for a terminal whose process
+    /// has exited (there is no live grid to return to), nor while a
+    /// selection is pending (resuming would discard it).
+    pub(crate) fn resume_terminal_at_scrollback_end(&mut self, pane: LeafId, buffer_id: BufferId) {
+        let resume = self.focused_terminal_scrollback_at_end(buffer_id)
+            && self.active_window().effective_active_split() == pane;
+        if resume {
+            self.enter_terminal_mode();
+        }
+    }
+
+    /// Whether the focused split is reading terminal `buffer_id`'s scrollback
+    /// with its view at the end — not scrolled up into history — while the
+    /// editor pane owns the keyboard and nothing pins the view (a pending
+    /// selection, an exited process). Such a view is following the terminal
+    /// as far as the user is concerned, so returning it to the live grid
+    /// loses nothing; a view scrolled up is one the user is reading.
+    pub(crate) fn focused_terminal_scrollback_at_end(&mut self, buffer_id: BufferId) -> bool {
+        let win = self.active_window();
+        let leaf = win.effective_active_split();
+        if win.key_context != crate::input::keybindings::KeyContext::Normal
+            || win.active_buffer() != buffer_id
+            || !win.split_terminal_scrollback(leaf, buffer_id)
+            || win.exited_terminals.contains_key(&buffer_id)
+            || self.terminal_selection_pins_view()
+        {
+            return false;
+        }
+        self.active_window_mut().split_view_at_end(buffer_id, leaf)
+    }
+
+    /// Whether a text selection in the focused pane pins its terminal view:
+    /// a drag that just started on the live grid
+    /// (`PointerDrag::TerminalPress`), an in-progress selection drag, or a
+    /// completed selection waiting to be copied. Resuming the live grid
+    /// would destroy it — the exact case drag-to-select exists for.
+    pub(crate) fn terminal_selection_pins_view(&self) -> bool {
+        let win = self.active_window();
+        matches!(
+            win.mouse_state.drag,
+            Some(
+                crate::app::types::PointerDrag::Selection(_)
+                    | crate::app::types::PointerDrag::TerminalPress { .. }
+            )
+        ) || (win.buffers.splits().is_some() && {
+            let c = win.focused_view().cursors.primary();
+            c.anchor.is_some_and(|a| a != c.position)
+        })
+    }
+
     /// Get terminal content for rendering
     pub fn get_terminal_content(
         &self,

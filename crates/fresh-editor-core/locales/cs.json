@@ -2035,7 +2035,7 @@
   "settings.field.sidebar.accordion": "Akordeon",
   "settings.field.sidebar.accordion_desc": "Otevírat sekce libovolně (`free`, výchozí) nebo jen jednu najednou (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Skočit na konec při výstupu",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Skočit zpět na živý terminál, když přijde nový výstup, zatímco procházíte historii (scrollback) (výchozí: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Vrátit se na živý terminál, když přijde nový výstup a zobrazení historie (scrollback) je na svém konci (výchozí: true). Zobrazení posunuté nahoru do historie zůstane na místě; posunutím zpět na konec se obnoví.",
   "settings.field.terminal.mouse_drag_selects": "Tažení myší vybírá",
   "settings.field.terminal.mouse_drag_selects_desc": "Tažení v terminálu vybírá text pro Ctrl+C a přepne do historie (scrollback) (Ctrl+Space vrací zpět). Kliknutí jen zaměří. Výchozí: true",
   "settings.field.terminal.mouse_forwarding": "Předávání myši",
