@@ -144,6 +144,10 @@ Operations:
   `{dropped, others}`), `doc.info`, `doc.lines`, `doc.lines_before`,
   `doc.window`, `doc.text`, `doc.search`, `doc.line_start`, `doc.edit`,
   `doc.save` (`force` to overwrite an external change), `doc.reload`
+  (`encoding` to read the file in that one), `doc.formats` (the languages,
+  encodings and line endings a document can be set to), `doc.set` (a
+  document's `language`, or the `line_ending` and `encoding` its next save
+  writes)
 - `term.open`, `term.input`, `term.resize`, `term.attach`, `term.close`
 - `proc.run`, `proc.kill`
 - `lsp.call` (any request about a document), `lsp.hover`,
@@ -176,7 +180,7 @@ Error codes (`src/error.rs`):
 
 Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
 `doc.deleted` (`{doc, info}`), `doc.changed_on_disk` (`{doc, info}`),
-`doc.reloaded` (`{doc, lost, info}`), `doc.indexing`, `doc.indexed`,
+`doc.reloaded` (`{doc, lost, info}`), `doc.info` (`{doc, info}`, after `doc.set`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
 `fs.changed`, `workspace.trusted` (with the available language servers).
 

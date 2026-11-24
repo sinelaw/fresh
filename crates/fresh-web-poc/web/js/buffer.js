@@ -214,6 +214,7 @@ export class FileBuffer extends Buffer {
     this.language = info.language;
     this.modified = info.modified;
     this.encoding = info.encoding;
+    this.lineEnding = info.line_ending;
     this._readOnly = !!info.readonly;
     this.totalLines = info.lines;
     this.text = null;
@@ -231,6 +232,8 @@ export class FileBuffer extends Buffer {
     this.name = info.path.split("/").pop();
     this.language = info.language;
     this.modified = info.modified;
+    this.encoding = info.encoding;
+    this.lineEnding = info.line_ending;
   }
 
   // The server replaced the document (a huge file reloaded from disk): a

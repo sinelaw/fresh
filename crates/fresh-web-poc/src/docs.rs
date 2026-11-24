@@ -16,6 +16,7 @@ use crate::ot::{transform_seqs, Prim};
 use crate::workspace::{host, signature, Fs};
 use anyhow::Result;
 pub use fresh_editor_core::model::buffer::Buffer;
+pub use fresh_editor_core::model::buffer::{BufferConfig, Encoding, LineEnding};
 
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -86,6 +87,40 @@ pub struct Docs {
     pub docs: HashMap<u64, Doc>,
     by_path: HashMap<PathBuf, u64>,
     next_id: u64,
+}
+
+/// The languages a document can be set to (`doc.set`), as `language_of`
+/// names them.
+pub const LANGUAGES: &[&str] = &[
+    "c",
+    "cpp",
+    "css",
+    "go",
+    "html",
+    "javascript",
+    "json",
+    "markdown",
+    "python",
+    "rust",
+    "shell",
+    "toml",
+    "typescript",
+    "yaml",
+];
+
+/// A line ending by the name `doc.info` gives it.
+pub fn line_ending_named(name: &str) -> Option<LineEnding> {
+    [LineEnding::LF, LineEnding::CRLF, LineEnding::CR]
+        .into_iter()
+        .find(|l| l.display_name() == name)
+}
+
+/// An encoding by the name `doc.info` gives it.
+pub fn encoding_named(name: &str) -> Option<Encoding> {
+    Encoding::all()
+        .iter()
+        .copied()
+        .find(|e| e.display_name() == name)
 }
 
 pub fn language_of(path: &Path) -> Option<String> {
@@ -193,6 +228,7 @@ impl Doc {
             "modified": self.buffer.is_modified(),
             "language": self.language,
             "encoding": self.buffer.encoding().display_name(),
+            "line_ending": self.buffer.line_ending().display_name(),
             "readonly": self.readonly,
         })
     }

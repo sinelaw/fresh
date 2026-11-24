@@ -42,6 +42,9 @@ class App {
     this.killRing = [];
     this.metrics = { cw: 8, lh: 18 };
     this.status = "";
+    this.statusSig = ""; // what the status bar shows, to write it only when it changes
+    this.statusRuns = []; // its items' actions
+    this.formats = null; // the server's languages, encodings and line endings
     this.log = [];
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem("fresh-poc:settings") || "{}"); } catch {}
@@ -550,7 +553,8 @@ class App {
       }
       case "doc.saved": {
         const b = this.docs.get(ev.doc);
-        if (b) { b.modified = ev.info.modified; this.renderAll(); }
+        // Saved, or reloaded (its encoding may be another now).
+        if (b) { b.setInfo(ev.info); this.renderAll(); this.updateStatus(); }
         break;
       }
       case "doc.renamed": {
@@ -562,6 +566,16 @@ class App {
         this.renderAll();
         this.updateStatus();
         this.host.emit("buffer.renamed", { buffer: b, from: ev.from });
+        break;
+      }
+      case "doc.info": {
+        // Its language, line ending or encoding changed (`doc.set`).
+        const b = this.docs.get(ev.doc);
+        if (!b) break;
+        b.setInfo(ev.info);
+        this.renderAll();
+        this.updateStatus();
+        this.host.emit("buffer.info", { buffer: b });
         break;
       }
       case "doc.reloaded": {
@@ -777,6 +791,17 @@ class App {
     return Object.keys(km).filter((k) => km[k] === id).join(", ");
   }
 
+  // The first key for command `id` as people write it ("Ctrl+Shift+K"),
+  // or "".
+  keyLabel(id) {
+    const k = this.keyFor(id).split(", ")[0];
+    if (!k) return "";
+    const m = /^((?:[CMS]-)*)(.+)$/.exec(k);
+    const mods = { C: "Ctrl", M: "Alt", S: "Shift" };
+    const key = m[2].length === 1 ? m[2].toUpperCase() : m[2];
+    return [...m[1].split("-").filter(Boolean).map((x) => mods[x]), key].join("+");
+  }
+
   // Run command `id`, with its one optional argument (a theme name for
   // `theme.use`, …).
   run(id, arg) {
@@ -807,6 +832,15 @@ class App {
       this.setStatus(mod.length ? `Saved ${mod.length} file(s)` : "Nothing to save");
     });
     cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b._readOnly = !b._readOnly; this.renderAll(); } });
+    cmd("file.language", "Set Language…", () => this.pickLanguage());
+    cmd("file.encoding", "Set Encoding… (reopen or save with)", () => this.pickEncoding());
+    cmd("file.lineEnding", "Set Line Ending…", () => this.pickLineEnding());
+    cmd("file.revert", "File: Revert (reload from disk)", async () => {
+      const b = V()?.buf;
+      if (!b?.doc) return;
+      if (b.modified && !(await this.confirm(`Revert ${b.name}? Its unsaved changes are lost`, "Revert"))) return;
+      try { await rpc("doc.reload", { doc: b.doc }); this.setStatus(`Reverted ${b.name}`); } catch (e) { this.setStatus(`Not reverted: ${e.detail || e.message || e}`); }
+    });
     cmd("edit.undo", "Edit: Undo", () => { const v = V(); if (v) this.afterUndo(v, v.buf.doUndo()); });
     cmd("edit.redo", "Edit: Redo", () => { const v = V(); if (v) this.afterUndo(v, v.buf.doRedo()); });
     cmd("palette.commands", "Command Palette", () => this.prompt.palette(">"));
@@ -915,6 +949,58 @@ class App {
     mv("edit.yank", "Yank", mutate(() => this.killRing.length && ed().type(P(), this.killRing[0])));
   }
 
+  // ------------------------------------------------------------- a document's format
+
+  // A document's language, line ending and encoding, as the server names
+  // them (asked once).
+  async docFormats() {
+    if (!this.formats) this.formats = await rpc("doc.formats");
+    return this.formats;
+  }
+  // Pick one of `choices` ({label, detail, value}) for the active file;
+  // the current one is marked and first selected. Resolves with the value,
+  // or null.
+  async pickFor(title, choices, current) {
+    const b = this.view()?.buf;
+    if (!b?.doc) { this.setStatus("Not a file"); return null; }
+    const items = choices.map((c) => (c.value === current ? { ...c, detail: c.detail ? `${c.detail} · current` : "current" } : c));
+    const i = Math.max(0, items.findIndex((c) => c.value === current));
+    return new Promise((resolve) => this.prompt.open({ title, items: [...items.slice(i), ...items.slice(0, i)], onAccept: (it) => resolve(it.value), onCancel: () => resolve(null) }));
+  }
+  async setFormat(b, change) {
+    try { await rpc("doc.set", { doc: b.doc, ...change }); } catch (e) { this.setStatus(String(e.detail || e.message || e)); }
+  }
+  async pickLanguage() {
+    const b = this.view()?.buf;
+    const f = await this.docFormats();
+    const lang = await this.pickFor("Language", [{ label: "plain text", value: "" }, ...f.languages.map((l) => ({ label: l, value: l }))], b?.language || "");
+    if (lang != null) await this.setFormat(b, { language: lang || null });
+  }
+  async pickLineEnding() {
+    const b = this.view()?.buf;
+    const f = await this.docFormats();
+    const names = { LF: "LF — Unix, macOS", CRLF: "CRLF — Windows", CR: "CR — classic Mac" };
+    const le = await this.pickFor("Line ending (saving converts the file)", f.line_endings.map((l) => ({ label: names[l] || l, value: l })), b?.lineEnding);
+    if (le && le !== b.lineEnding) { await this.setFormat(b, { line_ending: le }); this.setStatus(`${b.name} is saved with ${le} line endings`); }
+  }
+  // An encoding, then what to do with it: read the file again in it, or
+  // write the file in it on the next save.
+  async pickEncoding() {
+    const b = this.view()?.buf;
+    const f = await this.docFormats();
+    const enc = await this.pickFor("Encoding", f.encodings.map((e) => ({ label: e.name, detail: e.description, value: e.name })), b?.encoding);
+    if (!enc) return;
+    const how = await this.choose(`${b.name} in ${enc}`, [
+      ...(b.large ? [] : [{ label: `Reopen with ${enc} (read the file again in it)`, value: "reopen" }]),
+      { label: `Save with ${enc} (the next save writes it)`, value: "save" },
+    ]);
+    if (how === "save") await this.setFormat(b, { encoding: enc });
+    if (how === "reopen") {
+      if (b.modified && !(await this.confirm(`Reopening ${b.name} gives up its unsaved changes`, "Reopen"))) return;
+      try { await rpc("doc.reload", { doc: b.doc, encoding: enc }); this.setStatus(`Reopened ${b.name} with ${enc}`); } catch (e) { this.setStatus(String(e.detail || e.message || e)); }
+    }
+  }
+
   afterUndo(v, ops) {
     if (!ops || !ops.length) return;
     const last = ops[ops.length - 1];
@@ -994,19 +1080,19 @@ class App {
     return { set(text, o = {}) { it.text = text; it.title = o.title || ""; it.onClick = o.onClick || null; app.updateStatus(); } };
   }
 
+  // The status bar: the message, then the facts. A fact that has an action
+  // (a command, or a plugin item's onClick) runs it when clicked; its
+  // tooltip names it and its key. The bar is written only when what it
+  // shows changed.
   updateStatus() {
     const v = this.view();
     const left = $("#status-left"), right = $("#status-right");
     if (!left) return;
-    left.textContent = this.status;
-    right.innerHTML = "";
-    const add = (t, title, onClick) => {
-      const s = document.createElement("span");
-      s.textContent = t;
-      if (title) s.title = title;
-      if (onClick) { s.className = "click"; s.onclick = onClick; }
-      right.appendChild(s);
-    };
+    if (left.textContent !== this.status) left.textContent = this.status;
+    const items = [];
+    const add = (text, title, run) => items.push({ text, title, run });
+    const cmd = (id) => () => this.run(id);
+    const titled = (what, id) => { const k = this.keyLabel(id); return k ? `${what} (${k})` : what; };
     if (v) {
       const b = v.buf;
       const L = b.text;
@@ -1014,20 +1100,34 @@ class App {
       const i = L ? L.indexOf(c.pos) : -1;
       if (i >= 0) {
         const col = [...L.lines[i].slice(0, byteToIdx(L.lines[i], c.pos - L.starts[i]))].length + 1;
-        add(L.firstLine != null ? `Ln ${L.firstLine + i + 1}, Col ${col}` : `Byte ${c.pos}`);
+        add(L.firstLine != null ? `Ln ${L.firstLine + i + 1}, Col ${col}` : `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
       }
-      if (v.cursors.length > 1) add(`${v.cursors.length} cursors`);
-      if (b.readOnly && !b.isVirtual) add("[RO]");
-      if (b.large) add("large file");
-      if (b.encoding) add(b.encoding);
-      if (b.language) add(b.language);
+      if (v.cursors.length > 1) add(`${v.cursors.length} cursors`, titled("Remove the other cursors", "edit.escape"), cmd("edit.escape"));
+      if (b.readOnly && !b.isVirtual) add("[RO]", "Read-only: click to allow editing", cmd("file.toggleReadOnly"));
+      if (b.large) add("large file", "Read from disk as it is viewed; lines are counted in the background");
+      if (b.doc) {
+        if (b.lineEnding) add(b.lineEnding, titled("Line ending: Set Line Ending", "file.lineEnding"), cmd("file.lineEnding"));
+        if (b.encoding) add(b.encoding, titled("Encoding: Reopen or Save with Encoding", "file.encoding"), cmd("file.encoding"));
+        add(b.language || "plain text", titled("Language: Set Language", "file.language"), cmd("file.language"));
+      } else if (b.language) add(b.language);
       const ds = b.decor.diags;
-      if (ds.length) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, "Diagnostics", () => this.run("lsp.diagnostics"));
-      if (v.mode === "compose") add("compose");
+      if (ds.length) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
+      if (v.mode === "compose") add("compose", titled("Markdown: Toggle Compose", "markdown.toggleCompose"), cmd("markdown.toggleCompose"));
       if (b.doc) add(b.inflight || b.pending.length ? `v${b.version}…` : `v${b.version}`, "Document log version");
     }
     for (const it of this.statusItems.values()) if (it.text) add(it.text, it.title, it.onClick);
-    add(this.hostName);
+    add(this.hostName, "Workspace host");
+    const sig = items.map((x) => `${x.text}\u0001${x.title || ""}\u0001${x.run ? 1 : 0}`).join("\u0002");
+    this.statusRuns = items.map((x) => x.run);
+    if (sig === this.statusSig) return;
+    this.statusSig = sig;
+    right.replaceChildren(...items.map((x, k) => {
+      const s = document.createElement("span");
+      s.textContent = x.text;
+      if (x.title) s.title = x.title;
+      if (x.run) { s.className = "click"; s.onclick = () => this.statusRuns[k]?.(); }
+      return s;
+    }));
   }
 }
 

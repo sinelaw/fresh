@@ -284,8 +284,22 @@ export function activate(fresh) {
       b.setFoldRanges(asList(r).map((f) => ({ start: f.startLine, end: f.endLine })));
     } catch {}
   };
-  const showStatus = (b) => status.set(b && fresh.lsp.available(b) ? `LSP ${b.language}` : "", { title: "Language server running for this file" });
+  const showStatus = (b) => status.set(b && fresh.lsp.available(b) ? `LSP ${b.language}` : "", { title: "Language servers: Show Status", onClick: () => fresh.commands.run("lsp.status") });
   fresh.events.on("buffer.activated", ({ buffer }) => { showStatus(buffer); refreshFolds(buffer); });
+  // Its language changed: another server, or none.
+  fresh.events.on("buffer.info", ({ buffer }) => { if (buffer.id === fresh.buffers.active()?.id) showStatus(buffer); });
+  // Each language's server: running, available (started with its first
+  // file), or none found on the host.
+  const lspStatus = async () => {
+    const running = await fresh.lsp.status();
+    const langs = [...new Set([...fresh.lsp.languages(), ...Object.keys(running)])].sort();
+    const state = (l) => (running[l] ? "running" : fresh.lsp.languages().includes(l) ? "available (starts with a file)" : "not started");
+    fresh.ui.pick({
+      title: fresh.workspace.trusted ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
+      items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", value: null }],
+      onAccept: () => {},
+    });
+  };
   // Trusting the workspace starts its language servers.
   fresh.events.on("workspace.trusted", () => { const b = fresh.buffers.active(); showStatus(b); if (b) refreshFolds(b); });
   fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
@@ -301,4 +315,5 @@ export function activate(fresh) {
   reg("lsp.symbols", "LSP: Document Symbols", symbols, "C-S-o");
   reg("lsp.signatureHelp", "LSP: Signature Help", signatureHelp, "C-S-Space");
   reg("lsp.diagnostics", "Diagnostics: Show Panel", diagnosticsPanel, "C-S-m");
+  reg("lsp.status", "LSP: Show Status", lspStatus);
 }

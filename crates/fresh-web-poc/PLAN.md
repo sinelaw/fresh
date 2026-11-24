@@ -103,7 +103,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Area | Feature | Status |
 |---|---|---|
 | Chrome | Menu bar: File, Edit, View, Selection, Go, LSP, Explorer, Help; keyboard (Alt, arrows, letters), checks, keys shown | missing |
-| Chrome | Status bar items open their action: position → Go to Line, language → Set Language, encoding, line ending, diagnostics → panel, LSP → status, git branch → log, host, skin | missing (diagnostics, branch present) |
+| Chrome | Status bar items open their action: position → Go to Line, line ending → Set Line Ending, encoding → reopen / save with, language → Set Language (the language server follows), diagnostics → panel, LSP → server status, git branch → log, theme → Select Theme, read-only, cursors, compose; tooltips name the action and its key | fixed |
 | Chrome | Skin picker button and Ctrl+Alt+T | present |
 | Chrome | Theme picker | present |
 | Chrome | Zoom: editor font size larger / smaller / reset | missing |
@@ -133,8 +133,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Explorer | Multi-selection (Shift+Up/Down) for cut / copy / delete | missing (after the rest) |
 | Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
 | Files | Recent files (File menu, palette) | missing |
-| Files | Save As, Revert, Close Buffer, Close All | missing (Revert is the server's `doc.reload`) |
-| Files | Set line ending (LF / CRLF), save with encoding | missing (server: the buffer's format) |
+| Files | Save As, Close Buffer, Close All | missing |
+| Files | Set line ending (LF / CRLF / CR), reopen or save with an encoding, set language, revert | fixed (server `doc.set`, `doc.reload` with `encoding`) |
 | Files | New untitled buffer (Ctrl+N) | missing (documents are files on the server; New File asks for a name) |
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |
 | Palette | Go to symbol in the file (`@`), in the workspace | missing (`LSP: Document Symbols` is a panel) |
@@ -146,7 +146,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Search | Find / replace bar with toggles, project search panel | present |
 | Search | Find in selection, query replace, find selection next | missing |
 | LSP | Hover, completion, definition, references, rename, code actions, format, symbols, signature help, diagnostics panel | present |
-| LSP | Status / restart / stop server, inlay hints | missing (server has `lsp.status`) |
+| LSP | Server status (status bar, `LSP: Show Status`) | fixed |
+| LSP | Restart / stop a server, inlay hints | missing (the server starts one per language and keeps it) |
 | Git | Gutter, blame, log, diff, change navigation, branch in status | present |
 | Terminal | Multiple, tabs, toggle, keyboard capture (xterm) | present |
 | Terminal | Restart an exited terminal, send selection to terminal | missing |

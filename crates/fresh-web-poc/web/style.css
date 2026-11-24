@@ -167,8 +167,10 @@ body {
 .sash:hover::before, .sash.dragging::before { background: color-mix(in srgb, var(--accent) 60%, transparent); }
 .sash:has(+ .hidden), .hidden + .sash { display: none; }
 .sash-dragging body { user-select: none; }
-#status .click { cursor: pointer; text-decoration: underline dotted; }
-#status-right { display: flex; gap: 14px; }
+#status .click { cursor: pointer; }
+#status .click:hover { background: color-mix(in srgb, var(--status-fg) 16%, transparent); }
+#status-right { display: flex; gap: 6px; }
+#status-right > span { padding: 0 4px; border-radius: 3px; }
 #status-left { overflow: hidden; text-overflow: ellipsis; }
 .ctxmenu { position: fixed; z-index: 30; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 4px 0; min-width: 180px; font-size: var(--ui-font-sm); }
 .ctxmenu div { padding: 3px 14px; cursor: pointer; }

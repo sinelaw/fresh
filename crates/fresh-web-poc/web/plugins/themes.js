@@ -111,6 +111,8 @@ export function activate(fresh) {
     return cache.get(key);
   };
   let current = "dark";
+  // The theme's name at the end of the status bar opens the picker.
+  const item = fresh.ui.status("theme");
   // Applying in order: a slow fetch for an earlier preview never lands
   // after a later one.
   let shown = Promise.resolve();
@@ -119,6 +121,7 @@ export function activate(fresh) {
     current = key;
     fresh.settings.theme = key;
     try { localStorage.setItem(STORE, key); } catch {}
+    item.set(key.replace(/^skin\//, ""), { title: "Theme: Select Theme…", onClick: () => fresh.commands.run("theme.select") });
     return show(key);
   };
   fresh.events.on("app.ready", () => {

@@ -254,6 +254,9 @@ export class Host {
         // A byte offset in a held buffer as an LSP {line, character} (UTF-16).
         position: (buffer, pos) => app.lspPosition(buffer.b, pos),
         diagnostics: (buffer) => buffer.b.decor.diags.map((d) => ({ ...d })),
+        // The languages with a server on the host, and which servers run: {language: running}.
+        languages: () => [...(app.lspLanguages || [])],
+        status: () => rpc("lsp.status", {}),
       },
       // Text shown when the pointer rests on a position: f(buffer, pos) -> string|null.
       hover: { provide: (f) => app.hoverProvide((b, p) => f(host.buffer(b, name), p)) },

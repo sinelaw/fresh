@@ -226,7 +226,8 @@ impl App {
             }
             "doc.reload" => {
                 // Give up unsaved edits (every client's) for the file as it
-                // is on disk now.
+                // is on disk now; with `encoding`, read in that encoding
+                // instead of the detected one.
                 let mut docs = self.docs.lock().unwrap();
                 let d = docs.get(u(m, "doc")?)?;
                 let fs = ws.fs();
@@ -234,7 +235,23 @@ impl App {
                 if now.is_none() {
                     fail!(NotFound, "{} is not on disk", d.path.display());
                 }
-                let fresh = docs::Buffer::load_from_file(&d.path, docs::LARGE_FILE_THRESHOLD, fs)?;
+                let fresh = match m.get("encoding").and_then(Value::as_str) {
+                    Some(name) => {
+                        let Some(enc) = docs::encoding_named(name) else {
+                            fail!(BadRequest, "no encoding {name}");
+                        };
+                        if d.buffer.is_large_file() {
+                            fail!(BadRequest, "{} is a large file, read as it is viewed; it is read in the detected encoding", d.path.display());
+                        }
+                        docs::Buffer::load_from_file_with_encoding(
+                            &d.path,
+                            enc,
+                            fs,
+                            docs::BufferConfig::default(),
+                        )?
+                    }
+                    None => docs::Buffer::load_from_file(&d.path, docs::LARGE_FILE_THRESHOLD, fs)?,
+                };
                 if fresh.is_binary() {
                     fail!(Binary, "{} is now a binary file", d.path.display());
                 }
@@ -242,6 +259,12 @@ impl App {
                 d.info()
             }
             "doc.info" => self.docs.lock().unwrap().get(u(m, "doc")?)?.info(),
+            "doc.formats" => json!({
+                "languages": docs::LANGUAGES,
+                "encodings": docs::Encoding::all().iter().map(|e| json!({"name": e.display_name(), "description": e.description()})).collect::<Vec<_>>(),
+                "line_endings": ["LF", "CRLF", "CR"],
+            }),
+            "doc.set" => self.set_format(m)?,
             "doc.lines" => {
                 let count = m.get("count").and_then(Value::as_u64).unwrap_or(200) as usize;
                 self.docs
@@ -562,6 +585,10 @@ impl App {
         } else {
             self.sequence(d, d.version, prims)?
         };
+        // The file's format as read now (another encoding asked for, or the
+        // file's own changed).
+        d.buffer.set_default_encoding(fresh.encoding());
+        d.buffer.set_default_line_ending(fresh.line_ending());
         d.buffer.set_modified(false);
         d.disk = now;
         d.reported = None;
@@ -571,6 +598,69 @@ impl App {
         let ev = json!({"ev": "doc.saved", "doc": d.id, "info": d.info()});
         self.send_to(d, &ev);
         Ok(())
+    }
+
+    /// Change what a document is, not its text: its `language` (the
+    /// language server of the old one gets `didClose`, the new one's
+    /// `didOpen`), and the `line_ending` and `encoding` the next save
+    /// writes (the document is then modified). Every client holding it gets
+    /// `doc.info`.
+    fn set_format(&self, m: &Value) -> Result<Value> {
+        let mut docs = self.docs.lock().unwrap();
+        let d = docs.get(u(m, "doc")?)?;
+        if let Some(name) = m.get("line_ending").and_then(Value::as_str) {
+            let Some(le) = docs::line_ending_named(name) else {
+                fail!(BadRequest, "no line ending {name}");
+            };
+            if le != d.buffer.line_ending() {
+                // The text follows at once, as an edit from the server, so
+                // every client's copy is what the next save writes (a CR
+                // file's line breaks are `\n` in the text). A huge file's
+                // text is converted as it is saved.
+                if !d.buffer.is_large_file() {
+                    let old = d.full_text()?;
+                    let lf = old.replace("\r\n", "\n");
+                    let new = if le == docs::LineEnding::CRLF {
+                        lf.replace('\n', "\r\n")
+                    } else {
+                        lf
+                    };
+                    let prims = docs::diff_prims(&old, &new);
+                    if !prims.is_empty() {
+                        let ops = self.sequence(d, d.version, prims)?;
+                        self.broadcast_ops(d, 0, ops);
+                    }
+                }
+                d.buffer.set_line_ending(le);
+            }
+        }
+        if let Some(name) = m.get("encoding").and_then(Value::as_str) {
+            let Some(enc) = docs::encoding_named(name) else {
+                fail!(BadRequest, "no encoding {name}");
+            };
+            if enc != d.buffer.encoding() {
+                d.buffer.set_encoding(enc);
+            }
+        }
+        if let Some(lang) = m.get("language") {
+            let lang = lang.as_str().map(String::from);
+            if lang
+                .as_deref()
+                .is_some_and(|l| !docs::LANGUAGES.contains(&l))
+            {
+                fail!(BadRequest, "no language {}", lang.unwrap_or_default());
+            }
+            if lang != d.language {
+                self.lsp_close(d);
+                d.language = lang;
+                if self.trusted.load(std::sync::atomic::Ordering::SeqCst) {
+                    self.lsp_open(d)?;
+                }
+            }
+        }
+        let info = d.info();
+        self.send_to(d, &json!({"ev": "doc.info", "doc": d.id, "info": info}));
+        Ok(info)
     }
 
     fn send_to(&self, d: &docs::Doc, ev: &Value) {
@@ -1358,6 +1448,57 @@ mod tests {
             (exit["proc"].clone(), exit["stdout"].clone()),
             (p, json!("ran\n"))
         );
+    }
+
+    #[test]
+    fn a_documents_line_ending_encoding_and_language_can_be_set() {
+        let (dir, app) = app(false);
+        std::fs::write(dir.path().join("a.txt"), "a\r\nb\r\n").unwrap();
+        let (c, mut rx) = client(&app);
+        let info = app
+            .dispatch(c, "doc.open", &json!({"path": "a.txt"}))
+            .unwrap();
+        assert_eq!(info["line_ending"], "CRLF");
+        let doc = info["doc"].as_u64().unwrap();
+        let set = |m: Value| {
+            let mut m = m;
+            m["doc"] = json!(doc);
+            app.dispatch(c, "doc.set", &m)
+        };
+        let info = set(json!({"line_ending": "LF", "language": "python"})).unwrap();
+        assert_eq!(info["line_ending"], "LF");
+        assert_eq!(info["language"], "python");
+        assert_eq!(info["modified"], true, "the next save converts the file");
+        let ev = event(&mut rx, "doc.info", Duration::from_secs(1)).expect("doc.info");
+        assert_eq!(ev["info"]["line_ending"], "LF");
+        app.dispatch(c, "doc.save", &json!({"doc": doc})).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"a\nb\n");
+
+        // Saved in another encoding; reopened in one.
+        set(json!({"encoding": "UTF-16 LE"})).unwrap();
+        app.dispatch(c, "doc.save", &json!({"doc": doc})).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("a.txt")).unwrap(),
+            b"\xff\xfea\0\n\0b\0\n\0"
+        );
+        std::fs::write(dir.path().join("a.txt"), b"caf\xe9\n").unwrap();
+        let info = app
+            .dispatch(c, "doc.reload", &json!({"doc": doc, "encoding": "Latin-1"}))
+            .unwrap();
+        assert_eq!(info["encoding"], "Latin-1");
+        let text = app
+            .dispatch(c, "doc.text", &json!({"doc": doc, "start": 0, "end": 6}))
+            .unwrap();
+        assert_eq!(text["text"], "café\n");
+
+        for bad in [
+            json!({"line_ending": "NL"}),
+            json!({"encoding": "EBCDIC"}),
+            json!({"language": "cobol"}),
+        ] {
+            let e = set(bad).unwrap_err();
+            assert_eq!(error::code_of(&e), Code::BadRequest, "{e}");
+        }
     }
 
     #[test]
