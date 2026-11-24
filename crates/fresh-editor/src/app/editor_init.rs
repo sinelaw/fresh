@@ -756,6 +756,7 @@ impl Editor {
             paste_render_suppress_until: None,
             system_clipboard_reader: None,
             system_clipboard_probe: None,
+            paste_inline_wait: None,
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
