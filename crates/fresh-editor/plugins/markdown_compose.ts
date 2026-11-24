@@ -4693,9 +4693,10 @@ editor.on("after_delete", (data) => {
   } else fenceEditArmed.add(data.buffer_id);
 });
 
-// A bulk edit (multi-cursor typing, a replace-all, their undo) fires
-// `buffer_modified` with no `after_insert`/`after_delete` before it, so the
-// ranges cannot be moved: they are dropped, and a redraw finds them again.
+// `buffer_modified` carries no positions, and for a bulk edit (multi-cursor
+// typing, a replace-all, their undo) no `after_insert`/`after_delete` came
+// before it, so the ranges cannot be moved: they are dropped, and a redraw
+// finds them again.
 editor.on("buffer_modified", (data) => {
   if (shiftedByEdit.delete(data.buffer_id)) return;
   if (!specialBlockRangesByBuffer.has(data.buffer_id)) return;
