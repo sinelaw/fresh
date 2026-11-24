@@ -45,7 +45,7 @@ export function activate(fresh) {
         render: (r) => h("row", {},
           h("text", { bold: r.custom }, r.title),
           h("spacer", {}),
-          h("text", { mono: true, color: "#d7ba7d" }, recording === r.id ? "…" : r.keys.join(", ")),
+          h("text", { mono: true, color: "ui.accent_fg" }, recording === r.id ? "…" : r.keys.join(", ")),
           h("text", { dim: true }, r.source !== "core" ? r.source : "")),
         onActivate: record,
         onKey: (e, r) => { if (e.key === "Delete") { e.preventDefault(); remove(r); } },

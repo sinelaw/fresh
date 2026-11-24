@@ -10,19 +10,25 @@ const THEMES = {
     "editor.fg": "#1f1f1f", "editor.line_number_fg": "#8a8a8a", "editor.selection_bg": "#add6ff", "editor.occurrence_bg": "#e4e4e4",
     "syntax.keyword": "#0000ff", "syntax.string": "#a31515", "syntax.comment": "#008000", "syntax.number": "#098658", "syntax.constant": "#0070c1",
     "syntax.type": "#267f99", "syntax.function": "#795e26", "syntax.variable": "#001080", "syntax.link": "#006ab1", "ui.split_separator_fg": "#bbbbbb",
-    "search.match_bg": "#f8c9a1", "search.current_bg": "#f2a96b",
+    "search.match_bg": "#f8c9a1", "search.current_bg": "#f2a96b", "editor.current_line_bg": "#f3f3f3",
+    "editor.diff_add_bg": "#dafbe1", "editor.diff_remove_bg": "#ffebe9", "ui.tour_step_bg": "#add6ff",
+    "ui.terminal_bg": "#ffffff", "ui.terminal_fg": "#1f1f1f", "ui.accent_fg": "#795e26",
   },
   "high-contrast": {
     "--bg": "#000000", "--fg": "#ffffff", "--panel": "#0b0b0b", "--border": "#6fc3df", "--accent": "#f38518", "--muted": "#c0c0c0",
     "editor.fg": "#ffffff", "editor.line_number_fg": "#c0c0c0", "editor.selection_bg": "#264f78", "editor.occurrence_bg": "#333333",
     "syntax.keyword": "#569cd6", "syntax.string": "#ce9178", "syntax.comment": "#7ca668", "syntax.number": "#b5cea8", "syntax.constant": "#4fc1ff",
     "syntax.type": "#4ec9b0", "syntax.function": "#dcdcaa", "syntax.variable": "#9cdcfe", "syntax.link": "#3794ff",
+    "editor.current_line_bg": "#1a1a1a", "editor.diff_add_bg": "#003a00", "editor.diff_remove_bg": "#4a0000",
+    "ui.tour_step_bg": "#264f78", "ui.terminal_bg": "#000000", "ui.terminal_fg": "#ffffff", "ui.accent_fg": "#f38518",
   },
   solarized: {
     "--bg": "#002b36", "--fg": "#93a1a1", "--panel": "#073642", "--border": "#0b4452", "--accent": "#268bd2", "--muted": "#657b83",
     "editor.fg": "#93a1a1", "editor.line_number_fg": "#586e75", "editor.selection_bg": "#0b4f61", "editor.occurrence_bg": "#0a4150",
     "syntax.keyword": "#859900", "syntax.string": "#2aa198", "syntax.comment": "#586e75", "syntax.number": "#d33682", "syntax.constant": "#cb4b16",
     "syntax.type": "#b58900", "syntax.function": "#268bd2", "syntax.variable": "#6c71c4", "syntax.link": "#268bd2",
+    "editor.current_line_bg": "#073642", "editor.diff_add_bg": "#0b3b2e", "editor.diff_remove_bg": "#3b1d1d",
+    "ui.tour_step_bg": "#0b4f61", "ui.terminal_bg": "#002b36", "ui.terminal_fg": "#93a1a1", "ui.accent_fg": "#b58900",
   },
 };
 

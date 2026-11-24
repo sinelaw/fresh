@@ -2,38 +2,41 @@
 // in both and kept current as either is edited. Or a file against its last
 // commit.
 
-import { diffLines } from "../js/diff.js";
+import { changeBlocks } from "../js/diff.js";
 
 export function activate(fresh) {
-  let pair = null; // {a, b} buffers
+  let pair = null; // {a, b, blocks}
+  // A whole buffer's lines, without the empty one after a final newline.
+  const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
+  const markLines = (d, L, from, n, bg, glyph, color) => {
+    for (let i = from; i < from + n && i < L.starts.length; i++) {
+      d.overlay(L.starts[i], L.starts[i] + fresh.text.byteLen(L.lines[i]) + 1, { bg, extendToLineEnd: true });
+      d.gutter(L.starts[i], { glyph, color });
+    }
+  };
   const mark = () => {
     if (!pair) return;
     const { a, b } = pair;
-    const A = a.lines(), Bl = b.lines();
-    if (!A || !Bl) return;
+    const A = a.lines(), B = b.lines();
+    if (!A || !B) return;
     const da = a.decorations("compare"), db = b.decorations("compare");
     da.clear(); db.clear();
-    const edits = diffLines(A.lines, Bl.lines) || [];
-    pair.hunks = [];
-    for (const e of edits) {
-      if (e.kind === "-" && e.a < A.starts.length) {
-        da.overlay(A.starts[e.a], A.starts[e.a] + fresh.text.byteLen(A.lines[e.a]) + 1, { bg: "#4b1818", extendToLineEnd: true });
-        da.gutter(A.starts[e.a], { glyph: "-", color: "git.deleted" });
-      } else if (e.kind === "+" && e.b < Bl.starts.length) {
-        db.overlay(Bl.starts[e.b], Bl.starts[e.b] + fresh.text.byteLen(Bl.lines[e.b]) + 1, { bg: "#1e3a1e", extendToLineEnd: true });
-        db.gutter(Bl.starts[e.b], { glyph: "+", color: "git.added" });
-        pair.hunks.push(e.b);
-      }
+    const blocks = changeBlocks(held(A), held(B));
+    pair.blocks = blocks || [];
+    for (const k of pair.blocks) {
+      markLines(da, A, k.a, k.del, "editor.diff_remove_bg", "-", "git.deleted");
+      markLines(db, B, k.b, k.ins, "editor.diff_add_bg", "+", "git.added");
     }
     a.render(); b.render();
-    fresh.ui.message(`${edits.length} line${edits.length === 1 ? "" : "s"} differ`);
+    const n = pair.blocks.length;
+    fresh.ui.message(blocks ? `${n} difference${n === 1 ? "" : "s"}` : "Too many differences to compare");
   };
   const open = async (pathA, bufB) => {
     const a = typeof pathA === "string" ? await fresh.buffers.load(pathA) : pathA;
     const b = typeof bufB === "string" ? await fresh.buffers.load(bufB) : bufB;
     fresh.buffers.show(a, "tab");
     fresh.buffers.show(b, "right");
-    pair = { a, b, hunks: [] };
+    pair = { a, b, blocks: [] };
     mark();
   };
   const compareFiles = async () => {
@@ -53,13 +56,18 @@ export function activate(fresh) {
     const head = fresh.buffers.createVirtual({ name: `${cur.name} (HEAD)`, entries: [{ text: r.stdout }], language: cur.language });
     open(head, cur);
   };
+  // The next (or previous) changed block, on whichever side is active.
   const next = (dir) => {
-    if (!pair || !pair.hunks.length) return;
     const v = fresh.views.active();
-    const L = pair.b.lines();
+    if (!pair || !v) return;
+    const side = v.buffer.id === pair.a.id ? "a" : v.buffer.id === pair.b.id ? "b" : null;
+    if (!side) return fresh.ui.message("Not a compared file");
+    if (!pair.blocks.length) return fresh.ui.message("No differences");
+    const L = v.buffer.lines();
     const cur = L.starts.findIndex((s, k) => v.cursor >= s && (k + 1 >= L.starts.length || v.cursor < L.starts[k + 1]));
-    const h = dir > 0 ? pair.hunks.find((i) => i > cur) ?? pair.hunks[0] : [...pair.hunks].reverse().find((i) => i < cur) ?? pair.hunks[pair.hunks.length - 1];
-    v.setCursor(L.starts[h], { center: true });
+    const lines = pair.blocks.map((k) => k[side]);
+    const line = dir > 0 ? lines.find((i) => i > cur) ?? lines[0] : [...lines].reverse().find((i) => i < cur) ?? lines[lines.length - 1];
+    v.setCursor(L.starts[Math.min(line, L.starts.length - 1)], { center: true });
   };
   let t = null;
   fresh.events.on("buffer.changed", ({ buffer }) => {
@@ -69,4 +77,6 @@ export function activate(fresh) {
   fresh.commands.register("compare.head", { title: "Compare with Last Commit", run: compareHead });
   fresh.commands.register("compare.next", { title: "Compare: Next Difference", run: () => next(1) });
   fresh.commands.register("compare.prev", { title: "Compare: Previous Difference", run: () => next(-1) });
+  fresh.keys.bind("F7", "compare.next");
+  fresh.keys.bind("S-F7", "compare.prev");
 }

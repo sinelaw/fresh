@@ -586,6 +586,8 @@ class App {
     }
     resetStyleCaches();
     for (const p of this.panes()) p.clearRows();
+    this.ui.redraw();
+    this.term.applyTheme();
     this.renderAll();
   }
 

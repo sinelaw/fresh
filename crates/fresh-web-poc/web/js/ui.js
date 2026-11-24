@@ -13,6 +13,8 @@
 // focus and the caret back on the control with the same key. Lists are
 // virtualised (any number of items) and keyboard-navigable.
 
+import { color } from "./highlight.js";
+
 export function h(type, props, ...children) {
   return { type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null && c !== false) };
 }
@@ -47,7 +49,7 @@ export class UIKit {
     document.querySelector(".ctxmenu")?.remove();
     const m = div("ctxmenu");
     for (const it of items) {
-      if (!it) { const hr = document.createElement("hr"); hr.style.cssText = "border:0;border-top:1px solid #454545;margin:4px 0"; m.appendChild(hr); continue; }
+      if (!it) { const hr = document.createElement("hr"); hr.style.cssText = "border:0;border-top:1px solid var(--border);margin:4px 0"; m.appendChild(hr); continue; }
       const d = div("");
       d.textContent = it.label;
       d.onmousedown = (e) => { e.preventDefault(); m.remove(); it.run(); };
@@ -59,6 +61,9 @@ export class UIKit {
     const off = (e) => { if (!m.contains(e.target)) { m.remove(); window.removeEventListener("mousedown", off, true); } };
     window.addEventListener("mousedown", off, true);
   }
+
+  // Draw every panel again (the theme changed).
+  redraw() { for (const p of this.panels.values()) if (p.tree) p.render(p.tree); }
 
   dockShow(p) {
     this.activeDock = p;
@@ -186,12 +191,13 @@ class Panel {
       case "text":
         el = kids(document.createElement("span"));
         el.className = "ui-text" + (p.dim ? " dim" : "") + (p.mono ? " mono" : "") + (p.bold ? " bold" : "");
-        if (p.color) el.style.color = p.color;
+        // A theme key ("syntax.type") or a CSS colour.
+        if (p.color) el.style.color = color(p.color) || p.color;
         if (p.title) el.title = p.title;
         break;
       case "badge":
         el = kids(div("ui-badge"));
-        if (p.color) el.style.background = p.color;
+        if (p.color) el.style.background = color(p.color) || p.color;
         break;
       case "input":
         el = document.createElement("input");

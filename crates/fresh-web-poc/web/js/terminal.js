@@ -8,6 +8,15 @@
 // only the bytes after it, so nothing is lost or written twice.
 
 import { rpc } from "./rpc.js";
+import { THEME } from "./highlight.js";
+
+// The terminal's colours, from the theme.
+const xtermTheme = () => ({
+  background: THEME["ui.terminal_bg"],
+  foreground: THEME["ui.terminal_fg"],
+  cursor: THEME["ui.terminal_fg"],
+  selectionBackground: THEME["editor.selection_bg"],
+});
 
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
@@ -26,7 +35,7 @@ class Term {
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 5000,
-      theme: { background: "#181818", foreground: "#d4d4d4" },
+      theme: xtermTheme(),
     });
     this.fit = new FitAddon.FitAddon();
     this.xt.loadAddon(this.fit);
@@ -159,6 +168,11 @@ export class TerminalPanel {
       this.select(this.current);
     } else this.app.focusPane(this.app.activePane);
     this.app.relayout();
+  }
+
+  applyTheme() {
+    for (const t of this.terms.values()) t.xt.options.theme = xtermTheme();
+    this.screens.style.background = THEME["ui.terminal_bg"];
   }
 
   refit() {

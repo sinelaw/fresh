@@ -263,7 +263,7 @@ export function activate(fresh) {
       items,
       render: (it) => it.header
         ? h("text", { bold: true }, rel(it.b.path))
-        : h("row", {}, h("text", { color: it.d.severity === 1 ? "#f14c4c" : "#cca700" }, it.d.severity === 1 ? "  ●" : "  ▲"), h("text", { dim: true }, String(it.line)), h("text", { mono: true }, it.d.message.split("\n")[0])),
+        : h("row", {}, h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, it.d.severity === 1 ? "  ●" : "  ▲"), h("text", { dim: true }, String(it.line)), h("text", { mono: true }, it.d.message.split("\n")[0])),
       onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path); fresh.views.active().setCursor(it.d.start, { center: true }); },
     }));
   };

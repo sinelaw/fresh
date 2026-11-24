@@ -21,7 +21,7 @@ export function activate(fresh) {
       const d = b.decorations("tour");
       d.clear();
       if (li >= 0 && li < L.starts.length) {
-        d.overlay(L.starts[li], L.starts[li] + fresh.text.byteLen(L.lines[li]) + 1, { bg: "#264f78", extendToLineEnd: true });
+        d.overlay(L.starts[li], L.starts[li] + fresh.text.byteLen(L.lines[li]) + 1, { bg: "ui.tour_step_bg", extendToLineEnd: true });
         d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
       }
       b.render();

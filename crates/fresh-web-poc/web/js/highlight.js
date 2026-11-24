@@ -35,6 +35,12 @@ export const THEME = {
   "git.added": "#2ea043",
   "git.modified": "#0078d4",
   "git.deleted": "#f85149",
+  "editor.diff_add_bg": "#1e3a1e",
+  "editor.diff_remove_bg": "#4b1818",
+  "ui.tour_step_bg": "#264f78",
+  "ui.terminal_bg": "#181818",
+  "ui.terminal_fg": "#d4d4d4",
+  "ui.accent_fg": "#d7ba7d",
 };
 const NAMED = {
   black: "#000000", red: "#cd3131", green: "#0dbc79", yellow: "#e5e510", blue: "#2472c8", magenta: "#bc3fbc",

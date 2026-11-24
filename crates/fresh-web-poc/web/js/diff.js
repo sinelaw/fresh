@@ -64,6 +64,22 @@ export function mapLines(a, b) {
   return map;
 }
 
+// The changed blocks, in order: {a, b, del, ins}: `del` lines of `a` from
+// line `a` replaced by `ins` lines of `b` from line `b`. Null when the
+// texts differ too much.
+export function changeBlocks(a, b) {
+  const edits = diffLines(a, b);
+  if (!edits) return null;
+  const out = [];
+  let cur = null;
+  for (const [k, , i, j] of walk(a, b, edits)) {
+    if (k === " ") { cur = null; continue; }
+    if (!cur) out.push((cur = { a: i, b: j, del: 0, ins: 0 }));
+    if (k === "-") cur.del++; else cur.ins++;
+  }
+  return out;
+}
+
 // A unified diff of `a` to `b` with `context` lines around each change:
 // "" when they are equal, null when they differ too much.
 export function unifiedDiff(a, b, nameA, nameB, context = 3) {
