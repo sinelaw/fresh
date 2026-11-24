@@ -1082,3 +1082,68 @@ fn test_paste_column_mode_undo_is_atomic() {
     harness.render().unwrap();
     harness.assert_buffer_content("aaa\nbbb\nccc");
 }
+
+// ============================================================================
+// Paste over a selection is one modification (issue #3757's sibling defect)
+// ============================================================================
+
+/// `Ctrl+V` over a selection is one thing the user did, so it must be one
+/// edit: one undo step, and one `buffer_modified` for the plugins that
+/// re-derive from the buffer (the project search panel re-runs its search).
+///
+/// The async paste path used to delete the selection as its own bulk edit
+/// before it even read the clipboard, so a paste over a selection left two
+/// entries on the undo stack. One `Ctrl+Z` then put the buffer in a state the
+/// user never typed — the selection gone and nothing pasted — and the second
+/// was needed to get back to where they were.
+///
+/// Drives the real `Ctrl+V` async path, not `paste_for_test`: the premature
+/// delete lived there and nowhere else. The system-clipboard read is stubbed
+/// to `None` so the paste falls back to the internal clipboard a real `Ctrl+C`
+/// filled, and the inline budget is made long so the wait ends when that read
+/// answers rather than on a 50ms clock.
+#[test]
+fn test_paste_over_selection_is_one_undo_step() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .editor_mut()
+        .set_system_clipboard_reader_for_test(|| None);
+    harness
+        .editor_mut()
+        .set_paste_inline_wait_for_test(std::time::Duration::from_secs(600));
+
+    // Copy "AAA", then leave "AAABBB" in the buffer with "BBB" selected.
+    harness.type_text("AAA").unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text("BBB").unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Left, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("AAABBB"))
+        .unwrap();
+
+    // Paste over the selection: "BBB" becomes "AAA".
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("AAAAAA"))
+        .unwrap();
+
+    // One undo puts back exactly what was on screen before the paste.
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("AAABBB"))
+        .unwrap();
+}

@@ -896,6 +896,13 @@ pub struct Editor {
     /// Test override for the system clipboard a terminal paste reads; see
     /// `Clipboard::paste_for_terminal`. `None` reads the real one.
     pub(super) system_clipboard_probe: Option<fn() -> crate::services::clipboard::SystemClipboard>,
+    /// Test override for `clipboard::PASTE_INLINE_WAIT`, the budget
+    /// `paste()` gives the clipboard read before it falls back to the
+    /// placeholder path. A test that must exercise one of the two paths
+    /// sets this rather than racing the real budget: a long one turns the
+    /// wait into "block until the read answers" (the fast path), a zero one
+    /// into "never wait" (the placeholder path).
+    pub(super) paste_inline_wait: Option<std::time::Duration>,
 
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and
