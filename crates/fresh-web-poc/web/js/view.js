@@ -640,8 +640,22 @@ export class Pane {
     if (e.ctrlKey && e.button === 0) { this.app.run("lsp.definition"); return; }
     if (e.detail === 2) this.app.editing.selectWord(this);
     if (e.detail === 3) this.app.editing.selectLine(this);
-    const move = (ev) => { const q = toPos(ev); if (q != null) this.app.editing.place(this, q, true); };
-    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    const extend = (ev) => { const q = toPos(ev); if (q != null) this.app.editing.place(this, q, true); };
+    // Held past the top or bottom edge, the view scrolls each frame (faster
+    // the farther out) and the selection follows to the edge.
+    let last = null, frame = null;
+    const tick = () => {
+      frame = null;
+      const sr = this.surfaceEl.getBoundingClientRect();
+      const d = last.clientY < sr.top ? last.clientY - sr.top : last.clientY > sr.bottom ? last.clientY - sr.bottom : 0;
+      if (!d) return;
+      this.scrollLines(Math.sign(d) * Math.min(10, 1 + Math.floor(Math.abs(d) / this.metrics().lh)));
+      this.renderNow();
+      extend(last);
+      frame = requestAnimationFrame(tick);
+    };
+    const move = (ev) => { last = ev; extend(ev); if (!frame) frame = requestAnimationFrame(tick); };
+    const up = () => { cancelAnimationFrame(frame); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   }
