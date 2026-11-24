@@ -695,8 +695,9 @@ class App {
     });
     cmd("help.log", "Show Log", () => this.createVirtual({ name: "*Log*", entries: this.log.map((l) => ({ text: l + "\n" })), place: "tab" }));
 
-    // Motion.
-    const mv = (id, title, f) => cmd(id, title, f, true);
+    // Motion and selection: nothing to do without a view.
+    const vcmd = (id, title, f, hidden = false) => cmd(id, title, () => (V() ? f() : undefined), hidden);
+    const mv = (id, title, f) => vcmd(id, title, f, true);
     mv("cursor.left", "Left", () => ed().left(P(), false)); mv("cursor.right", "Right", () => ed().right(P(), false));
     mv("select.left", "Select Left", () => ed().left(P(), true)); mv("select.right", "Select Right", () => ed().right(P(), true));
     mv("cursor.wordLeft", "Word Left", () => ed().left(P(), false, true)); mv("cursor.wordRight", "Word Right", () => ed().right(P(), false, true));
@@ -711,17 +712,17 @@ class App {
     mv("select.docEnd", "Select to Document End", () => this.gotoByte(V().buf.len, true));
     mv("cursor.pageUp", "Page Up", page(-1, false)); mv("cursor.pageDown", "Page Down", page(1, false));
     mv("select.pageUp", "Select Page Up", page(-1, true)); mv("select.pageDown", "Select Page Down", page(1, true));
-    cmd("cursor.paragraphUp", "Go to Previous Paragraph", () => ed().paragraph(P(), -1, false));
-    cmd("cursor.paragraphDown", "Go to Next Paragraph", () => ed().paragraph(P(), 1, false));
+    vcmd("cursor.paragraphUp", "Go to Previous Paragraph", () => ed().paragraph(P(), -1, false));
+    vcmd("cursor.paragraphDown", "Go to Next Paragraph", () => ed().paragraph(P(), 1, false));
     mv("select.paragraphUp", "Select to Previous Paragraph", () => ed().paragraph(P(), -1, true));
     mv("select.paragraphDown", "Select to Next Paragraph", () => ed().paragraph(P(), 1, true));
-    cmd("cursor.matchingBracket", "Go to Matching Bracket", () => ed().matchingBracket(P()));
-    cmd("cursor.addAbove", "Add Cursor Above", () => ed().addCursorVertical(P(), -1));
-    cmd("cursor.addBelow", "Add Cursor Below", () => ed().addCursorVertical(P(), 1));
+    vcmd("cursor.matchingBracket", "Go to Matching Bracket", () => ed().matchingBracket(P()));
+    vcmd("cursor.addAbove", "Add Cursor Above", () => ed().addCursorVertical(P(), -1));
+    vcmd("cursor.addBelow", "Add Cursor Below", () => ed().addCursorVertical(P(), 1));
     cmd("select.all", "Select All", () => { const v = V(); if (v) { v.cursors = [{ pos: v.buf.len, anchor: 0, goalX: null }]; P().scheduleRender(); } });
-    cmd("select.line", "Select Line", () => ed().selectLine(P()));
-    cmd("select.nextOccurrence", "Select Next Occurrence", () => ed().selectNextOccurrence(P()));
-    cmd("select.allOccurrences", "Select All Occurrences", () => ed().selectAllOccurrences(P()));
+    vcmd("select.line", "Select Line", () => ed().selectLine(P()));
+    vcmd("select.nextOccurrence", "Select Next Occurrence", () => ed().selectNextOccurrence(P()));
+    vcmd("select.allOccurrences", "Select All Occurrences", () => ed().selectAllOccurrences(P()));
     // Editing.
     mv("edit.newline", "Newline", mutate(() => ed().newline(P())));
     mv("edit.backspace", "Backspace", mutate(() => ed().backspace(P(), false)));
@@ -736,9 +737,9 @@ class App {
     cmd("edit.moveLineUp", "Move Line Up", mutate(() => ed().moveLines(P(), -1)));
     cmd("edit.moveLineDown", "Move Line Down", mutate(() => ed().moveLines(P(), 1)));
     cmd("edit.toggleComment", "Toggle Comment", mutate(() => ed().toggleComment(P())));
-    cmd("fold.toggle", "Toggle Fold", () => ed().toggleFold(P()));
-    cmd("fold.all", "Fold All", () => ed().foldAll(P()));
-    cmd("fold.none", "Unfold All", () => ed().unfoldAll(P()));
+    vcmd("fold.toggle", "Toggle Fold", () => ed().toggleFold(P()));
+    vcmd("fold.all", "Fold All", () => ed().foldAll(P()));
+    vcmd("fold.none", "Unfold All", () => ed().unfoldAll(P()));
     // Emacs: mark and kill ring.
     mv("edit.setMark", "Set Mark", () => { const v = V(); v.primary.anchor = v.primary.pos; this.setStatus("Mark set"); });
     mv("edit.killLine", "Kill Line", mutate(() => {
