@@ -599,7 +599,8 @@ async function merge(direction: "copy" | "take"): Promise<void> {
   const text = src.to > src.from ? await editor.getBufferText(bufferOf(c, from), src.from, src.to) : "";
   const version = to === "left" ? r.leftVersion : r.rightVersion;
   const applied = await editor.replaceRange(bufferOf(c, to), dst.from, dst.to, text, version);
-  // A plugin's own edits fire no `buffer_modified`, so diff again here.
+  // `buffer_modified` fires for this edit too, but the status line below
+  // reads `c.result`, so wait for the diff rather than for that handler.
   await rediff(c);
   if (!applied) {
     const path = editor.getBufferPath(bufferOf(c, to));

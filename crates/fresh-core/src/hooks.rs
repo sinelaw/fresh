@@ -124,10 +124,20 @@ pub enum HookArgs {
         lines_removed: usize,
     },
 
-    /// A buffer's content changed: after any applied edit, including the
-    /// bulk edits (multi-cursor typing, a whole-buffer replace, and the undo
-    /// or redo of either) that fire no `AfterInsert` / `AfterDelete`. Carries
-    /// no positions; it tells a plugin to re-read the buffer, not what moved.
+    /// A buffer's content changed: after any edit at all, whoever made it —
+    /// typing, a bulk edit (multi-cursor typing, a replace, the undo or redo
+    /// of either) that fires no `AfterInsert` / `AfterDelete`, an LSP code
+    /// action or rename, a plugin's own `insertText` / `replaceRange` /
+    /// `replaceInBuffer`, the on-save formatter.
+    ///
+    /// Carries no positions; it tells a plugin to re-read the buffer, not
+    /// what moved. It is coalesced: a buffer whose content moved several
+    /// times before the editor next looked is reported once, so this is
+    /// "something changed, read it again" and never a count of edits.
+    ///
+    /// Your own edits are included. A handler that edits the buffer it was
+    /// told about is called again, so guard it with a flag of your own
+    /// rather than expecting to be skipped.
     BufferModified { buffer_id: BufferId, window_id: u64 },
 
     /// Cursor moved to a new position

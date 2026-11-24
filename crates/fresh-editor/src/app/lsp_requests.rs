@@ -3436,9 +3436,6 @@ impl Editor {
         self.active_window_mut()
             .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
 
-        // Not applied through `apply_event_to_active_buffer`, which fires this.
-        self.fire_buffer_modified(buffer_id);
-
         Ok(())
     }
 

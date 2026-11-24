@@ -9556,10 +9556,19 @@ interface HookEventMap {
 		lines_removed: number;
 	};
 	/**
-	* Fired after any edit changes a buffer's content — including the bulk
-	* edits (multi-cursor typing, a whole-buffer replace, and the undo or redo
-	* of either) that fire no `after_insert` / `after_delete`. Carries no
-	* positions: it says the buffer changed, so re-read it.
+	* Fired after any edit changes a buffer's content, whoever made it —
+	* typing, a bulk edit (multi-cursor typing, a replace, the undo or redo of
+	* either) that fires no `after_insert` / `after_delete`, an LSP code action
+	* or rename, your own `insertText` / `replaceRange` / `replaceInBuffer`,
+	* the on-save formatter.
+	*
+	* Carries no positions: it says the buffer changed, so re-read it. It is
+	* coalesced — a buffer edited several times before the editor next looks is
+	* reported once — so treat it as "something changed" and never as a count
+	* of edits.
+	*
+	* Your own edits are included, so a handler that edits the buffer it was
+	* told about is called again. Guard it with a flag of your own.
 	*/
 	buffer_modified: {
 		buffer_id: number;

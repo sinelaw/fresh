@@ -896,6 +896,13 @@ pub struct Editor {
     /// Test override for the system clipboard a terminal paste reads; see
     /// `Clipboard::paste_for_terminal`. `None` reads the real one.
     pub(super) system_clipboard_probe: Option<fn() -> crate::services::clipboard::SystemClipboard>,
+    /// The `Buffer::version` each buffer had when `buffer_modified` was last
+    /// fired for it. A buffer missing from the map has not been looked at
+    /// yet: it is recorded, and nothing is announced for it, so opening a
+    /// file is not reported as an edit to it. Entries for closed buffers are
+    /// dropped on the next pass. See
+    /// `Editor::fire_buffer_modified_for_changed_buffers`.
+    pub(crate) plugin_buffer_versions: std::collections::HashMap<BufferId, u64>,
     /// Test override for `clipboard::PASTE_INLINE_WAIT`, the budget
     /// `paste()` gives the clipboard read before it falls back to the
     /// placeholder path. A test that must exercise one of the two paths

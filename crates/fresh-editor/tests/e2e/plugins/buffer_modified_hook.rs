@@ -1,7 +1,7 @@
-//! `buffer_modified` reaches plugins for edits applied as one bulk edit —
-//! typing over a selection, multi-cursor typing, an LSP code action — not
-//! only for the single-event edits that also fire `after_insert` /
-//! `after_delete`.
+//! `buffer_modified` reaches plugins for every edit, not only the
+//! single-event ones that also fire `after_insert` / `after_delete`: a bulk
+//! edit (typing over a selection, multi-cursor typing), an LSP code action,
+//! and a plugin's own edit through the plugin API.
 
 use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -17,6 +17,14 @@ editor.on("buffer_modified", (args) => {
   count += 1;
   editor.setStatus(`modified ${count} len ${editor.getBufferLength(args.buffer_id)}`);
 });
+
+// Deliberately an edit made by a plugin, through the plugin API, which is a
+// path that announced nothing at all while the hook was fired per edit site.
+registerHandler("probe_insert", () => {
+  editor.insertText(editor.getActiveBufferId(), 0, "ZZ");
+});
+editor.registerCommand("Probe Insert", "Insert ZZ through the plugin API", "probe_insert", null);
+
 editor.setStatus("probe loaded");
 "#;
 
@@ -212,4 +220,34 @@ fn lsp_code_action_fires_buffer_modified() {
         .wait_until(|h| h.get_buffer_content().as_deref() == Some(edited))
         .unwrap();
     assert_fired_once(&mut harness, edited.len());
+}
+
+/// A plugin's own edit is announced to plugins, including back to the plugin
+/// that made it.
+///
+/// `editor.insertText()` and its four siblings (`deleteRange`,
+/// `insertAtCursor`, `replaceRange`, `replaceInBuffer` — the last is how the
+/// project search panel writes its replacements) fired nothing while
+/// `buffer_modified` was fired from the edit sites, so a plugin could not see
+/// another's edits, nor the panel its own. Firing once per pass for every
+/// buffer whose content moved covers them without any of the five saying so.
+///
+/// Without that, the wait below never resolves: the text is inserted and the
+/// hook never fires.
+#[test]
+fn a_plugin_api_edit_fires_buffer_modified() {
+    let (mut harness, _dir) = harness_with_probe("alpha\nbeta\n");
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_palette_command("Probe Insert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZalpha"))
+        .unwrap();
+    assert_fired_once(&mut harness, 13);
 }
