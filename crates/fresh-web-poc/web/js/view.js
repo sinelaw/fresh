@@ -459,9 +459,20 @@ export class Pane {
     return this.posAt(Math.floor((y - rect.top) / lh), Math.max(0, (x - rect.left) / cw));
   }
 
-  // Where a caret can stand at or beyond `p` (in direction `dir`): not
-  // inside text a conceal hides (one revealed by a caret at `p` shows).
+  // The fold hiding line `li`, with the last line it keeps: {fold, keep}.
+  foldHiding(v, li) {
+    if (v.mode === "compose") return this.doc.hiding(v, li);
+    const f = v.folds.find((f) => li > f.start && li <= f.end);
+    return f ? { fold: f, keep: f.start } : null;
+  }
+
+  // Where a caret can stand at or beyond `p` (in direction `dir`): not on
+  // a line a fold hides, nor inside text a conceal hides (one revealed by a
+  // caret at `p` shows).
   settle(v, p, dir) {
+    const L = v.buf.text;
+    const h = L && this.foldHiding(v, L.indexOf(p));
+    if (h) p = dir < 0 || h.fold.end + 1 >= L.count ? L.lineEnd(h.keep) : L.starts[h.fold.end + 1];
     for (let guard = 0; guard < 64; guard++) {
       const c = v.buf.decor.query("conceals", p, p + 1).find((c) => c.start < p && p < c.end && applies(c, v.mode) && !(c.reveal && cursorIn([p], c.reveal)));
       if (!c) return p;
@@ -632,6 +643,9 @@ export class Pane {
     this.app.focusPane(this);
     const v = this.view;
     if (!v) return;
+    // A document's fold toggle.
+    const fold = e.target.closest?.("[data-fold]");
+    if (fold) { this.app.editing.toggleFoldAt(this, +fold.dataset.fold); return; }
     const toPos = (ev) => this.posFromPoint(ev.clientX, ev.clientY);
     const p = toPos(e);
     if (p == null) return;

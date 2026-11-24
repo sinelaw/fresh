@@ -163,3 +163,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .doc-hr::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--border); pointer-events: none; }
 .doc-body .vt, .doc-body .vline { color: var(--muted); }
 .doc-body .vt.edge { margin-left: 2em; }
+/* Fold toggles sit in the margin, left of their block's first line. */
+.doc-body > * { position: relative; }
+.doc-fold { position: absolute; left: -1.3em; width: 1em; text-align: center; color: var(--muted); cursor: pointer; opacity: 0; }
+.doc-li .doc-fold { left: -2.9em; }
+.doc-body > :hover .doc-fold, .doc-fold.folded { opacity: 1; }
+.doc-more { margin-left: .4em; padding: 0 .4em; border-radius: 4px; background: var(--doc-code-bg); color: var(--muted); cursor: pointer; }

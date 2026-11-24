@@ -145,8 +145,12 @@ export class Editing {
   // ---------------------------------------------------------------- folding
 
   // The block that starts at window line `li`: the language server's range
-  // when it gave one, else the lines indented deeper than it.
-  foldRangeAt(b, li) {
+  // when it gave one, else the lines indented deeper than it. A compose
+  // view folds its document's blocks (a heading's section, a list's deeper
+  // items, a code block's lines).
+  foldRangeAt(v, li) {
+    if (v.mode === "compose") return v.pane.doc.foldRange(v, li);
+    const b = v.buf;
     const L = b.text;
     const first = L.firstLine ?? 0;
     const lsp = (b.foldRanges || []).find((r) => r.start === li + first && r.end > r.start);
@@ -165,16 +169,16 @@ export class Editing {
 
   toggleFoldAt(pane, li) {
     const v = pane.view;
-    const i = v.folds.findIndex((f) => f.start === li);
+    const r = this.foldRangeAt(v, li);
+    const i = v.folds.findIndex((f) => f.start === li || (r && f.start === r.start));
     if (i >= 0) v.folds.splice(i, 1);
     else {
-      const r = this.foldRangeAt(v.buf, li);
       if (!r) return;
       v.folds = v.folds.filter((f) => f.start < r.start || f.start > r.end);
       v.folds.push(r);
-      // A cursor inside the fold moves to its first line.
+      // A cursor the fold hides moves to the end of the last line it keeps.
       const L = v.buf.text;
-      for (const c of v.cursors) { const ci = L.indexOf(c.pos); if (ci > r.start && ci <= r.end) { c.pos = L.lineEnd(r.start); c.anchor = null; } }
+      for (const c of v.cursors) { const h = pane.foldHiding(v, L.indexOf(c.pos)); if (h) { c.pos = L.lineEnd(h.keep); c.anchor = null; } }
     }
     pane.scheduleRender();
   }
@@ -187,7 +191,7 @@ export class Editing {
     // block holding the cursor.
     if (v.folds.some((f) => f.start === li)) return this.toggleFoldAt(pane, li);
     for (let k = li; k >= 0; k--) {
-      const r = this.foldRangeAt(v.buf, k);
+      const r = this.foldRangeAt(v, k);
       if (r && r.end >= li) return this.toggleFoldAt(pane, k);
     }
   }
@@ -197,8 +201,9 @@ export class Editing {
     const L = v.buf.text;
     v.folds = [];
     for (let k = 0; k < L.count; k++) {
-      const r = this.foldRangeAt(v.buf, k);
-      if (r && !v.folds.some((f) => k > f.start && k <= f.end)) v.folds.push(r);
+      if (v.folds.some((f) => k >= f.start && k <= f.end)) continue;
+      const r = this.foldRangeAt(v, k);
+      if (r) v.folds.push(r);
     }
     pane.scheduleRender();
   }

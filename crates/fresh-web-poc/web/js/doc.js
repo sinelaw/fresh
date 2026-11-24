@@ -16,6 +16,12 @@
 // drawn top (`v.topPx`). A frame draws the blocks from one above the top's
 // block down to what fills the view, measures each line's top once after
 // writing, and translates the document so the scroll position is at the top.
+//
+// Folds are the view's, as in a source view: a fold hides the lines after
+// its first. A block offers one over what belongs to it: a heading its
+// section, an item or quote the deeper ones after it, a code block or table
+// its lines after the first shown. A joined block holding a fold's first
+// line is drawn whole (its lines read as one).
 
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
@@ -25,6 +31,10 @@ import { EMPTY, spansFor, synAt, fenceLanguage, esc, css, cssFor, styleKey } fro
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
+// Block types that keep their lines (the others are joined into one run).
+const LINES = new Set(["code", "table"]);
+// Pixels kept clear left (and right) of the document for fold toggles.
+const FOLD_MARGIN = 40;
 
 const PLAIN = styleKey(EMPTY);
 const anchor = (p) => `<span data-a="${p}">​</span>`;
@@ -63,7 +73,9 @@ export class DocView {
     const pane = this.pane;
     const { cw, lh } = pane.metrics();
     const g = pane.geometry(v);
-    const w = `${g.width * cw}px`;
+    // The compose width, leaving a margin on each side for fold toggles.
+    const room = (pane.size.w || pane.surfaceEl.clientWidth) - 12 - 2 * FOLD_MARGIN;
+    const w = `${Math.max(10 * cw, Math.min(g.width * cw, room))}px`;
     if (this.content.style.width !== w) this.content.style.width = w;
     // Theme colours the stylesheet reads.
     const vars = `--doc-accent:${THEME["syntax.keyword"]};--doc-markup:${THEME["editor.line_number_fg"]}`;
@@ -123,7 +135,65 @@ export class DocView {
       lineCache.set(li, x);
       return x;
     };
-    return { v, L, d, o, cursors, vlines, lineInfo, mode: v.mode };
+    const ctx = { v, L, d, o, cursors, vlines, lineInfo, mode: v.mode };
+    ctx.hidden = this.hider(ctx);
+    return ctx;
+  }
+
+  // hidden(li): the fold hiding line `li` and the last line it keeps
+  // ({fold, keep}), or null.
+  hider(ctx) {
+    const keeps = ctx.v.folds.map((f) => {
+      const sb = this.blockAt(ctx, f.start);
+      return sb.node && !LINES.has(sb.node.type) ? Math.max(f.start, sb.last) : f.start;
+    });
+    return (li) => {
+      const folds = ctx.v.folds;
+      for (let i = 0; i < folds.length; i++) if (li > keeps[i] && li <= folds[i].end) return { fold: folds[i], keep: keeps[i] };
+      return null;
+    };
+  }
+
+  // The fold hiding line `li` of view `v`, as `hidden` gives it.
+  hiding(v, li) {
+    return this.hider({ v, L: v.buf.text, d: v.buf.decor, mode: v.mode })(li);
+  }
+
+  // The fold the block holding line `li` offers: {start, end} lines, or null.
+  foldRange(v, li) {
+    const ctx = { v, L: v.buf.text, d: v.buf.decor, mode: v.mode };
+    return this.foldOf(ctx, this.blockAt(ctx, li));
+  }
+
+  // `probe`: only whether there is one (looks no further than needed).
+  foldOf(ctx, blk, probe = false) {
+    const { L } = ctx;
+    const n = blk.node;
+    if (!n) return null;
+    if (n.type === "code") return blk.last - blk.first >= 3 ? { start: blk.first + 1, end: blk.last } : null;
+    if (n.type === "table") return blk.last - blk.first >= 2 ? { start: blk.first, end: blk.last } : null;
+    // A heading's section runs to the next heading as high; an item or a
+    // quote holds the deeper ones after it. Blank lines in between belong.
+    const child = (b) => n.type === "heading"
+      ? !(b.node?.type === "heading" && b.node.level <= n.level)
+      : b.node?.type === n.type && (b.node.depth ?? 0) > (n.depth ?? 0);
+    let end = null;
+    for (let k = blk.last + 1; k < L.count;) {
+      const b = this.blockAt(ctx, k);
+      if (!b.node && L.lines[k].trim() === "") { k++; continue; }
+      if (!child(b)) break;
+      end = b.last;
+      k = b.last + 1;
+      if (probe) break;
+    }
+    return end == null ? null : { start: blk.first, end };
+  }
+
+  // The next line drawn after (dir 1) or before (dir -1) line `k`, past the
+  // folds: -1 or L.count at the ends.
+  shownFrom(ctx, k, dir) {
+    for (let h; k >= 0 && k < ctx.L.count && (h = ctx.hidden(k));) k = dir > 0 ? h.fold.end + 1 : h.keep;
+    return k;
   }
 
   // The block holding line `li`: its node (or none) and its lines.
@@ -144,7 +214,8 @@ export class DocView {
   // delimiter row may draw nothing.
   low(ctx, blk, lh, from = blk.first) {
     if (!blk.node) return from > blk.last ? 0 : lh;
-    let n = blk.last - from + 1;
+    let n = 0;
+    for (let k = from; k <= blk.last; k++) if (!ctx.hidden(k)) n++;
     if (blk.node.type === "code") n -= 2;
     if (blk.node.type === "table") n -= 1;
     return Math.max(0, n) * lh;
@@ -153,21 +224,23 @@ export class DocView {
   pass(v, ctx, lh) {
     const { L } = ctx;
     const h = this.pane.size.h || this.pane.surfaceEl.clientHeight;
+    const hid = ctx.hidden(L.indexOf(v.top));
+    if (hid) v.setTop(L.starts[hid.keep], 0);
     const ti = L.indexOf(v.top);
     // The blocks to draw: one above the top's block (more when the offset
     // is negative), and down to what surely fills the view.
     const top = this.blockAt(ctx, ti);
     const blocks = [top];
     let cur = top, above = 0;
-    while (cur.first > 0 && (blocks.length === 1 || above < -v.topPx)) {
-      cur = this.blockAt(ctx, cur.first - 1);
+    for (let k; (k = this.shownFrom(ctx, cur.first - 1, -1)) >= 0 && (blocks.length === 1 || above < -v.topPx);) {
+      cur = this.blockAt(ctx, k);
       blocks.unshift(cur);
       above += this.low(ctx, cur, lh);
     }
     let below = this.low(ctx, top, lh, ti);
     cur = top;
-    while (below < h + Math.max(0, v.topPx) + lh && cur.last + 1 < L.count) {
-      cur = this.blockAt(ctx, cur.last + 1);
+    for (let k; below < h + Math.max(0, v.topPx) + lh && (k = this.shownFrom(ctx, cur.last + 1, 1)) < L.count;) {
+      cur = this.blockAt(ctx, k);
       blocks.push(cur);
       below += this.low(ctx, cur, lh);
     }
@@ -215,15 +288,19 @@ export class DocView {
       if (li >= 0 && !ys.has(li)) ys.set(li, e.el.getBoundingClientRect().top - y0);
     }
     const first = blocks[0].first, lastLine = blocks[blocks.length - 1].last;
-    const lineY = [];
+    // Each drawn line's top (a folded line has none).
+    const lineY = [], yAt = new Map();
     let prev = ys.get(first);
     for (let k = first; k <= lastLine; k++) {
+      if (ctx.hidden(k)) continue;
       const y = Math.max(prev, ys.get(k) ?? prev);
       lineY.push([k, y]);
+      yAt.set(k, y);
       prev = y;
     }
     this.lineY = lineY;
-    const yOf = (li) => lineY[li - first][1];
+    const yOf = (li) => yAt.get(li);
+    const atEnd = this.shownFrom(ctx, lastLine + 1, 1) >= L.count;
     const bottom = this.body.getBoundingClientRect().bottom - y0;
 
     // The scroll position, kept on the primary cursor when asked.
@@ -235,10 +312,13 @@ export class DocView {
       if (r) carets.push({ x: r.left - cr.left, y: r.top - y0, h: r.height || lh, c });
     }
     if (this.want) {
-      const pc = carets.find((x) => x.c === v.primary);
+      // A cursor in a fold is kept in view at the line before the fold.
+      let ci = L.indexOf(v.primary.pos);
+      const fh = ctx.hidden(ci);
+      if (fh) ci = fh.keep;
+      const pc = carets.find((x) => x.c === v.primary) || (fh && yAt.has(ci) && { y: yOf(ci), h: lh });
       if (!pc) {
         // Not drawn: start again from its line.
-        const ci = L.indexOf(v.primary.pos);
         const back = this.want === "center" ? h / 2 : ci < ti ? lh : h - 3 * lh;
         v.setTop(L.starts[ci], -Math.max(0, back));
         return { again: true };
@@ -250,7 +330,7 @@ export class DocView {
     }
     // At the document's ends: its end stops at the view's bottom; there is
     // no space above its start.
-    if (lastLine === L.count - 1 && L.eof) sy = Math.min(sy, cr.height - h);
+    if (atEnd && L.eof) sy = Math.min(sy, cr.height - h);
     if (first === 0 && L.bof) sy = Math.max(sy, 0);
     // The new top: the last line starting at or above the scroll position.
     let k = 0;
@@ -261,7 +341,7 @@ export class DocView {
     // on the cursor), in pixels.
     this.moved += sy - asked;
     // Drawn too little above or below (an offset past what was estimated)?
-    const again = (sy < lineY[0][1] && first > 0) || (sy + h > bottom && lastLine + 1 < L.count);
+    const again = (sy < lineY[0][1] && first > 0) || (sy + h > bottom && !atEnd);
     return { again, carets };
   }
 
@@ -276,7 +356,12 @@ export class DocView {
     const { L } = ctx;
     const n = blk.node;
     const ls = L.starts[blk.first], le = L.lineEnd(blk.last);
-    const joined = () => { const r = this.walk(ctx, ls, le); return r.html + (r.shown ? "" : anchor(le)); };
+    // The fold toggle (shown on hover, or while folded) and, while folded,
+    // an ellipsis where the hidden part was.
+    const folded = ctx.v.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
+    const tog = folded || this.foldOf(ctx, blk, true) ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
+    const more = folded ? `<span class="doc-more" data-fold="${blk.first}">⋯</span>` : "";
+    const joined = () => { const r = this.walk(ctx, ls, le); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
     if (!n) return `<p class="l">${joined()}</p>`;
     switch (n.type) {
       case "heading": {
@@ -293,21 +378,22 @@ export class DocView {
       case "code": {
         const lang = fenceLanguage(n.lang);
         const syn = lang ? (li) => spansFor(lang, L.lines[li]) : null;
-        let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>`;
+        let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>${tog}`;
         for (let k = blk.first; k <= blk.last; k++) {
+          if (ctx.hidden(k)) continue;
           const r = this.walk(ctx, L.starts[k], L.lineEnd(k), syn);
           // A line whose text is all concealed draws nothing.
           if (!r.shown && L.lines[k] !== "") continue;
           html += `<div class="ln l">${r.html}${r.shown ? "" : anchor(L.lineEnd(k))}</div>`;
         }
-        return html + "</div>";
+        return html + (folded ? `<div class="ln">${more}</div>` : "") + "</div>";
       }
-      case "table": return this.tableHTML(ctx, blk);
+      case "table": return this.tableHTML(ctx, blk, tog);
       default: return `<p class="l">${joined()}</p>`;
     }
   }
 
-  tableHTML(ctx, blk) {
+  tableHTML(ctx, blk, tog) {
     const { L, d } = ctx;
     const n = blk.node;
     const parts = d.query("nodes", n.start, n.end + 1).filter((x) => PART.has(x.type) && applies(x, ctx.mode));
@@ -321,13 +407,17 @@ export class DocView {
     for (const list of cells.values()) { list.sort((a, b) => a.start - b.start); ncol = Math.max(ncol, list.length); }
     let html = `<table class="doc-table"><tbody>`;
     for (let k = blk.first; k <= blk.last; k++) {
+      if (ctx.hidden(k)) continue;
       const ls = L.starts[k], le = L.lineEnd(k);
       const list = cells.get(k);
+      // The fold toggle sits in the first cell drawn, placed by the table.
+      const t = tog;
+      tog = "";
       if (!list) {
         // A row without cells (the delimiter row): its text across the table.
         const r = this.walk(ctx, ls, le);
         if (!r.shown && L.lines[k] !== "") continue;
-        html += `<tr class="raw"><td class="l" colspan="${ncol}">${r.html}${r.shown ? "" : anchor(le)}</td></tr>`;
+        html += `<tr class="raw"><td class="l" colspan="${ncol}">${t}${r.html}${r.shown ? "" : anchor(le)}</td></tr>`;
         continue;
       }
       const tag = rows.get(k)?.header ? "th" : "td";
@@ -336,7 +426,7 @@ export class DocView {
         const a = i === 0 ? ls : c.start, z = i + 1 < list.length ? list[i + 1].start : le;
         const r = this.walk(ctx, a, z);
         const al = n.align?.[i];
-        html += `<${tag} class="l"${al ? ` style="text-align:${al}"` : ""}>${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
+        html += `<${tag} class="l"${al ? ` style="text-align:${al}"` : ""}>${i === 0 ? t : ""}${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
       });
       for (let i = list.length; i < ncol; i++) html += `<${tag}></${tag}>`;
       html += "</tr>";
