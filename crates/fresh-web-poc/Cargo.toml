@@ -15,13 +15,17 @@ path = "src/main.rs"
 
 [dependencies]
 fresh-editor-core = { workspace = true, features = ["runtime"] }
-fresh-parser-js = { workspace = true, features = ["oxc"] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow = { workspace = true, features = ["std"] }
-tiny_http = "0.12"
+fresh-editor = { path = "../fresh-editor" }
+tokio.workspace = true
+axum = "0.8"
+futures-util = "0.3"
 portable-pty = "0.9"
 base64 = "0.22"
+ignore = "0.4"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3.25"

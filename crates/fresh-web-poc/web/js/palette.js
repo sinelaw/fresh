@@ -1,0 +1,207 @@
+// The palette: one input over a list, in four modes picked by prefix, as in
+// the editor —
+//   (none) files     fuzzy file finder (server-side), `path:line:col` jumps
+//   >      commands  every registered command, with its key
+//   #      buffers   open buffers by name
+//   :      line      go to a line, previewed as you type
+// — and the general pick-from-a-list / ask-for-text prompts plugins use.
+
+import { rpc } from "./rpc.js";
+
+const $ = (s) => document.querySelector(s);
+
+export class Palette {
+  constructor(app) {
+    this.app = app;
+    this.el = $("#prompt");
+    this.label = this.el.querySelector(".label");
+    this.input = this.el.querySelector("input");
+    this.list = this.el.querySelector(".list");
+    this.hint = this.el.querySelector(".hint");
+    this.items = [];
+    this.sel = 0;
+    this.spec = null;
+    this.seq = 0;
+    this.input.addEventListener("input", () => this.changed());
+    this.input.addEventListener("keydown", (e) => this.key(e));
+    this.input.addEventListener("blur", () => setTimeout(() => { if (this.spec && document.activeElement !== this.input) this.cancel(); }, 150));
+  }
+
+  get isOpen() { return !!this.spec; }
+
+  // The palette, in the mode `prefix` selects.
+  palette(prefix) {
+    const v = this.app.view();
+    const origin = v ? { v, pos: v.primary.pos, top: v.top } : null;
+    this.show({
+      label: "",
+      value: prefix,
+      hint: "files · > commands · # buffers · : go to line",
+      source: (q) => this.paletteItems(q),
+      onChange: (q) => {
+        // Preview a `:N` jump; Escape puts the view back.
+        const m = /^:(\d+)/.exec(q);
+        if (m && origin) this.app.gotoLine(parseInt(m[1], 10) - 1, 0);
+      },
+      onAccept: (it, q) => it?.run ? it.run() : this.openTyped(q),
+      onCancel: () => { if (origin && /^:\d/.test(this.input.value)) { origin.v.top = origin.top; this.app.editing.place(origin.v.pane, origin.pos, false); } },
+    });
+  }
+
+  async paletteItems(q) {
+    const app = this.app;
+    if (q.startsWith(">")) {
+      const terms = q.slice(1).toLowerCase().split(/\s+/).filter(Boolean);
+      return [...app.commands]
+        .filter(([, c]) => !c.hidden && terms.every((t) => c.title.toLowerCase().includes(t)))
+        .map(([id, c]) => ({ label: c.title, detail: [app.keyFor(id), c.source !== "core" ? c.source : ""].filter(Boolean).join(" · "), run: () => app.run(id) }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
+    if (q.startsWith("#")) {
+      const t = q.slice(1).toLowerCase();
+      return [...app.buffers.values()]
+        .filter((b) => (b.path || b.name).toLowerCase().includes(t))
+        .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : "virtual", run: () => app.showBuffer(b) }));
+    }
+    if (q.startsWith(":")) {
+      const n = parseInt(q.slice(1), 10);
+      return [{ label: n > 0 ? `Go to line ${n}` : "Type a line number", run: () => n > 0 && app.gotoLine(n - 1, 0) }];
+    }
+    const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
+    const files = q.trim() ? (await rpc("fs.find", { query: m[1] })).files : [];
+    return files.map((f) => ({
+      label: f,
+      run: () => app.openFile(f, m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {}),
+    }));
+  }
+
+  openTyped(q) {
+    const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
+    if (m && !/^[>#:]/.test(q)) this.app.openFile(m[1], m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {});
+  }
+
+  // Pick from a list: {title, items: [{label, detail, value}], onAccept(item), onChange(item)}
+  open(o) {
+    this.show({
+      label: o.title || "",
+      value: o.value || "",
+      source: (q) => {
+        const t = q.toLowerCase().split(/\s+/).filter(Boolean);
+        return (o.items || []).filter((it) => t.every((x) => `${it.label} ${it.detail || ""}`.toLowerCase().includes(x)));
+      },
+      onSelect: o.onChange,
+      onAccept: (it) => it && o.onAccept?.(it),
+      onCancel: o.onCancel,
+    });
+  }
+
+  // Ask for text: resolves with it, or null when cancelled.
+  ask(o) {
+    return new Promise((resolve) => {
+      this.show({
+        label: o.title || "",
+        value: o.value || "",
+        hint: o.hint || "",
+        source: null,
+        onAccept: (_it, q) => resolve(q),
+        onCancel: () => resolve(null),
+      });
+      if (o.select !== false) this.input.select();
+    });
+  }
+
+  show(spec) {
+    if (this.spec) this.cancel();
+    this.spec = spec;
+    this.label.textContent = spec.label;
+    this.hint.textContent = spec.hint || "";
+    this.input.value = spec.value;
+    this.items = [];
+    this.sel = 0;
+    this.el.classList.remove("hidden");
+    this.input.focus();
+    this.changed();
+  }
+
+  async changed() {
+    const s = this.spec;
+    if (!s) return;
+    const q = this.input.value;
+    s.onChange?.(q);
+    if (!s.source) { this.items = []; this.render(); return; }
+    const seq = ++this.seq;
+    const r = await s.source(q);
+    if (this.spec !== s || seq !== this.seq) return;
+    this.items = r || [];
+    this.sel = 0;
+    this.render();
+    if (this.items[0]) s.onSelect?.(this.items[0]);
+  }
+
+  render() {
+    this.list.innerHTML = "";
+    this.items.slice(0, 300).forEach((it, i) => {
+      const d = document.createElement("div");
+      d.className = "item" + (i === this.sel ? " sel" : "");
+      d.innerHTML = `<span class="t"></span><span class="d"></span>`;
+      d.querySelector(".t").textContent = it.label;
+      d.querySelector(".d").textContent = it.detail || "";
+      d.onmousedown = (e) => { e.preventDefault(); this.sel = i; this.accept(); };
+      this.list.appendChild(d);
+    });
+    this.list.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+  }
+
+  key(e) {
+    const move = (d) => {
+      this.sel = Math.max(0, Math.min(this.items.length - 1, this.sel + d));
+      this.render();
+      this.spec?.onSelect?.(this.items[this.sel]);
+    };
+    if (e.key === "Escape") { e.preventDefault(); this.cancel(); }
+    else if (e.key === "Enter") { e.preventDefault(); this.accept(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+    else if (e.key === "PageDown") { e.preventDefault(); move(10); }
+    else if (e.key === "PageUp") { e.preventDefault(); move(-10); }
+    else if (e.key === "Tab" && this.items[this.sel]) {
+      // Complete to the top suggestion (a path a folder at a time).
+      e.preventDefault();
+      const it = this.items[this.sel];
+      const q = this.input.value;
+      if (!/^[>#:]/.test(q) && it.label) {
+        const common = commonPrefix(this.items.map((x) => x.label));
+        this.input.value = common.length > q.length ? common : it.label;
+        this.changed();
+      }
+    }
+  }
+
+  close() {
+    this.spec = null;
+    this.el.classList.add("hidden");
+    this.app.focusPane(this.app.activePane);
+  }
+
+  accept() {
+    const s = this.spec;
+    if (!s) return;
+    const item = this.items[this.sel];
+    const q = this.input.value;
+    this.close();
+    s.onAccept?.(item, q);
+  }
+
+  cancel() {
+    const s = this.spec;
+    this.close();
+    s?.onCancel?.();
+  }
+}
+
+function commonPrefix(list) {
+  if (!list.length) return "";
+  let p = list[0];
+  for (const s of list) while (!s.startsWith(p)) p = p.slice(0, -1);
+  return p;
+}

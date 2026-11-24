@@ -11,18 +11,20 @@
 </head>
 <body>
 <div id="app">
-  <header id="topbar"><span class="brand">Fresh</span><span id="ws-name"></span><span class="hint">Ctrl+P open · F1 commands · Ctrl+` terminal</span></header>
+  <header id="topbar"><span class="brand">Fresh</span><span id="ws-name"></span><span class="hint">Ctrl+P commands · Ctrl+O files · Ctrl+` terminal</span></header>
   <div id="main">
-    <aside id="explorer"><div class="title">Explorer</div><div id="explorer-tree"></div></aside>
+    <aside id="sidebar"><div id="side-panels"></div></aside>
     <section id="work">
-      <div id="editor-area"></div>
+      <div id="bar" class="hidden"></div>
+      <div id="center"><div id="editor-area"></div><aside id="right-dock" class="hidden"></aside></div>
+      <div id="dock" class="hidden"><div class="dock-tabs"></div><div class="dock-body"></div></div>
       <div id="terminal" class="hidden"><div class="term-tabs"></div><div class="term-screens"></div></div>
     </section>
   </div>
   <footer id="status"><span id="status-left"></span><span id="status-right"></span></footer>
 </div>
-<div id="prompt" class="hidden"><div class="bar"><span class="label"></span><input spellcheck="false" autocomplete="off"></div><div class="list"></div></div>
-<div id="hover" class="hidden"></div>
+<div id="prompt" class="hidden"><div class="bar"><span class="label"></span><input spellcheck="false" autocomplete="off"></div><div class="list"></div><div class="hint"></div></div>
+<div id="popup" class="hidden"></div>
 <textarea id="input" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
 <script type="module" src="js/app.js"></script>
 </body>

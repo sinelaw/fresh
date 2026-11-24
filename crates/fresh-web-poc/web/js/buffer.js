@@ -15,10 +15,10 @@ import { rpc } from "./rpc.js";
 import { byteLen, transformSeqs, shiftPos } from "./ot.js";
 import { Decor } from "./decor.js";
 
-// Files below this are held whole; larger ones through a window.
-const FULL_LIMIT = 3 * 1024 * 1024;
-const WINDOW_BEFORE = 300;
-const WINDOW_AFTER = 900;
+// A window: this many lines before and after the line asked for. A file
+// shorter than that arrives whole in its first window; nothing else differs.
+const WINDOW_BEFORE = 2000;
+const WINDOW_AFTER = 6000;
 
 let nextBufferId = 1;
 
@@ -58,52 +58,64 @@ export function byteToIdx(s, b) {
 }
 export function idxToByte(s, idx) { return byteLen(s.slice(0, idx)); }
 
-// The text of a buffer as lines with their byte starts.
+// The text of a buffer as lines, with each line's byte length cached and
+// its byte start kept. An edit re-measures only the lines it touches; the
+// starts after them move by a sum, not a re-measure.
 class Lines {
   constructor(start, text, bof, eof, firstLine) {
     this.start = start;
     this.bof = bof;
     this.eof = eof;
     this.firstLine = firstLine; // null when the document has no line index
-    let lines = text.split("\n");
+    const lines = text.split("\n");
     // A trailing empty piece after the last newline is a real (empty) line
     // only at the end of the document; otherwise the next line is unloaded.
     if (!eof && lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
     this.lines = lines;
+    this.lens = lines.map(byteLen);
+    this.starts = new Array(lines.length);
     this.recount(0);
   }
   recount(from) {
-    if (!this.starts) this.starts = [];
-    this.starts.length = this.lines.length;
-    let b = from === 0 ? this.start : this.starts[from - 1] + byteLen(this.lines[from - 1]) + 1;
-    for (let i = from; i < this.lines.length; i++) {
-      this.starts[i] = b;
-      b += byteLen(this.lines[i]) + 1;
+    let b = from === 0 ? this.start : this.starts[from - 1] + this.lens[from - 1] + 1;
+    const { starts, lens } = this;
+    starts.length = lens.length;
+    for (let i = from; i < lens.length; i++) {
+      starts[i] = b;
+      b += lens[i] + 1;
     }
+  }
+  // Every start moves by `d` (an edit before the window).
+  move(d) {
+    this.start += d;
+    const { starts } = this;
+    for (let i = 0; i < starts.length; i++) starts[i] += d;
   }
   get count() { return this.lines.length; }
   // End of the covered bytes: the end of the document when eof.
   end(docLen) {
     if (this.eof) return docLen;
     const k = this.lines.length - 1;
-    return this.starts[k] + byteLen(this.lines[k]) + 1;
+    return this.starts[k] + this.lens[k] + 1;
   }
   // Index of the line holding byte `b`, or -1 outside.
   indexOf(b) {
-    if (b < this.start) return -1;
-    let lo = 0, hi = this.lines.length - 1;
-    if (b > this.starts[hi] + byteLen(this.lines[hi]) + (this.eof ? 0 : 1)) return -1;
+    const { starts, lens } = this;
+    let hi = starts.length - 1;
+    if (b < this.start || b > starts[hi] + lens[hi] + (this.eof ? 0 : 1)) return -1;
+    let lo = 0;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (this.starts[mid] <= b) lo = mid; else hi = mid - 1;
+      if (starts[mid] <= b) lo = mid; else hi = mid - 1;
     }
     return lo;
   }
-  lineEnd(i) { return this.starts[i] + byteLen(this.lines[i]); }
+  lineEnd(i) { return this.starts[i] + this.lens[i]; }
   hasNewline(i) { return i < this.lines.length - 1 || !this.eof; }
   text(s, e) {
     const a = this.indexOf(s), b = this.indexOf(e);
     if (a < 0 || b < 0) return null;
+    if (a === b) { const l = this.lines[a]; return l.slice(byteToIdx(l, s - this.starts[a]), byteToIdx(l, e - this.starts[a])); }
     const seg = this.lines.slice(a, b + 1).join("\n");
     const off = this.starts[a];
     return seg.slice(byteToIdx(seg, s - off), byteToIdx(seg, e - off));
@@ -112,11 +124,12 @@ class Lines {
   splice(op) {
     const s = op.pos, e = op.t === "del" ? op.pos + op.len : op.pos;
     const a = this.indexOf(s), b = this.indexOf(e);
-    const seg = this.lines.slice(a, b + 1).join("\n");
+    const seg = a === b ? this.lines[a] : this.lines.slice(a, b + 1).join("\n");
     const off = this.starts[a];
     const si = byteToIdx(seg, s - off), ei = byteToIdx(seg, e - off);
-    const out = seg.slice(0, si) + (op.t === "ins" ? op.text : "") + seg.slice(ei);
-    this.lines.splice(a, b - a + 1, ...out.split("\n"));
+    const out = (seg.slice(0, si) + (op.t === "ins" ? op.text : "") + seg.slice(ei)).split("\n");
+    this.lines.splice(a, b - a + 1, ...out);
+    this.lens.splice(a, b - a + 1, ...out.map(byteLen));
     this.recount(a);
   }
 }
@@ -156,8 +169,7 @@ export class Buffer {
       const lines = op.t === "ins" ? nl(op.text) : op.nl ?? 0;
       if (op.t === "ins" ? op.pos < ws : end <= ws) {
         // Wholly before the window.
-        L.start += op.t === "ins" ? n : -n;
-        L.recount(0);
+        L.move(op.t === "ins" ? n : -n);
         if (L.firstLine != null) L.firstLine += op.t === "ins" ? lines : -lines;
       } else if (op.pos > we || (op.pos === we && !L.eof)) {
         // Wholly after it.
@@ -192,8 +204,9 @@ export class FileBuffer extends Buffer {
     this.large = info.large;
     this.language = info.language;
     this.modified = info.modified;
+    this.encoding = info.encoding;
+    this._readOnly = !!info.readonly;
     this.totalLines = info.lines;
-    this.full = !info.large && info.len <= FULL_LIMIT;
     this.text = null;
     this.inflight = null;
     this.pending = [];
@@ -202,19 +215,19 @@ export class FileBuffer extends Buffer {
     this.fetching = null;
   }
 
+  // The held text covers the whole document.
+  get full() { const L = this.text; return !!L && L.bof && L.eof; }
+
   // Make sure the window holds the line at `pos` and `after` lines past it.
   // Resolves when it does (immediately when it already does).
   ensure(pos, after = 200) {
     const L = this.text;
     if (L) {
-      if (this.full) return Promise.resolve();
       const i = L.indexOf(pos);
       if (i >= 0 && (L.eof || L.count - i > after) && (L.bof || i > 50)) return Promise.resolve();
     }
     if (this.fetching) return this.fetching;
-    const args = this.full
-      ? { doc: this.doc, around: 0, before: 0, after: 1e9 }
-      : { doc: this.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2) };
+    const args = { doc: this.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2) };
     this.fetching = (async () => {
       for (;;) {
         // A window is the server's text; with edits of ours not yet in it,
@@ -261,6 +274,7 @@ export class FileBuffer extends Buffer {
       this.emit("edit", { op, gone, local: true });
     }
     if (undoable) { pushUndo(this, ops, inverse); this.redo = []; }
+    this.lastEdit = Date.now();
     this.pending.push(...ops.map((o) => ({ ...o })));
     this.modified = true;
     this.flush();
@@ -340,7 +354,6 @@ export class VirtualBuffer extends Buffer {
     this.mode = opts.mode || null;
     this._readOnly = !!opts.readOnly;
     this.len = 0;
-    this.full = true;
     this.entries = [];
     this.setEntries([]);
     this.modified = false;
@@ -353,22 +366,23 @@ export class VirtualBuffer extends Buffer {
     for (const e of this.entries) {
       const s = byteLen(text);
       text += e.text || "";
-      this.ranges.push({ start: s, end: byteLen(text), props: e.properties || {}, style: e.style, inline: e.inlineOverlays });
+      this.ranges.push({ start: s, end: byteLen(text), props: e.props || {}, style: e.style, inline: e.inlineOverlays });
     }
     this.len = byteLen(text);
     this.text = new Lines(0, text, true, true, 0);
     this.textGen = (this.textGen || 0) + 1;
     this.offered = new Set();
     this.totalLines = this.text.count;
-    this.decor.clearNamespace("__entry_style");
+    this.decor.clearNamespace("entry-style");
     for (const r of this.ranges) {
-      if (r.style) this.decor.addOverlay("__entry_style", r.start, r.end, r.style);
+      if (r.style) this.decor.add("overlays", { ns: "entry-style", start: r.start, end: r.end, style: r.style, when: null });
     }
     this.emit("text");
   }
   propsAt(pos) {
     return this.ranges.filter((r) => pos >= r.start && (pos < r.end || (pos === r.end && r.end === this.len))).map((r) => r.props);
   }
+  get full() { return true; }
   ensure() { return Promise.resolve(); }
   edit(ops, { undoable = true } = {}) {
     const inverse = [];

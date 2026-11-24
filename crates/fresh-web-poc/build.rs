@@ -9,7 +9,11 @@ fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
         if p.is_dir() {
             walk(&p, base, out);
         } else {
-            let rel = p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+            let rel = p
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
             out.push(format!(
                 "    ({:?}, include_bytes!({:?})),\n",
                 rel,

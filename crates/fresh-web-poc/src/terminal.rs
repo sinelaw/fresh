@@ -50,7 +50,12 @@ fn b64(bytes: &[u8]) -> String {
 impl Terms {
     pub fn open(&self, hub: Arc<Hub>, ws: &Workspace, cols: u16, rows: u16) -> Result<u64> {
         let pair = native_pty_system()
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| anyhow!("{e}"))?;
         let child = pair
             .slave
@@ -60,7 +65,11 @@ impl Terms {
         let mut reader = pair.master.try_clone_reader().map_err(|e| anyhow!("{e}"))?;
         let writer = pair.master.take_writer().map_err(|e| anyhow!("{e}"))?;
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
-        let out = Arc::new(Mutex::new(Output { replay: VecDeque::new(), end: 0, exited: false }));
+        let out = Arc::new(Mutex::new(Output {
+            replay: VecDeque::new(),
+            end: 0,
+            exited: false,
+        }));
         {
             let out = out.clone();
             std::thread::spawn(move || {
@@ -90,7 +99,13 @@ impl Terms {
         }
         self.map.lock().unwrap().insert(
             id,
-            Term { out, writer, master: pair.master, child, size: (cols, rows) },
+            Term {
+                out,
+                writer,
+                master: pair.master,
+                child,
+                size: (cols, rows),
+            },
         );
         Ok(id)
     }
@@ -124,10 +139,18 @@ impl Terms {
         let t = m.get_mut(&id).ok_or_else(|| anyhow!("no terminal {id}"))?;
         if t.size != (cols, rows) {
             t.master
-                .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
                 .map_err(|e| anyhow!("{e}"))?;
             t.size = (cols, rows);
-            hub.broadcast(&json!({"ev": "term.size", "term": id, "cols": cols, "rows": rows}), None);
+            hub.broadcast(
+                &json!({"ev": "term.size", "term": id, "cols": cols, "rows": rows}),
+                None,
+            );
         }
         Ok(())
     }

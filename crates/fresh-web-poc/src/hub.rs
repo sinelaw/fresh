@@ -8,8 +8,10 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Mutex;
+use tokio::sync::mpsc::{
+    unbounded_channel as channel, UnboundedReceiver as Receiver, UnboundedSender as Sender,
+};
 
 struct Slot {
     tx: Sender<String>,
@@ -56,9 +58,5 @@ impl Hub {
                 let _ = s.tx.send(msg.clone());
             }
         }
-    }
-
-    pub fn ids(&self) -> Vec<u64> {
-        self.clients.lock().unwrap().keys().copied().collect()
     }
 }

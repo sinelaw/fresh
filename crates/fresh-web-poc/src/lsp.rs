@@ -9,12 +9,13 @@
 //! the document version they describe; each client anchors them in its own
 //! marker trees. The server keeps no annotations itself.
 
+use crate::workspace::Workspace;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -23,13 +24,7 @@ use std::time::Duration;
 /// Called with every notification a server sends (`method`, `params`).
 pub type OnNotify = Arc<dyn Fn(&str, &str, &Value) + Send + Sync>;
 
-fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|d| d.join(program).is_file())
-    })
-}
-
-/// The command for a language's server, when one is installed.
+/// The command for a language's server.
 pub fn command_for(language: &str) -> Option<Vec<String>> {
     let cmd: &[&str] = match language {
         "python" => &["pyright-langserver", "--stdio"],
@@ -39,7 +34,7 @@ pub fn command_for(language: &str) -> Option<Vec<String>> {
         "go" => &["gopls"],
         _ => return None,
     };
-    on_path(cmd[0]).then(|| cmd.iter().map(|s| s.to_string()).collect())
+    Some(cmd.iter().map(|s| s.to_string()).collect())
 }
 
 pub fn uri_of(path: &Path) -> String {
@@ -108,10 +103,15 @@ fn read_msg(r: &mut BufReader<impl Read>) -> Option<Value> {
 }
 
 impl Server {
-    fn start(language: &str, cmd: &[String], root: &Path, on_notify: OnNotify) -> Result<Arc<Self>> {
-        let mut child = Command::new(&cmd[0])
-            .args(&cmd[1..])
-            .current_dir(root)
+    fn start(
+        language: &str,
+        cmd: &[String],
+        ws: &Workspace,
+        on_notify: OnNotify,
+    ) -> Result<Arc<Self>> {
+        let mut child = ws
+            .authority
+            .command(&cmd[0], &cmd[1..], &ws.root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -139,14 +139,20 @@ impl Server {
                 let method = msg.get("method").and_then(Value::as_str);
                 match (method, msg.get("id")) {
                     (None, Some(id)) => {
-                        if let Some(tx) = id.as_i64().and_then(|i| pending_r.lock().unwrap().remove(&i)) {
+                        if let Some(tx) = id
+                            .as_i64()
+                            .and_then(|i| pending_r.lock().unwrap().remove(&i))
+                        {
                             let _ = tx.send(msg);
                         }
                     }
                     (Some(m), Some(id)) => {
                         // A request from the server: answer with defaults.
                         let result = if m == "workspace/configuration" {
-                            let n = msg["params"]["items"].as_array().map(|a| a.len()).unwrap_or(0);
+                            let n = msg["params"]["items"]
+                                .as_array()
+                                .map(|a| a.len())
+                                .unwrap_or(0);
                             Value::Array(vec![Value::Null; n])
                         } else {
                             Value::Null
@@ -160,7 +166,7 @@ impl Server {
         });
 
         // The writer: initialize first, then everything queued, in order.
-        let root_uri = uri_of(root);
+        let root_uri = uri_of(&ws.root);
         let pending_w = pending;
         std::thread::spawn(move || {
             let (tx, init_rx) = channel();
@@ -189,7 +195,10 @@ impl Server {
             if init_rx.recv_timeout(Duration::from_secs(60)).is_err() {
                 return;
             }
-            let _ = write_msg(&mut stdin, &json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
+            let _ = write_msg(
+                &mut stdin,
+                &json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            );
             while let Ok(msg) = rx.recv() {
                 if write_msg(&mut stdin, &msg).is_err() {
                     break;
@@ -200,7 +209,9 @@ impl Server {
     }
 
     pub fn notify(&self, method: &str, params: Value) {
-        let _ = self.queue.send(json!({"jsonrpc": "2.0", "method": method, "params": params}));
+        let _ = self
+            .queue
+            .send(json!({"jsonrpc": "2.0", "method": method, "params": params}));
     }
 
     /// Send a request and wait for its reply.
@@ -228,33 +239,72 @@ impl Drop for Server {
     }
 }
 
-/// The servers, one per language, started on first use.
+/// The servers, one per language, started on first use, on the
+/// workspace's host.
 pub struct Lsp {
-    root: PathBuf,
+    ws: Arc<Workspace>,
     servers: Mutex<HashMap<String, Option<Arc<Server>>>>,
+    installed: Mutex<HashMap<String, bool>>,
     on_notify: OnNotify,
 }
 
 impl Lsp {
-    pub fn new(root: PathBuf, on_notify: OnNotify) -> Self {
-        Lsp { root, servers: Mutex::default(), on_notify }
+    pub fn new(ws: Arc<Workspace>, on_notify: OnNotify) -> Self {
+        Lsp {
+            ws,
+            servers: Mutex::default(),
+            installed: Mutex::default(),
+            on_notify,
+        }
+    }
+
+    /// Whether `language`'s server is installed on the host (asked once).
+    pub fn available(&self, language: &str) -> bool {
+        let Some(cmd) = command_for(language) else {
+            return false;
+        };
+        if let Some(&v) = self.installed.lock().unwrap().get(language) {
+            return v;
+        }
+        let probe = format!("command -v {}", cmd[0]);
+        let ok = self
+            .ws
+            .authority
+            .command("sh", &["-c".into(), probe], &self.ws.root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        self.installed
+            .lock()
+            .unwrap()
+            .insert(language.to_string(), ok);
+        ok
     }
 
     /// The server for `language`, starting it if it is installed.
     pub fn server(&self, language: &str) -> Option<Arc<Server>> {
+        if !self.available(language) {
+            return None;
+        }
         let mut m = self.servers.lock().unwrap();
         if let Some(s) = m.get(language) {
             return s.clone();
         }
         let s = command_for(language)
-            .and_then(|cmd| Server::start(language, &cmd, &self.root, self.on_notify.clone()).ok());
+            .and_then(|cmd| Server::start(language, &cmd, &self.ws, self.on_notify.clone()).ok());
         m.insert(language.to_string(), s.clone());
         s
     }
 
     /// The server for `language` only if it is already running.
     pub fn running(&self, language: &str) -> Option<Arc<Server>> {
-        self.servers.lock().unwrap().get(language).cloned().flatten()
+        self.servers
+            .lock()
+            .unwrap()
+            .get(language)
+            .cloned()
+            .flatten()
     }
 
     pub fn status(&self) -> Value {

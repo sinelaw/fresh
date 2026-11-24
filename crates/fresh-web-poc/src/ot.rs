@@ -46,7 +46,10 @@ pub fn transform(a: &Prim, b: &Prim, a_first: bool) -> Vec<Prim> {
             if *pa < *pb || (*pa == *pb && a_first) {
                 vec![a.clone()]
             } else {
-                vec![Ins { pos: pa + tb.len(), text: ta.clone() }]
+                vec![Ins {
+                    pos: pa + tb.len(),
+                    text: ta.clone(),
+                }]
             }
         }
         (Ins { pos: pa, text: ta }, Del { pos: pb, len: lb }) => {
@@ -59,19 +62,31 @@ pub fn transform(a: &Prim, b: &Prim, a_first: bool) -> Vec<Prim> {
                 // the deletion point.
                 *pb
             };
-            vec![Ins { pos: p, text: ta.clone() }]
+            vec![Ins {
+                pos: p,
+                text: ta.clone(),
+            }]
         }
         (Del { pos: pa, len: la }, Ins { pos: pb, text: tb }) => {
             if *pb <= *pa {
-                vec![Del { pos: pa + tb.len(), len: *la }]
+                vec![Del {
+                    pos: pa + tb.len(),
+                    len: *la,
+                }]
             } else if *pb >= pa + la {
                 vec![a.clone()]
             } else {
                 // `b` inserted inside the range `a` deletes: delete around it.
                 let before = pb - pa;
                 vec![
-                    Del { pos: *pa, len: before },
-                    Del { pos: pa + tb.len(), len: la - before },
+                    Del {
+                        pos: *pa,
+                        len: before,
+                    },
+                    Del {
+                        pos: pa + tb.len(),
+                        len: la - before,
+                    },
                 ]
             }
         }
@@ -80,10 +95,16 @@ pub fn transform(a: &Prim, b: &Prim, a_first: bool) -> Vec<Prim> {
             if a1 <= b0 {
                 vec![a.clone()]
             } else if a0 >= b1 {
-                vec![Del { pos: a0 - lb, len: *la }]
+                vec![Del {
+                    pos: a0 - lb,
+                    len: *la,
+                }]
             } else {
                 let overlap = a1.min(b1) - a0.max(b0);
-                vec![Del { pos: a0.min(b0), len: la - overlap }]
+                vec![Del {
+                    pos: a0.min(b0),
+                    len: la - overlap,
+                }]
             }
         }
     };
@@ -116,6 +137,7 @@ pub fn transform_seqs(a: &[Prim], b: &[Prim], a_first: bool) -> (Vec<Prim>, Vec<
 }
 
 /// Apply a primitive to a byte string.
+#[cfg(test)]
 pub fn apply(doc: &mut Vec<u8>, p: &Prim) {
     match p {
         Prim::Ins { pos, text } => {
@@ -135,7 +157,10 @@ mod tests {
     use super::*;
 
     fn ins(pos: usize, t: &str) -> Prim {
-        Prim::Ins { pos, text: t.into() }
+        Prim::Ins {
+            pos,
+            text: t.into(),
+        }
     }
     fn del(pos: usize, len: usize) -> Prim {
         Prim::Del { pos, len }

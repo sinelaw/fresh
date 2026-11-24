@@ -1,14 +1,33 @@
 // A pane and the views in it: one view per buffer tab, each with its own
-// scroll, cursors, view mode and width — all of it this client's.
+// scroll, cursors, options and folds — all of it this client's.
 
-import { layout, stringWidth } from "./layout.js";
+import { layout } from "./layout.js";
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { color, highlightLine, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
 
-let nextSplitId = 1;
-const FLOW_RUN_MAX = 200;
+let nextPaneId = 1;
+
+const EMPTY = Object.freeze({});
+const NO_SPANS = [];
+// Syntax spans by language and line text: a line's colours depend only on
+// its text (the highlighter is line-local), so scrolling and editing reuse
+// them. Each span carries its finished style.
+const spanCache = new Map();
+function spansFor(lang, text) {
+  if (!lang) return NO_SPANS;
+  const key = lang + "\u0000" + text;
+  let v = spanCache.get(key);
+  if (!v) {
+    v = highlightLine(lang, text).map((x) => ({ s: x.s, e: x.e, style: Object.freeze({ fg: THEME[x.k], bold: x.bold, italic: x.italic }) }));
+    if (spanCache.size > 50000) spanCache.clear();
+    spanCache.set(key, v);
+  }
+  return v;
+}
+
+export const sel = (c) => (c.anchor == null || c.anchor === c.pos ? null : { start: Math.min(c.anchor, c.pos), end: Math.max(c.anchor, c.pos) });
 
 // One buffer as shown in one pane.
 export class View {
@@ -16,31 +35,42 @@ export class View {
     this.pane = pane;
     this.buf = buf;
     this.top = 0; // byte: start of the first visible source line
-    this.cursor = 0;
-    this.anchor = null; // selection anchor, or null
-    this.compose = false;
-    this.composeWidth = null;
-    this.wrap = false;
-    this.lineNumbers = null; // plugin default; null = on
-    this.leftCol = 0;
-    this.goalX = null;
-    this.extraCursors = [];
+    // Every cursor: position, selection anchor (or null) and the column
+    // vertical motion aims for. The first is the primary.
+    this.cursors = [{ pos: 0, anchor: null, goalX: null }];
+    this.mode = "source"; // or "compose"
+    this.opts = { composeWidth: null, wrap: false, lineNumbers: !buf.isVirtual };
+    this.folds = []; // [{start, end}] window line indices; start's line stays
     buf.views.add(this);
   }
+  get primary() { return this.cursors[0]; }
   shift(op) {
     const sp = (p, r) => {
       if (op.t === "ins") return p > op.pos || (p === op.pos && r) ? p + byteLen(op.text) : p;
       if (p >= op.pos + op.len) return p - op.len;
       return p > op.pos ? op.pos : p;
     };
-    this.cursor = sp(this.cursor, true);
-    if (this.anchor != null) this.anchor = sp(this.anchor, false);
+    for (const c of this.cursors) {
+      c.pos = sp(c.pos, true);
+      if (c.anchor != null) c.anchor = sp(c.anchor, false);
+    }
     this.top = sp(this.top, false);
-    this.extraCursors = this.extraCursors.map((c) => sp(c, true));
   }
-  selection() {
-    if (this.anchor == null || this.anchor === this.cursor) return null;
-    return { start: Math.min(this.anchor, this.cursor), end: Math.max(this.anchor, this.cursor) };
+  selection() { return sel(this.cursors[0]); }
+  selections() { return this.cursors.map(sel).filter(Boolean); }
+  // Sort cursors by position (primary kept first) and merge any that met.
+  normalize() {
+    const prim = this.cursors[0];
+    const lo = (x) => Math.min(x.pos, x.anchor ?? x.pos), hi = (x) => Math.max(x.pos, x.anchor ?? x.pos);
+    const out = [];
+    for (const c of [...this.cursors].sort((a, b) => lo(a) - lo(b))) {
+      const prev = out[out.length - 1];
+      if (prev && (prev.pos === c.pos || lo(c) < hi(prev))) { if (c === prim) out[out.length - 1] = c; continue; }
+      out.push(c);
+    }
+    const i = out.indexOf(prim);
+    if (i > 0) { out.splice(i, 1); out.unshift(prim); }
+    this.cursors = out.length ? out : [prim];
   }
   dispose() { this.buf.views.delete(this); }
 }
@@ -48,25 +78,27 @@ export class View {
 export class Pane {
   constructor(app) {
     this.app = app;
-    this.id = nextSplitId++;
+    this.id = nextPaneId++;
     this.views = []; // tabs
     this.view = null;
     this.el = document.createElement("div");
     this.el.className = "pane";
-    this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="thumb"></div></div></div>`;
-    this.tabsEl = this.el.querySelector(".tabs");
-    this.surface = this.el.querySelector(".surface");
-    this.gutterEl = this.el.querySelector(".gutter");
-    this.textEl = this.el.querySelector(".text");
-    this.caretsEl = this.el.querySelector(".carets");
-    this.scrollEl = this.el.querySelector(".scrollbar");
-    this.thumbEl = this.el.querySelector(".thumb");
+    this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="rulers"></div><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="thumb"></div></div></div>`;
+    for (const k of ["tabs", "surface", "rulers", "gutter", "text", "carets", "scrollbar", "thumb"]) this[k + "El"] = this.el.querySelector("." + k);
     this.rows = [];
-    this.lastViewport = "";
-    this.surface.addEventListener("mousedown", (e) => this.onMouseDown(e));
-    this.surface.addEventListener("wheel", (e) => { e.preventDefault(); this.scrollLines(Math.sign(e.deltaY) * 3); }, { passive: false });
-    this.surface.addEventListener("mousemove", (e) => this.onHover(e));
-    this.scrollEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
+    this.lastWidth = new Map();
+    // Sizes come from a ResizeObserver, never read while drawing: reading
+    // layout after writing rows would force a synchronous reflow.
+    this.size = { w: 0, h: 0, sb: 0 };
+    new ResizeObserver(() => {
+      this.size = { w: this.surfaceEl.clientWidth, h: this.surfaceEl.clientHeight, sb: this.scrollbarEl.clientHeight };
+      this.scheduleRender();
+    }).observe(this.surfaceEl);
+    this.surfaceEl.addEventListener("mousedown", (e) => this.onMouseDown(e));
+    this.surfaceEl.addEventListener("wheel", (e) => { e.preventDefault(); this.scrollLines(Math.sign(e.deltaY) * 3); }, { passive: false });
+    this.surfaceEl.addEventListener("mousemove", (e) => this.onHover(e));
+    this.scrollbarEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
+    this.gutterEl.addEventListener("mousedown", (e) => this.onGutter(e));
   }
 
   // ---------------------------------------------------------------- tabs
@@ -95,10 +127,14 @@ export class Pane {
   }
   renderTabs() {
     this.tabsEl.innerHTML = "";
+    const names = this.views.map((v) => v.buf.name);
     for (const v of this.views) {
       const t = document.createElement("div");
       t.className = "tab" + (v === this.view ? " active" : "");
-      t.textContent = (v.buf.modified ? "● " : "") + v.buf.name;
+      // Tabs of files with one name show their parent folder.
+      const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path;
+      const label = dup ? v.buf.path.split("/").slice(-2).join("/") : v.buf.name;
+      t.textContent = (v.buf.modified ? "● " : "") + label + (v.buf.readOnly && !v.buf.isVirtual ? " [RO]" : "");
       t.title = v.buf.path || v.buf.name;
       t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.app.closeTab(this, v); else { this.show(v.buf); this.app.focusPane(this); } };
       const x = document.createElement("span");
@@ -114,14 +150,27 @@ export class Pane {
 
   metrics() {
     const m = this.app.metrics;
-    const w = this.surface.clientWidth - 12;
-    const h = this.surface.clientHeight;
+    const w = (this.size.w || this.surfaceEl.clientWidth) - 12;
+    const h = this.size.h || this.surfaceEl.clientHeight;
     return { cols: Math.max(10, Math.floor(w / m.cw)), rows: Math.max(1, Math.floor(h / m.lh)), cw: m.cw, lh: m.lh };
   }
 
+  geometry(v) {
+    const { cols, rows } = this.metrics();
+    const L = v.buf.text;
+    const compose = v.mode === "compose";
+    const nums = v.opts.lineNumbers && !compose && L && L.firstLine != null;
+    const digits = nums ? String(L.firstLine + L.count).length : 0;
+    const gutter = (nums ? digits + 1 : 0) + 2;
+    const avail = cols - gutter;
+    const width = compose ? Math.min(v.opts.composeWidth || this.app.settings.page_width, avail) : avail;
+    const margin = compose ? Math.max(0, Math.floor((avail - width) / 2)) : 0;
+    return { cols, rows, gutter, digits, width, margin, nums };
+  }
+
   scheduleRender() {
-    if (this.pendingRender) return;
-    this.pendingRender = requestAnimationFrame(() => { this.pendingRender = null; this.render(); });
+    if (this.pending) return;
+    this.pending = requestAnimationFrame(() => { this.pending = null; this.render(); });
   }
 
   // ---------------------------------------------------------------- render
@@ -129,171 +178,227 @@ export class Pane {
   layoutOpts(v, width) {
     const buf = v.buf;
     const L = buf.text;
-    const lang = buf.language || (buf.path || "").endsWith(".md") && "markdown";
-    const sel = v.selection();
-    const cursors = [v.cursor, ...v.extraCursors];
-    const syn = new Map();
-    // Inside a fenced block, highlight in the fence's language.
-    const struct = buf.structGen === buf.textGen ? buf.struct : null;
-    const FENCE_LANG = { bash: "shell", sh: "shell", shell: "shell", console: "shell", rust: "rust", rs: "rust", js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", python: "python", py: "python", json: "json", toml: "toml", go: "go", c: "c", cpp: "cpp" };
+    const lang = buf.language || (/\.(md|markdown)$/.test(buf.path || "") && "markdown");
+    const sels = v.selections();
+    const s = this.app.settings;
+    // Fenced blocks in markdown are highlighted in the fence's language.
+    let struct = null;
+    if (lang === "markdown" && buf.full) {
+      if (buf.structGen !== buf.textGen) { buf.struct = classify(L.lines); buf.structGen = buf.textGen; }
+      struct = buf.struct;
+    }
+    const FENCE = { bash: "shell", sh: "shell", shell: "shell", console: "shell", rust: "rust", rs: "rust", js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", python: "python", py: "python", json: "json", toml: "toml", go: "go", c: "c", cpp: "cpp" };
     const fenceLang = (li) => {
       let k = li;
       while (k > 0 && struct.region[k] !== "open") k--;
       const info = (/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]) || [])[1] || "";
-      return FENCE_LANG[info.toLowerCase()] || null;
+      return FENCE[info.toLowerCase()] || null;
     };
     const synFor = (li) => {
-      if (!syn.has(li)) {
-        const region = struct && struct.region[li];
-        const l = region === "body" ? fenceLang(li) : lang;
-        syn.set(li, region === "body" && !l ? [] : highlightLine(l, L.lines[li]));
-      }
-      return syn.get(li);
+      const region = struct && struct.region[li];
+      const l = region === "body" ? fenceLang(li) : lang;
+      return region === "body" && !l ? NO_SPANS : spansFor(l, L.lines[li]);
     };
-    const overlays = buf.decor.overlays;
-    const diags = buf.decor.diags;
-    const search = this.app.searchHit && this.app.searchHit.buf === buf ? this.app.searchHit : null;
+    const compose = v.mode === "compose";
+    // Each line's decorations, gathered when the layout first reaches the
+    // line (the interval index makes that cost what the line has), in order
+    // of precedence: overlays, occurrences, diagnostics, selection.
+    let occ = null;
+    if (s.highlight_occurrences) {
+      const w = v.selection() || this.app.editing.wordAt(buf, v.primary.pos);
+      const t = w ? buf.textRange(w.start, w.end) : null;
+      if (t && t.length >= 2 && !t.includes("\n")) occ = t;
+    }
+    const occBg = { bg: THEME["editor.occurrence_bg"] };
+    const selBg = THEME["editor.selection_bg"];
+    const DIAG = ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]];
+    const overlayFn = (o) => {
+      const y = o.style || {};
+      const fg = y.fg != null ? color(y.fg) : null, bg = y.bg != null ? color(y.bg) : null;
+      return (st) => ({
+        ...st, ...(fg ? { fg } : {}), ...(bg ? { bg } : {}),
+        ...(y.bold ? { bold: true } : {}), ...(y.italic ? { italic: true } : {}), ...(y.underline ? { underline: true } : {}), ...(y.strike ? { strike: true } : {}),
+      });
+    };
+    const lineCache = new Map();
+    const lineDecos = (li) => {
+      let out = lineCache.get(li);
+      if (out) return out;
+      out = [];
+      const ls = L.starts[li], le = L.lineEnd(li) + 1;
+      for (const o of buf.decor.query("overlays", ls, le)) if (!o.when || (o.when === "compose" && compose)) out.push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
+      if (occ) {
+        const line = L.lines[li];
+        for (let k = line.indexOf(occ); k >= 0; k = line.indexOf(occ, k + occ.length)) {
+          if ((k === 0 || !/\w/.test(line[k - 1])) && !/\w/.test(line[k + occ.length] || "")) {
+            const st0 = ls + byteLen(line.slice(0, k));
+            out.push({ s: st0, e: st0 + byteLen(occ), f: (st) => ({ ...st, ...occBg }) });
+          }
+        }
+      }
+      for (const g of buf.decor.query("diags", ls, le)) { const wavy = DIAG[g.severity] || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => ({ ...st, wavy }) }); }
+      for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: (st) => ({ ...st, bg: selBg }) });
+      lineCache.set(li, out);
+      return out;
+    };
     return {
-      compose: v.compose,
-      wrap: v.wrap || v.compose,
+      compose,
+      wrap: v.opts.wrap || compose,
       width,
       tab: 4,
-      cursors,
+      cursors: v.cursors.map((c) => c.pos),
+      folds: v.folds,
+      whitespace: s.show_whitespace,
       extendAt: (b) => {
-        for (const o of overlays) if (o.style?.extendToLineEnd && o.start <= b && o.end >= b && o.style.bg) return color(o.style.bg);
+        for (const o of buf.decor.query("overlays", b, b + 1)) if (o.style?.extendToLineEnd && o.style.bg) return color(o.style.bg);
         return null;
       },
       styleAt: (b, li, idx) => {
-        let st = {};
-        if (li != null) for (const s of synFor(li)) if (idx >= s.s && idx < s.e) { st = { fg: THEME[s.k], bold: s.bold, italic: s.italic }; break; }
-        for (const o of overlays) {
-          if (b >= o.start && b < o.end) {
-            const s = o.style || {};
-            st = { ...st };
-            if (s.fg != null) st.fg = color(s.fg);
-            if (s.bg != null) st.bg = color(s.bg);
-            if (s.bold) st.bold = true;
-            if (s.italic) st.italic = true;
-            if (s.underline) st.underline = true;
-            if (s.strikethrough) st.strike = true;
-          }
-        }
-        for (const g of diags) if (b >= g.start && b < Math.max(g.end, g.start + 1)) st = { ...st, wavy: ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]][g.severity] || THEME["diagnostic.error"] };
-        if (search && b >= search.pos && b < search.pos + search.len) st = { ...st, bg: THEME["search.match_bg"] };
-        if (sel && b >= sel.start && b < sel.end) st = { ...st, bg: THEME["editor.selection_bg"] };
+        if (li == null) { li = L.indexOf(b); idx = li >= 0 ? byteToIdx(L.lines[li], b - L.starts[li]) : 0; }
+        let st = EMPTY;
+        if (li >= 0) for (const x of synFor(li)) if (idx >= x.s && idx < x.e) { st = x.style; break; }
+        if (li >= 0) for (const x of lineDecos(li)) if (b >= x.s && b < x.e) st = x.f(st);
         return st;
       },
     };
   }
 
-  geometry(v) {
-    const { cols, rows } = this.metrics();
-    const buf = v.buf;
-    const L = buf.text;
-    const showNums = v.lineNumbers ?? !buf.isVirtual;
-    // A huge file has no line numbers to show (no line index), as in the editor.
-    const maxLine = L && L.firstLine != null ? L.firstLine + L.count : null;
-    const gutter = showNums && maxLine != null ? String(maxLine).length + 2 : 1;
-    const avail = cols - gutter;
-    const width = v.compose ? Math.min(v.composeWidth || 80, avail) : avail;
-    const margin = v.compose ? Math.max(0, Math.floor((avail - width) / 2)) : 0;
-    return { cols, rows, gutter, width, margin, showNums };
-  }
-
   computeRows(v, extra = 1) {
     const L = v.buf.text;
     const g = this.geometry(v);
-    const topIdx = L.indexOf(v.top);
-    const r = layout(v.buf, Math.max(0, topIdx), g.rows + extra, this.layoutOpts(v, g.width));
-    return { ...r, g, topIdx };
+    const r = layout(v.buf, Math.max(0, L.indexOf(v.top)), g.rows + extra, this.layoutOpts(v, g.width));
+    return { ...r, g };
+  }
+
+  // Window line indices [first, last] on screen.
+  visibleLineRange(v) {
+    if (!v.buf.text || this.view !== v) return null;
+    const { consumed } = this.computeRows(v, 0);
+    return consumed.length ? { first: consumed[0], last: consumed[consumed.length - 1] } : null;
+  }
+
+  ready(v) {
+    const L = v.buf.text;
+    return !!L && L.indexOf(v.top) >= 0 && (v.buf.full || L.eof || L.count - L.indexOf(v.top) > this.metrics().rows + 2);
+  }
+
+  // Clear the drawn rows (a pane with nothing to show, or still loading).
+  clearRows() {
+    this.textEl.textContent = "";
+    this.gutterEl.textContent = "";
+    this.caretsEl.textContent = "";
+    this.rowEls = [];
+    this.gutEls = [];
   }
 
   render() {
     const v = this.view;
-    this.textEl.innerHTML = "";
-    this.gutterEl.innerHTML = "";
-    this.caretsEl.innerHTML = "";
-    if (!v) return;
+    if (!v) { this.clearRows(); return; }
     const buf = v.buf;
-    const L = buf.text;
-    if (!L || L.indexOf(v.top) < 0 || (!L.eof && L.count - L.indexOf(v.top) < this.metrics().rows + 2 && !buf.full)) {
-      if (buf.ensure) {
-        this.textEl.textContent = "Loading…";
-        buf.ensure(v.top, this.metrics().rows + 50).then(() => {
-          if (buf.text && buf.text.indexOf(v.top) < 0) v.top = buf.text.starts[0];
-          if (buf.text && buf.text.indexOf(v.top) >= 0) this.render();
-        });
-      }
-      if (!L || L.indexOf(v.top) < 0) return;
+    if (!this.ready(v)) {
+      buf.ensure(v.top, this.metrics().rows + 50).then(() => {
+        const L2 = buf.text;
+        if (L2 && L2.indexOf(v.top) < 0) v.top = L2.starts[0];
+        if (this.ready(v) || (L2 && L2.eof)) this.render();
+      });
+      if (!buf.text || buf.text.indexOf(v.top) < 0) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
     }
-    // Snap the top to a line start.
-    const ti = L.indexOf(v.top);
-    v.top = L.starts[ti];
-    const { rows, consumed, g } = this.computeRows(v, 0);
+    const L = buf.text;
+    v.top = L.starts[L.indexOf(v.top)];
+    const { rows, g } = this.computeRows(v, 0);
     this.rows = rows;
     this.geom = g;
-    this.offerLines(v, consumed);
     const { cw, lh } = this.metrics();
+    const s = this.app.settings;
     this.gutterEl.style.width = `${g.gutter * cw}px`;
-    const textLeft = (g.gutter + g.margin) * cw;
-    this.textEl.style.left = `${textLeft}px`;
-    this.caretsEl.style.left = `${textLeft}px`;
-    const frag = document.createDocumentFragment();
-    const gfrag = document.createDocumentFragment();
+    const left = (g.gutter + g.margin) * cw;
+    this.textEl.style.left = this.caretsEl.style.left = this.rulersEl.style.left = `${left}px`;
+    // Gutter marks and the worst diagnostic, by line.
+    const marks = new Map();
+    for (const m of buf.decor.gutters) { const i = L.indexOf(m.start); if (i >= 0) marks.set(i, m); }
+    const dline = new Map();
+    for (const d of buf.decor.diags) { const i = L.indexOf(d.start); if (i >= 0 && !(dline.get(i) <= d.severity)) dline.set(i, d.severity); }
+    const curLines = new Set(v.cursors.map((c) => L.indexOf(c.pos)));
+    const folded = new Set(v.folds.map((f) => f.start));
+    // Rows are drawn from HTML strings (as Monaco draws its view lines) into
+    // a pool of row elements; a row's DOM is written only when its HTML
+    // changed, so a keystroke touches the rows it changed and no others.
+    // Rows are drawn from HTML strings (as Monaco draws its view lines) and
+    // kept by content: a row whose HTML is already on screen is reused, just
+    // moved (scrolling moves every row but rewrites only the new ones), and
+    // the children are swapped in with one replaceChildren.
+    if (!this.rowEls || this.textEl.firstChild?.nodeType === 3) this.clearRows();
+    const reuse = (pool, html) => {
+      const list = pool.get(html);
+      if (list && list.length) return list.pop();
+      const t = document.createElement("template");
+      t.innerHTML = html;
+      const el = t.content.firstChild;
+      el._html = html;
+      return el;
+    };
+    const textPool = new Map(), gutPool = new Map();
+    for (const el of this.rowEls) (textPool.get(el._html) || textPool.set(el._html, []).get(el._html)).push(el);
+    for (const el of this.gutEls) (gutPool.get(el._html) || gutPool.set(el._html, []).get(el._html)).push(el);
+    const textEls = [], gutEls = [];
     let lastLine = -1;
     for (const r of rows) {
-      const div = document.createElement("div");
-      div.className = "row" + (r.kind === "virtual" ? " virtual" : "");
-      if (r.fill) div.style.background = r.fill;
-      let run = null, runStyle = null;
-      const flush = () => {
-        if (run == null) return;
-        const s = document.createElement("span");
-        s.textContent = run;
-        applyStyle(s, runStyle);
-        div.appendChild(s);
-        run = null;
-      };
+      const current = s.highlight_current_line && r.kind === "text" && curLines.has(r.lineIdx) && !v.selection();
+      const cls = "row" + (r.kind === "virtual" ? " virtual" : "") + (current && !r.fill ? " current" : "");
+      let html = `<div class="${cls}"${r.fill ? ` style="background:${r.fill}"` : ""}>`;
+      let run = "", key = null, cssText = "";
       for (const c of r.cells) {
-        const key = styleKey(c.style);
-        if (run != null && key === runStyle.__k) run += c.ch;
-        else { flush(); run = c.ch; runStyle = { ...c.style, __k: key }; }
+        const k2 = c.style === EMPTY ? "" : styleKey(c.style);
+        if (k2 !== key) {
+          if (key !== null) html += cssText ? `<span style="${cssText}">${esc(run)}</span>` : esc(run);
+          key = k2; cssText = k2 ? cssFor(c.style, k2) : ""; run = "";
+        }
+        run += c.ch;
       }
-      flush();
-      if (!r.cells.length) div.appendChild(document.createTextNode("​"));
-      frag.appendChild(div);
-      const gd = document.createElement("div");
-      gd.className = "row";
-      if (g.showNums && r.kind === "text" && !r.cont && r.lineIdx !== lastLine) {
-        gd.textContent = String(L.firstLine != null ? L.firstLine + r.lineIdx + 1 : "").padStart(g.gutter - 1) + " ";
+      if (key !== null) html += cssText ? `<span style="${cssText}">${esc(run)}</span>` : esc(run);
+      if (!r.cells.length) html += "\u200b";
+      html += "</div>";
+      textEls.push(reuse(textPool, html));
+      // The gutter: line number and one mark (fold, diagnostic or plugin).
+      let ghtml;
+      if (r.kind === "text" && !r.cont && r.lineIdx !== lastLine) {
         lastLine = r.lineIdx;
-      } else gd.textContent = "​";
-      gfrag.appendChild(gd);
+        const m = marks.get(r.lineIdx);
+        const sev = dline.get(r.lineIdx);
+        const mark = folded.has(r.lineIdx) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m ? m.glyph : " ";
+        const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] : m && m.color ? color(m.color) : "";
+        const num = g.nums ? String(L.firstLine + r.lineIdx + 1).padStart(g.digits) + " " : "";
+        ghtml = `<div class="row${current ? " current" : ""}" data-line="${r.lineIdx}"${m && !sev && m.title ? ` title="${esc(m.title)}"` : ""}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
+      } else ghtml = `<div class="row">\u200b</div>`;
+      gutEls.push(reuse(gutPool, ghtml));
     }
-    this.textEl.appendChild(frag);
-    this.gutterEl.appendChild(gfrag);
-    // Carets.
-    if (this.app.activePane === this) {
-      for (const p of [v.cursor, ...v.extraCursors]) {
-        const at = this.caretXY(p);
-        if (!at) continue;
-        const c = document.createElement("div");
-        c.className = "caret";
-        c.style.left = `${at.x * cw}px`;
-        c.style.top = `${at.r * lh}px`;
-        c.style.height = `${lh}px`;
-        this.caretsEl.appendChild(c);
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    if (!same(textEls, this.rowEls)) this.textEl.replaceChildren(...textEls);
+    if (!same(gutEls, this.gutEls)) this.gutterEl.replaceChildren(...gutEls);
+    this.rowEls = textEls;
+    this.gutEls = gutEls;
+    this.rulersEl.textContent = "";
+    if (v.mode !== "compose") {
+      for (const col of s.rulers) {
+        const r = document.createElement("div");
+        r.className = "ruler";
+        r.style.left = `${(col - 1) * cw}px`;
+        this.rulersEl.appendChild(r);
       }
     }
+    // Carets: absolutely placed, so moving one never touches the rows.
+    let html = "";
+    if (this.app.activePane === this) {
+      for (const c of v.cursors) {
+        const at = this.caretXY(c.pos);
+        if (at) html += `<div class="caret" style="left:${at.x * cw}px;top:${at.r * lh}px;height:${lh}px"></div>`;
+      }
+    }
+    if (this.caretsEl._html !== html) { this.caretsEl.innerHTML = html; this.caretsEl._html = html; }
     this.renderScrollbar(v, g);
-    // viewport_changed
-    const vp = `${buf.id}:${v.top}:${g.cols}:${g.rows}`;
-    if (vp !== this.lastViewport) {
-      this.lastViewport = vp;
-      this.app.plugins.fire("viewport_changed", {
-        split_id: this.id, buffer_id: buf.id, window_id: 1, top_byte: v.top,
-        top_line: L.firstLine != null ? L.firstLine + ti : null, width: g.cols, height: g.rows,
-      });
+    if (this.lastWidth.get(v) !== g.width) {
+      this.lastWidth.set(v, g.width);
+      this.app.host.emit("view.resized", { view: v });
     }
     this.app.updateStatus();
   }
@@ -303,14 +408,13 @@ export class Pane {
     const buf = v.buf;
     let frac, size;
     if (L.firstLine != null && buf.totalLines) {
-      const top = L.firstLine + L.indexOf(v.top);
-      frac = top / Math.max(1, buf.totalLines);
+      frac = (L.firstLine + L.indexOf(v.top)) / Math.max(1, buf.totalLines);
       size = Math.min(1, g.rows / Math.max(1, buf.totalLines));
     } else {
       frac = v.top / Math.max(1, buf.len);
       size = 0.02;
     }
-    const h = this.scrollEl.clientHeight;
+    const h = this.size.sb;
     this.thumbEl.style.top = `${frac * h}px`;
     this.thumbEl.style.height = `${Math.max(16, size * h)}px`;
   }
@@ -353,122 +457,58 @@ export class Pane {
     return first ? first.src : last;
   }
 
-  // ---------------------------------------------------------------- plugins
-
-  offerLines(v, consumed) {
-    const buf = v.buf;
-    const L = buf.text;
-    if (!consumed.length) return;
-    const composing = [...buf.views].some((x) => x.compose);
-    let a = consumed[0], b = consumed[consumed.length - 1];
-    if (composing) {
-      // Walk out to the blank lines around, so a reflowing pass sees whole
-      // paragraphs, as the editor offers them.
-      let k = 0;
-      while (a > 0 && L.lines[a - 1].trim() !== "" && k++ < FLOW_RUN_MAX) a--;
-      k = 0;
-      while (b < L.count - 1 && L.lines[b].trim() !== "" && k++ < FLOW_RUN_MAX) b++;
-    }
-    const seen = (buf.offered ||= new Set());
-    let struct = null;
-    const isMd = /\.(md|markdown)$/.test(buf.path || buf.name || "");
-    if (isMd && buf.full) {
-      if (buf.structGen !== buf.textGen) {
-        buf.struct = classify(L.lines);
-        buf.structGen = buf.textGen;
-      }
-      struct = buf.struct;
-    }
-    const keyOf = (i) => `${L.starts[i]}\u0000${L.lines[i]}${L.hasNewline(i) ? "\n" : ""}`;
-    const send = [];
-    for (let i = a; i <= b; i++) send.push(!seen.has(keyOf(i)));
-    if (composing) {
-      // A run (lines between blank lines) is offered whole when any of it
-      // is new, so a pass that flows a paragraph sees all of it.
-      let i = a;
-      while (i <= b) {
-        if (L.lines[i].trim() === "") { i++; continue; }
-        const s0 = i;
-        while (i <= b && L.lines[i].trim() !== "") i++;
-        if (send.slice(s0 - a, i - a).some(Boolean)) for (let k = s0; k < i; k++) send[k - a] = true;
-      }
-    }
-    const lines = [];
-    for (let i = a; i <= b; i++) {
-      if (!send[i - a]) continue;
-      seen.add(keyOf(i));
-      const content = L.lines[i] + (L.hasNewline(i) ? "\n" : "");
-      const line = {
-        line_number: L.firstLine != null ? L.firstLine + i : Math.floor(L.starts[i] / 80),
-        byte_start: L.starts[i],
-        byte_end: L.starts[i] + byteLen(content),
-        content,
-      };
-      if (struct) {
-        if (struct.region[i]) line.region = struct.region[i];
-        if (struct.table[i]) line.table = struct.table[i];
-      }
-      lines.push(line);
-    }
-    if (!lines.length) return;
-    this.app.plugins.fire("lines_changed", {
-      buffer_id: buf.id, lines, epoch: buf.version || 0, is_composing_in_any_split: composing,
-    });
-  }
-
   // ---------------------------------------------------------------- motion
 
   scrollLines(n) {
     const v = this.view;
     if (!v || !v.buf.text) return;
     const L = v.buf.text;
-    let i = L.indexOf(v.top);
+    const i = L.indexOf(v.top);
     if (i < 0) return;
-    const j = Math.max(0, Math.min(L.count - 1, i + n));
+    let j = Math.max(0, Math.min(L.count - 1, i + n));
+    for (const f of v.folds) if (j > f.start && j <= f.end) j = n > 0 ? Math.min(L.count - 1, f.end + 1) : f.start;
     if (j === i && n < 0 && !L.bof) {
-      v.buf.ensure(Math.max(0, L.start - 1)).then(() => { this.scrollLines(n); });
+      v.buf.ensure(Math.max(0, L.start - 1)).then(() => this.scrollLines(n));
       return;
     }
     v.top = L.starts[j];
-    if (!L.eof && L.count - j < 400) v.buf.ensure(v.top, 400);
-    if (!L.bof && j < 50) v.buf.ensure(v.top, 400);
+    if (!v.buf.full && ((!L.eof && L.count - j < 400) || (!L.bof && j < 50))) v.buf.ensure(v.top, 400);
     this.scheduleRender();
   }
 
-  // Keep the caret on screen.
-  reveal() {
+  // Keep the primary cursor on screen; `center` puts it mid-screen.
+  reveal(center = false) {
     const v = this.view;
     if (!v || !v.buf.text) return;
     const L = v.buf.text;
-    let ci = L.indexOf(v.cursor);
+    const ci = L.indexOf(v.primary.pos);
     if (ci < 0) return;
-    const ti = L.indexOf(v.top);
-    if (ci < ti) { v.top = L.starts[ci]; return; }
-    // Lay out from the top and see whether the caret is within the rows.
+    if (center) { v.top = L.starts[Math.max(0, ci - Math.floor(this.metrics().rows / 2))]; return; }
+    if (ci < L.indexOf(v.top)) { v.top = L.starts[ci]; return; }
     for (let guard = 0; guard < 2000; guard++) {
       const { rows, g } = this.computeRows(v, 0);
       this.rows = rows;
-      const at = this.caretXY(v.cursor);
+      const at = this.caretXY(v.primary.pos);
       if (at && at.r < g.rows) return;
-      const ti2 = L.indexOf(v.top);
-      if (ti2 >= ci || ti2 >= L.count - 1) return;
-      v.top = L.starts[ti2 + 1];
+      const ti = L.indexOf(v.top);
+      if (ti >= ci || ti >= L.count - 1) return;
+      v.top = L.starts[ti + 1];
     }
   }
 
-  // Move the caret by visual rows.
+  // Move the primary cursor by visual rows.
   moveRows(n, extend) {
     const v = this.view;
     if (!v) return;
     const L = v.buf.text;
+    const c = v.primary;
     this.reveal();
     let { rows } = this.computeRows(v, Math.abs(n) + 2);
     this.rows = rows;
-    let at = this.caretXY(v.cursor);
+    let at = this.caretXY(c.pos);
     if (!at) return;
-    if (v.goalX == null) v.goalX = at.x;
-    let r = at.r;
-    let left = Math.abs(n);
+    const goal = c.goalX ?? at.x;
+    let r = at.r, left = Math.abs(n);
     while (left > 0) {
       let t = r + Math.sign(n);
       while (t >= 0 && t < rows.length && rows[t].kind !== "text") t += Math.sign(n);
@@ -478,7 +518,7 @@ export class Pane {
         v.top = L.starts[ti - 1];
         ({ rows } = this.computeRows(v, Math.abs(n) + 2));
         this.rows = rows;
-        at = this.caretXY(v.cursor);
+        at = this.caretXY(c.pos);
         r = at ? at.r : 0;
         continue;
       }
@@ -486,26 +526,14 @@ export class Pane {
       r = t;
       left--;
     }
-    const p = this.posAt(r, v.goalX);
-    if (p != null) this.setCursor(p, extend, true);
-  }
-
-  setCursor(p, extend, keepGoal) {
-    const v = this.view;
-    const old = v.cursor;
-    if (extend) { if (v.anchor == null) v.anchor = old; }
-    else v.anchor = null;
-    v.cursor = Math.max(0, Math.min(v.buf.len, p));
-    if (!keepGoal) v.goalX = null;
-    this.reveal();
-    if (old !== v.cursor) this.app.cursorMoved(v, old);
-    this.scheduleRender();
+    const p = this.posAt(r, goal);
+    if (p != null) { this.app.editing.place(this, p, extend); c.goalX = goal; }
   }
 
   // ---------------------------------------------------------------- mouse
 
   onMouseDown(e) {
-    if (e.target === this.scrollEl || e.target === this.thumbEl) return;
+    if (e.target === this.scrollbarEl || e.target === this.thumbEl || this.gutterEl.contains(e.target)) return;
     e.preventDefault();
     this.app.focusPane(this);
     const v = this.view;
@@ -515,13 +543,22 @@ export class Pane {
     const toPos = (ev) => this.posAt(Math.floor((ev.clientY - rect.top) / lh), Math.max(0, (ev.clientX - rect.left) / cw));
     const p = toPos(e);
     if (p == null) return;
-    if (e.altKey && e.button === 0) { v.extraCursors.push(p); this.scheduleRender(); return; }
-    this.setCursor(p, e.shiftKey);
-    if (e.detail === 2) this.app.selectWord(this);
-    const move = (ev) => { const q = toPos(ev); if (q != null) this.setCursor(q, true); };
+    if (e.altKey && e.button === 0) { v.cursors.push({ pos: p, anchor: null, goalX: null }); v.normalize(); this.scheduleRender(); return; }
+    this.app.editing.place(this, p, e.shiftKey);
+    if (e.ctrlKey && e.button === 0) { this.app.run("lsp.definition"); return; }
+    if (e.detail === 2) this.app.editing.selectWord(this);
+    if (e.detail === 3) this.app.editing.selectLine(this);
+    const move = (ev) => { const q = toPos(ev); if (q != null) this.app.editing.place(this, q, true); };
     const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+  }
+
+  onGutter(e) {
+    e.preventDefault();
+    this.app.focusPane(this);
+    const row = e.target.closest(".row");
+    if (row?.dataset.line != null) this.app.editing.toggleFoldAt(this, +row.dataset.line);
   }
 
   onHover(e) {
@@ -536,9 +573,8 @@ export class Pane {
   onScrollbar(e) {
     e.preventDefault();
     const go = (ev) => {
-      const r = this.scrollEl.getBoundingClientRect();
-      const f = Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height));
-      this.app.scrollToFraction(this, f);
+      const r = this.scrollbarEl.getBoundingClientRect();
+      this.app.scrollToFraction(this, Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)));
     };
     go(e);
     const up = () => { window.removeEventListener("mousemove", go); window.removeEventListener("mouseup", up); };
@@ -547,21 +583,26 @@ export class Pane {
   }
 }
 
+const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+const esc = (t) => t.replace(/[&<>"]/g, (c) => ESC[c]);
+// The inline CSS for a style, cached by its key.
+const cssCache = new Map();
+function cssFor(st, key) {
+  let c = cssCache.get(key);
+  if (c == null) {
+    c = "";
+    if (st.fg) c += `color:${css(st.fg)};`;
+    if (st.bg) c += `background:${css(st.bg)};`;
+    if (st.bold) c += "font-weight:bold;";
+    if (st.italic) c += "font-style:italic;";
+    if (st.wavy) c += `text-decoration:underline wavy ${st.wavy};`;
+    else if (st.underline || st.strike) c += `text-decoration:${[st.underline && "underline", st.strike && "line-through"].filter(Boolean).join(" ")};`;
+    cssCache.set(key, c);
+  }
+  return c;
+}
+
 function styleKey(s) {
   return `${s.fg || ""}|${s.bg || ""}|${s.bold ? 1 : 0}${s.italic ? 1 : 0}${s.underline ? 1 : 0}${s.strike ? 1 : 0}|${s.wavy || ""}`;
 }
 const css = (x) => (typeof x === "string" && (x.startsWith("#") || x.startsWith("rgb")) ? x : color(x));
-function applyStyle(el, s) {
-  if (!s) return;
-  if (s.fg) el.style.color = css(s.fg);
-  if (s.bg) el.style.background = css(s.bg);
-  if (s.bold) el.style.fontWeight = "bold";
-  if (s.italic) el.style.fontStyle = "italic";
-  const deco = [];
-  if (s.underline) deco.push("underline");
-  if (s.strike) deco.push("line-through");
-  if (s.wavy) { el.style.textDecoration = `underline wavy ${s.wavy}`; return; }
-  if (deco.length) el.style.textDecoration = deco.join(" ");
-}
-
-export { stringWidth, byteToIdx };

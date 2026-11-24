@@ -10,13 +10,24 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #topbar .brand { font-weight: 600; color: #4ec9b0; }
 #topbar .hint { margin-left: auto; color: var(--muted); }
 #main { flex: 1; display: flex; min-height: 0; }
-#explorer { width: 240px; background: var(--panel); border-right: 1px solid var(--border); overflow: auto; flex-shrink: 0; }
-#explorer .title { padding: 6px 10px; text-transform: uppercase; font-size: 11px; color: var(--muted); }
-#explorer .entry { padding: 2px 6px; white-space: nowrap; cursor: pointer; font-family: var(--mono); font-size: 12px; }
-#explorer .entry:hover { background: #2a2d2e; }
-#explorer .entry.dir { color: #c5c5c5; }
+#sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
+#sidebar.hidden { display: none; }
+#side-panels { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#editor-area { flex: 1; display: flex; min-height: 0; }
+#center { flex: 1; display: flex; min-height: 0; }
+#editor-area { flex: 1; display: flex; min-height: 0; min-width: 0; }
+#right-dock { width: 320px; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+#right-dock.hidden, #bar.hidden, #dock.hidden { display: none; }
+#bar { border-bottom: 1px solid var(--border); background: var(--panel); }
+#dock { height: 32%; min-height: 120px; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel); }
+.dock-tabs { display: flex; }
+.dock-body { flex: 1; min-height: 0; display: flex; }
+.dock-body > .panel { flex: 1; }
+.rulers { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.ruler { position: absolute; top: 0; bottom: 0; width: 1px; background: #3a3a3a; }
+.row.current { background: #262626; }
+.gutter .mark { display: inline-block; width: 1ch; }
+.gutter .row { padding-right: 0; }
 .split { display: flex; min-width: 0; min-height: 0; }
 .split.h { flex-direction: row; }
 .split.v { flex-direction: column; }
@@ -47,7 +58,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .xterm-host { height: 100%; }
 #status { display: flex; justify-content: space-between; padding: 2px 10px; background: var(--accent); color: #fff; font-size: 12px; white-space: nowrap; overflow: hidden; }
 #prompt { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(700px, 90vw); background: #252526; border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 10; }
-#prompt.hidden, #hover.hidden { display: none; }
+#prompt.hidden, #popup.hidden { display: none; }
+#prompt .hint { padding: 3px 10px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
+#prompt .hint:empty { display: none; }
 #prompt .bar { display: flex; align-items: center; gap: 8px; padding: 6px; }
 #prompt .label { color: var(--muted); white-space: nowrap; }
 #prompt input { flex: 1; background: #3c3c3c; color: var(--fg); border: 1px solid var(--accent); padding: 4px 6px; font: 13px var(--mono); outline: none; }
@@ -55,6 +68,59 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #prompt .item { display: flex; justify-content: space-between; gap: 12px; padding: 3px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; }
 #prompt .item .d { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #prompt .item.sel { background: #04395e; }
-#hover { position: fixed; max-width: 600px; max-height: 300px; overflow: auto; background: #252526; border: 1px solid #454545; padding: 6px 8px; white-space: pre-wrap; font: 12px var(--mono); z-index: 9; }
+#popup { position: fixed; max-width: 600px; max-height: 300px; overflow: auto; background: #252526; border: 1px solid #454545; padding: 6px 8px; white-space: pre-wrap; font: 12px var(--mono); z-index: 9; }
 #input { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
 .measure { position: absolute; visibility: hidden; white-space: pre; font-family: var(--mono); font-size: 13px; line-height: normal; }
+
+/* Panels (the plugin UI kit) */
+.panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); outline: none; }
+.panel-sidebar { flex: 1 1 0; border-bottom: 1px solid var(--border); }
+.panel-right { flex: 1 1 0; }
+.panel-head { display: flex; justify-content: space-between; padding: 5px 10px; text-transform: uppercase; font-size: 11px; color: var(--muted); }
+.panel-head .x { cursor: pointer; }
+.panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 6px; gap: 4px; overflow: hidden; }
+.panel-bar .panel-body { flex-direction: row; padding: 4px 8px; }
+.panel-dialog { position: fixed; top: 12vh; left: 50%; transform: translateX(-50%); width: min(820px, 92vw); max-height: 70vh; border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 20; }
+.ui-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.ui-col { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
+.ui-box { min-height: 0; }
+.ui-text.dim { color: var(--muted); }
+.ui-text.mono { font-family: var(--mono); font-size: 12px; }
+.ui-text.bold { font-weight: 600; }
+.ui-input { background: #3c3c3c; color: var(--fg); border: 1px solid #3c3c3c; padding: 3px 6px; font: 12px var(--mono); outline: none; min-width: 0; flex: 1; }
+.ui-input:focus { border-color: var(--accent); }
+.ui-button { background: #3a3d41; color: var(--fg); border: 0; padding: 3px 10px; cursor: pointer; font: 12px system-ui; }
+.ui-button.primary { background: var(--accent); color: #fff; }
+.ui-button:disabled { opacity: .5; cursor: default; }
+.ui-toggle { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 1px 5px; cursor: pointer; font: 12px var(--mono); }
+.ui-toggle.on { color: var(--fg); border-color: var(--accent); background: rgba(0,122,204,.2); }
+.ui-check { display: flex; gap: 4px; align-items: center; }
+.ui-select { background: #3c3c3c; color: var(--fg); border: 0; padding: 2px 4px; }
+.ui-badge { display: inline-block; padding: 0 6px; border-radius: 8px; background: #4d4d4d; font-size: 11px; }
+.ui-spacer { flex: 1; }
+.ui-list { position: relative; flex: 1; min-height: 60px; overflow: auto; outline: none; }
+.ui-list-inner { position: relative; }
+.ui-list-row { position: absolute; left: 0; right: 0; height: 22px; line-height: 22px; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; }
+.ui-list-row:hover { background: #2a2d2e; }
+.ui-list-row.sel { background: #37373d; }
+.ui-list:focus .ui-list-row.sel { background: #04395e; }
+.ui-list-row.header { color: #c5c5c5; font-weight: 600; }
+.ui-tree-row { gap: 0; }
+.ui-table { border-collapse: collapse; width: 100%; font: 12px var(--mono); }
+.ui-table th { text-align: left; color: var(--muted); font-weight: normal; padding: 3px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+.ui-table td { padding: 2px 6px; border-bottom: 1px solid #2d2d2d; }
+.ui-table tr:hover td { background: #2a2d2e; }
+.ui-scroll { overflow: auto; flex: 1; min-height: 0; }
+.ui-markdown { white-space: pre-wrap; font: 12px var(--mono); overflow: auto; flex: 1; }
+#status .click { cursor: pointer; text-decoration: underline dotted; }
+#status-right { display: flex; gap: 14px; }
+#status-left { overflow: hidden; text-overflow: ellipsis; }
+.ctxmenu { position: fixed; z-index: 30; background: #252526; border: 1px solid #454545; box-shadow: 0 4px 12px rgba(0,0,0,.4); padding: 4px 0; min-width: 180px; font-size: 12px; }
+.ctxmenu div { padding: 3px 14px; cursor: pointer; }
+.ctxmenu div:hover { background: #04395e; }
+/* Containment: a row's change does not relayout the page around it. */
+.surface { contain: strict; }
+.text, .gutter, .carets, .rulers { contain: layout style; }
+.caret { will-change: left, top; }
+.text .row, .gutter .row { contain: layout style paint; }

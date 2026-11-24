@@ -30,9 +30,13 @@ impl Procs {
         args: &[String],
         cwd: Option<&str>,
     ) -> Result<u64> {
-        let cwd = cwd.map(|c| ws.resolve(c)).unwrap_or_else(|| ws.root.clone());
+        let cwd = cwd
+            .map(|c| ws.resolve(c))
+            .unwrap_or_else(|| ws.root.clone());
         let mut cmd = ws.authority.command(program, args, &cwd);
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
         let mut child = match cmd.spawn() {
             Ok(c) => c,
@@ -108,25 +112,24 @@ pub struct Watches {
     next: AtomicU64,
 }
 
-fn signature(p: &PathBuf) -> Option<(u64, u64)> {
-    let m = std::fs::metadata(p).ok()?;
-    let t = m
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_nanos() as u64;
-    Some((m.len(), t))
-}
-
 impl Watches {
-    pub fn start(&self, hub: Arc<Hub>) {
+    /// Poll every watched path's (size, mtime) through the workspace's
+    /// filesystem, so a remote host's paths are watched the same way.
+    pub fn start(&self, hub: Arc<Hub>, ws: Arc<Workspace>) {
         let map = self.map.clone();
         std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(300));
+            std::thread::sleep(Duration::from_millis(500));
+            let paths: Vec<(u64, PathBuf)> = map
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, w)| (*id, w.path.clone()))
+                .collect();
+            let sigs: Vec<(u64, Option<(u64, u64)>)> =
+                paths.iter().map(|(id, p)| (*id, ws.signature(p))).collect();
             let mut m = map.lock().unwrap();
-            for (&id, w) in m.iter_mut() {
-                let now = signature(&w.path);
+            for (id, now) in sigs {
+                let Some(w) = m.get_mut(&id) else { continue };
                 if now != w.last {
                     w.last = now;
                     hub.send(
@@ -138,10 +141,13 @@ impl Watches {
         });
     }
 
-    pub fn add(&self, client: u64, path: PathBuf) -> u64 {
+    pub fn add(&self, ws: &Workspace, client: u64, path: PathBuf) -> u64 {
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
-        let last = signature(&path);
-        self.map.lock().unwrap().insert(id, Watch { client, path, last });
+        let last = ws.signature(&path);
+        self.map
+            .lock()
+            .unwrap()
+            .insert(id, Watch { client, path, last });
         id
     }
 

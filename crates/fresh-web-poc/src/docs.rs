@@ -12,13 +12,13 @@
 //! in text it never fetched.
 
 use crate::ot::{transform_seqs, Prim};
+use crate::workspace::{host, Fs};
 use anyhow::{anyhow, bail, Result};
 use fresh_editor_core::model::buffer::Buffer;
-use fresh_editor_core::model::filesystem::StdFileSystem;
+
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// Files at or above this size load lazily, with no line index: the
 /// editor's own default.
@@ -36,7 +36,6 @@ const CHUNK: usize = 64 * 1024;
 
 pub struct LogEntry {
     pub version: u64,
-    pub client: u64,
     pub prims: Vec<Prim>,
 }
 
@@ -49,6 +48,7 @@ pub struct Doc {
     pub log: VecDeque<LogEntry>,
     pub language: Option<String>,
     pub clients: HashSet<u64>,
+    pub readonly: bool,
 }
 
 /// One primitive as applied, for the broadcast and for the language server.
@@ -121,6 +121,8 @@ impl Doc {
             "large": self.buffer.is_large_file(),
             "modified": self.buffer.is_modified(),
             "language": self.language,
+            "encoding": self.buffer.encoding().display_name(),
+            "readonly": self.readonly,
         })
     }
 
@@ -326,15 +328,21 @@ impl Doc {
     /// Returns what was applied, at the version it produced.
     pub fn edit(
         &mut self,
-        client: u64,
         base: u64,
         prims: Vec<Prim>,
         lsp_positions: bool,
     ) -> Result<Vec<Applied>> {
         if base > self.version {
-            bail!("base version {base} is ahead of the document ({})", self.version);
+            bail!(
+                "base version {base} is ahead of the document ({})",
+                self.version
+            );
         }
-        let oldest = self.log.front().map(|e| e.version - 1).unwrap_or(self.version);
+        let oldest = self
+            .log
+            .front()
+            .map(|e| e.version - 1)
+            .unwrap_or(self.version);
         if base < oldest {
             bail!("resync: base version {base} is older than the kept log");
         }
@@ -385,17 +393,20 @@ impl Doc {
             }
         }
         self.version += 1;
-        self.log.push_back(LogEntry { version: self.version, client, prims });
+        self.log.push_back(LogEntry {
+            version: self.version,
+            prims,
+        });
         while self.log.len() > LOG_KEEP {
             self.log.pop_front();
         }
         Ok(applied)
     }
 
-    pub fn save(&mut self) -> Result<()> {
-        let dir = std::env::temp_dir().join("fresh-poc-recovery");
-        std::fs::create_dir_all(&dir)?;
-        self.buffer.save(&dir)
+    /// Save through the document's filesystem; `recovery` is the host's
+    /// recovery folder.
+    pub fn save(&mut self, recovery: &Path) -> Result<()> {
+        self.buffer.save(recovery)
     }
 
     /// The whole text, for a language server's `didOpen`. Only for an
@@ -409,16 +420,20 @@ impl Doc {
 impl Docs {
     /// Open `path` for `client`, or join the document already open for it.
     /// Returns the id and whether it was newly opened.
-    pub fn open(&mut self, client: u64, path: &Path) -> Result<(u64, bool)> {
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    pub fn open(&mut self, client: u64, path: &Path, fs: Fs) -> Result<(u64, bool)> {
+        let path = fs
+            .canonicalize(host(path).as_host_path())
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| path.to_path_buf());
         if let Some(&id) = self.by_path.get(&path) {
             if let Some(d) = self.docs.get_mut(&id) {
                 d.clients.insert(client);
                 return Ok((id, false));
             }
         }
-        let fs = Arc::new(StdFileSystem);
-        let buffer = if path.exists() {
+        let meta = fs.metadata(host(&path).as_host_path()).ok();
+        let readonly = meta.as_ref().is_some_and(|m| m.is_readonly);
+        let buffer = if meta.is_some() {
             Buffer::load_from_file(&path, LARGE_FILE_THRESHOLD, fs)?
         } else {
             let mut b = Buffer::empty(fs);
@@ -442,6 +457,7 @@ impl Docs {
                 version: 0,
                 log: VecDeque::new(),
                 clients,
+                readonly,
             },
         );
         self.by_path.insert(path, id);
@@ -449,7 +465,9 @@ impl Docs {
     }
 
     pub fn get(&mut self, id: u64) -> Result<&mut Doc> {
-        self.docs.get_mut(&id).ok_or_else(|| anyhow!("no document {id}"))
+        self.docs
+            .get_mut(&id)
+            .ok_or_else(|| anyhow!("no document {id}"))
     }
 
     /// `client` closes `id`. The document goes when no client has it open
@@ -465,15 +483,36 @@ impl Docs {
         None
     }
 
+    /// A file (or a folder of files) was renamed on disk: open documents
+    /// follow it.
+    pub fn renamed(&mut self, from: &Path, to: &Path) {
+        let moved: Vec<(PathBuf, u64)> = self
+            .by_path
+            .iter()
+            .filter(|(p, _)| p.starts_with(from))
+            .map(|(p, id)| (p.clone(), *id))
+            .collect();
+        for (p, id) in moved {
+            let np = to.join(p.strip_prefix(from).unwrap_or(&p));
+            self.by_path.remove(&p);
+            self.by_path.insert(np.clone(), id);
+            if let Some(d) = self.docs.get_mut(&id) {
+                d.buffer.rename_file_path(np.clone());
+                d.path = np;
+            }
+        }
+    }
+
     pub fn by_path(&self, path: &Path) -> Option<u64> {
-        let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.by_path.get(&p).copied()
+        self.by_path.get(path).copied()
     }
 
     /// A client disconnected: it closes everything.
     pub fn drop_client(&mut self, client: u64) -> Vec<Doc> {
         let ids: Vec<u64> = self.docs.keys().copied().collect();
-        ids.into_iter().filter_map(|id| self.close(client, id)).collect()
+        ids.into_iter()
+            .filter_map(|id| self.close(client, id))
+            .collect()
     }
 }
 
@@ -487,7 +526,13 @@ mod tests {
         let p = dir.path().join("a.txt");
         std::fs::write(&p, text).unwrap();
         let mut docs = Docs::default();
-        let (id, _) = docs.open(1, &p).unwrap();
+        let (id, _) = docs
+            .open(
+                1,
+                &p,
+                std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem),
+            )
+            .unwrap();
         (dir, docs, id)
     }
 
@@ -496,7 +541,9 @@ mod tests {
         let text: String = (0..100).map(|i| format!("line {i}\n")).collect();
         let (_d, mut docs, id) = doc_with(&text);
         let d = docs.get(id).unwrap();
-        let w = d.lines_forward(text.find("line 10\n").unwrap() + 3, 3).unwrap();
+        let w = d
+            .lines_forward(text.find("line 10\n").unwrap() + 3, 3)
+            .unwrap();
         assert_eq!(w["text"], "line 10\nline 11\nline 12\n");
         assert_eq!(w["first_line"], 10);
         let start = w["start"].as_u64().unwrap() as usize;
@@ -512,8 +559,17 @@ mod tests {
         let d = docs.get(id).unwrap();
         // Client 1 inserts at 5 against version 0; client 2, also at
         // version 0, deletes "world".
-        d.edit(1, 0, vec![Prim::Ins { pos: 5, text: ",".into() }], false).unwrap();
-        d.edit(2, 0, vec![Prim::Del { pos: 6, len: 5 }], false).unwrap();
+        d.edit(
+            0,
+            vec![Prim::Ins {
+                pos: 5,
+                text: ",".into(),
+            }],
+            false,
+        )
+        .unwrap();
+        d.edit(0, vec![Prim::Del { pos: 6, len: 5 }], false)
+            .unwrap();
         assert_eq!(d.text(0, 100).unwrap(), "hello, \n");
         assert_eq!(d.version, 2);
     }
@@ -534,7 +590,13 @@ mod tests {
         }
         drop(f);
         let mut docs = Docs::default();
-        let (id, _) = docs.open(1, &p).unwrap();
+        let (id, _) = docs
+            .open(
+                1,
+                &p,
+                std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem),
+            )
+            .unwrap();
         let d = docs.get(id).unwrap();
         assert!(d.buffer.is_large_file());
         assert_eq!(d.buffer.line_count(), None);
@@ -546,8 +608,15 @@ mod tests {
         assert!(w["first_line"].is_null());
         // Edit in the middle and read it back.
         let s = w["start"].as_u64().unwrap() as usize;
-        d.edit(1, 0, vec![Prim::Ins { pos: s, text: "EDITED ".into() }], false)
-            .unwrap();
+        d.edit(
+            0,
+            vec![Prim::Ins {
+                pos: s,
+                text: "EDITED ".into(),
+            }],
+            false,
+        )
+        .unwrap();
         let w = d.lines_forward(s, 1).unwrap();
         assert!(w["text"].as_str().unwrap().starts_with("EDITED a fairly"));
         // Search finds the last line from the start.

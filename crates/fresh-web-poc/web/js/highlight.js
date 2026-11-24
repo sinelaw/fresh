@@ -30,6 +30,11 @@ export const THEME = {
   "diagnostic.info": "#3794ff",
   "diagnostic.hint": "#b0b0b0",
   "search.match_bg": "#613214",
+  "search.current_bg": "#9e6a03",
+  "editor.occurrence_bg": "#343a40",
+  "git.added": "#2ea043",
+  "git.modified": "#0078d4",
+  "git.deleted": "#f85149",
 };
 const NAMED = {
   black: "#000000", red: "#cd3131", green: "#0dbc79", yellow: "#e5e510", blue: "#2472c8", magenta: "#bc3fbc",

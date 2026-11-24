@@ -10,6 +10,29 @@ Each feature on getfresh.dev (`docs/features/`) is ported one of three ways:
   version is less work and better UX than emulating that model.
 - **Skip** — out of scope for the proof of concept, with the reason.
 
+## Plugins with UI: a web-native panel API
+
+The terminal's widget plugins are written against its cell-based widget model
+(`mountWidgetPanel`, `mountFloatingWidget`, buffer groups, key capture). The
+client does not reproduce that API. It gives plugins one designed for the
+browser instead (`web/js/ui.js`):
+
+- `ui.panel({id, title, place})` — a panel in the sidebar, the bottom dock,
+  beside the editor, or a dialog; returns a handle with `render(tree)`,
+  `focus()`, `close()`.
+- `h(type, props, ...children)` — a declarative tree of real DOM controls:
+  `box`/`row`/`col`, `text`, `input`, `button`, `checkbox`, `select`,
+  `list` (virtualised, keyboard-navigable, `onActivate`), `tree`, `table`,
+  `badge`. Re-rendering keeps focus and caret by element key.
+- Events are callbacks on the props; keyboard navigation and focus are the
+  browser's.
+
+Native features with UI are written as client plugins on this API
+(`web/plugins/*.js`) against the same `editor` object the ported plugins use,
+so the line between "built in" and "plugin" stays where the editor draws it.
+Plugins that only touch text and decorations (compose, git status bar) keep
+running unchanged on the editor's API.
+
 Plugin freshness was checked (`git log` per file, and every `editor.*` call
 against `fresh.d.ts`): no shipped plugin calls a removed API. The
 `examples/` plugins are not shipped by the editor (its build compiles only
