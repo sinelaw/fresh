@@ -41,9 +41,14 @@ export class Palette {
       onChange: (q) => {
         // Preview a `:N` jump; Escape puts the view back.
         const m = /^:(\d+)/.exec(q);
-        if (m && origin) this.app.gotoLine(parseInt(m[1], 10) - 1, 0);
+        if (m && origin) this.app.gotoLine(parseInt(m[1], 10) - 1, 0, { history: false });
       },
-      onAccept: (it, q) => it?.run ? it.run() : this.openTyped(q),
+      onAccept: (it, q) => {
+        // The jump is remembered from where the palette opened, not from
+        // the preview.
+        if (/^:\d/.test(q) && origin) this.app.pushHistory(origin.v, origin.pos);
+        it?.run ? it.run() : this.openTyped(q);
+      },
       onCancel: () => { if (origin && /^:\d/.test(this.input.value)) { origin.v.top = origin.top; this.app.editing.place(origin.v.pane, origin.pos, false); } },
     });
   }
@@ -65,7 +70,7 @@ export class Palette {
     }
     if (q.startsWith(":")) {
       const n = parseInt(q.slice(1), 10);
-      return [{ label: n > 0 ? `Go to line ${n}` : "Type a line number", run: () => n > 0 && app.gotoLine(n - 1, 0) }];
+      return [{ label: n > 0 ? `Go to line ${n}` : "Type a line number", run: () => n > 0 && app.gotoLine(n - 1, 0, { history: false }) }];
     }
     const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
     const files = q.trim() ? (await rpc("fs.find", { query: m[1] })).files : [];

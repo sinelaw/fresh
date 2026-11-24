@@ -63,8 +63,8 @@ export class Editing {
 
   // `fn(cursor)` returns {start, end, text, caret?, anchor?} or null; caret
   // and anchor are offsets from `start` in the result (caret defaults to the
-  // end of the text). One batch, one undo step.
-  replace(pane, fn) {
+  // end of the text). One batch, one undo step (`typing`: see buffer.js).
+  replace(pane, fn, typing = null) {
     const v = pane.view;
     const b = v.buf;
     if (b.readOnly) { this.app.setStatus("Read-only buffer"); return false; }
@@ -83,7 +83,7 @@ export class Editing {
     }
     const old = v.primary.pos;
     for (const c of v.cursors) c.anchor = null;
-    if (ops.length) this.app.applyEdit(b, ops);
+    if (ops.length) this.app.applyEdit(b, ops, typing);
     // Final place of each replacement: shifted by every one before it.
     const asc = [...reps].sort((x, y) => x.start - y.start);
     let delta = 0;
@@ -280,18 +280,27 @@ export class Editing {
 
   // ---------------------------------------------------------------- typing
 
-  type(pane, text) {
-    const b = pane.view.buf;
+  // Insert `text` at every cursor. `typed`: it was typed (not pasted or
+  // inserted by a command), so a run of it is one undo step: the run goes
+  // on while each insert starts at the carets the last one left.
+  type(pane, text, typed = false) {
+    const v = pane.view;
+    const b = v.buf;
     const lang = this.lang(b);
     const pairsOn = this.app.settings.auto_close && lang !== "markdown";
+    const carets = () => v.cursors.map((c) => c.pos).join();
+    const run = typed && !text.includes("\n");
+    const typing = !run ? null : this.typed && this.typed.v === v && this.typed.carets === carets() ? "continue" : "start";
+    const done = () => { this.typed = run ? { v, carets: carets() } : null; };
     if (text.length === 1) {
       const closer = PAIRS[text];
       // Overtype a closer that is already there.
-      if ((CLOSERS.has(text) || text === '"' || text === "'" || text === "`") && pane.view.cursors.every((c) => !sel(c) && this.charAt(b, c.pos) === text) && pairsOn) {
-        return this.move(pane, (c) => c.pos + 1, false);
+      if ((CLOSERS.has(text) || text === '"' || text === "'" || text === "`") && v.cursors.every((c) => !sel(c) && this.charAt(b, c.pos) === text) && pairsOn) {
+        this.move(pane, (c) => c.pos + 1, false);
+        return done();
       }
       if (closer && pairsOn) {
-        return this.replace(pane, (c) => {
+        this.replace(pane, (c) => {
           const s = sel(c);
           if (s) {
             // Surround the selection.
@@ -303,13 +312,15 @@ export class Editing {
           const quote = text === closer;
           const ok = (next == null || /\s/.test(next) || CLOSERS.has(next) || next === ",") && !(quote && this.isWord(prev));
           return ok ? { start: c.pos, end: c.pos, text: text + closer, caret: 1 } : { start: c.pos, end: c.pos, text };
-        });
+        }, typing);
+        return done();
       }
     }
     this.replace(pane, (c) => {
       const s = sel(c);
       return s ? { start: s.start, end: s.end, text } : { start: c.pos, end: c.pos, text };
-    });
+    }, typing);
+    done();
   }
 
   newline(pane) {

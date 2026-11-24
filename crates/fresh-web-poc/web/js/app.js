@@ -258,9 +258,11 @@ class App {
     return b;
   }
 
-  applyEdit(b, ops) {
+  // `typing` groups a run of typed characters into one undo step (see
+  // buffer.js).
+  applyEdit(b, ops, typing = null) {
     if (b.readOnly) { this.setStatus("Read-only buffer"); return; }
-    b.edit(ops);
+    b.edit(ops, { typing });
   }
 
   afterEdit(b, data) {
@@ -312,7 +314,8 @@ class App {
     await this.moveTo(v, p, { extend, center: !extend && Math.abs(p - v.primary.pos) > 5000 });
   }
 
-  async gotoLine(line, col = 0) {
+  // `history`: remember where the view was, for Go Back.
+  async gotoLine(line, col = 0, { history = true } = {}) {
     const v = this.view();
     if (!v) return;
     // Only the latest navigation lands: a newer one (the palette previews a
@@ -333,7 +336,7 @@ class App {
     const L = b.text;
     const i = L.indexOf(p);
     p += byteLen(L.lines[i].slice(0, col || 0));
-    this.pushHistory(v);
+    if (history) this.pushHistory(v);
     await this.moveTo(v, p, { center: true });
   }
 
@@ -358,11 +361,11 @@ class App {
 
   // ------------------------------------------------------------- position history
 
-  pushHistory(v) {
+  pushHistory(v, pos = v.primary.pos) {
     const h = this.history;
     const top = h.back[h.back.length - 1];
-    if (top && top.buf === v.buf && top.pos === v.primary.pos) return;
-    h.back.push({ buf: v.buf, pos: v.primary.pos });
+    if (top && top.buf === v.buf && top.pos === pos) return;
+    h.back.push({ buf: v.buf, pos });
     if (h.back.length > 100) h.back.shift();
     h.fwd = [];
   }
@@ -372,8 +375,10 @@ class App {
     const e = from.pop();
     if (!e) return;
     const v = this.view();
+    // An entry for a closed buffer, or for where the view already is, is
+    // passed over.
+    if (!this.buffers.has(e.buf.id) || (v && v.buf === e.buf && v.primary.pos === e.pos)) return this.historyStep(dir);
     if (v) to.push({ buf: v.buf, pos: v.primary.pos });
-    if (!this.buffers.has(e.buf.id)) return this.historyStep(dir);
     const nv = this.showBuffer(e.buf);
     await this.moveTo(nv, Math.min(e.pos, e.buf.len), { center: true });
   }
@@ -488,7 +493,7 @@ class App {
     // A buffer mode may claim printable keys (a panel's single-key commands).
     const mode = v.buf.mode && this.modes.get(v.buf.mode);
     if (mode && t.length === 1 && mode[t]) { mode[t](); return; }
-    this.editing.type(this.activePane, t);
+    this.editing.type(this.activePane, t, true);
   }
 
   paste(text) {
@@ -579,7 +584,7 @@ class App {
       Tab: "edit.indent", "S-Tab": "edit.dedent", Esc: "edit.escape",
       "C-a": "select.all", "C-l": "select.line", "C-S-k": "edit.deleteLine", "C-S-d": "edit.duplicateLine", "M-Up": "edit.moveLineUp", "M-Down": "edit.moveLineDown",
       "C-/": "edit.toggleComment", "C-d": "select.nextOccurrence", "C-S-l": "select.allOccurrences", "C-M-Up": "cursor.addAbove", "C-M-Down": "cursor.addBelow",
-      "C-]": "cursor.matchingBracket", "C-S-[": "fold.toggle", "C-S-]": "fold.toggle",
+      "C-]": "cursor.matchingBracket", "C-{": "fold.toggle", "C-}": "fold.toggle",
     };
     const emacs = this.settings.keymap === "emacs" ? {
       "C-f": "cursor.right", "C-b": "cursor.left", "C-n": "cursor.down", "C-p": "cursor.up", "C-a": "cursor.home", "C-e": "cursor.end",

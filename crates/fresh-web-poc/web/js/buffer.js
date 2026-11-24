@@ -22,19 +22,17 @@ const WINDOW_AFTER = 6000;
 
 let nextBufferId = 1;
 
-// Typing a run of characters is one undo step: an insert that continues the
-// previous one (at its end, within a second, no newline) joins its entry.
-function pushUndo(buf, ops, inverse) {
+// Typing a run of characters is one undo step. The editor marks typing
+// edits with `typing`: "start" for the first of a run, "continue" for one
+// that goes on where the last left the carets. A continuing edit joins the
+// entry before it when that one was typing too, within a second.
+function pushUndo(buf, inverse, typing) {
   const now = Date.now();
   const last = buf.undo[buf.undo.length - 1];
-  const op = ops.length === 1 ? ops[0] : null;
-  if (
-    op && op.t === "ins" && !op.text.includes("\n") && last && last.length === 1 && last[0].t === "del" &&
-    buf.lastTyped && now - buf.lastTyped.at < 1000 && buf.lastTyped.end === op.pos
-  ) {
-    last[0].len += byteLen(op.text);
-  } else buf.undo.push(inverse);
-  buf.lastTyped = op && op.t === "ins" ? { at: now, end: op.pos + byteLen(op.text) } : null;
+  if (typing === "continue" && buf.typingRun && last && now - buf.lastUndoAt < 1000) last.unshift(...inverse);
+  else buf.undo.push(inverse);
+  buf.typingRun = !!typing;
+  buf.lastUndoAt = now;
 }
 
 export function nl(s) {
@@ -263,7 +261,7 @@ export class FileBuffer extends Buffer {
   }
 
   // A local edit: apply now, send when nothing is in flight.
-  edit(ops, { undoable = true } = {}) {
+  edit(ops, { undoable = true, typing = null } = {}) {
     const inverse = [];
     for (const op of ops) {
       const gone = op.t === "del" ? this.textRange(op.pos, op.pos + op.len) : null;
@@ -273,7 +271,7 @@ export class FileBuffer extends Buffer {
       inverse.unshift(op.t === "ins" ? { t: "del", pos: op.pos, len: byteLen(op.text) } : { t: "ins", pos: op.pos, text: gone ?? "" });
       this.emit("edit", { op, gone, local: true });
     }
-    if (undoable) { pushUndo(this, ops, inverse); this.redo = []; }
+    if (undoable) { pushUndo(this, inverse, typing); this.redo = []; }
     this.lastEdit = Date.now();
     this.pending.push(...ops.map((o) => ({ ...o })));
     this.modified = true;
@@ -323,6 +321,7 @@ export class FileBuffer extends Buffer {
   doUndo(stack = this.undo, other = this.redo) {
     const ops = stack.pop();
     if (!ops) return false;
+    this.typingRun = false;
     const inv = this.edit(ops.map((o) => ({ ...o })), { undoable: false });
     other.push(inv);
     return ops;
@@ -384,7 +383,7 @@ export class VirtualBuffer extends Buffer {
   }
   get full() { return true; }
   ensure() { return Promise.resolve(); }
-  edit(ops, { undoable = true } = {}) {
+  edit(ops, { undoable = true, typing = null } = {}) {
     const inverse = [];
     for (const op of ops) {
       const gone = op.t === "del" ? this.textRange(op.pos, op.pos + op.len) : null;
@@ -393,12 +392,13 @@ export class VirtualBuffer extends Buffer {
       inverse.unshift(op.t === "ins" ? { t: "del", pos: op.pos, len: byteLen(op.text) } : { t: "ins", pos: op.pos, text: gone ?? "" });
       this.emit("edit", { op, gone, local: true });
     }
-    if (undoable) { pushUndo(this, ops, inverse); this.redo = []; }
+    if (undoable) { pushUndo(this, inverse, typing); this.redo = []; }
     return inverse;
   }
   doUndo(stack = this.undo, other = this.redo) {
     const ops = stack.pop();
     if (!ops) return false;
+    this.typingRun = false;
     other.push(this.edit(ops, { undoable: false }));
     return ops;
   }
