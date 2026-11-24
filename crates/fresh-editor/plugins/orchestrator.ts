@@ -47,7 +47,7 @@ import {
 } from "./lib/widgets.ts";
 import { WindowMachines } from "./lib/window_machines.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
-import { legacyProjectStateDirs, projectStateDir } from "./lib/path_slug.ts";
+import { legacyProjectStateDir, projectStateDir } from "./lib/path_slug.ts";
 import {
   AGENT_REGISTRY,
   agentEntryForBase,
@@ -8179,15 +8179,20 @@ interface ArchiveManifest {
   sessions: ArchivedSession[];
 }
 
+/// Where this project's manifest lives: under the storage key, or under the
+/// name a release before it used when that is where the file already is.
+///
+/// Nothing is migrated to the new name, because nothing has to be. A worktree
+/// is found through git, which records it in the repository by absolute path,
+/// and every path inside an entry is absolute as well, so the manifest is the
+/// only thing that has to be found again — and both reading and writing
+/// resolve here, so a project still under the old name is read *and* written
+/// in place rather than left with two files.
 function archiveManifestPath(repoRoot: string): string {
-  return editor.pathJoin(projectStateDir(editor, repoRoot), "archived.json");
-}
-
-/// A manifest and the file it was read from — which is the file a change to
-/// it has to go back to, so the two travel together.
-interface LoadedManifest {
-  path: string;
-  manifest: ArchiveManifest;
+  const path = editor.pathJoin(projectStateDir(editor, repoRoot), "archived.json");
+  if (editor.fileExists(editor.localPath(path))) return path;
+  const legacy = editor.pathJoin(legacyProjectStateDir(editor, repoRoot), "archived.json");
+  return editor.fileExists(editor.localPath(legacy)) ? legacy : path;
 }
 
 /// The manifest stored at `path`, or null when there is no readable one
@@ -8210,44 +8215,21 @@ function readArchiveManifestAt(path: string): ArchiveManifest | null {
   return null;
 }
 
-/// A project's archive manifest, and the file to write it back to.
-///
-/// Falls back to the state directories a release before the storage key used
-/// (`legacyProjectStateDirs`). Nothing migrates those: a worktree is found
-/// through git, which records it in the repository by absolute path, and
-/// every path inside a manifest entry is absolute too, so the manifest is
-/// the only thing that has to be found again — and it is read, and written,
-/// where it already is.
-///
-/// **Writing back to where it was found is the point.** The entry a caller
-/// drops has to leave the file that holds it. Writing to the storage key's
-/// path instead would leave the old file still saying the workspace is
-/// archived, so `scanArchiveManifests` — which walks every directory and
-/// cares nothing for the key — would keep listing a workspace that is back
-/// on disk, and a second unarchive of it would fail on a worktree that had
-/// already moved.
-///
-/// With no manifest anywhere, the current path comes back, so a project's
-/// first archive lands under the storage key.
-function loadArchiveManifest(repoRoot: string): LoadedManifest {
-  const path = archiveManifestPath(repoRoot);
-  const manifest = readArchiveManifestAt(path);
-  if (manifest) return { path, manifest };
-  for (const dir of legacyProjectStateDirs(editor, repoRoot)) {
-    const legacy = editor.pathJoin(dir, "archived.json");
-    if (legacy === path) continue;
-    const found = readArchiveManifestAt(legacy);
-    if (found) return { path: legacy, manifest: found };
-  }
-  return { path, manifest: { version: 1, sessions: [] } };
+function loadArchiveManifest(repoRoot: string): ArchiveManifest {
+  return readArchiveManifestAt(archiveManifestPath(repoRoot)) ?? { version: 1, sessions: [] };
 }
 
-/// Write a manifest to the file it came from (`LoadedManifest.path`), never
-/// to a path rebuilt from the repo root — see `loadArchiveManifest`.
-function saveArchiveManifest(at: string, m: ArchiveManifest): boolean {
-  const dir = editor.pathDirname(at);
+/// Write a manifest to `path` — the counterpart of `readArchiveManifestAt`,
+/// for the one caller that has to write back to a file it was handed rather
+/// than one resolved from a repo root (`unarchiveOne`).
+function writeArchiveManifestAt(path: string, m: ArchiveManifest): boolean {
+  const dir = editor.pathDirname(path);
   if (!editor.createDir(editor.localPath(dir))) return false;
-  return editor.replaceFile(editor.localPath(at), JSON.stringify(m, null, 2));
+  return editor.replaceFile(editor.localPath(path), JSON.stringify(m, null, 2));
+}
+
+function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
+  return writeArchiveManifestAt(archiveManifestPath(repoRoot), m);
 }
 
 /// Every archive manifest on this machine, paired with the entries it holds.
@@ -8257,9 +8239,9 @@ function saveArchiveManifest(at: string, m: ArchiveManifest): boolean {
 /// entries carry `repo_root`; for older ones the repo is recovered from the
 /// archived worktree itself (`archivedRepoRoot`) at the point it is needed,
 /// which is the one place that needs it.
-function scanArchiveManifests(): { slug: string; path: string; manifest: ArchiveManifest }[] {
+function scanArchiveManifests(): { path: string; manifest: ArchiveManifest }[] {
   const base = editor.pathJoin(editor.getDataDir(), "orchestrator");
-  const out: { slug: string; path: string; manifest: ArchiveManifest }[] = [];
+  const out: { path: string; manifest: ArchiveManifest }[] = [];
   let entries: DirEntry[];
   try {
     entries = editor.readDir(editor.localPath(base));
@@ -8279,7 +8261,7 @@ function scanArchiveManifests(): { slug: string; path: string; manifest: Archive
     // The path travels with the entries: whoever acts on one has to write
     // the change back to the file it came out of, which for a project still
     // under a legacy name is not the one its repo root now points at.
-    if (manifest) out.push({ slug: e.name, path, manifest });
+    if (manifest) out.push({ path, manifest });
   }
   return out;
 }
@@ -8344,7 +8326,7 @@ async function unarchiveOne(e: ArchivedSession, foundAt: string): Promise<Lifecy
   // stop listing it.
   const manifest = readArchiveManifestAt(foundAt) ?? { version: 1, sessions: [] };
   manifest.sessions = manifest.sessions.filter((x) => x.root !== e.root);
-  saveArchiveManifest(foundAt, manifest);
+  writeArchiveManifestAt(foundAt, manifest);
   // Nothing re-adds the row to the model here: the worktree is back on disk,
   // so the discovered-worktree scan picks it up as an unopened row the next
   // time it runs (and `focusWorkspace` / Enter opens it). Forcing a window
@@ -8566,7 +8548,7 @@ async function archiveOneNow(id: number): Promise<LifecycleResult> {
         repoRoot,
       };
     }
-    const { path: manifestPath, manifest } = loadArchiveManifest(repoRoot);
+    const manifest = loadArchiveManifest(repoRoot);
     manifest.sessions.push({
       label: s.label,
       root: archivedRoot,
@@ -8575,7 +8557,7 @@ async function archiveOneNow(id: number): Promise<LifecycleResult> {
       archived_at: new Date().toISOString(),
       repo_root: repoRoot,
     });
-    saveArchiveManifest(manifestPath, manifest);
+    saveArchiveManifest(repoRoot, manifest);
     // A discovered row has no window_closed hook to drop it — remove it
     // from the model directly.
     if (s.discovered) {
@@ -8595,7 +8577,7 @@ async function archiveOneNow(id: number): Promise<LifecycleResult> {
   // future Unarchive reopen a window there — then drops the live record.
   // The window was already closed above.
   const repoRoot = (await resolveCanonicalRepoRoot(s.root)) ?? s.root;
-  const { path: manifestPath, manifest } = loadArchiveManifest(repoRoot);
+  const manifest = loadArchiveManifest(repoRoot);
   manifest.sessions.push({
     label: s.label,
     root: s.root,
@@ -8604,7 +8586,7 @@ async function archiveOneNow(id: number): Promise<LifecycleResult> {
     archived_at: new Date().toISOString(),
     repo_root: repoRoot,
   });
-  saveArchiveManifest(manifestPath, manifest);
+  saveArchiveManifest(repoRoot, manifest);
   orchestratorSessions.delete(id);
   // In-place archive leaves the directory on disk, so its persisted
   // workspace must be forgotten too — otherwise discovery re-adds it as a
@@ -8705,11 +8687,11 @@ async function deleteOneNow(id: number, removeWorktree: boolean): Promise<Lifecy
 
     // Drop the matching manifest entry too, in case the session was
     // already archived (delete-from-archived drops dormant sessions).
-    const { path: manifestPath, manifest } = loadArchiveManifest(rr);
+    const manifest = loadArchiveManifest(rr);
     const before = manifest.sessions.length;
     manifest.sessions = manifest.sessions.filter((e) => e.label !== s.label);
     if (manifest.sessions.length !== before) {
-      saveArchiveManifest(manifestPath, manifest);
+      saveArchiveManifest(rr, manifest);
     }
   }
 

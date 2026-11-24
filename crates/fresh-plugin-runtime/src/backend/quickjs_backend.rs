@@ -3237,9 +3237,8 @@ impl JsEditorApi {
         Path::new(&path).is_absolute()
     }
 
-    // The editor names its own per-path directories with this same key, so the
-    // two agree on a name for one project and a plugin cannot drift from the
-    // editor by reimplementing the scheme.
+    // The editor names its own per-path directories with this same key, so a
+    // plugin cannot drift from the editor by reimplementing the scheme.
     /// A directory name for data kept *about* a path, such as a plugin's own
     /// per-project state: the path's last component, reduced to letters,
     /// digits, `.`, `_` and `-`, then a `-` and 16 hex digits of a hash of
@@ -3247,20 +3246,15 @@ impl JsEditorApi {
     ///
     /// Use this rather than building a name out of a path yourself. The
     /// result is a single path component of at most 65 characters, holding
-    /// nothing a file cannot be called on any platform, with no leading or
-    /// trailing `.` or `-` and no separator or drive letter for `pathJoin`
-    /// to read as a prefix. That last part is what keeps
+    /// nothing a file cannot be called on any platform and no separator or
+    /// drive letter for `pathJoin` to read as a prefix — which is what keeps
     /// `pathJoin(getDataDir(), "myplugin", pathStorageKey(project), name)`
     /// under the data dir even when the project is `C:\code\myrepo`.
     ///
     /// The hash is what tells two projects apart, so the readable part is
     /// free to be lossy: a name written in another script keeps none of it
     /// and reads `dir`, and a filesystem root reads `root`. Two spellings of
-    /// one path give one key — both separators count, and empty and `.`
-    /// components are dropped — so `/a/b`, `/a//b`, `/a/b/` and `/a/./b`
-    /// agree. Nothing further is resolved: `..`, letter case and a `\\?\`
-    /// prefix are taken as written, and a relative path is not made
-    /// absolute first.
+    /// one path give one key, so `/a/b`, `/a//b`, `/a/b/` and `/a/./b` agree.
     ///
     /// The answer is the same in every release, so a key can name a
     /// directory that outlives the editor. Nothing turns one back into a

@@ -4,10 +4,9 @@
 //! `fresh-editor`'s workspace store to name session files, and — through
 //! `editor.pathStorageKey()` — by the plugins that keep their own per-project
 //! state under the data dir. So it lives at the bottom, below every caller,
-//! rather than in one of them: the orchestrator's state directory and the
-//! editor's have to agree on a name for the same path, and a second
-//! implementation of [`storage_key_for_path`] in another language would be
-//! free to drift from this one.
+//! rather than in one of them. The plugin side could have spelled
+//! [`storage_key_for_path`] out again in TypeScript; one implementation that
+//! every caller reaches cannot drift from itself.
 
 use std::path::Path;
 
