@@ -19,12 +19,15 @@ use std::sync::Arc;
 // Re-export Encoding for backward compatibility
 pub use encoding::Encoding;
 
+mod content_version;
 pub mod file_kind;
 pub mod format;
 pub mod persistence;
 mod recovery_chunks;
 pub mod save;
 pub mod search;
+pub use content_version::ContentStamp;
+use content_version::ContentVersion;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
 pub use persistence::Persistence;
@@ -187,8 +190,9 @@ pub struct TextBuffer {
     /// Encoding + line-ending state — see `format.rs`.
     format: BufferFormat,
 
-    /// Monotonic version counter for change tracking.
-    version: u64,
+    /// Monotonic version counter for change tracking, with where each
+    /// recent change landed — see `content_version.rs`.
+    version: ContentVersion,
 
     /// Buffer configuration (estimated line length, etc.)
     config: BufferConfig,
@@ -268,7 +272,7 @@ impl TextBuffer {
             persistence: Persistence::new(fs, None, saved_root, None),
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig {
                 large_file_threshold: Some(large_file_threshold),
                 ..BufferConfig::default()
@@ -303,7 +307,22 @@ impl TextBuffer {
 
     /// Current buffer version (monotonic, wraps on overflow)
     pub fn version(&self) -> u64 {
-        self.version
+        self.version.get()
+    }
+
+    /// Where the content stands now, for a later
+    /// [`unchanged_prefix_since`](Self::unchanged_prefix_since).
+    pub fn content_stamp(&self) -> ContentStamp {
+        self.version.stamp()
+    }
+
+    /// Every byte before the returned offset is what it was when `stamp`
+    /// was taken from this buffer: `usize::MAX` when nothing has changed
+    /// since, `0` when the stamp came from another buffer (one this replaced)
+    /// or is too old to answer. Lets a cache over a prefix of the buffer keep
+    /// what an edit further on cannot have touched.
+    pub fn unchanged_prefix_since(&self, stamp: ContentStamp) -> usize {
+        self.version.unchanged_prefix_since(stamp)
     }
 
     /// Get a reference to the filesystem implementation used by this buffer.
@@ -311,15 +330,19 @@ impl TextBuffer {
         self.persistence.fs()
     }
 
+    /// Advance the version for a change that left every byte before
+    /// `floor` as it was (`usize::MAX`: no byte changed).
     #[inline]
-    fn bump_version(&mut self) {
-        self.version = self.version.wrapping_add(1);
+    fn bump_version(&mut self, floor: usize) {
+        self.version.bump(floor);
     }
 
+    /// Mark the buffer dirty for a change that left every byte before
+    /// `floor` as it was.
     #[inline]
-    fn mark_content_modified(&mut self) {
+    fn mark_content_modified(&mut self, floor: usize) {
         self.persistence.mark_dirty();
-        self.bump_version();
+        self.bump_version(floor);
     }
 
     /// Create a text buffer from raw bytes WITHOUT encoding conversion.
@@ -349,7 +372,7 @@ impl TextBuffer {
             persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, true),
             format: BufferFormat::new(line_ending, Encoding::Utf8),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         }
     }
@@ -446,7 +469,7 @@ impl TextBuffer {
             persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::with_normalization(line_ending, encoding, normalized),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         }
     }
@@ -475,7 +498,7 @@ impl TextBuffer {
             persistence: Persistence::new(fs, None, saved_root, None),
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         }
     }
@@ -741,7 +764,7 @@ impl TextBuffer {
             ),
             file_kind: BufferFileKind::new(true, is_binary),
             format: BufferFormat::new(line_ending, encoding),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         })
     }
@@ -1202,7 +1225,7 @@ impl TextBuffer {
         .entered();
 
         self.persistence
-            .diff_since_saved(&self.piece_tree, &self.buffers, self.version)
+            .diff_since_saved(&self.piece_tree, &self.buffers, self.version.get())
     }
 
     /// Total bytes of the saved snapshot (the diff baseline's old side).
@@ -1240,7 +1263,7 @@ impl TextBuffer {
         let line_feed_cnt = Some(text.iter().filter(|&&b| b == b'\n').count());
 
         // Mark as modified (updates version)
-        self.mark_content_modified();
+        self.mark_content_modified(offset);
 
         // Optimization: try to append to existing buffer if insertion is at piece boundary
         let (buffer_location, buffer_offset, text_len) =
@@ -1331,7 +1354,8 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        self.mark_content_modified();
+        let offset = self.position_to_offset(position);
+        self.mark_content_modified(offset);
 
         // Count line feeds in the text to insert
         let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
@@ -1373,7 +1397,7 @@ impl TextBuffer {
         // Update piece tree
         self.piece_tree.delete(offset, bytes, &self.buffers);
 
-        self.mark_content_modified();
+        self.mark_content_modified(offset);
     }
 
     /// Delete text in a range
@@ -1386,6 +1410,7 @@ impl TextBuffer {
     /// Delete text in a line/column range
     /// This now uses the optimized piece_tree.delete_position_range() for a single traversal
     pub fn delete_range(&mut self, start: Position, end: Position) {
+        let floor = self.position_to_offset(start);
         // Use the optimized position-based deletion
         self.piece_tree.delete_position_range(
             start.line,
@@ -1394,7 +1419,7 @@ impl TextBuffer {
             end.column,
             &self.buffers,
         );
-        self.mark_content_modified();
+        self.mark_content_modified(floor);
     }
 
     /// Replace the entire buffer content with new content
@@ -1428,7 +1453,7 @@ impl TextBuffer {
             self.piece_tree = PieceTree::empty();
         }
 
-        self.mark_content_modified();
+        self.mark_content_modified(0);
     }
 
     /// Restore a previously saved buffer state (for undo/redo of BulkEdit).
@@ -1440,7 +1465,7 @@ impl TextBuffer {
         self.piece_tree = snapshot.piece_tree.clone();
         self.buffers = snapshot.buffers.clone();
         self.next_buffer_id = snapshot.next_buffer_id;
-        self.mark_content_modified();
+        self.mark_content_modified(0);
     }
 
     /// Snapshot the current buffer state (piece tree + buffers) for BulkEdit undo/redo.
@@ -1489,7 +1514,8 @@ impl TextBuffer {
                 info
             });
 
-        self.mark_content_modified();
+        let floor = edits.iter().map(|(pos, _, _)| *pos).min().unwrap_or(0);
+        self.mark_content_modified(floor);
         delta
     }
 
@@ -1920,7 +1946,7 @@ impl TextBuffer {
         // pre-append state.  Deliberately not `mark_content_modified`
         // — the buffer still matches the on-disk stream, so it isn't
         // dirty.
-        self.bump_version();
+        self.bump_version(old_size);
     }
 
     /// Check if the buffer has been modified since last save
@@ -2346,8 +2372,9 @@ impl TextBuffer {
     /// This marks the buffer as modified since the line ending format has changed.
     /// On save, the buffer content will be converted to the new format.
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
+        // The bytes stay as they are until save converts them.
         self.format.set_line_ending(line_ending);
-        self.mark_content_modified();
+        self.mark_content_modified(usize::MAX);
     }
 
     /// Set the default line ending format for a new/empty buffer
@@ -2368,8 +2395,9 @@ impl TextBuffer {
     /// This marks the buffer as modified since the encoding format has changed.
     /// On save, the buffer content will be converted to the new encoding.
     pub fn set_encoding(&mut self, encoding: Encoding) {
+        // The bytes stay as they are until save converts them.
         self.format.set_encoding(encoding);
-        self.mark_content_modified();
+        self.mark_content_modified(usize::MAX);
     }
 
     /// Set the default encoding format for a new/empty buffer

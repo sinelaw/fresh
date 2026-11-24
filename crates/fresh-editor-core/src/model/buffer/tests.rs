@@ -1985,7 +1985,7 @@ mod rebuild_pristine_saved_root_tests {
             persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(true, false),
             format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         }
     }
@@ -2232,7 +2232,7 @@ mod rebuild_pristine_saved_root_tests {
             ),
             file_kind: BufferFileKind::new(true, false),
             format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         }
     }
@@ -2794,7 +2794,7 @@ mod rebuild_pristine_saved_root_tests {
             ),
             file_kind: BufferFileKind::new(true, false),
             format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-            version: 0,
+            version: ContentVersion::new(),
             config: BufferConfig::default(),
         };
 
@@ -3266,7 +3266,7 @@ fn a_walked_stretch_is_not_walked_twice() {
         ),
         file_kind: BufferFileKind::new(true, false),
         format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-        version: 0,
+        version: ContentVersion::new(),
         config: BufferConfig::default(),
     };
 
@@ -3345,7 +3345,7 @@ fn typing_does_not_forget_where_the_line_breaks_are_not() {
         ),
         file_kind: BufferFileKind::new(true, false),
         format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-        version: 0,
+        version: ContentVersion::new(),
         config: BufferConfig::default(),
     };
 
@@ -3911,4 +3911,44 @@ fn snapshot_shares_loaded_chunks_and_survives_later_edits() {
 
     buffer.restore_buffer_state(&snapshot);
     assert_eq!(buffer.to_string().unwrap(), "hello\nworld\n");
+}
+
+/// Each kind of content change reports where it landed, so a cache over a
+/// prefix of the buffer (rainbow bracket depths, issue #3478) keeps what
+/// lies before it.
+#[test]
+fn unchanged_prefix_ends_where_each_kind_of_change_landed() {
+    let mut buffer = TextBuffer::from_str_test("hello\nworld\nagain\n");
+
+    let stamp = buffer.content_stamp();
+    assert_eq!(buffer.unchanged_prefix_since(stamp), usize::MAX);
+    buffer.insert_bytes(8, b"X".to_vec());
+    assert_eq!(buffer.unchanged_prefix_since(stamp), 8);
+
+    let stamp = buffer.content_stamp();
+    buffer.delete_bytes(3, 2);
+    assert_eq!(buffer.unchanged_prefix_since(stamp), 3);
+
+    // Bulk edits arrive sorted descending; the lowest one bounds the prefix.
+    let stamp = buffer.content_stamp();
+    buffer.apply_bulk_edits(&[(10, 1, "Y"), (4, 0, "Z")]);
+    assert_eq!(buffer.unchanged_prefix_since(stamp), 4);
+
+    // A format change leaves every byte in place until save.
+    let stamp = buffer.content_stamp();
+    buffer.set_line_ending(LineEnding::CRLF);
+    assert_eq!(buffer.unchanged_prefix_since(stamp), usize::MAX);
+
+    // Changes that can't say where they landed vouch for nothing.
+    let snapshot = buffer.snapshot_buffer_state();
+    let stamp = buffer.content_stamp();
+    buffer.restore_buffer_state(&snapshot);
+    assert_eq!(buffer.unchanged_prefix_since(stamp), 0);
+    let stamp = buffer.content_stamp();
+    buffer.replace_content("fresh");
+    assert_eq!(buffer.unchanged_prefix_since(stamp), 0);
+
+    // A stamp from the buffer this one replaced (a reload) is no answer.
+    let reloaded = TextBuffer::from_str_test("fresh");
+    assert_eq!(reloaded.unchanged_prefix_since(buffer.content_stamp()), 0);
 }
