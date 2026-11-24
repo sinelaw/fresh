@@ -1292,6 +1292,90 @@ fn test_search_replace_undo_in_file_shows_matches_again() {
         .unwrap();
 }
 
+/// The project panel drops a match the user replaced with the editor's own
+/// in-buffer Replace (`Ctrl+R`), without needing a further keystroke.
+///
+/// Issue #3757: with the panel open on three matches, replacing one of them
+/// with `Ctrl+R` left the panel reading "Matches (3 in 3 files)" and still
+/// quoting the text the buffer no longer held; typing any single character
+/// afterwards re-ran the search and corrected it. The panel's only refresh
+/// path is `buffer_modified`, and an in-buffer replace applies its edits as
+/// one bulk edit, outside the event path that fires the hook — so the panel
+/// never heard about it. Doing the same edit with plain Backspaces refreshed
+/// the panel immediately, which is what made it look like the panel's bug.
+///
+/// Without the fix the wait at the end never resolves: the panel keeps
+/// showing all three matches.
+#[test]
+fn test_search_replace_panel_refreshes_after_in_file_replace() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // `qxzv`, not a word the copied plugin sources contain.
+    for name in ["one.txt", "two.txt", "three.txt"] {
+        fs::write(
+            project_root.join(name),
+            "head
+see qxzv here
+tail
+",
+        )
+        .unwrap();
+    }
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&project_root.join("one.txt")).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("qxzv").unwrap();
+    harness.render().unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("(3 matches / 3 files)"))
+        .unwrap();
+
+    // Focus the edited file (the panel stays open) and replace there.
+    let (col, row) = harness
+        .find_text_on_screen("see qxzv here")
+        .expect("the open file is on screen");
+    harness.mouse_click(col, row).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("qxzv").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("with"))
+        .unwrap();
+    harness.type_text("done").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The buffer now reads "see done here", and the panel says so: two
+    // matches in the two files that still have one, and no row for this file.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("see done here")
+                && s.contains("(2 matches / 2 files)")
+                && !s.contains("one.txt:2")
+        })
+        .unwrap();
+}
+
 /// Multiple matches on the same line — all occurrences on the line get replaced.
 #[test]
 fn test_search_replace_multiple_matches_same_line() {

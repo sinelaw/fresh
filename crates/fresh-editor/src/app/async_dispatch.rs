@@ -647,6 +647,15 @@ impl Editor {
             self.update_plugin_state_snapshot();
         }
 
+        // A command that edited a buffer (`insertText`, `replaceRange`,
+        // `replaceInBuffer`, ...) is announced in the pass that applied it
+        // rather than whenever the next one happens to come round — the
+        // editor may well be sitting idle waiting for input by then.
+        #[cfg(feature = "plugins")]
+        if processed_any_commands {
+            self.fire_buffer_modified_for_changed_buffers();
+        }
+
         // Process pending plugin action completions
         #[cfg(feature = "plugins")]
         {

@@ -207,6 +207,9 @@ impl Editor {
     /// Rebuild the plugin state snapshot if anything happened since the last
     /// rebuild; an idle loop pass leaves it untouched.
     pub(crate) fn refresh_plugin_state_snapshot(&mut self) {
+        // Edits announce themselves here, at one fork, and the hook wants the
+        // snapshot this would rebuild anyway.
+        self.fire_buffer_modified_for_changed_buffers();
         let env_changed = self.take_env_probe_result();
         if env_changed
             || self.plugin_snapshot_dirty
@@ -214,6 +217,99 @@ impl Editor {
         {
             self.update_plugin_state_snapshot();
         }
+    }
+
+    /// Fire `buffer_modified` for every buffer whose content has changed since
+    /// this last ran — the one and only place that hook is fired.
+    ///
+    /// # Why it lives here and not at the edit sites
+    ///
+    /// A buffer is edited through four very different paths (the event path,
+    /// the two bulk-edit appliers, and the plugin API's own edit commands),
+    /// and each one that announced itself had to remember to. They did not:
+    /// the bulk-edit paths fired nothing at all, which is #3757 — the project
+    /// search panel kept listing a match an in-file Replace had already
+    /// rewritten — and the plugin API's five edit commands and the on-save
+    /// formatter fired nothing either, so the hook's documented "after any
+    /// edit" was false however many sites were patched.
+    ///
+    /// So nothing is announced at an edit site. What this reads instead is
+    /// `Buffer::version`, which the buffer bumps itself inside every method
+    /// that alters its content — `insert_bytes`, `delete_bytes`,
+    /// `apply_bulk_edits`, `replace_content`, `restore_buffer_state` (undo and
+    /// redo), `set_line_ending`, `set_encoding`. A path cannot edit a buffer
+    /// without moving it, so a new edit path is covered the day it is written
+    /// and there is nothing for it to forget.
+    ///
+    /// # What that costs
+    ///
+    /// The hook is coalesced: once per pass per buffer, not once per edit. An
+    /// N-file LSP rename now rebuilds the snapshot once rather than N times,
+    /// all but the last discarded. A lazily loaded file growing as it streams
+    /// off disk moves the version too, and is reported — bounded by the same
+    /// one-per-pass, not one per chunk.
+    ///
+    /// A handler that edits the buffer it was told about will be called again
+    /// on the next pass, which is why `search_replace.ts` holds
+    /// `replaceInProgress` across its own project-wide replace.
+    pub(crate) fn fire_buffer_modified_for_changed_buffers(&mut self) {
+        let modified = self.take_modified_buffers();
+        if modified.is_empty() {
+            return;
+        }
+
+        // Before the hook, never after: it runs on the plugin thread, and a
+        // handler that reads the buffer (its length, its text) through the
+        // snapshot would otherwise see it as it was before the edit.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+
+        for (window_id, buffer_id) in modified {
+            self.plugin_manager.read().unwrap().run_hook(
+                "buffer_modified",
+                crate::services::plugins::hooks::HookArgs::BufferModified {
+                    buffer_id,
+                    window_id,
+                },
+            );
+        }
+    }
+
+    /// Every buffer whose content has moved since it was last looked at, as
+    /// `(window_id, buffer_id)`, recording where each one is now.
+    ///
+    /// A buffer this has not seen before is recorded and not reported: its
+    /// content arrived as it was built, which is not an edit to it. The one
+    /// consequence is that a buffer opened *and* edited before the next pass
+    /// — `replaceInBuffer` on a file that was not open — is announced only
+    /// from its next edit, which is what that path's only caller wants.
+    fn take_modified_buffers(&mut self) -> Vec<(u64, crate::model::event::BufferId)> {
+        use std::collections::hash_map::Entry;
+
+        let mut modified = Vec::new();
+        let mut live = std::collections::HashSet::new();
+        for (window_id, window) in &self.windows {
+            for (buffer_id, state) in &window.buffers {
+                live.insert(*buffer_id);
+                let version = state.buffer.version();
+                match self.plugin_buffer_versions.entry(*buffer_id) {
+                    Entry::Occupied(mut seen) => {
+                        if *seen.get() != version {
+                            seen.insert(version);
+                            modified.push((window_id.0, *buffer_id));
+                        }
+                    }
+                    Entry::Vacant(unseen) => {
+                        unseen.insert(version);
+                    }
+                }
+            }
+        }
+        // A buffer can close and its id be handed out again; a stale entry
+        // would then read as "already announced at that version".
+        self.plugin_buffer_versions
+            .retain(|id, _| live.contains(id));
+        modified
     }
 
     /// Which windows have a live remote connection, folded into one value.

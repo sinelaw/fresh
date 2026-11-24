@@ -666,6 +666,51 @@ impl Editor {
         }
     }
 
+    /// Delete whatever every cursor has selected, as one bulk edit, so the
+    /// slow paste path can plant its placeholder where the text will land.
+    ///
+    /// Returns false when the delete failed, in which case the caller must
+    /// abandon the paste rather than insert over a selection it did not clear.
+    fn delete_selections_for_paste(&mut self, buffer_id: BufferId) -> bool {
+        let cursor_selections: Vec<(CursorId, std::ops::Range<usize>)> = self
+            .active_cursors()
+            .iter()
+            .filter_map(|(id, c)| c.selection_range().map(|r| (id, r)))
+            .collect();
+
+        if cursor_selections.is_empty() {
+            return true;
+        }
+
+        let mut delete_events = Vec::with_capacity(cursor_selections.len());
+        for (cursor_id, range) in &cursor_selections {
+            let deleted_text = self
+                .active_state_mut()
+                .get_edit_text(range.start, range.end);
+            delete_events.push(Event::Delete {
+                range: range.clone(),
+                deleted_text,
+                cursor_id: *cursor_id,
+            });
+        }
+        // Descending by position, so applying one does not shift the next.
+        delete_events.sort_by_key(|e| {
+            std::cmp::Reverse(match e {
+                Event::Delete { range, .. } => range.start,
+                _ => 0,
+            })
+        });
+        if let Err(e) = self.apply_events_to_buffer_as_bulk_edit(
+            buffer_id,
+            delete_events,
+            "Paste (clear selection)".to_string(),
+        ) {
+            tracing::warn!("paste selection delete failed: {}", e);
+            return false;
+        }
+        true
+    }
+
     /// Paste the clipboard content at all cursor positions
     ///
     /// Handles:
@@ -796,51 +841,21 @@ impl Editor {
             .ok();
 
         // Now race a short inline wait against the spawned read.
-        // Doing the selection-delete *after* this wait would be
-        // wrong: a fast inline paste needs the selection cleared
-        // first so it can replace it via `paste_text`'s normal
-        // logic. So delete the selection now (it's a synchronous
-        // local operation, ~µs) and only THEN race the wait.
-        let cursor_selections: Vec<(CursorId, std::ops::Range<usize>)> = self
-            .active_cursors()
-            .iter()
-            .filter_map(|(id, c)| c.selection_range().map(|r| (id, r)))
-            .collect();
-
-        if !cursor_selections.is_empty() {
-            let mut delete_events = Vec::with_capacity(cursor_selections.len());
-            for (cursor_id, range) in &cursor_selections {
-                let deleted_text = self
-                    .active_state_mut()
-                    .get_edit_text(range.start, range.end);
-                delete_events.push(Event::Delete {
-                    range: range.clone(),
-                    deleted_text,
-                    cursor_id: *cursor_id,
-                });
-            }
-            delete_events.sort_by(|a, b| {
-                let pa = if let Event::Delete { range, .. } = a {
-                    range.start
-                } else {
-                    0
-                };
-                let pb = if let Event::Delete { range, .. } = b {
-                    range.start
-                } else {
-                    0
-                };
-                pb.cmp(&pa)
-            });
-            if let Err(e) = self.apply_events_to_buffer_as_bulk_edit(
-                buffer_id,
-                delete_events,
-                "Paste (clear selection)".to_string(),
-            ) {
-                tracing::warn!("paste selection delete failed: {}", e);
-                return;
-            }
-        }
+        //
+        // The selection a paste replaces is *not* deleted up front. On either
+        // fast path below `paste_text` deletes it and inserts the pasted text
+        // in one bulk edit, which is one undo step and one `buffer_modified`
+        // for what the user did once. Deleting it here first made a
+        // paste-over-selection two of each: `Ctrl+Z` left the selection
+        // deleted and the paste undone, and a `buffer_modified` subscriber
+        // (the project search panel re-running its search) saw the buffer
+        // half-edited. Nothing renders during the wait below, so the
+        // selection is not visible any longer than it was.
+        //
+        // The slow path still clears it first, because its placeholder has to
+        // sit where the pasted text will land; there the delete really is its
+        // own modification, visible on its own for as long as the clipboard
+        // takes.
 
         // Inline wait: if arboard came back within budget, paste
         // synchronously and skip the placeholder entirely — the
@@ -849,7 +864,8 @@ impl Editor {
         // path. If the read is still in flight after the budget,
         // drop `inline_rx` (which signals the thread to deliver via
         // the bridge instead) and continue to the placeholder path.
-        match inline_rx.recv_timeout(PASTE_INLINE_WAIT) {
+        let inline_wait = self.paste_inline_wait.unwrap_or(PASTE_INLINE_WAIT);
+        match inline_rx.recv_timeout(inline_wait) {
             Ok(text) => {
                 tracing::info!(
                     target: "paste_timing",
@@ -889,6 +905,13 @@ impl Editor {
 
         // Slow path: plant placeholders and register the pending
         // paste so the eventual bridge delivery lands at the anchor.
+        //
+        // The placeholder goes where the pasted text will land, so a selection
+        // being replaced has to be gone before the anchors are taken.
+        if !self.delete_selections_for_paste(buffer_id) {
+            return;
+        }
+
         let mut positions: Vec<usize> = self
             .active_cursors()
             .iter()
@@ -1486,6 +1509,20 @@ impl Editor {
     #[doc(hidden)]
     pub fn set_system_clipboard_reader_for_test(&mut self, reader: fn() -> Option<String>) {
         self.system_clipboard_reader = Some(reader);
+    }
+
+    /// Override the budget `paste()` gives the clipboard read before it
+    /// gives up and plants a placeholder, for tests.
+    ///
+    /// Which of the two paths a paste takes is otherwise a race against a
+    /// 50ms wall clock, and they differ in what the user can undo: the fast
+    /// path replaces a selection in one bulk edit, the placeholder path
+    /// clears the selection first so the placeholder has somewhere to sit.
+    /// A long budget makes the wait semantic — it blocks until the read
+    /// answers — and a zero one forces the placeholder path.
+    #[doc(hidden)]
+    pub fn set_paste_inline_wait_for_test(&mut self, wait: std::time::Duration) {
+        self.paste_inline_wait = Some(wait);
     }
 
     /// Stand in for the system clipboard a terminal paste reads, for tests:
