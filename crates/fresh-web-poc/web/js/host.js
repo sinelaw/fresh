@@ -30,8 +30,10 @@ class DecorationSet {
   clear() { this.d.clearNamespace(this.ns); }
   clearRange(start, end) { this.d.clearNamespaceRange(this.ns, start, end); }
   // Style [start, end): {fg, bg, bold, italic, underline, strike, mono,
-  // extendToLineEnd}; `mono` sets inline code in a compose view.
-  overlay(start, end, style, opts = {}) { this.d.add("overlays", { ns: this.ns, start, end, style, when: opts.when || null }); }
+  // extendToLineEnd}; `mono` sets inline code in a compose view. With
+  // `opts.mark`, the line is also marked on the scrollbar in the style's
+  // background (search matches).
+  overlay(start, end, style, opts = {}) { this.d.add("overlays", { ns: this.ns, start, end, style, when: opts.when || null, mark: !!opts.mark }); }
   // Draw `text` instead of [start, end). `reveal` {start, end}: shown as
   // source while a cursor is inside it (a compose view draws it dimmed). A
   // conceal over a newline joins the next line onto this row; in a compose

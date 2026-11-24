@@ -54,7 +54,7 @@ export function activate(fresh) {
     if (!b) return;
     const d = deco(b);
     d.clear();
-    matches.forEach((m, i) => d.overlay(m.pos, m.pos + m.len, i === current ? { bg: "search.current_bg", fg: "search.current_fg" } : { bg: "search.match_bg", fg: "search.match_fg" }));
+    matches.forEach((m, i) => d.overlay(m.pos, m.pos + m.len, i === current ? { bg: "search.current_bg", fg: "search.current_fg" } : { bg: "search.match_bg", fg: "search.match_fg" }, { mark: true }));
     b.render();
   };
 

@@ -73,7 +73,7 @@ export class Pane {
     this.view = null;
     this.el = document.createElement("div");
     this.el.className = "pane";
-    this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="rulers"></div><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="thumb"></div></div></div>`;
+    this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="rulers"></div><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="marks"></div><div class="thumb"></div></div></div>`;
     const el = this.el;
     const part = (k) => el.querySelector("." + k);
     this.tabsEl = part("tabs");
@@ -84,6 +84,8 @@ export class Pane {
     this.caretsEl = part("carets");
     this.scrollbarEl = part("scrollbar");
     this.thumbEl = part("thumb");
+    this.marksEl = part("marks");
+    this.marksSig = "";
     // A view in compose mode is drawn as a document instead of rows.
     this.doc = new DocView();
     this.surfaceEl.insertBefore(this.doc.el, this.scrollbarEl);
@@ -453,6 +455,50 @@ export class Pane {
     const h = this.size.sb;
     this.thumbEl.style.top = `${frac * h}px`;
     this.thumbEl.style.height = `${Math.max(16, size * h)}px`;
+    this.renderMarks(v, h);
+  }
+
+  // Marks on the scrollbar, by where their line is in the file: git
+  // changes (the gutter's marks) in the left lane, search matches in the
+  // middle, diagnostics in the right, the cursor's line across. One mark a
+  // pixel row and lane, the most severe; redrawn only when what they show
+  // changed. Only a buffer held whole has them (a huge file's lines are
+  // not all known).
+  renderMarks(v, h) {
+    const b = v.buf, L = b.text;
+    const d = b.decor;
+    const cursor = b.full ? L.indexOf(v.primary.pos) : -1;
+    const sig = b.full ? `${b.id}:${d.gen}:${b.textGen}:${L.count}:${cursor}:${h}` : "";
+    if (sig === this.marksSig) return;
+    this.marksSig = sig;
+    if (!sig || !h) { this.marksEl.replaceChildren(); return; }
+    const n = Math.max(1, L.count);
+    const lanes = [new Map(), new Map(), new Map()]; // y -> [rank, colour]
+    const put = (lane, pos, rank, col) => {
+      const i = L.indexOf(pos);
+      if (i < 0 || !col) return;
+      const y = Math.min(h - 2, Math.floor((i / n) * h));
+      const at = lanes[lane].get(y);
+      if (!at || at[0] > rank) lanes[lane].set(y, [rank, col]);
+    };
+    for (const m of d.gutters) put(0, m.start, 1, m.color ? color(m.color) : null);
+    for (const o of d.overlays) if (o.mark && o.style?.bg) put(1, o.start, 1, color(o.style.bg));
+    for (const g of d.diags) put(2, g.start, g.severity, THEME[["", "diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"][g.severity] || "diagnostic.error"]);
+    const els = [];
+    lanes.forEach((m, lane) => {
+      for (const [y, [, col]] of m) {
+        const e = document.createElement("div");
+        e.className = `mark lane${lane}`;
+        e.style.top = `${y}px`;
+        e.style.background = col;
+        els.push(e);
+      }
+    });
+    const c = document.createElement("div");
+    c.className = "mark cursor";
+    c.style.top = `${Math.min(h - 2, Math.floor((cursor / n) * h))}px`;
+    els.push(c);
+    this.marksEl.replaceChildren(...els);
   }
 
   // Where a caret at byte `p` is drawn, in client pixels: {x, y, h}, or

@@ -89,6 +89,14 @@ body {
 @keyframes blink { 50% { opacity: 0; } }
 .scrollbar { position: absolute; right: 0; top: 0; bottom: 0; width: 12px; background: color-mix(in srgb, var(--fg) 3%, transparent); }
 .thumb { position: absolute; left: 2px; right: 2px; background: color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 3px; }
+/* Marks on the scrollbar (view.js renderMarks): git, search, diagnostics
+   lanes and the cursor's line. */
+.scrollbar .marks { position: absolute; inset: 0; pointer-events: none; }
+.scrollbar .mark { position: absolute; height: 2px; }
+.scrollbar .mark.lane0 { left: 0; width: 4px; }
+.scrollbar .mark.lane1 { left: 4px; width: 4px; }
+.scrollbar .mark.lane2 { right: 0; width: 4px; height: 3px; }
+.scrollbar .mark.cursor { left: 0; right: 0; background: var(--fg); opacity: .6; }
 #terminal { height: 40%; min-height: 120px; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: var(--terminal-bg); }
 #terminal.hidden { display: none; }
 .term-tabs { display: flex; background: var(--panel); }

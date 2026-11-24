@@ -121,7 +121,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Tabs | Preview (ephemeral) tab from a single click in the explorer | missing (needs a tab state model; after the rest) |
 | Editor | Right-click context menu (Cut / Copy / Paste, Go to Definition, References, Rename, Code Actions, Hover, Format, comment / duplicate / delete line, select all / occurrences, Revert); a right press outside the selection moves the caret | fixed |
 | Editor | Scrollbar: drag, click to jump | present |
-| Editor | Scrollbar markers: diagnostics, search matches, git changes, cursor | missing |
+| Editor | Scrollbar markers: git changes, search matches, diagnostics (in lanes), the cursor's line; for buffers held whole | fixed |
 | Editor | Horizontal scrolling of long lines (wrap off) | missing |
 | Editor | Line wrap toggle (Alt+Z), line numbers, current line, occurrences, whitespace, rulers | present |
 | Editor | Indentation guides, matching-bracket highlight, rainbow brackets | missing (drawing extras; after the chrome) |
