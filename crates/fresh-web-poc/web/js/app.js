@@ -14,6 +14,7 @@ import { UIKit } from "./ui.js";
 import { Host } from "./host.js";
 import { Palette } from "./palette.js";
 import { Skins } from "./skins.js";
+import { Orchestrator } from "./orchestrator.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 import { Session } from "./session.js";
@@ -39,6 +40,7 @@ class App {
     this.commands = new Map(); // id -> {title, run, source, hidden}
     this.modes = new Map(); // buffer mode -> {key: fn}
     this.keys = {}; // key -> command, from plugins
+    this.terminalKeys = new Set(["C-`"]); // keys a focused terminal leaves to the editor
     this.statusItems = new Map();
     this.procs = new Map();
     this.watches = new Map();
@@ -63,21 +65,32 @@ class App {
   }
 
   async start() {
+    // The workspace this page views: `?ws=<id>`, or the server's first.
+    // None when it was closed (or none is open): the page is then the
+    // orchestrator's overview alone.
+    const params = new URLSearchParams(location.search);
+    const hello = await rpc("hello", params.has("ws") ? { workspace: Number(params.get("ws")) } : {});
+    session.client = hello.client;
+    const ws = (this.workspace = hello.workspace);
+    if (ws && params.get("ws") !== String(ws.id)) {
+      params.set("ws", String(ws.id));
+      history.replaceState(null, "", `?${params}`);
+    }
+    this.orchestrator = new Orchestrator(this, hello.workspaces);
     // The skin first: the editor's cell is measured in its fonts.
     this.skins = new Skins(this);
     await this.skins.load();
     this.measure();
-    const hello = await rpc("hello");
-    session.client = hello.client;
-    this.root = hello.root;
+    this.root = ws?.root ?? "";
     this.host = null;
-    this.hostName = hello.host;
-    this.trusted = hello.trusted;
-    this.lspLanguages = new Set(hello.lsp);
-    document.title = `${hello.name} — Fresh`;
-    $("#ws-name").textContent = `${hello.name} · ${hello.host}${hello.trusted ? "" : " · restricted"}`;
+    this.hostName = ws?.host ?? "";
+    this.trusted = !!ws?.trusted;
+    this.lspLanguages = new Set(ws?.lsp ?? []);
+    document.title = ws ? `${ws.name} — Fresh` : "Workspaces — Fresh";
+    $("#ws-name").textContent = ws ? `${ws.name} · ${ws.host}${ws.trusted ? "" : " · restricted"}` : "No workspace";
+    $("#ws-name").title = "Workspaces (Alt+O)";
     connectEvents((ev) => this.onEvent(ev));
-    this.session.open(hello.host, hello.root);
+    if (ws) this.session.open(ws.host, ws.root);
     this.installSashes();
     this.editing = new Editing(this);
     this.ui = new UIKit(this);
@@ -108,13 +121,18 @@ class App {
     this.registerCoreCommands();
     this.menubar = new MenuBar(this);
     this.menubar.listen();
+    this.orchestrator.listen();
     this.relayout();
     new ResizeObserver(() => this.renderAll()).observe($("#editor-area"));
     setInterval(() => this.autoSave(), 1000);
+    if (!ws) {
+      this.orchestrator.show();
+      return;
+    }
     await this.host.load(PLUGINS);
-    await this.term.adopt(hello.terminals);
+    await this.term.adopt(ws.terminals);
     // What was open in this workspace last time, unless a file is named.
-    const open = new URLSearchParams(location.search).get("open");
+    const open = params.get("open");
     if (!open) await this.restoreLayout();
     this.restoring = false;
     this.rememberLayout();
@@ -837,6 +855,9 @@ class App {
         break;
       case "fs.changed":
         this.watches.get(ev.watch)?.(ev.path);
+        break;
+      case "workspace.added": case "workspace.removed": case "workspace.status":
+        this.orchestrator.onEvent(ev);
         break;
     }
   }

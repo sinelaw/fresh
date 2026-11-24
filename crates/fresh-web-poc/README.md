@@ -14,7 +14,9 @@ cargo run -p fresh-web-poc -- [--port N] [--restricted] \
 ```
 
 Then open the printed URL (`http://127.0.0.1:8090/` by default; the server
-listens on loopback only). `DIR` defaults to the current directory.
+listens on loopback only). `DIR` (default: the current directory) on the
+host the flags name is the first workspace; the web client opens more, on
+any of these hosts, and moves between them (see Orchestrator).
 
 | Flag | Meaning |
 |---|---|
@@ -23,7 +25,7 @@ listens on loopback only). `DIR` defaults to the current directory.
 | `--container NAME_OR_ID` | A devcontainer-style workspace: files are read on this machine; processes, terminals and language servers run in the running container through `docker exec`. `DIR` must be bind-mounted at the same path in the container; this is checked at start. |
 | `--agent` | The remote agent run locally without `ssh`: the whole remote file path minus the transport, for testing it. Processes are local. |
 | `--slow-network` | Adds network-like delays to every filesystem call (any authority). |
-| `--restricted` | Start untrusted: no processes, terminals or language servers (and no probing for them) until the client trusts the workspace. Files and documents work. |
+| `--restricted` | The first workspace starts untrusted: no processes, terminals or language servers (and no probing for them) until the client trusts it. Files and documents work. |
 
 `FRESH_POC_WEB=crates/fresh-web-poc/web` serves the client from that folder
 instead of the copy embedded at build time, so client changes need only a
@@ -31,9 +33,11 @@ reload.
 
 ## Architecture
 
-**The server is the data authority.** It holds one workspace on one host,
-reached through an `Authority` (`src/authority.rs`): `Local`, `Ssh`,
-`Container` or `Agent`. The authority supplies the host's filesystem (the
+**The server is the data authority.** It holds workspaces
+(`src/orchestrator.rs`), each a root on a host reached through its own
+`Authority` (`src/authority.rs`): `Local`, `Ssh`, `Container` or `Agent`.
+Each workspace (`src/session.rs`) owns its trust, documents, terminals,
+processes, watches and language servers; nothing is shared between two. The authority supplies the host's filesystem (the
 editor's `FileSystem` trait: `StdFileSystem` or the agent's
 `RemoteFileSystem`) and builds every process — a client's `proc.run`, a
 terminal's shell, a language server and the probe that finds the servers.
@@ -101,10 +105,14 @@ change. When the file changed:
   again; edits based on the old log are refused (`resync`);
 - a deleted file is handled as `fs.delete` is (`doc.deleted`).
 
-**Terminals** (`src/terminal.rs`) are PTYs running the authority's shell;
-the server streams raw bytes with stream offsets and keeps a replay buffer,
-and each client runs its own emulator (xterm.js). Terminals belong to the
-workspace and outlive clients. **Language servers** (`src/lsp.rs`): one per
+**Terminals** (`src/terminal.rs`) are PTYs running the authority's shell
+(or a command in it: an agent session); the server streams raw bytes with
+stream offsets and keeps a replay buffer, and each client runs its own
+emulator (xterm.js). Terminals belong to the workspace and outlive clients.
+The server also reads each terminal's stream for the orchestrator: the title
+a program sets, the bell, and its state — `working` (output in the last two
+seconds), `waiting` (quiet, its last line a question or a `[y/n]` prompt),
+`idle`, `exited`. **Language servers** (`src/lsp.rs`): one per
 language, kept in sync from the edit log; requests are routed in, and
 diagnostics go out as data tagged with the version they describe.
 **Ignore rules** (`Ignores` in `src/workspace.rs`) are git's:
@@ -134,9 +142,27 @@ client then opens `GET /events?client=ID`, a Server-Sent Events stream of
 JSON events. When that stream ends the client is forgotten: its documents
 are closed, its watches removed and its processes killed.
 
+A client views one workspace. `hello {workspace?}` binds it to that one (by
+default the first open), and answers `{client, workspace, workspaces}`:
+`workspace` is what the client starts from (`{id, name, root, host,
+trusted, terminals, lsp}`), or `null` when the one asked for is closed (or
+none is open); `workspaces` is every open workspace (`{id, name, root, host,
+status}`). Every other operation acts on the client's workspace; a client
+of a closed one gets `not_found`. Viewing another workspace is a new
+client.
+
 Operations:
 
-- `hello`, `workspace.trust`
+- `hello`, `workspace.trust`, `workspace.seen` (the user has seen what
+  needed attention)
+- `workspace.list`, `workspace.open` (`{root, host, trusted, agent}`; `host`
+  is `{kind: "local"}`, `{kind: "ssh", target}`, `{kind: "container", id}`
+  or `{kind: "agent"}`; `~` is the home folder on that host; a folder
+  already open on the same host answers that workspace as it is; `agent`, a
+  command, starts an agent session in it, which needs `trusted`; answers
+  `{workspace, agent}`), `workspace.close` (`{workspace, discard}`: stops its
+  terminals, processes and language servers; refused with `unsaved` while
+  it holds unsaved documents, unless `discard`)
 - `fs.list`, `fs.stat`, `fs.read`, `fs.write`, `fs.find`, `fs.create`,
   `fs.rename`, `fs.delete`, `fs.copy`, `fs.watch`, `fs.unwatch`,
   `search.project`
@@ -148,14 +174,19 @@ Operations:
   encodings and line endings a document can be set to), `doc.set` (a
   document's `language`, or the `line_ending` and `encoding` its next save
   writes)
-- `term.open`, `term.input`, `term.resize`, `term.attach`, `term.close`
+- `term.open` (`{cols, rows, name, command}`: the login shell, or
+  `command` in it — an agent session), `term.input`, `term.resize`,
+  `term.attach` (the replay, and `{name, command, agent, title, state}`),
+  `term.close`
 - `proc.run`, `proc.kill`
 - `lsp.call` (any request about a document), `lsp.hover`,
   `lsp.definition`, `lsp.completion`, `lsp.status`
 - `theme.list`, `theme.get` (the editor's built-in themes and the skins'
   themes, resolved)
 - `skin.list` (every skin's header), `host.stats` (the host's load, for skin
-  readouts); `GET /skins/<id>/<path>` serves a skin's files
+  readouts); `GET /skins/<id>/<path>` serves a built-in skin's files,
+  `GET /workspaces/<ws>/skins/<id>/<path>` any skin's as that workspace
+  sees it (a user skin is read from its host)
 
 Error codes (`src/error.rs`):
 
@@ -170,6 +201,7 @@ Error codes (`src/error.rs`):
 | `changed_on_disk` | `doc.save`: the file changed since it was loaded or last saved; `force` overwrites it |
 | `in_use` | `fs.rename`/`fs.delete` of a huge file open as a document (it is read from disk as it is viewed) |
 | `resync` | `doc.edit`: the base version is older than the kept log; reopen the document |
+| `unsaved` | `workspace.close`: the workspace holds unsaved documents; `discard` closes it anyway |
 | `binary` | `doc.open`: a binary file |
 | `too_large` | A whole read over the cap (`fs.read`, `doc.text`) |
 | `no_language_server` | No running language server for the document's language |
@@ -182,7 +214,48 @@ Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
 `doc.deleted` (`{doc, info}`), `doc.changed_on_disk` (`{doc, info}`),
 `doc.reloaded` (`{doc, lost, info}`), `doc.info` (`{doc, info}`, after `doc.set`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
-`fs.changed`, `workspace.trusted` (with the available language servers).
+`fs.changed`, `workspace.trusted` (with the available language servers) —
+to the clients of the workspace they concern; and to every client,
+`workspace.added` (`{workspace}`), `workspace.removed` (`{workspace: id}`)
+and `workspace.status` (`{workspace: id, status}`, when it changes).
+
+A workspace's `status`: `trusted`; `docs` and `modified` (open and unsaved
+documents); `terminals` (each `{id, name, command, agent, title, state,
+bells}`); `procs`; `errors` and `warnings` (from the language servers'
+latest reports for its open documents); `branch` (read from `.git/HEAD`
+through its filesystem); `viewers` (clients viewing it); and `attention`,
+why it needs the user — a terminal rang the bell, or an agent session went
+from working to waiting, idle ("finished") or exited — until a client
+viewing it sends `workspace.seen`.
+
+## Orchestrator
+
+One server, many workspaces — the editor's Orchestrator, for this split.
+Each workspace is a folder on a host (this machine, an SSH host, a
+container, the local agent) with its own trust, files, terminals, agents
+and language servers. A browser tab views one at a time (`?ws=<id>`);
+switching loads the page for the other one, so its tabs, splits, terminals
+and plugins come back as this browser left them and never mix with
+another's. Two tabs can view two workspaces side by side.
+
+- **Workspaces** (Alt+O, or the workspace's name in the top bar): every
+  workspace with its live status — `●` it needs you (and why), `*` an agent
+  is working; its branch, host and folder, `restricted`, open and unsaved
+  files, terminals, each agent session and its state, diagnostics, how
+  many pages view it — with **switch** and **close** (Enter, Delete).
+- **Switch Workspace…** (Ctrl+Alt+O): the same as a quick pick.
+- **New Workspace…**: a folder (`~` for home, recent ones offered), the host,
+  whether to trust it, and optionally an agent command (a coding agent's
+  CLI, or any long-running program) to start in a terminal there. **Open**
+  (Ctrl+Enter) switches to it; **Open in Background** (Alt+Enter) stays.
+- **Start Agent Session…**: a terminal running a command here; its tab
+  shows its state (`*` working, `●` waiting for you, `·` idle, `✕` exited).
+- The status bar counts the other workspaces that need you
+  (`● 1 needs you`); a click, or **Jump to Attention**, switches to the one
+  that has. Viewing a workspace that needed you says why in the status bar.
+- **Close Workspace** stops its terminals and agents (asking first) and
+  asks before discarding unsaved files; pages viewing it are told and show
+  the overview.
 
 ## Themes and colours
 
@@ -385,5 +458,8 @@ properties, most of the plugin API — have no type yet.
 - Ignore rules are git's own files only (`.git/info/exclude` and every
   `.gitignore`), not `core.excludesFile`. Each folder's `.gitignore` costs one
   read through the filesystem per walk (a round trip on a remote host).
-- One workspace per server; the SSH connection is not re-established if it
-  drops.
+- The open workspaces are not remembered across a server restart (each
+  browser remembers its own layout per workspace); an SSH connection is not
+  re-established if it drops. Agent sessions are terminals: the state is
+  read from the stream, not from the agent; there is no worktree creation,
+  project list or import of sessions run elsewhere.

@@ -72,7 +72,8 @@ days; where they matter the feature is reimplemented rather than run.
 | **Remote editing (SSH)** | Adapt | Done (`--ssh`): files through the editor's remote agent (ranged reads, line counting, walking and searching on the remote side); processes, terminals and language servers through `ssh` with the connection's port, identity and options. Exercised end to end against a local sshd, with and without `--slow-network` |
 | **Devcontainers** | Adapt | Done (`--container`): files stay local; processes, terminals and language servers run through `docker exec -w <dir>` in a container whose workspace is bind-mounted at the same path (checked at start). Exercised against a `docker` stand-in; not yet against a real daemon |
 | **Daemon mode** | Adapt | The server *is* the daemon: clients come and go, documents and terminals stay; a disconnected client's documents, watches and processes are released. Done in substance |
-| **Orchestrator**, **Workboard**, agent sessions | Skip | Multi-workspace agent management; large, and orthogonal to the split |
+| **Orchestrator**, agent sessions | Native + server | Done: one server holds many workspaces (registry in `src/orchestrator.rs`; each workspace a `Session` with its own authority, trust, documents, terminals, processes, watches and language servers); a client views one (`?ws=`), switching reloads the page for the other; overview with live status (attention, agents' states, branch, files, diagnostics), quick switcher, New Workspace (any host, trust, an agent command), agent sessions as terminals running a command, attention beacon and jump, close. Not ported: worktree creation, folders and pins, projects and machines lists, importing external sessions, persisting the workspace list across restarts |
+| **Workboard** | Skip | The overview covers the at-a-glance list; lenses and the kanban board are not ported |
 | **Keybinding editor** | Native | A table of the client's keymap with search; edits saved in the browser |
 | **Emacs keymap** | Native | An alternative keymap table for the common movement/editing keys |
 | **Vi mode** | Skip | `vi_mode` depends on key capture and modal editor state across ~4k lines; a native vi layer is its own project |
@@ -154,4 +155,4 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Terminal | Restart an exited terminal, send selection to terminal | missing |
 | Help | Welcome, keyboard shortcuts (keybinding editor), show log | present |
 | Help | Settings screen | skipped (settings are palette toggles in the browser; a settings UI needs the editor's schema) |
-| Workspaces | Orchestrator / multi-session management | in progress (another agent) |
+| Workspaces | Orchestrator / multi-session management | present (overview Alt+O, switcher Ctrl+Alt+O, New Workspace, agent sessions, attention beacon) |

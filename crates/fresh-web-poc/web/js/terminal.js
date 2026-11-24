@@ -24,6 +24,10 @@ const termFont = () => {
   return { fontFamily: css.getPropertyValue("--mono"), fontSize: parseFloat(css.getPropertyValue("--editor-font-size")) || 13 };
 };
 
+// How an agent session's tab shows what it is doing (the server reads it
+// from the terminal's stream: `src/terminal.rs`).
+export const STATE_MARK = { working: "* ", waiting: "● ", idle: "· ", exited: "✕ " };
+
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 class Term {
@@ -55,15 +59,24 @@ class Term {
     this.xt.onBinary((data) => rpc("term.input", { term: this.id, data }));
     this.xt.onResize(({ cols, rows }) => rpc("term.resize", { term: this.id, cols, rows }).catch(() => {}));
     this.xt.attachCustomKeyEventHandler((e) => {
-      // Keep the editor's own terminal toggle.
-      if (e.type === "keydown" && e.ctrlKey && e.key === "`") { panel.toggle(); return false; }
-      return true;
+      // The keys the editor keeps while a terminal has the keyboard (the
+      // terminal's toggle, moving between workspaces): `app.terminalKeys`.
+      const app = panel.app;
+      const k = e.type === "keydown" ? app.keyName(e) : null;
+      if (!k || !app.terminalKeys.has(k)) return true;
+      e.preventDefault();
+      app.run(app.keymap()[k]);
+      return false;
     });
     this.xt.onTitleChange((t) => { this.title = t; panel.renderTabs(); });
   }
 
   async attach() {
     const r = await rpc("term.attach", { term: this.id });
+    // What it is: its name, and whether it runs an agent's command.
+    this.name = r.name;
+    this.agent = r.agent;
+    this.state = r.state;
     this.xt.write(decode(r.data));
     this.end = r.end;
     for (const ev of this.queue) this.data(ev);
@@ -111,8 +124,19 @@ export class TerminalPanel {
 
   // Terminals the server already runs (from another client, or before a
   // reload) are attached as they are.
-  async adopt(ids) {
-    for (const id of ids) await this.add(id);
+  async adopt(terms) {
+    for (const t of terms) await this.add(t.id);
+  }
+
+  // The terminals' states from the workspace's status: an agent session's
+  // tab shows its own.
+  states(terms) {
+    let changed = false;
+    for (const s of terms) {
+      const t = this.terms.get(s.id);
+      if (t && t.state !== s.state) { t.state = s.state; changed = true; }
+    }
+    if (changed) this.renderTabs();
   }
 
   async add(id) {
@@ -126,10 +150,12 @@ export class TerminalPanel {
     return t;
   }
 
-  async create() {
-    const id = (await rpc("term.open", { cols: 100, rows: 24 })).term;
+  // A new terminal: the shell, or `command` in it (an agent session).
+  async create({ name, command } = {}) {
+    const id = (await rpc("term.open", { cols: 100, rows: 24, name, command })).term;
     await this.add(id);
     this.select(id);
+    return id;
   }
 
   select(id) {
@@ -145,7 +171,8 @@ export class TerminalPanel {
       b.className = "tab" + (id === this.current ? " active" : "");
       const label = document.createElement("span");
       label.className = "label";
-      label.textContent = `${t.done ? "✕ " : ""}${t.title || "Terminal " + id}`;
+      const mark = t.done ? STATE_MARK.exited : t.agent ? STATE_MARK[t.state] || "" : "";
+      label.textContent = `${mark}${t.title || (t.agent ? t.name : `Terminal ${id}`)}`;
       b.title = label.textContent;
       b.appendChild(label);
       b.onmousedown = (e) => { e.preventDefault(); this.select(id); };
@@ -177,10 +204,14 @@ export class TerminalPanel {
   }
 
   async toggle() {
+    // A first terminal before the panel opens: when the workspace refuses
+    // one (restricted), the panel stays closed.
+    if (!this.visible && !this.terms.size) {
+      try { await this.create(); } catch (e) { this.app.setStatus(`No terminal: ${e.detail || e.message || e}`); return; }
+    }
     this.visible = !this.visible;
     this.el.classList.toggle("hidden", !this.visible);
     if (this.visible) {
-      if (!this.terms.size) await this.create();
       this.select(this.current);
     } else this.app.focusPane(this.app.activePane);
     this.app.relayout();

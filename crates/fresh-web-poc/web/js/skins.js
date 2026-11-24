@@ -2,7 +2,8 @@
 // chrome's layout and density, and (through an editor theme) the buffers.
 //
 // A skin is a folder of plain web files the server serves at
-// `skins/<id>/` (`src/skins.rs`): a `skin.css` whose header names it, and
+// `skins/<id>/` (a built-in one) or `workspaces/<ws>/skins/<id>/` (one from
+// the workspace's host; `src/skins.rs`): a `skin.css` whose header names it, and
 // optionally a `furniture.html` of decorative markup and a `theme.json`.
 // The client never runs anything a skin brings. Applying one:
 //
@@ -48,6 +49,12 @@ export class Skins {
 
   byId(id) { return this.all.find((s) => s.id === id) || null; }
 
+  // Where a skin's files are served: a built-in skin's beside the client's
+  // own files, a user skin's through the workspace whose host has it.
+  base(id) {
+    return this.byId(id)?.source === "user" ? `workspaces/${this.app.workspace.id}/skins/${id}/` : `skins/${id}/`;
+  }
+
   // A skin with what it extends folded in: the chain base first; the last
   // skin to set a frame, scale, furniture or theme wins.
   resolve(id) {
@@ -57,7 +64,7 @@ export class Skins {
     for (const s of chain) {
       r.frame = s.frame;
       if (s.scale) r.scale = s.scale;
-      if (s.furniture) r.furniture = `skins/${s.id}/${s.furniture}`;
+      if (s.furniture) r.furniture = `${this.base(s.id)}${s.furniture}`;
       if (s.theme) r.theme = s.theme;
     }
     return r;
@@ -84,7 +91,7 @@ export class Skins {
     await Promise.all(sk.chain.map((c) => new Promise((resolve) => {
       const l = document.createElement("link");
       l.rel = "stylesheet";
-      l.href = `skins/${c}/skin.css`;
+      l.href = `${this.base(c)}skin.css`;
       l.dataset.skin = c;
       l.onload = l.onerror = resolve;
       document.head.insertBefore(l, anchor);

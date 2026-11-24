@@ -106,7 +106,7 @@ body {
 .term-screens { flex: 1; min-height: 0; padding: 2px 4px; }
 .xterm-host { height: 100%; }
 #status { display: flex; justify-content: space-between; padding: 2px 10px; background: var(--status-bg); color: var(--status-fg); border-top: 1px solid var(--border); font-size: var(--ui-font-sm); white-space: nowrap; overflow: hidden; }
-#prompt { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(700px, 90vw); background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); z-index: 10; }
+#prompt { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(700px, 90vw); background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); z-index: 25; }
 #prompt.hidden, #popup.hidden { display: none; }
 #prompt .hint { padding: 3px 10px; color: var(--muted); font-size: var(--ui-font-xs); border-top: 1px solid var(--border); }
 #prompt .hint:empty { display: none; }
@@ -256,3 +256,30 @@ body {
 .doc-li .doc-fold { left: -2.9em; }
 .doc-body > :hover .doc-fold, .doc-fold.folded { opacity: 1; }
 .doc-more { margin-left: .4em; padding: 0 .4em; border-radius: 4px; background: var(--doc-code-bg); color: var(--muted); cursor: pointer; }
+
+/* The orchestrator (js/orchestrator.js): the workspaces overview and the
+   New Workspace form */
+#topbar #ws-name { cursor: pointer; }
+.orch .orch-list { min-height: 180px; }
+.orch-row { flex: 1; min-width: 0; }
+.orch-mark { width: 1ch; flex-shrink: 0; color: var(--muted); }
+.orch-mark.attention, .orch-attention { color: var(--warning); }
+.orch-name { flex-shrink: 0; }
+.orch-row.current .orch-name { color: var(--emphasis); }
+.orch-where, .orch-attention { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-branch { flex-shrink: 0; color: var(--link); }
+.orch-restricted { color: var(--warning); background: transparent; border: 1px solid var(--warning); line-height: 14px; flex-shrink: 0; }
+.orch-agent { flex-shrink: 0; }
+.orch-agent.working { color: var(--accent); }
+.orch-agent.waiting { color: var(--warning); }
+.orch-agent.exited { color: var(--muted); }
+.orch-errors { color: var(--error); }
+.orch-warnings { color: var(--warning); }
+.ui-button.orch-act { padding: 0 6px; line-height: 16px; font-size: var(--ui-font-xs); }
+.orch-form { gap: 8px; padding: 4px 2px; }
+.orch-field { align-items: center; }
+.orch-label { width: 80px; flex-shrink: 0; color: var(--muted); }
+.orch-recent { flex-wrap: wrap; }
+.orch-error { color: var(--error); white-space: pre-wrap; }
+/* On the focused selection, the selection's own colours. */
+.ui-list:focus .ui-list-row.sel .orch-row :is(.ui-text, .ui-badge) { color: inherit; border-color: currentColor; }
