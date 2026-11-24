@@ -8,8 +8,8 @@ export function activate(fresh) {
   let pair = null; // {a, b, blocks}
   // A whole buffer's lines, without the empty one after a final newline.
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
-  const markLines = (d, L, from, n, bg, glyph, color) => {
-    for (let i = from; i < from + n && i < L.starts.length; i++) {
+  const markLines = (d, L, first, n, bg, glyph, color) => {
+    for (let i = first; i < first + n && i < L.starts.length; i++) {
       d.overlay(L.starts[i], L.starts[i] + fresh.text.byteLen(L.lines[i]) + 1, { bg, extendToLineEnd: true });
       d.gutter(L.starts[i], { glyph, color });
     }

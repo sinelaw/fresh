@@ -338,6 +338,31 @@ explorer, a source file with a selection, a split, the terminal, the
 palette, a context menu, a plugin dialog (Keyboard Shortcuts), and a Markdown
 file in compose mode, under a dark and a light editor theme.
 
+## Type checking the client
+
+The client is plain JavaScript checked by [inty](https://github.com/sinelaw/inty)
+(types are inferred; where one is stated it is a `/** … */` annotation, so
+the files run as they are):
+
+```
+cargo install --git https://github.com/sinelaw/inty inty-cli
+crates/fresh-web-poc/typecheck.sh        # INTY=path/to/inty to pick the binary
+```
+
+It checks every module under `web/js` and `web/plugins` (not the vendored
+xterm.js) in one run, with two declaration files: `types/browser.d.js`
+(browser APIs inty's DOM library leaves out) and `types/fresh.d.js` (the
+shapes modules share: edit primitives, the server's events, documents,
+diagnostics, colours, syntax spans).
+
+`ot.js`, `rpc.js`'s functions, `diff.js`, `mdstruct.js` and `highlight.js`
+are typed. The rest does not check yet: inty does not parse `export class`,
+a class constructor that does more than assign fields, `extends`, or default
+and destructured parameters of class methods; a default parameter can't be
+left out of a call; and a record's optional field (`fg?: Color`) can't be
+read, so option bags and partial styles — decorations, the UI kit's
+properties, most of the plugin API — have no type yet.
+
 ## Limits
 
 - Killing a process or closing a terminal kills the local `ssh` or

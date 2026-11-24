@@ -76,8 +76,8 @@ export function activate(fresh) {
     if (!b.whole) {
       // A huge file: the server finds the next match (plain text).
       const sel = v.selection;
-      const from = dir > 0 ? (sel ? sel.end : v.cursor) : (sel ? sel.start : v.cursor);
-      const res = await fresh.host.searchDocument(b, query, from, dir < 0);
+      const start = dir > 0 ? (sel ? sel.end : v.cursor) : (sel ? sel.start : v.cursor);
+      const res = await fresh.host.searchDocument(b, query, start, dir < 0);
       if (res == null) { fresh.ui.message(`Not found: ${query}`); return; }
       matches = [{ pos: res, len: fresh.text.byteLen(query) }];
       current = 0;
@@ -86,14 +86,14 @@ export function activate(fresh) {
       const at = v.cursor;
       if (dir > 0) {
         const sel = v.selection;
-        const from = sel && matches[current] && sel.start === matches[current].pos ? sel.end : at;
-        current = matches.findIndex((m) => m.pos >= from && !(sel && m.pos === sel.start && sel.end === m.pos + m.len));
+        const start = sel && matches[current] && sel.start === matches[current].pos ? sel.end : at;
+        current = matches.findIndex((m) => m.pos >= start && !(sel && m.pos === sel.start && sel.end === m.pos + m.len));
         if (current < 0) current = 0;
       } else {
         const sel = v.selection;
-        const from = sel ? sel.start : at;
+        const start = sel ? sel.start : at;
         let k = -1;
-        for (let i = 0; i < matches.length; i++) if (matches[i].pos < from) k = i;
+        for (let i = 0; i < matches.length; i++) if (matches[i].pos < start) k = i;
         current = k < 0 ? matches.length - 1 : k;
       }
     }

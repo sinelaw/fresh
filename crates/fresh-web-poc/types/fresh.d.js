@@ -4,6 +4,14 @@
 // An edit primitive over byte offsets (ot.js); an edit is a sequence of them.
 /** type Op = {t: "ins", pos: Number, text: String} | {t: "del", pos: Number, len: Number} */
 
+// A colour as plugins and themes give it: a theme key ("syntax.keyword"), a
+// CSS colour, a colour name, "Indexed:N", or [r, g, b].
+/** type Color = String | Number[] */
+
+// A syntax span of a line (highlight.js), in UTF-16 indices; `k` is a theme
+// key.
+/** type Highlight = {s: Number, e: Number, k: String, bold: Boolean, italic: Boolean} */
+
 // ---------------------------------------------------------------- protocol
 
 // A document as the server describes it (`doc.open`, `doc.saved`).
