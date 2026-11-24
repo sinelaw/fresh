@@ -32,6 +32,50 @@ fn themed(theme: &str) -> Config {
     }
 }
 
+/// A user theme whose selection is reverse video — the built-ins no longer
+/// use one, but a theme may (`editor.selection_bg` with `["reversed"]`).
+const REVERSE_SELECTION_THEME: &str = r#"{
+    "name": "reverse-selection",
+    "extends": "builtin://terminal",
+    "editor": {
+        "selection_bg": { "color": "Default", "modifier": ["reversed"] }
+    }
+}"#;
+
+/// A harness on [`REVERSE_SELECTION_THEME`]. The temp dir holds the theme
+/// file and has to outlive the harness.
+fn reverse_video_harness() -> (EditorTestHarness, tempfile::TempDir) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(temp_dir.path());
+    let themes_dir = temp_dir.path().join("config").join("themes");
+    std::fs::create_dir_all(&themes_dir).unwrap();
+    std::fs::write(
+        themes_dir.join("reverse-selection.json"),
+        REVERSE_SELECTION_THEME,
+    )
+    .unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    std::fs::create_dir_all(project_root.join("plugins")).unwrap();
+    let h = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(themed("reverse-selection"))
+            .with_working_dir(project_root)
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    assert!(
+        h.editor()
+            .theme()
+            .selection_modifier
+            .contains(Modifier::REVERSED),
+        "the reverse-video fixture theme should be the active one"
+    );
+    (h, temp_dir)
+}
+
 fn key(h: &mut EditorTestHarness, code: KeyCode, modifiers: KeyModifiers) {
     h.send_key(code, modifiers).unwrap();
 }
@@ -164,7 +208,7 @@ fn a_cursor_inside_a_selection_keeps_the_selection() {
 /// of the selected cell, so it shows as the one un-reversed cell in the band.
 #[test]
 fn a_cursor_inside_a_reverse_video_selection_is_distinct() {
-    let mut h = harness_with(themed("terminal"));
+    let (mut h, _themes) = reverse_video_harness();
     two_cursors_on_backward_selections(&mut h);
 
     for word in selected_words(&h) {
@@ -187,7 +231,7 @@ fn a_cursor_inside_a_reverse_video_selection_is_distinct() {
 /// Inside a reverse-video selection it must still stand out.
 #[test]
 fn software_cursor_inside_a_reverse_video_selection_is_distinct() {
-    let mut h = harness_with(themed("terminal"));
+    let (mut h, _themes) = reverse_video_harness();
     h.set_software_cursor_only(true);
     h.load_buffer_from_text("one wxyz\n").unwrap();
     key(&mut h, KeyCode::End, KeyModifiers::NONE);
@@ -308,7 +352,7 @@ fn run_command(h: &mut EditorTestHarness, query: &str) {
 /// REVERSED on the inactive cursor and buried it in the band.
 #[test]
 fn an_inactive_panes_cursor_stands_out_of_a_reverse_video_selection() {
-    let mut h = harness_with(themed("terminal"));
+    let (mut h, _themes) = reverse_video_harness();
     h.load_buffer_from_text("one wxyz\n").unwrap();
     key(&mut h, KeyCode::End, KeyModifiers::NONE);
     key(
@@ -391,4 +435,41 @@ fn a_cursor_on_a_virtual_line_below_eof_is_drawn_there() {
         h.screen_to_string()
     );
     assert_eq!(h.screen_cursor_position(), virtual_cell);
+}
+
+/// The built-in `terminal` theme used to select in reverse video. A terminal
+/// draws its block cursor by inverting the cell, so on the selected character
+/// under the cursor the two inversions cancelled: selecting backward, the
+/// first selected character read as unselected, and only looked selected
+/// once the window lost focus (and the terminal drew a hollow cursor). The
+/// selection is a palette colour now, so the cell under the terminal's
+/// cursor is a selected cell for the terminal to invert like any other.
+#[test]
+fn terminal_theme_selection_survives_the_terminals_cursor() {
+    let mut h = harness_with(themed("terminal"));
+    h.load_buffer_from_text("one wxyz\n").unwrap();
+    key(&mut h, KeyCode::End, KeyModifiers::NONE);
+    key(
+        &mut h,
+        KeyCode::Left,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+
+    let hardware = h.render_observing_cursor().unwrap();
+    let word = cells_of(&h, "wxyz");
+    assert_eq!(
+        hardware,
+        Some(word[0]),
+        "the terminal draws the lone cursor"
+    );
+    let selection_bg = h.editor().theme().selection_bg;
+    for &cell in &word {
+        let s = style_at(&h, cell);
+        assert_eq!(s.bg, Some(selection_bg), "selected cell {cell:?}: {s:?}");
+        assert!(
+            !reversed(s),
+            "cell {cell:?} is reverse video, which the terminal's inverting \
+             cursor cancels: {s:?}"
+        );
+    }
 }

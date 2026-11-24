@@ -429,6 +429,14 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         style = style
             .bg(ctx.theme.selection_bg)
             .add_modifier(ctx.theme.selection_modifier);
+        // Selected text keeps its own colour, except where that colour *is*
+        // the selection's: a palette theme (`terminal`, selection `Blue`)
+        // draws functions in `Blue` too, and they would vanish while
+        // selected. Those fall back to the editor's foreground.
+        if style.fg.is_some() && style.fg == style.bg && style.bg != Some(Color::Reset) {
+            style = style.fg(ctx.theme.editor_fg);
+            fg_theme_key = Some("editor.fg");
+        }
         bg_theme_key = Some("editor.selection_bg");
         region = "Selection";
     }
@@ -654,6 +662,47 @@ mod tests {
             is_cursor_line_highlighted: false,
             current_line_bg: theme.current_line_bg,
         })
+    }
+
+    /// Selected text keeps its colour unless that colour is the selection's
+    /// own: the `terminal` theme selects in `Blue` and draws functions in
+    /// `Blue`, which would vanish while selected.
+    #[test]
+    fn selected_text_in_the_selection_colour_falls_back_to_editor_fg() {
+        let theme = Theme::load_builtin(THEME_TERMINAL).unwrap();
+        let selected = |fg: Color| {
+            compute_char_style(&CharStyleContext {
+                byte_pos: Some(0),
+                token_style: None,
+                ansi_style: Style::default(),
+                is_cursor: false,
+                is_selected: true,
+                theme: &theme,
+                highlight_color: Some(fg),
+                highlight_theme_key: Some("syntax.function"),
+                highlight_bg: None,
+                highlight_bg_theme_key: None,
+                semantic_token_color: None,
+                active_overlays: &[],
+                primary_cursor_position: 0,
+                is_active: true,
+                primary_cursor_by_terminal: true,
+                is_cursor_line_highlighted: false,
+                current_line_bg: theme.current_line_bg,
+            })
+            .style
+        };
+
+        let collided = selected(theme.selection_bg);
+        assert_eq!(collided.bg, Some(theme.selection_bg));
+        assert_eq!(collided.fg, Some(theme.editor_fg));
+
+        let keyword = selected(theme.syntax_keyword);
+        assert_eq!(
+            keyword.fg,
+            Some(theme.syntax_keyword),
+            "others keep their colour"
+        );
     }
 
     #[test]
