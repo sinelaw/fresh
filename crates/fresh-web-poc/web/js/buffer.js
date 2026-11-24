@@ -213,6 +213,15 @@ export class FileBuffer extends Buffer {
     this.fetching = null;
   }
 
+  // The server's word on the document's file (after a rename or a delete):
+  // its path, name, language and whether it is unsaved.
+  setInfo(info) {
+    this.path = info.path;
+    this.name = info.path.split("/").pop();
+    this.language = info.language;
+    this.modified = info.modified;
+  }
+
   // The held text covers the whole document.
   get full() { const L = this.text; return !!L && L.bof && L.eof; }
 

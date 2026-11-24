@@ -56,6 +56,13 @@ pub struct Doc {
     pub disk: Option<(u64, u64)>,
 }
 
+/// A document that followed a rename, with where it was.
+pub struct Moved {
+    pub id: u64,
+    pub path: PathBuf,
+    pub language: Option<String>,
+}
+
 /// A change as `didChange` states it: start and end (line, UTF-16 column),
 /// and the new text.
 pub type LspChange = ((usize, usize), (usize, usize), String);
@@ -428,6 +435,12 @@ impl Doc {
                 self.path.display()
             );
         }
+        if self.disk.is_none() {
+            // A new file, or one deleted while open: its folder may be gone.
+            if let Some(parent) = self.path.parent() {
+                fs.create_dir_all(host(parent).as_host_path())?;
+            }
+        }
         self.buffer.save(recovery)?;
         self.disk = signature(&fs, &self.path);
         Ok(())
@@ -509,24 +522,61 @@ impl Docs {
         None
     }
 
-    /// A file (or a folder of files) was renamed on disk: open documents
-    /// follow it.
-    pub fn renamed(&mut self, from: &Path, to: &Path) {
-        let moved: Vec<(PathBuf, u64)> = self
+    /// The documents of `path` or of files under it, in id order.
+    pub fn under(&self, path: &Path) -> Vec<u64> {
+        let mut ids: Vec<u64> = self
             .by_path
             .iter()
-            .filter(|(p, _)| p.starts_with(from))
-            .map(|(p, id)| (p.clone(), *id))
+            .filter(|(p, _)| p.starts_with(path))
+            .map(|(_, id)| *id)
             .collect();
-        for (p, id) in moved {
-            let np = to.join(p.strip_prefix(from).unwrap_or(&p));
-            self.by_path.remove(&p);
+        ids.sort_unstable();
+        ids
+    }
+
+    /// A file (or a folder of files) was renamed: its open documents follow
+    /// it, and their languages are detected again from the new names.
+    /// Returns each moved document with its old path and language, in id
+    /// order.
+    pub fn renamed(&mut self, from: &Path, to: &Path) -> Vec<Moved> {
+        let mut out = Vec::new();
+        for id in self.under(from) {
+            let Some(d) = self.docs.get_mut(&id) else {
+                continue;
+            };
+            let np = match d.path.strip_prefix(from) {
+                Ok(rel) if !rel.as_os_str().is_empty() => to.join(rel),
+                _ => to.to_path_buf(),
+            };
+            self.by_path.remove(&d.path);
             self.by_path.insert(np.clone(), id);
-            if let Some(d) = self.docs.get_mut(&id) {
-                d.buffer.rename_file_path(np.clone());
-                d.path = np;
+            d.buffer.rename_file_path(np.clone());
+            out.push(Moved {
+                id,
+                path: std::mem::replace(&mut d.path, np.clone()),
+                language: std::mem::replace(&mut d.language, language_of(&np)),
+            });
+        }
+        out
+    }
+
+    /// The file of each document at or under `path` that no longer exists
+    /// was deleted: the document keeps its text as unsaved, so it stays
+    /// until closed, and saving writes the file again. Returns their ids.
+    pub fn deleted(&mut self, path: &Path) -> Vec<u64> {
+        let mut out = Vec::new();
+        for id in self.under(path) {
+            let Some(d) = self.docs.get_mut(&id) else {
+                continue;
+            };
+            let fs = d.buffer.filesystem().clone();
+            if signature(&fs, &d.path).is_none() {
+                d.disk = None;
+                d.buffer.set_modified(true);
+                out.push(id);
             }
         }
+        out
     }
 
     pub fn by_path(&self, path: &Path) -> Option<u64> {

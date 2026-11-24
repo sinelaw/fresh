@@ -53,6 +53,20 @@ every client that opens it; it is dropped when the last one closes it,
 unless it has unsaved edits, which wait for the next client. Saving refuses
 if the file changed on disk since it was loaded or last saved, unless forced.
 
+Documents follow the workspace's own file operations. `fs.rename` of an
+open file, or of a folder holding open files, moves their documents with
+them: the path changes, the language is detected again from the new name,
+the language server gets `didClose` for the old URI and `didOpen` for the
+new, and every client holding one gets `doc.renamed` and relabels its
+buffer; a later save writes the new path. `fs.delete` of an open file keeps
+its document with its text, marked unsaved, and its clients get
+`doc.deleted`: closing it asks to save or discard like any unsaved buffer,
+and saving writes the file again (with its folder). A huge file open as a
+document is read from disk as it is viewed, so renaming or deleting it
+while open is refused (`in_use`). Renaming onto the name of an unsaved
+document is refused (`exists`). Changes made outside the editor are not
+followed: a save then finds the file changed (`changed_on_disk`).
+
 **Terminals** (`src/terminal.rs`) are PTYs running the authority's shell;
 the server streams raw bytes with stream offsets and keeps a replay buffer,
 and each client runs its own emulator (xterm.js). Terminals belong to the
@@ -101,6 +115,7 @@ Error codes (`src/error.rs`):
 | `not_found` | No such file, folder, document or terminal |
 | `exists` | The target name is taken, by a file or by an open document |
 | `changed_on_disk` | `doc.save`: the file changed since it was loaded or last saved; `force` overwrites it |
+| `in_use` | `fs.rename`/`fs.delete` of a huge file open as a document (it is read from disk as it is viewed) |
 | `resync` | `doc.edit`: the base version is older than the kept log; reopen the document |
 | `binary` | `doc.open`: a binary file |
 | `too_large` | A whole read over the cap (`fs.read`, `doc.text`) |
@@ -110,7 +125,8 @@ Error codes (`src/error.rs`):
 | `io` | Any other I/O error on the host |
 | `failed` | Anything else |
 
-Events: `doc.ops`, `doc.saved`, `doc.indexing`, `doc.indexed`,
+Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
+`doc.deleted` (`{doc, info}`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
 `fs.changed`, `workspace.trusted` (with the available language servers).
 

@@ -161,12 +161,11 @@ impl App {
             }
             "fs.rename" => {
                 let (from, to) = (ws.resolve(s(m, "from")?), ws.resolve(s(m, "to")?));
-                ws.rename(&from, &to)?;
-                self.docs.lock().unwrap().renamed(&from, &to);
+                self.rename(&from, &to)?;
                 json!({})
             }
             "fs.delete" => {
-                ws.remove(&ws.resolve(s(m, "path")?))?;
+                self.delete(&ws.resolve(s(m, "path")?))?;
                 json!({})
             }
             "fs.copy" => {
@@ -378,6 +377,72 @@ impl App {
             self.hub.send(*c, &ev);
         }
         Ok(json!({ "version": d.version }))
+    }
+
+    /// Rename or move a file or folder. Documents open on it (or in it)
+    /// follow: their path and language change, their language servers are
+    /// told (`didClose` of the old name, `didOpen` of the new), and their
+    /// clients get `doc.renamed`. Held under the documents lock, so no
+    /// document opens or saves meanwhile.
+    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        let mut docs = self.docs.lock().unwrap();
+        Self::refuse_lazy(&mut docs, from, "moved")?;
+        if !docs.under(to).is_empty() {
+            fail!(Exists, "{} is open as an unsaved document", to.display());
+        }
+        self.ws.rename(from, to)?;
+        let trusted = self.trusted.load(std::sync::atomic::Ordering::SeqCst);
+        for moved in docs.renamed(from, to) {
+            let d = docs.get(moved.id)?;
+            if let Some(server) = moved.language.as_deref().and_then(|l| self.lsp.running(l)) {
+                server.notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": lsp::uri_of(&moved.path)}}),
+                );
+            }
+            if trusted {
+                self.lsp_open(d)?;
+            }
+            let ev = json!({"ev": "doc.renamed", "doc": d.id, "from": moved.path.to_string_lossy(), "info": d.info()});
+            for c in &d.clients {
+                self.hub.send(*c, &ev);
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete a file or folder. A document open on a deleted file keeps
+    /// its text, unsaved (saving writes the file again); its clients get
+    /// `doc.deleted`. Documents are updated by what is gone, even when the
+    /// deletion stopped part-way.
+    fn delete(&self, path: &Path) -> Result<()> {
+        let mut docs = self.docs.lock().unwrap();
+        Self::refuse_lazy(&mut docs, path, "deleted")?;
+        let removed = self.ws.remove(path);
+        for id in docs.deleted(path) {
+            let d = docs.get(id)?;
+            let ev = json!({"ev": "doc.deleted", "doc": id, "info": d.info()});
+            for c in &d.clients {
+                self.hub.send(*c, &ev);
+            }
+        }
+        removed
+    }
+
+    /// A huge file's document reads its text from the file as it is
+    /// viewed, so the file cannot go while the document is open.
+    fn refuse_lazy(docs: &mut Docs, path: &Path, what: &str) -> Result<()> {
+        for id in docs.under(path) {
+            let d = docs.get(id)?;
+            if d.buffer.is_large_file() {
+                fail!(
+                    InUse,
+                    "{} is open as a large file, read from disk as it is viewed; close it before it is {what}",
+                    d.path.display()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Hand a newly opened document of an ordinary size to its language's
@@ -1048,6 +1113,90 @@ mod tests {
         let mut docs = app.docs.lock().unwrap();
         assert!(docs.get(a).is_err(), "closed by every client: dropped");
         assert!(docs.get(b).is_ok());
+    }
+
+    #[test]
+    fn open_documents_follow_a_rename_and_survive_a_delete() {
+        let (dir, app) = app(true);
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.txt"), "a\n").unwrap();
+        let (c, mut rx) = client(&app);
+        let a = app
+            .dispatch(c, "doc.open", &json!({"path": "src/a.txt"}))
+            .unwrap()["doc"]
+            .as_u64()
+            .unwrap();
+        let edit = |doc: u64, base: u64| {
+            app.dispatch(
+                c,
+                "doc.edit",
+                &json!({"doc": doc, "base": base, "ops": [{"t": "ins", "pos": 0, "text": "x"}]}),
+            )
+            .unwrap();
+        };
+        edit(a, 0);
+
+        // A file: the document follows, with the language of its new name.
+        app.dispatch(
+            c,
+            "fs.rename",
+            &json!({"from": "src/a.txt", "to": "src/b.py"}),
+        )
+        .unwrap();
+        let ev = event(&mut rx, "doc.renamed", Duration::from_secs(1)).unwrap();
+        assert_eq!(ev["doc"], a);
+        assert_eq!(ev["from"], json!(root.join("src/a.txt")));
+        assert_eq!(ev["info"]["path"], json!(root.join("src/b.py")));
+        assert_eq!(ev["info"]["language"], "python");
+        app.dispatch(c, "doc.save", &json!({"doc": a})).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/b.py")).unwrap(),
+            "xa\n"
+        );
+        assert!(!root.join("src/a.txt").exists(), "the old name stays gone");
+
+        // A folder holding it: the same.
+        app.dispatch(c, "fs.rename", &json!({"from": "src", "to": "lib"}))
+            .unwrap();
+        let ev = event(&mut rx, "doc.renamed", Duration::from_secs(1)).unwrap();
+        assert_eq!(ev["info"]["path"], json!(root.join("lib/b.py")));
+        let again = app
+            .dispatch(c, "doc.open", &json!({"path": "lib/b.py"}))
+            .unwrap();
+        assert_eq!(again["doc"], a, "found under its new path");
+
+        // Never onto a name an unsaved document holds.
+        let n = app
+            .dispatch(c, "doc.open", &json!({"path": "new.txt"}))
+            .unwrap()["doc"]
+            .as_u64()
+            .unwrap();
+        edit(n, 0);
+        let e = app
+            .dispatch(
+                c,
+                "fs.rename",
+                &json!({"from": "lib/b.py", "to": "new.txt"}),
+            )
+            .unwrap_err();
+        assert_eq!(error::code_of(&e), Code::Exists);
+
+        // Deleted: the document keeps its text, unsaved; saving writes the
+        // file again.
+        app.dispatch(c, "fs.delete", &json!({"path": "lib"}))
+            .unwrap();
+        let ev = event(&mut rx, "doc.deleted", Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            (ev["doc"].clone(), ev["info"]["modified"].clone()),
+            (json!(a), json!(true))
+        );
+        assert!(!root.join("lib").exists());
+        app.dispatch(c, "doc.save", &json!({"doc": a})).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("lib/b.py")).unwrap(),
+            "xa\n"
+        );
     }
 
     #[test]

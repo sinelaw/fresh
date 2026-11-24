@@ -433,6 +433,28 @@ class App {
         if (b) { b.modified = ev.info.modified; this.renderAll(); }
         break;
       }
+      case "doc.renamed": {
+        // The file was renamed or moved (here or by another client): the
+        // buffer follows it.
+        const b = this.docs.get(ev.doc);
+        if (!b) break;
+        b.setInfo(ev.info);
+        this.renderAll();
+        this.updateStatus();
+        this.host.emit("buffer.renamed", { buffer: b, from: ev.from });
+        break;
+      }
+      case "doc.deleted": {
+        // The file was deleted: the buffer keeps its text, unsaved, and
+        // saving writes the file again.
+        const b = this.docs.get(ev.doc);
+        if (!b) break;
+        b.setInfo(ev.info);
+        this.renderAll();
+        this.setStatus(`${b.name} was deleted; its text is kept unsaved (save to write it again)`);
+        this.host.emit("buffer.deleted", { buffer: b });
+        break;
+      }
       case "lsp.diagnostics": {
         const b = this.docs.get(ev.doc);
         if (!b) break;

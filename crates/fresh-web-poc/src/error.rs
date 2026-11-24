@@ -26,6 +26,9 @@ pub enum Code {
     /// The file changed on disk since it was loaded or last saved; saving
     /// again with `force` overwrites it.
     ChangedOnDisk,
+    /// The file is in use in a way that forbids the operation: a huge
+    /// file read lazily from disk cannot be moved or deleted while open.
+    InUse,
     /// An edit's base version is older than the kept log: reload the
     /// document.
     Resync,
@@ -51,6 +54,7 @@ impl Code {
             Code::NotFound => "not_found",
             Code::Exists => "exists",
             Code::ChangedOnDisk => "changed_on_disk",
+            Code::InUse => "in_use",
             Code::Resync => "resync",
             Code::Binary => "binary",
             Code::TooLarge => "too_large",
