@@ -69,8 +69,25 @@ its document with its text, marked unsaved, and its clients get
 and saving writes the file again (with its folder). A huge file open as a
 document is read from disk as it is viewed, so renaming or deleting it
 while open is refused (`in_use`). Renaming onto the name of an unsaved
-document is refused (`exists`). Changes made outside the editor are not
-followed: a save then finds the file changed (`changed_on_disk`).
+document is refused (`exists`).
+
+Documents also follow changes made outside the editor (a terminal, `git
+checkout`, another tool). The server polls each open document's file
+signature (size, mtime) through the filesystem every half second; its own
+saves record the signature they leave, so they are never taken for a
+change. When the file changed:
+- with no unsaved edits, the new text is applied as an edit from the server
+  (client `0`): a line diff trimmed to the characters that differ, sent as
+  ordinary `doc.ops`, so every client's text, cursors, decorations and undo
+  carry through it as through anyone's edit;
+- with unsaved edits, the clients get `doc.changed_on_disk` once per change
+  and offer Reload (`doc.reload`: the disk's text replaces every client's
+  unsaved edits, as edits) or Keep mine (the next save is forced);
+- a huge document reads its unedited text from the file, so it cannot keep
+  anything over a change: it is loaded again with a new log, and clients get
+  `doc.reloaded` (`lost` when it had unsaved edits) and fetch their windows
+  again; edits based on the old log are refused (`resync`);
+- a deleted file is handled as `fs.delete` is (`doc.deleted`).
 
 **Terminals** (`src/terminal.rs`) are PTYs running the authority's shell;
 the server streams raw bytes with stream offsets and keeps a replay buffer,
@@ -109,7 +126,7 @@ Operations:
 - `doc.open`, `doc.close` (`discard` to give up unsaved edits; answers
   `{dropped, others}`), `doc.info`, `doc.lines`, `doc.lines_before`,
   `doc.window`, `doc.text`, `doc.search`, `doc.line_start`, `doc.edit`,
-  `doc.save` (`force` to overwrite an external change)
+  `doc.save` (`force` to overwrite an external change), `doc.reload`
 - `term.open`, `term.input`, `term.resize`, `term.attach`, `term.close`
 - `proc.run`, `proc.kill`
 - `lsp.call` (any request about a document), `lsp.hover`,
@@ -138,7 +155,8 @@ Error codes (`src/error.rs`):
 | `failed` | Anything else |
 
 Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
-`doc.deleted` (`{doc, info}`), `doc.indexing`, `doc.indexed`,
+`doc.deleted` (`{doc, info}`), `doc.changed_on_disk` (`{doc, info}`),
+`doc.reloaded` (`{doc, lost, info}`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
 `fs.changed`, `workspace.trusted` (with the available language servers).
 

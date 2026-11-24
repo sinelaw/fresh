@@ -86,6 +86,7 @@ impl App {
             trusted: std::sync::atomic::AtomicBool::new(trusted),
         });
         app.watches.start(hub, ws);
+        App::follow_disk(&app);
         app
     }
 
@@ -217,6 +218,23 @@ impl App {
                         json!({ "dropped": false, "others": others })
                     }
                 }
+            }
+            "doc.reload" => {
+                // Give up unsaved edits (every client's) for the file as it
+                // is on disk now.
+                let mut docs = self.docs.lock().unwrap();
+                let d = docs.get(u(m, "doc")?)?;
+                let fs = ws.fs();
+                let now = workspace::signature(&fs, &d.path);
+                if now.is_none() {
+                    fail!(NotFound, "{} is not on disk", d.path.display());
+                }
+                let fresh = docs::Buffer::load_from_file(&d.path, docs::LARGE_FILE_THRESHOLD, fs)?;
+                if fresh.is_binary() {
+                    fail!(Binary, "{} is now a binary file", d.path.display());
+                }
+                self.reload_with(d, fresh, now)?;
+                d.info()
             }
             "doc.info" => self.docs.lock().unwrap().get(u(m, "doc")?)?.info(),
             "doc.lines" => {
@@ -355,18 +373,18 @@ impl App {
         let prims: Vec<ot::Prim> = serde_json::from_value(arg(m, "ops")?.clone())?;
         let mut docs = self.docs.lock().unwrap();
         let d = docs.get(id)?;
+        let ops = self.sequence(d, base, prims)?;
+        self.broadcast_ops(d, client, ops);
+        Ok(json!({ "version": d.version }))
+    }
+
+    /// Sequence an edit against log version `base` and tell the language
+    /// server; returns the primitives as applied, for [`Self::broadcast_ops`].
+    fn sequence(&self, d: &mut docs::Doc, base: u64, prims: Vec<ot::Prim>) -> Result<Vec<Value>> {
         let server = (!d.buffer.is_large_file())
             .then(|| d.language.as_deref().and_then(|l| self.lsp.running(l)))
             .flatten();
         let applied = d.edit(base, prims, server.is_some())?;
-        let ops: Vec<Value> = applied
-            .iter()
-            .map(|a| {
-                let mut v = serde_json::to_value(&a.prim).unwrap_or(Value::Null);
-                v["nl"] = json!(a.newlines);
-                v
-            })
-            .collect();
         if let Some(server) = server {
             let changes: Vec<Value> = applied
                 .iter()
@@ -380,17 +398,180 @@ impl App {
                 json!({"textDocument": {"uri": lsp::uri_of(&d.path), "version": d.version}, "contentChanges": changes}),
             );
         }
-        // Sent under the documents lock, so every client sees every
-        // document's log in order. The editing client takes the event about
-        // its own edit as the acknowledgement.
+        Ok(applied
+            .iter()
+            .map(|a| {
+                let mut v = serde_json::to_value(&a.prim).unwrap_or(Value::Null);
+                v["nl"] = json!(a.newlines);
+                v
+            })
+            .collect())
+    }
+
+    /// The latest log entry to the document's clients, as made by `client`
+    /// (0: the server itself, following the file on disk). Sent under the
+    /// documents lock, so every client sees every document's log in order.
+    /// The editing client takes the event about its own edit as the
+    /// acknowledgement.
+    fn broadcast_ops(&self, d: &docs::Doc, client: u64, ops: Vec<Value>) {
         let ev = json!({
-            "ev": "doc.ops", "doc": id, "version": d.version, "client": client,
+            "ev": "doc.ops", "doc": d.id, "version": d.version, "client": client,
             "ops": ops, "len": d.len(), "modified": d.buffer.is_modified(),
         });
         for c in &d.clients {
             self.hub.send(*c, &ev);
         }
-        Ok(json!({ "version": d.version }))
+    }
+
+    /// Follow every open document's file on disk: its (size, mtime) is
+    /// polled through the workspace's filesystem, and a change the editor
+    /// did not make itself (its own saves record what they leave) is
+    /// handled by [`Self::disk_changed`]. Stops when the app goes.
+    fn follow_disk(app: &Arc<App>) {
+        let weak = Arc::downgrade(app);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let Some(app) = weak.upgrade() else { return };
+            app.check_disk();
+        });
+    }
+
+    /// One look at every open document's file.
+    fn check_disk(&self) {
+        // Read without the lock: a remote host's answers take time.
+        // In id order, so documents are followed in the order they opened.
+        let mut seen: Vec<_> = {
+            let docs = self.docs.lock().unwrap();
+            docs.docs
+                .values()
+                .map(|d| {
+                    (
+                        d.id,
+                        d.path.clone(),
+                        d.disk,
+                        d.buffer.is_large_file() || !d.buffer.is_modified(),
+                    )
+                })
+                .collect()
+        };
+        seen.sort_by_key(|x| x.0);
+        let fs = self.ws.fs();
+        for (id, path, disk, would_reload) in seen {
+            let now = workspace::signature(&fs, &path);
+            if now == disk {
+                continue;
+            }
+            // The new text, when it may replace the document's.
+            let fresh = (now.is_some() && would_reload).then(|| {
+                docs::Buffer::load_from_file(&path, docs::LARGE_FILE_THRESHOLD, fs.clone())
+            });
+            let mut docs = self.docs.lock().unwrap();
+            let Ok(d) = docs.get(id) else { continue };
+            // Renamed or saved meanwhile: look again next time.
+            if d.path != path || d.disk != disk {
+                continue;
+            }
+            self.disk_changed(d, now, fresh);
+        }
+    }
+
+    /// The file of `d` changed on disk to signature `now`:
+    /// - gone: the document keeps its text, unsaved (`doc.deleted`);
+    /// - a huge document reads its unedited text from the file, so it is
+    ///   reloaded whatever it holds (`doc.reloaded`, with `lost` when it had
+    ///   unsaved edits);
+    /// - with no unsaved edits: the change is applied as an edit from the
+    ///   server, a minimal diff through the log, so every replica, cursor
+    ///   and undo entry carries through it;
+    /// - with unsaved edits: its clients are told once (`doc.changed_on_disk`)
+    ///   and choose to reload (`doc.reload`) or keep theirs (a forced save).
+    fn disk_changed(
+        &self,
+        d: &mut docs::Doc,
+        now: Option<(u64, u64)>,
+        fresh: Option<Result<docs::Buffer>>,
+    ) {
+        if now.is_none() {
+            d.disk = None;
+            d.reported = None;
+            d.buffer.set_modified(true);
+            self.send_to(
+                d,
+                &json!({"ev": "doc.deleted", "doc": d.id, "info": d.info()}),
+            );
+            return;
+        }
+        let modified = d.buffer.is_modified();
+        match fresh {
+            Some(Ok(b)) if !b.is_binary() && (d.buffer.is_large_file() || !modified) => {
+                if let Err(e) = self.reload_with(d, b, now) {
+                    eprintln!("{}: not followed: {e}", d.path.display());
+                }
+            }
+            _ if d.reported != Some(now) => {
+                d.reported = Some(now);
+                self.send_to(
+                    d,
+                    &json!({"ev": "doc.changed_on_disk", "doc": d.id, "info": d.info()}),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// Make `d` hold `fresh`, the file as it is now with signature `now`.
+    fn reload_with(
+        &self,
+        d: &mut docs::Doc,
+        mut fresh: docs::Buffer,
+        now: Option<(u64, u64)>,
+    ) -> Result<()> {
+        if d.buffer.is_large_file() || fresh.is_large_file() {
+            // A huge file: a new buffer and a new log; clients fetch their
+            // windows again.
+            let lost = d.buffer.is_modified();
+            self.lsp_close(d);
+            d.buffer = fresh;
+            d.version += 1;
+            d.log.clear();
+            d.disk = now;
+            d.reported = None;
+            if self.trusted.load(std::sync::atomic::Ordering::SeqCst) {
+                self.lsp_open(d)?;
+            }
+            if d.buffer.line_count().is_none() {
+                index_lines(self.docs.clone(), self.hub.clone(), d.id);
+            }
+            self.send_to(
+                d,
+                &json!({"ev": "doc.reloaded", "doc": d.id, "lost": lost, "info": d.info()}),
+            );
+            return Ok(());
+        }
+        let n = fresh.len();
+        let new = String::from_utf8_lossy(&fresh.get_text_range_mut(0, n)?).into_owned();
+        let old = d.full_text()?;
+        let prims = docs::diff_prims(&old, &new);
+        let ops = if prims.is_empty() {
+            Vec::new()
+        } else {
+            self.sequence(d, d.version, prims)?
+        };
+        d.buffer.set_modified(false);
+        d.disk = now;
+        d.reported = None;
+        if !ops.is_empty() {
+            self.broadcast_ops(d, 0, ops);
+        }
+        let ev = json!({"ev": "doc.saved", "doc": d.id, "info": d.info()});
+        self.send_to(d, &ev);
+        Ok(())
+    }
+
+    fn send_to(&self, d: &docs::Doc, ev: &Value) {
+        for c in &d.clients {
+            self.hub.send(*c, ev);
+        }
     }
 
     /// Rename or move a file or folder. Documents open on it (or in it)
@@ -1211,6 +1392,75 @@ mod tests {
             std::fs::read_to_string(root.join("lib/b.py")).unwrap(),
             "xa\n"
         );
+    }
+
+    #[test]
+    fn open_documents_follow_their_files_on_disk() {
+        let (dir, app) = app(true);
+        let p = dir.path().join("a.txt");
+        std::fs::write(&p, "one\ntwo\nthree\n").unwrap();
+        let (c, mut rx) = client(&app);
+        let a = app
+            .dispatch(c, "doc.open", &json!({"path": "a.txt"}))
+            .unwrap()["doc"]
+            .as_u64()
+            .unwrap();
+        let text = |app: &App| {
+            app.docs
+                .lock()
+                .unwrap()
+                .get(a)
+                .unwrap()
+                .full_text()
+                .unwrap()
+        };
+
+        // The editor's own save is not a change on disk.
+        app.dispatch(
+            c,
+            "doc.edit",
+            &json!({"doc": a, "base": 0, "ops": [{"t": "ins", "pos": 0, "text": "zero\n"}]}),
+        )
+        .unwrap();
+        app.dispatch(c, "doc.save", &json!({"doc": a})).unwrap();
+        while rx.try_recv().is_ok() {}
+        app.check_disk();
+        assert!(rx.try_recv().is_err(), "nothing to follow after a save");
+
+        // Unmodified: the change arrives as edits from the server.
+        std::fs::write(&p, "zero\none\n2\nthree\nfour\n").unwrap();
+        app.check_disk();
+        let ev = event(&mut rx, "doc.ops", Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            (ev["client"].clone(), ev["modified"].clone()),
+            (json!(0), json!(false))
+        );
+        assert_eq!(text(&app), "zero\none\n2\nthree\nfour\n");
+        app.check_disk();
+        assert!(event(&mut rx, "doc.ops", Duration::from_millis(50)).is_none());
+
+        // Unsaved edits: reported once; a reload takes the disk's text.
+        app.dispatch(
+            c,
+            "doc.edit",
+            &json!({"doc": a, "base": 2, "ops": [{"t": "ins", "pos": 0, "text": "mine "}]}),
+        )
+        .unwrap();
+        std::fs::write(&p, "theirs\n").unwrap();
+        app.check_disk();
+        assert!(event(&mut rx, "doc.changed_on_disk", Duration::from_secs(1)).is_some());
+        app.check_disk();
+        assert!(event(&mut rx, "doc.changed_on_disk", Duration::from_millis(50)).is_none());
+        assert_eq!(text(&app), "mine zero\none\n2\nthree\nfour\n");
+        let info = app.dispatch(c, "doc.reload", &json!({"doc": a})).unwrap();
+        assert_eq!(info["modified"], false);
+        assert_eq!(text(&app), "theirs\n");
+
+        // Deleted outside: kept, unsaved.
+        std::fs::remove_file(&p).unwrap();
+        app.check_disk();
+        let ev = event(&mut rx, "doc.deleted", Duration::from_secs(1)).unwrap();
+        assert_eq!(ev["info"]["modified"], true);
     }
 
     #[test]

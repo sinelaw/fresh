@@ -323,7 +323,10 @@ class App {
   async saveBuffer(b, { ask = true } = {}) {
     if (!b.doc) return;
     try {
-      await b.save();
+      // Keeping one's changes over the file's (`askChangedOnDisk`) was the
+      // choice to overwrite it.
+      await b.save({ force: !!b.keepMine });
+      b.keepMine = false;
     } catch (e) {
       if (!ask || e.code !== "changed_on_disk") { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
       if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
@@ -332,6 +335,22 @@ class App {
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
     this.host.emit("buffer.saved", { buffer: b });
+  }
+
+  async askChangedOnDisk(b) {
+    const pick = await this.choose(`${b.name} changed on disk, and you have unsaved changes`, [
+      { label: "Reload (discard my changes)", value: "reload" },
+      { label: "Keep mine (the next save overwrites the file)", value: "keep" },
+    ]);
+    if (pick === "reload") {
+      try {
+        await rpc("doc.reload", { doc: b.doc });
+        this.setStatus(`Reloaded ${b.name}`);
+      } catch (e) { this.setStatus(`Not reloaded: ${e.detail || e.message || e}`); }
+    } else if (pick === "keep") {
+      b.keepMine = true;
+      this.setStatus(`Keeping your changes to ${b.name}; saving overwrites the file`);
+    }
   }
 
   autoSave() {
@@ -477,6 +496,21 @@ class App {
         this.renderAll();
         this.updateStatus();
         this.host.emit("buffer.renamed", { buffer: b, from: ev.from });
+        break;
+      }
+      case "doc.reloaded": {
+        // A huge file changed on disk and was loaded again.
+        const b = this.docs.get(ev.doc);
+        if (!b) break;
+        b.reloaded(ev.info).then(() => { this.renderAll(); this.updateStatus(); });
+        this.setStatus(ev.lost ? `${b.name} changed on disk and was reloaded; its unsaved changes are lost` : `${b.name} changed on disk and was reloaded`);
+        break;
+      }
+      case "doc.changed_on_disk": {
+        // Changed on disk under unsaved changes: reload the file (giving
+        // them up), or keep them, and the next save overwrites the file.
+        const b = this.docs.get(ev.doc);
+        if (b) this.askChangedOnDisk(b);
         break;
       }
       case "doc.deleted": {

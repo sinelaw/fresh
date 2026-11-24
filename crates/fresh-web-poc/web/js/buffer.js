@@ -222,6 +222,30 @@ export class FileBuffer extends Buffer {
     this.modified = info.modified;
   }
 
+  // The server replaced the document (a huge file reloaded from disk): a
+  // new log from `info.version`. Edits not yet sequenced are dropped (the
+  // server refuses them as based on the old log), undo starts over, and
+  // the window is fetched again.
+  reloaded(info) {
+    this.setInfo(info);
+    this.version = info.version;
+    this.len = info.len;
+    this.large = info.large;
+    this.totalLines = info.lines;
+    this.inflight = null;
+    this.pending = [];
+    this.recent = [];
+    this.undo = [];
+    this.redo = [];
+    this.text = null;
+    for (const v of this.views) {
+      for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = null; }
+      v.top = 0;
+    }
+    const v = [...this.views][0];
+    return this.ensure(v ? v.primary.pos : 0);
+  }
+
   // The held text covers the whole document.
   get full() { const L = this.text; return !!L && L.bof && L.eof; }
 

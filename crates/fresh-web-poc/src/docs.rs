@@ -15,7 +15,7 @@ use crate::error::{err, Code};
 use crate::ot::{transform_seqs, Prim};
 use crate::workspace::{host, signature, Fs};
 use anyhow::Result;
-use fresh_editor_core::model::buffer::Buffer;
+pub use fresh_editor_core::model::buffer::Buffer;
 
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -54,6 +54,10 @@ pub struct Doc {
     /// while it does not exist. A save finding anything else refuses unless
     /// forced, so another writer's change is never overwritten unseen.
     pub disk: Option<(u64, u64)>,
+    /// The signature of an external change already reported to the
+    /// document's clients as conflicting with its unsaved edits, so it is
+    /// reported once.
+    pub reported: Option<Option<(u64, u64)>>,
 }
 
 /// A document that followed a rename, with where it was.
@@ -104,6 +108,57 @@ pub fn language_of(path: &Path) -> Option<String> {
         _ => return None,
     };
     Some(lang.to_string())
+}
+
+/// Primitives that turn `old` into `new`, for following a change made on
+/// disk through the edit log: line hunks (Myers), each trimmed to the
+/// characters that differ, last hunk first so every position is one in the
+/// text the earlier primitives leave.
+pub fn diff_prims(old: &str, new: &str) -> Vec<Prim> {
+    fn starts(t: &str) -> Vec<usize> {
+        let mut v = vec![0];
+        for l in t.split_inclusive('\n') {
+            v.push(v[v.len() - 1] + l.len());
+        }
+        v
+    }
+    let (os, ns) = (starts(old), starts(new));
+    let diff = similar::TextDiff::from_lines(old, new);
+    let mut out = Vec::new();
+    for op in diff.ops().iter().rev() {
+        let (tag, or, nr) = op.as_tag_tuple();
+        if tag == similar::DiffTag::Equal {
+            continue;
+        }
+        let a = &old[os[or.start]..os[or.end]];
+        let b = &new[ns[nr.start]..ns[nr.end]];
+        let pre: usize = a
+            .chars()
+            .zip(b.chars())
+            .take_while(|(x, y)| x == y)
+            .map(|(x, _)| x.len_utf8())
+            .sum();
+        let suf: usize = a[pre..]
+            .chars()
+            .rev()
+            .zip(b[pre..].chars().rev())
+            .take_while(|(x, y)| x == y)
+            .map(|(x, _)| x.len_utf8())
+            .sum();
+        let pos = os[or.start] + pre;
+        let del = a.len() - pre - suf;
+        let ins = &b[pre..b.len() - suf];
+        if del > 0 {
+            out.push(Prim::Del { pos, len: del });
+        }
+        if !ins.is_empty() {
+            out.push(Prim::Ins {
+                pos,
+                text: ins.to_string(),
+            });
+        }
+    }
+    out
 }
 
 fn count_newlines(b: &[u8]) -> usize {
@@ -443,6 +498,7 @@ impl Doc {
         }
         self.buffer.save(recovery)?;
         self.disk = signature(&fs, &self.path);
+        self.reported = None;
         Ok(())
     }
 
@@ -497,6 +553,7 @@ impl Docs {
                 clients,
                 readonly,
                 disk,
+                reported: None,
             },
         );
         self.by_path.insert(path, id);
@@ -718,6 +775,38 @@ mod tests {
         assert!(new);
         assert_eq!(docs.get(again).unwrap().text(0, 100).unwrap(), "disk\n");
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "disk\n");
+    }
+
+    #[test]
+    fn a_diff_applied_as_edits_gives_the_new_text() {
+        for (old, new) in [
+            ("a\nb\nc\n", "a\nB\nc\n"),
+            ("one\ntwo\nthree\n", "zero\none\nthree\nfour"),
+            ("", "new\n"),
+            ("gone\n", ""),
+            ("héllo wörld\nx\n", "héllo wörld!\nx\ny\n"),
+            ("same\n", "same\n"),
+        ] {
+            let (_d, mut docs, id) = doc_with(old);
+            let d = docs.get(id).unwrap();
+            let prims = diff_prims(old, new);
+            d.edit(0, prims.clone(), false).unwrap();
+            assert_eq!(d.text(0, 1000).unwrap(), new, "{old:?} -> {new:?}");
+            if old == new {
+                assert!(prims.is_empty());
+            }
+        }
+        // Only what differs is touched: one character in a line.
+        assert_eq!(
+            diff_prims("abc\ndef\n", "abc\ndXf\n"),
+            [
+                Prim::Del { pos: 5, len: 1 },
+                Prim::Ins {
+                    pos: 5,
+                    text: "X".into()
+                }
+            ]
+        );
     }
 
     #[test]
