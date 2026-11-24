@@ -17,7 +17,8 @@
 //! dock (folders nest, `A/B`), a pin, when it was created and last worked
 //! in (typed into one of its files or terminals), and, for a workspace made
 //! on a new git worktree, that worktree. The registry — workspaces and
-//! folders — is kept in a file on this machine through a local authority
+//! folders — is kept in a file on this machine (one per server port)
+//! through a local authority
 //! ([`Store`]) and opened again when the server starts; a workspace that
 //! cannot be opened again (its host unreachable, its folder gone) stays
 //! listed with why, to retry or dismiss.
@@ -99,13 +100,14 @@ pub struct Store {
 }
 
 impl Store {
-    /// `~/.local/share/fresh-poc/orchestrator.json` on this machine.
-    pub fn local() -> Result<Store> {
+    /// `~/.local/share/fresh-poc/orchestrator-<port>.json` on this machine:
+    /// a server is known by its port, so two servers keep two registries.
+    pub fn local(port: u16) -> Result<Store> {
         let fs = authority::Local::new().fs();
         let home = PathBuf::from(fs.home_dir()?);
         Ok(Store {
             fs,
-            path: home.join(".local/share/fresh-poc/orchestrator.json"),
+            path: home.join(format!(".local/share/fresh-poc/orchestrator-{port}.json")),
         })
     }
 
@@ -689,6 +691,21 @@ impl Orchestrator {
             "workspace.set" => {
                 self.known(client)?;
                 json!({ "workspace": self.set(u(m, "workspace")?, m)? })
+            }
+            "agents.scan" => {
+                // Agent sessions run outside the editor on a host
+                // (default: this machine), to import as workspaces.
+                self.known(client)?;
+                let host: HostSpec = match m.get("host") {
+                    Some(h) => serde_json::from_value(h.clone())
+                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
+                    None => HostSpec::Local,
+                };
+                let authority = authority::connect(&host, self.slow)
+                    .map_err(|e| err(Code::Failed, format!("cannot reach the host: {e}")))?;
+                let fs = authority.fs();
+                let home = PathBuf::from(fs.home_dir()?);
+                json!({ "sessions": crate::agents::scan(&fs, &home) })
             }
             "folder.create" | "folder.rename" | "folder.delete" => {
                 self.known(client)?;

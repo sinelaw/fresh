@@ -12,6 +12,7 @@
 //!
 //! Usage: `fresh-poc [--port N] [DIR]`, then open the printed URL.
 
+mod agents;
 mod authority;
 #[macro_use]
 mod error;
@@ -161,7 +162,10 @@ fn main() -> Result<()> {
     let given = root.unwrap_or_else(|| ".".into());
     // The registry kept last time first, then the command line's folder
     // (which is one of them when it was open then).
-    let orch = Arc::new(Orchestrator::new(slow, Some(orchestrator::Store::local()?)));
+    let orch = Arc::new(Orchestrator::new(
+        slow,
+        Some(orchestrator::Store::local(port)?),
+    ));
     orch.restore();
     let (first, _) = orch
         .open(&Open::new(host, &given, trusted))
