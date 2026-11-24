@@ -19,6 +19,7 @@ import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 import { Session } from "./session.js";
 import { MenuBar } from "./menubar.js";
+import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
 
 const $ = (s) => document.querySelector(s);
@@ -122,6 +123,8 @@ class App {
     this.layoutTree = { pane: first };
     this.activePane = this.layoutTree.pane;
     this.registerCoreCommands();
+    this.macros = new Macros(this);
+    this.macros.register();
     this.menubar = new MenuBar(this);
     this.menubar.listen();
     this.orchestrator.listen();
@@ -996,12 +999,14 @@ class App {
     // A buffer mode may claim printable keys (a panel's single-key commands).
     const mode = v.buf.mode && this.modes.get(v.buf.mode);
     if (mode && t.length === 1 && mode[t]) { mode[t](); return; }
+    this.macros.text(t, true);
     this.editing.type(this.activePane, t, true);
   }
 
   paste(text) {
     const v = this.view();
     if (!v || v.buf.readOnly) return;
+    this.macros.text(text, false);
     // One line per cursor when the counts match, as editors do.
     const parts = text.split("\n");
     if (v.cursors.length > 1 && parts.length === v.cursors.length) {
@@ -1086,10 +1091,12 @@ class App {
       Enter: "edit.newline", Backspace: "edit.backspace", "C-Backspace": "edit.deleteWordBack", Delete: "edit.delete", "C-Delete": "edit.deleteWordForward",
       Tab: "edit.indent", "S-Tab": "edit.dedent", Esc: "edit.escape",
       "C-a": "select.all", "C-l": "select.line", "C-S-k": "edit.deleteLine", "C-S-d": "edit.duplicateLine", "M-Up": "edit.moveLineUp", "M-Down": "edit.moveLineDown",
-      "M-u": "edit.upperCase", "M-l": "edit.lowerCase",
+      "M-u": "edit.upperCase", "M-l": "edit.lowerCase", "C-t": "edit.transposeChars",
+      "M-S-Up": "select.blockUp", "M-S-Down": "select.blockDown", "M-S-Left": "select.blockLeft", "M-S-Right": "select.blockRight",
+      "C-M-Right": "select.expand", "C-M-Left": "select.shrink",
       "C-/": "edit.toggleComment", "C-d": "select.nextOccurrence", "C-S-l": "select.allOccurrences", "C-M-Up": "cursor.addAbove", "C-M-Down": "cursor.addBelow",
       "C-]": "cursor.matchingBracket", "C-{": "fold.toggle", "C-}": "fold.toggle",
-      "C-=": "view.zoomIn", "C-+": "view.zoomIn", "C--": "view.zoomOut", "C-0": "view.zoomReset",
+      "F4": "macro.playLast", "F5": "macro.stop", "C-=": "view.zoomIn", "C-+": "view.zoomIn", "C--": "view.zoomOut", "C-0": "view.zoomReset",
       F10: "menu.open", "M-f": "menu.file", "M-e": "menu.edit", "M-v": "menu.view", "M-s": "menu.selection", "M-g": "menu.go", "M-x": "menu.explorer", "M-h": "menu.help",
     };
     const emacs = this.settings.keymap === "emacs" ? {
@@ -1120,13 +1127,23 @@ class App {
 
   // Run command `id`, with its one optional argument (a theme name for
   // `theme.use`, …).
+  // `id`, with its one optional argument (a theme name for `theme.use`, …).
+  // Resolves when it is done. A macro being recorded takes it (not the
+  // commands it runs itself).
   run(id, arg) {
     const c = this.commands.get(id);
-    if (!c) { this.setStatus(`No command “${id}”`); return; }
+    if (!c) { this.setStatus(`No command “${id}”`); return Promise.resolve(); }
+    this.macros?.command(id, arg);
+    if (this.macros) this.macros.depth++;
     try {
       const r = c.run(arg);
-      if (r && r.catch) r.catch((e) => this.report(`${id}: ${e.stack || e}`));
-    } catch (e) { this.report(`${id}: ${e.stack || e}`); }
+      return Promise.resolve(r).catch((e) => this.report(`${id}: ${e.stack || e}`));
+    } catch (e) {
+      this.report(`${id}: ${e.stack || e}`);
+      return Promise.resolve();
+    } finally {
+      if (this.macros) this.macros.depth--;
+    }
   }
 
   // ------------------------------------------------------------- core commands
@@ -1291,6 +1308,12 @@ class App {
     vcmd("select.line", "Select Line", () => ed().selectLine(P()));
     vcmd("select.nextOccurrence", "Select Next Occurrence", () => ed().selectNextOccurrence(P()));
     vcmd("select.allOccurrences", "Select All Occurrences", () => ed().selectAllOccurrences(P()));
+    vcmd("select.expand", "Expand Selection", () => ed().expandSelection(P()));
+    vcmd("select.shrink", "Shrink Selection", () => ed().shrinkSelection(P()));
+    mv("select.blockUp", "Block Select Up", () => ed().blockSelect(P(), -1, 0));
+    mv("select.blockDown", "Block Select Down", () => ed().blockSelect(P(), 1, 0));
+    mv("select.blockLeft", "Block Select Left", () => ed().blockSelect(P(), 0, -1));
+    mv("select.blockRight", "Block Select Right", () => ed().blockSelect(P(), 0, 1));
     // Editing.
     mv("edit.newline", "Newline", mutate(() => ed().newline(P())));
     mv("edit.backspace", "Backspace", mutate(() => ed().backspace(P(), false)));
@@ -1309,6 +1332,8 @@ class App {
     cmd("edit.lowerCase", "Transform to Lowercase", mutate(() => ed().transform(P(), (t) => t.toLowerCase())));
     cmd("edit.sortLines", "Sort Lines", mutate(() => ed().sortLines(P())));
     cmd("edit.trimTrailing", "Trim Trailing Whitespace", mutate(() => ed().trimTrailing(P())));
+    cmd("edit.transposeChars", "Transpose Characters", mutate(() => ed().transposeChars(P())));
+    cmd("edit.transposeLines", "Transpose Lines", mutate(() => ed().transposeLines(P())));
     vcmd("fold.toggle", "Toggle Fold", () => ed().toggleFold(P()));
     vcmd("fold.all", "Fold All", () => ed().foldAll(P()));
     vcmd("fold.none", "Unfold All", () => ed().unfoldAll(P()));
@@ -1485,6 +1510,7 @@ class App {
         add(L.firstLine != null ? `Ln ${L.firstLine + i + 1}, Col ${col}` : `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
       }
       if (v.cursors.length > 1) add(`${v.cursors.length} cursors`, titled("Remove the other cursors", "edit.escape"), cmd("edit.escape"));
+      if (this.macros?.recording) add(`● REC ${this.macros.recording.register}`, titled("Recording a macro: Stop Recording Macro", "macro.stop"), cmd("macro.stop"));
       if (b.readOnly && !b.isVirtual) add("[RO]", "Read-only: click to allow editing", cmd("file.toggleReadOnly"));
       if (b.large) add("large file", "Read from disk as it is viewed; lines are counted in the background");
       if (b.doc) {

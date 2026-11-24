@@ -67,6 +67,12 @@ export const MENUS = [
     { label: "Transform", items: [
       { command: "edit.upperCase", label: "Uppercase" }, { command: "edit.lowerCase", label: "Lowercase" },
       { command: "edit.sortLines", label: "Sort Lines" }, { command: "edit.trimTrailing", label: "Trim Trailing Whitespace" },
+      { command: "edit.transposeChars", label: "Transpose Characters" }, { command: "edit.transposeLines", label: "Transpose Lines" },
+    ] },
+    { label: "Macros", items: [
+      { command: "macro.record", label: "Record Macro…" }, { command: "macro.stop", label: "Stop Recording" },
+      { command: "macro.playLast", label: "Play Last Macro" }, { command: "macro.play", label: "Play Macro…" },
+      { command: "macro.list", label: "List Macros" },
     ] },
     null,
     { label: "Settings", items: [
@@ -129,6 +135,12 @@ export const MENUS = [
   { label: "Selection", key: "s", items: [
     { command: "select.all", label: "Select All" },
     { command: "select.line", label: "Select Line" },
+    { command: "select.expand", label: "Expand Selection" },
+    { command: "select.shrink", label: "Shrink Selection" },
+    { label: "Block Select", items: [
+      { command: "select.blockUp", label: "Up" }, { command: "select.blockDown", label: "Down" },
+      { command: "select.blockLeft", label: "Left" }, { command: "select.blockRight", label: "Right" },
+    ] },
     null,
     { command: "cursor.addAbove", label: "Add Cursor Above" },
     { command: "cursor.addBelow", label: "Add Cursor Below" },

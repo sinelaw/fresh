@@ -7,6 +7,8 @@
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { sel } from "./view.js";
+import { rpc } from "./rpc.js";
+import { charWidth } from "./layout.js";
 
 const PAIRS = { "(": ")", "[": "]", "{": "}", '"': '"', "'": "'", "`": "`" };
 const CLOSERS = new Set([")", "]", "}"]);
@@ -19,6 +21,29 @@ const INDENT = "    ";
 const OPEN = { "(": ")", "[": "]", "{": "}" }, CLOSE = { ")": "(", "]": "[", "}": "{" };
 // How many lines a bracket's match is looked for in.
 const BRACKET_SCAN = 5000;
+const TAB = 4;
+
+// The screen column of UTF-16 index `idx` in `line` (tabs to the next stop,
+// wide characters two columns), and the index at or before column `col`.
+function colOf(line, idx) {
+  let c = 0;
+  for (let i = 0; i < idx && i < line.length; i++) {
+    const u = line.charCodeAt(i);
+    if (u >= 0xdc00 && u < 0xe000) continue; // the second half of a pair
+    c = line[i] === "\t" ? c + TAB - (c % TAB) : c + charWidth(line.codePointAt(i));
+  }
+  return c;
+}
+function idxAt(line, col) {
+  let c = 0, i = 0;
+  while (i < line.length) {
+    const w = line[i] === "\t" ? TAB - (c % TAB) : charWidth(line.codePointAt(i));
+    if (c + w > col) break;
+    c += w;
+    i += line.codePointAt(i) > 0xffff ? 2 : 1;
+  }
+  return i;
+}
 
 export class Editing {
   constructor(app) { this.app = app; }
@@ -137,6 +162,234 @@ export class Editing {
     pane.reveal();
     if (old !== c.pos) this.app.cursorMoved(v, old);
     pane.scheduleRender();
+  }
+
+  // ---------------------------------------------------------------- expand and shrink
+
+  // The ranges that hold `s` ({start, end}), smallest first, from the
+  // text's structure: the word, a string's inside and the string, each
+  // bracket pair's inside and the pair outwards, the line's text and the
+  // line, each indentation block outwards (its lines), the document.
+  structureAround(b, s) {
+    const L = b.text;
+    const out = [];
+    const add = (start, end) => { if (start <= s.start && end >= s.end && end > start) out.push({ start, end }); };
+    const w = this.wordAt(b, s.start);
+    if (w) add(w.start, w.end);
+    const li = L.indexOf(s.start);
+    if (li < 0) return out;
+    const line = L.lines[li], ls = L.starts[li];
+    // Strings on the line: quote pairs, left to right.
+    for (let i = 0; i < line.length; i++) {
+      const q = line[i];
+      if (q !== '"' && q !== "'" && q !== "`") continue;
+      let j = i + 1;
+      while (j < line.length && line[j] !== q) j += line[j] === "\\" ? 2 : 1;
+      if (j >= line.length) break;
+      const a = ls + byteLen(line.slice(0, i)), z = ls + byteLen(line.slice(0, j + 1));
+      add(a + 1, z - 1);
+      add(a, z);
+      i = j;
+    }
+    // Bracket pairs around it, outwards.
+    let from = s.start;
+    for (let guard = 0; guard < 64; guard++) {
+      const open = this.openerBefore(b, from);
+      if (open == null) break;
+      const pair = this.bracketPair(b, open);
+      if (!pair || pair.match < s.end) { from = open; continue; }
+      add(open + 1, pair.match);
+      add(open, pair.match + 1);
+      from = open;
+    }
+    // The line's text, then the line with its break.
+    const text0 = ls + byteLen(/^\s*/.exec(line)[0]);
+    add(text0, ls + byteLen(line.replace(/\s+$/, "")));
+    add(ls, li + 1 < L.count ? L.starts[li + 1] : L.lineEnd(li));
+    // Indentation blocks: the lines around it indented at least as deep,
+    // then with the line that opens them, outwards.
+    const indent = (k) => (L.lines[k].trim() === "" ? Infinity : /^\s*/.exec(L.lines[k])[0].length);
+    let lo = li, hi = L.indexOf(s.end);
+    if (hi < 0) hi = L.count - 1;
+    for (let guard = 0; guard < 64; guard++) {
+      let depth = Infinity;
+      for (let k = lo; k <= hi; k++) depth = Math.min(depth, indent(k));
+      if (depth === Infinity) depth = 0;
+      while (lo > 0 && indent(lo - 1) >= depth) lo--;
+      while (hi < L.count - 1 && indent(hi + 1) >= depth) hi++;
+      add(L.starts[lo], hi + 1 < L.count ? L.starts[hi + 1] : L.lineEnd(hi));
+      if (lo === 0 && hi === L.count - 1) break;
+      if (lo > 0) lo--;
+      else if (hi < L.count - 1) hi++;
+    }
+    if (b.full) add(0, b.len);
+    return out.sort((x, y) => (x.end - x.start) - (y.end - y.start));
+  }
+
+  // The unmatched opening bracket before `p` (in the held lines), or null.
+  openerBefore(b, p) {
+    const L = b.text;
+    let li = L.indexOf(p);
+    if (li < 0) return null;
+    let k = byteToIdx(L.lines[li], p - L.starts[li]) - 1;
+    const depth = { "(": 0, "[": 0, "{": 0 };
+    for (let n = 0; n < BRACKET_SCAN && li >= 0; n++) {
+      const line = L.lines[li];
+      for (; k >= 0; k--) {
+        const c = line[k];
+        if (c in CLOSE) depth[CLOSE[c]]++;
+        else if (c in OPEN) { if (depth[c] === 0) return L.starts[li] + byteLen(line.slice(0, k)); depth[c]--; }
+      }
+      li--;
+      if (li >= 0) k = L.lines[li].length - 1;
+    }
+    return null;
+  }
+
+  // A language server's selection ranges for each cursor ([[{start,
+  // end}], ...] innermost first), or null when there is none or it has no
+  // answer.
+  async lspSelectionRanges(v) {
+    const b = v.buf;
+    if (!this.app.lspAvailable(b)) return null;
+    const positions = v.cursors.map((c) => this.app.lspPosition(b, c.pos));
+    if (positions.some((x) => !x)) return null;
+    try {
+      const r = await rpc("lsp.call", { doc: b.doc, method: "textDocument/selectionRange", params: { positions } });
+      if (!Array.isArray(r) || r.length !== v.cursors.length) return null;
+      return r.map((sr) => {
+        const out = [];
+        for (let x = sr; x; x = x.parent) {
+          const start = this.app.lspOffset(b, x.range.start.line, x.range.start.character);
+          const end = this.app.lspOffset(b, x.range.end.line, x.range.end.character);
+          if (start != null && end != null) out.push({ start, end });
+        }
+        return out;
+      });
+    } catch { return null; }
+  }
+
+  // Expand each cursor's selection to the next range that holds it: the
+  // language server's selection ranges where it gives them, else the text's
+  // structure (`structureAround`). Shrink goes back the way it came.
+  async expandSelection(pane) {
+    const v = pane.view;
+    const b = v.buf;
+    if (!b.text) return;
+    const before = v.cursors.map((c) => ({ pos: c.pos, anchor: c.anchor }));
+    const lsp = await this.lspSelectionRanges(v);
+    if (pane.view !== v) return;
+    let grew = false;
+    v.cursors.forEach((c, i) => {
+      const s = sel(c) || { start: c.pos, end: c.pos };
+      const ranges = (lsp && lsp[i] && lsp[i].length ? lsp[i].concat(b.full ? [{ start: 0, end: b.len }] : []) : this.structureAround(b, s))
+        .filter((r) => r.start <= s.start && r.end >= s.end && r.end - r.start > s.end - s.start);
+      const r = ranges.sort((x, y) => (x.end - x.start) - (y.end - y.start))[0];
+      if (!r) return;
+      c.anchor = r.start;
+      c.pos = r.end;
+      c.goalX = null;
+      grew = true;
+    });
+    if (!grew) return;
+    const key = (cs) => cs.map((c) => `${c.anchor}:${c.pos}`).join();
+    if (!v.expansions || v.expansions.key !== key(before)) v.expansions = { stack: [], key: "" };
+    v.expansions.stack.push(before);
+    v.expansions.key = key(v.cursors);
+    v.normalize();
+    pane.reveal();
+    pane.scheduleRender();
+  }
+  shrinkSelection(pane) {
+    const v = pane.view;
+    const key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
+    const prev = v.expansions && v.expansions.key === key ? v.expansions.stack.pop() : null;
+    if (prev) {
+      v.cursors = prev.map((c) => ({ pos: c.pos, anchor: c.anchor, goalX: null }));
+      v.expansions.key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
+    } else for (const c of v.cursors) c.anchor = null;
+    pane.reveal();
+    pane.scheduleRender();
+  }
+
+  // ---------------------------------------------------------------- transpose
+
+  // Swap the characters on either side of each caret and move past them;
+  // at the end of a line, the two before it (as the editor and Emacs).
+  transposeChars(pane) {
+    const b = pane.view.buf;
+    this.replace(pane, (c) => {
+      if (sel(c)) return null;
+      const ln = this.lineAt(b, c.pos);
+      const i = byteToIdx(ln.text, c.pos - ln.start);
+      const chars = [...ln.text];
+      // The character index of the caret.
+      const ci = [...ln.text.slice(0, i)].length;
+      const at = ci >= chars.length ? ci - 1 : ci;
+      if (at < 1 || chars.length < 2) return null;
+      const start = ln.start + byteLen(chars.slice(0, at - 1).join(""));
+      const text = chars[at] + chars[at - 1];
+      return { start, end: start + byteLen(text), text };
+    });
+  }
+
+  // Swap each caret's line with the line above it; the caret goes down
+  // with it to the next line (as Emacs's transpose-lines).
+  transposeLines(pane) {
+    const b = pane.view.buf;
+    const L = b.text;
+    this.replace(pane, (c) => {
+      const li = L.indexOf(c.pos);
+      if (li < 1) return null;
+      const start = L.starts[li - 1], end = L.lineEnd(li);
+      const text = L.lines[li] + "\n" + L.lines[li - 1];
+      return { start, end, text, caret: byteLen(text) + (li + 1 < L.count ? 1 : 0) };
+    });
+  }
+
+  // ---------------------------------------------------------------- block selection
+
+  // A rectangle of text, from screen column and line `anchor` to `head`
+  // ({line, col}, window line indices): one cursor a line, each selecting
+  // the line's part between the two columns (a short line gives an empty
+  // selection at its end). The view remembers it, so Alt+Shift+arrows go
+  // on growing it while its cursors are the rectangle's.
+  setBlock(pane, anchor, head) {
+    const v = pane.view;
+    const L = v.buf.text;
+    const lo = Math.min(anchor.line, head.line), hi = Math.max(anchor.line, head.line);
+    const cs = [];
+    for (let k = lo; k <= hi; k++) {
+      const line = L.lines[k];
+      const at = (col) => L.starts[k] + byteLen(line.slice(0, idxAt(line, col)));
+      cs.push({ pos: at(head.col), anchor: at(anchor.col), goalX: null, line: k });
+    }
+    // The head's line holds the primary cursor.
+    const prim = cs.find((c) => c.line === head.line);
+    v.cursors = [prim, ...cs.filter((c) => c !== prim)].map((c) => ({ pos: c.pos, anchor: c.anchor === c.pos ? null : c.anchor, goalX: null }));
+    v.block = { anchor, head, key: this.blockKey(v) };
+    pane.reveal();
+    pane.scheduleRender();
+  }
+  blockKey(v) { return v.cursors.map((c) => `${c.anchor}:${c.pos}`).join(); }
+  // Where a position is as a block's corner: {line, col}.
+  cornerAt(b, p) {
+    const L = b.text;
+    const li = L.indexOf(p);
+    return { line: li, col: colOf(L.lines[li], byteToIdx(L.lines[li], p - L.starts[li])) };
+  }
+  // Grow the rectangle by a line or a column (Alt+Shift+arrows); a new one
+  // starts at the primary cursor.
+  blockSelect(pane, dl, dc) {
+    const v = pane.view;
+    const L = v.buf.text;
+    if (!L) return;
+    const go = v.block && v.block.key === this.blockKey(v);
+    const anchor = go ? v.block.anchor : this.cornerAt(v.buf, v.primary.pos);
+    const head = go ? { ...v.block.head } : { ...anchor };
+    head.line = Math.max(0, Math.min(L.count - 1, head.line + dl));
+    head.col = Math.max(0, head.col + dc);
+    this.setBlock(pane, anchor, head);
   }
 
   selectWord(pane) {

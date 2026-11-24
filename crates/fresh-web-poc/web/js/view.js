@@ -109,6 +109,9 @@ export class Pane {
       this.scheduleRender();
     }).observe(this.surfaceEl);
     this.surfaceEl.addEventListener("mousedown", (e) => this.onMouseDown(e));
+    // The middle button drags a block, and does not paste (as X does).
+    this.surfaceEl.addEventListener("mouseup", (e) => { if (e.button === 1) e.preventDefault(); });
+    this.surfaceEl.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
     // The wheel scrolls lines; sideways (a tilt, or with Shift) it scrolls
     // columns.
     this.surfaceEl.addEventListener("wheel", (e) => {
@@ -803,8 +806,10 @@ export class Pane {
       if (!v.selections().some((s) => p >= s.start && p <= s.end)) this.app.editing.place(this, p, false);
       return;
     }
+    // Alt+drag or a middle-button drag selects a rectangle (a block); an
+    // Alt+click without a drag adds a cursor.
+    if (e.button === 1 || (e.button === 0 && e.altKey)) { this.blockDrag(e, p); return; }
     if (e.button !== 0) return;
-    if (e.altKey && e.button === 0) { v.cursors.push({ pos: p, anchor: null, goalX: null }); v.normalize(); this.scheduleRender(); return; }
     this.app.editing.place(this, p, e.shiftKey);
     if (e.ctrlKey && e.button === 0) { this.app.run("lsp.definition"); return; }
     if (e.detail === 2) this.app.editing.selectWord(this);
@@ -825,6 +830,36 @@ export class Pane {
     };
     const move = (ev) => { last = ev; extend(ev); if (!frame) frame = requestAnimationFrame(tick); };
     const up = () => { cancelAnimationFrame(frame); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  // The screen line and column at client point (x, y), for a block's
+  // corner: {line, col} (the column may be past the line's end).
+  cornerFromPoint(x, y) {
+    const v = this.view;
+    const p = this.posFromPoint(x, y);
+    if (p == null || !v.buf.text) return null;
+    const rect = this.textEl.getBoundingClientRect();
+    return { line: v.buf.text.indexOf(p), col: Math.max(0, Math.round((x - rect.left) / this.metrics().cw)) };
+  }
+  blockDrag(e, p) {
+    const v = this.view;
+    if (v.mode === "compose") return;
+    const x0 = e.clientX, y0 = e.clientY;
+    const anchor = this.cornerFromPoint(x0, y0);
+    let dragged = false;
+    const move = (ev) => {
+      if (!dragged && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+      dragged = true;
+      const head = this.cornerFromPoint(ev.clientX, ev.clientY);
+      if (anchor && head) this.app.editing.setBlock(this, anchor, head);
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      if (!dragged && e.button === 0) { v.cursors.push({ pos: p, anchor: null, goalX: null }); v.normalize(); this.scheduleRender(); }
+    };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   }
