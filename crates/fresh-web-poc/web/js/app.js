@@ -15,10 +15,10 @@ import { Host } from "./host.js";
 import { Palette } from "./palette.js";
 import { Skins } from "./skins.js";
 import { THEME } from "./highlight.js";
+import { PLUGINS } from "../plugins/index.js";
 
 const $ = (s) => document.querySelector(s);
 
-const PLUGINS = ["welcome", "explorer", "search", "lsp", "git", "markdown", "compare", "tours", "keybindings", "themes"];
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
@@ -65,7 +65,9 @@ class App {
     this.editing = new Editing(this);
     this.ui = new UIKit(this);
     this.prompt = new Palette(this);
+    this.prompt.listen();
     this.term = new TerminalPanel(this, $("#terminal"));
+    this.term.listen();
     this.host = new Host(this);
     this.input = $("#input");
     this.input.addEventListener("keydown", (e) => this.onKey(e));
@@ -726,11 +728,13 @@ class App {
     return Object.keys(km).filter((k) => km[k] === id).join(", ");
   }
 
-  run(id, ...args) {
+  // Run command `id`, with its one optional argument (a theme name for
+  // `theme.use`, …).
+  run(id, arg) {
     const c = this.commands.get(id);
     if (!c) { this.setStatus(`No command “${id}”`); return; }
     try {
-      const r = c.run(...args);
+      const r = c.run(arg);
       if (r && r.catch) r.catch((e) => this.report(`${id}: ${e.stack || e}`));
     } catch (e) { this.report(`${id}: ${e.stack || e}`); }
   }

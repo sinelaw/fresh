@@ -4,14 +4,16 @@
 export const session = { client: 0 };
 
 // A refused operation: `code` is the server's stable reason (see the
-// README's protocol section), `detail` its message for people.
-export class RpcError extends Error {
+// README's protocol section), `detail` its message for people, `message`
+// both with the operation, as an Error's message reads.
+export class RpcError {
   constructor(op, error) {
-    super(`${op}: ${error.message}`);
     this.op = op;
     this.code = error.code;
     this.detail = error.message;
+    this.message = `${op}: ${error.message}`;
   }
+  toString() { return this.message; }
 }
 
 // Operations that change documents or files. A client's are sent one at a

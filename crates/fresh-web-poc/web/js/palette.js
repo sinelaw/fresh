@@ -22,6 +22,10 @@ export class Palette {
     this.sel = 0;
     this.spec = null;
     this.seq = 0;
+  }
+
+  // Take the input's events (once, after `new`).
+  listen() {
     this.input.addEventListener("input", () => this.changed());
     this.input.addEventListener("keydown", (e) => this.key(e));
     this.input.addEventListener("blur", () => setTimeout(() => { if (this.spec && document.activeElement !== this.input) this.cancel(); }, 150));

@@ -56,6 +56,18 @@ export function byteToIdx(s, b) {
 }
 export function idxToByte(s, idx) { return byteLen(s.slice(0, idx)); }
 
+// The byte start of each line, for lines of byte lengths `lens` starting
+// at byte `start`.
+function lineStarts(start, lens) {
+  const starts = [];
+  let b = start;
+  for (const n of lens) {
+    starts.push(b);
+    b += n + 1;
+  }
+  return starts;
+}
+
 // The text of a buffer as lines, with each line's byte length cached and
 // its byte start kept. An edit re-measures only the lines it touches; the
 // starts after them move by a sum, not a re-measure.
@@ -71,8 +83,7 @@ class Lines {
     if (!eof && lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
     this.lines = lines;
     this.lens = lines.map(byteLen);
-    this.starts = new Array(lines.length);
-    this.recount(0);
+    this.starts = lineStarts(start, this.lens);
   }
   recount(from) {
     let b = from === 0 ? this.start : this.starts[from - 1] + this.lens[from - 1] + 1;

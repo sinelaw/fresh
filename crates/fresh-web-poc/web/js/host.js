@@ -138,11 +138,12 @@ export class Host {
     }
   }
 
-  async load(list) {
-    for (const name of list) {
+  // Activate `plugins` ([{name, activate}], see plugins/index.js) in order;
+  // one that throws is reported and the rest still load.
+  async load(plugins) {
+    for (const { name, activate } of plugins) {
       try {
-        const mod = await import(`../plugins/${name}.js`);
-        await mod.activate(this.api(name));
+        await activate(this.api(name));
         this.plugins.push(name);
       } catch (e) {
         this.app.report(`plugin ${name}: ${e.stack || e}`);
@@ -168,7 +169,7 @@ export class Host {
       settings: app.settings,
       commands: {
         register: (id, spec) => app.commands.set(id, { ...spec, source: name }),
-        run: (id, ...args) => app.run(id, ...args),
+        run: (id, arg) => app.run(id, arg),
         all: () => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: !!c.hidden })),
       },
       keys: {

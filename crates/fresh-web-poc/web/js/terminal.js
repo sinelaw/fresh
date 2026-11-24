@@ -46,6 +46,11 @@ class Term {
     this.fit = new FitAddon.FitAddon();
     this.xt.loadAddon(this.fit);
     this.xt.open(this.el);
+  }
+
+  // Wire the terminal to the server and the panel (once, after `new`).
+  listen() {
+    const panel = this.panel;
     this.xt.onData((data) => rpc("term.input", { term: this.id, data }));
     this.xt.onBinary((data) => rpc("term.input", { term: this.id, data }));
     this.xt.onResize(({ cols, rows }) => rpc("term.resize", { term: this.id, cols, rows }).catch(() => {}));
@@ -97,6 +102,10 @@ export class TerminalPanel {
     this.terms = new Map();
     this.current = null;
     this.visible = false;
+  }
+
+  // Refit the terminals as the panel resizes (once, after `new`).
+  listen() {
     new ResizeObserver(() => this.refit()).observe(this.screens);
   }
 
@@ -109,6 +118,7 @@ export class TerminalPanel {
   async add(id) {
     if (this.terms.has(id)) return this.terms.get(id);
     const t = new Term(this, id);
+    t.listen();
     this.terms.set(id, t);
     await t.attach();
     if (!this.current) this.select(id);

@@ -18,7 +18,12 @@ const KINDS = ["overlays", "conceals", "inlines", "lines", "nodes", "gutters"];
 
 export class Decor {
   constructor() {
-    for (const k of KINDS) this[k] = [];
+    this.overlays = [];
+    this.conceals = [];
+    this.inlines = [];
+    this.lines = [];
+    this.nodes = [];
+    this.gutters = [];
     this.diags = [];
     this.gen = 0;
   }
