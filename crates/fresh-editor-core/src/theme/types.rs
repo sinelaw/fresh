@@ -4831,6 +4831,60 @@ mod tests {
         }
     }
 
+    /// Issue #1900: the selection has to be seen where it starts — on the
+    /// cursor line — and on a 256-color terminal as well as a truecolor one.
+    ///
+    /// The truecolor separation between `editor.selection_bg` and the two
+    /// grounds it is drawn on (`editor.bg`, `editor.current_line_bg`) is the
+    /// theme author's design. 256-color quantization may coarsen it but must
+    /// not erase it: the painted selection keeps at least that separation, up
+    /// to [`MIN_BRIGHTNESS_DELTA`]. On master `high-contrast` — the default
+    /// theme — painted its selection `#00005F` against the cursor line's
+    /// `#121212`, 0.6 apart in luma where truecolor has 40: on a plain
+    /// `xterm-256color`/tmux session a selection simply did not show.
+    #[test]
+    fn test_builtin_selection_survives_256_color() {
+        use crate::color_support::{painted_rgb, ColorCapability};
+
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            let Some(selection) = painted_rgb(theme.selection_bg, ColorCapability::TrueColor)
+            else {
+                continue; // A terminal-palette selection (reverse video) is the terminal's.
+            };
+            let painted_selection = painted_rgb(theme.selection_bg, ColorCapability::Color256)
+                .expect("an RGB colour quantizes to a palette entry");
+
+            for (name, ground) in [
+                ("editor background", theme.editor_bg),
+                ("current line background", theme.current_line_bg),
+            ] {
+                let Some(ground_rgb) = painted_rgb(ground, ColorCapability::TrueColor) else {
+                    continue;
+                };
+                let painted_ground = painted_rgb(ground, ColorCapability::Color256)
+                    .expect("an RGB colour quantizes to a palette entry");
+                let designed = (brightness(selection) - brightness(ground_rgb)).abs();
+                let painted = (brightness(painted_selection) - brightness(painted_ground)).abs();
+                let required = designed.min(MIN_BRIGHTNESS_DELTA);
+                assert!(
+                    painted >= required,
+                    "Theme '{}': at 256 colours the selection {:?} is only {:.1} apart from the \
+                     {} {:?} (truecolor has {:.1}; need {:.1}) — quantization erased the \
+                     selection (#1900)",
+                    builtin.name,
+                    painted_selection,
+                    painted,
+                    name,
+                    painted_ground,
+                    designed,
+                    required
+                );
+            }
+        }
+    }
+
     /// The counterpart to the visibility rule above: a highlight far enough
     /// from `editor.bg` to be seen necessarily sits where syntax foregrounds
     /// live, so some cells collide. `repaired_fg` repairs those, and this

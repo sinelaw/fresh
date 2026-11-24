@@ -30,7 +30,7 @@
     "file_status_added_fg": [133, 153, 0],
     "blame_header_fg": [253, 246, 227],
     "blame_header_bg": [88, 110, 117],
-    "semantic_highlight_bg": [87, 87, 87],
+    "semantic_highlight_bg": [96, 96, 96],
     "tour_step_bg": [7, 54, 66],
     "tab_active_fg": [253, 246, 227],
     "tab_active_bg": [38, 139, 210],
