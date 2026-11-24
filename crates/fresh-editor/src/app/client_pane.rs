@@ -88,6 +88,11 @@ pub struct PaneRender {
     pub gutter: u16,
     /// The caret's cell, when the buffer shows one.
     pub caret: Option<(u16, u16)>,
+    /// Whether the cells already draw the caret: the pane has several
+    /// cursors, and the editor painted every one of them as a block, so a
+    /// client's own caret on top would draw the primary unlike the others
+    /// (#620). The caret's cell still anchors popups and the input method.
+    pub caret_in_cells: bool,
     /// Where the window starts and how long the buffer is, in bytes — the
     /// scroll position a client shows.
     pub top_byte: usize,
@@ -229,7 +234,7 @@ impl Editor {
     /// view already swapped in.
     fn render_leaf_at(&mut self, leaf: LeafId, area: Rect) -> Option<PaneRender> {
         let theme = self.theme.read().unwrap().clone();
-        let session_mode = self.session_mode || !self.software_cursor_only;
+        let hardware_cursor = self.session_mode || !self.software_cursor_only;
         let highlight_current_column = self.config.editor.highlight_current_column;
         let style = crate::view::ui::RenderStyle {
             theme: &theme,
@@ -246,7 +251,7 @@ impl Editor {
         let buffer = win.pane_buffer(leaf)?;
         let mut cells = ratatui::buffer::Buffer::empty(area);
         let mut cell_theme_map = Vec::new();
-        let (rows, mut caret) =
+        let (rows, mut caret, caret_by_terminal) =
             win.buffers
                 .with_buffer_and_split(buffer, leaf, |state, view| {
                     crate::view::ui::SplitRenderer::render_view(
@@ -255,7 +260,7 @@ impl Editor {
                         view,
                         area,
                         style,
-                        session_mode,
+                        hardware_cursor,
                         highlight_current_column,
                         &mut cell_theme_map,
                         area.width,
@@ -271,7 +276,16 @@ impl Editor {
         if win.is_terminal_buffer(buffer) && !win.split_terminal_scrollback(leaf, buffer) {
             caret = win.paint_terminal_grid(&mut cells, leaf, buffer, area, false);
         }
-        crate::app::shell_host::settle_pane_view(self, window, leaf, area, rows, caret, true);
+        crate::app::shell_host::settle_pane_view(
+            self,
+            window,
+            leaf,
+            area,
+            rows,
+            caret,
+            true,
+            caret_by_terminal,
+        );
         let win = self.windows.get(&window)?;
         let state = win.buffers.get(&buffer)?;
         let gutter = state.margins.left_total_width() as u16;
@@ -291,6 +305,7 @@ impl Editor {
             cells,
             gutter,
             caret,
+            caret_in_cells: !caret_by_terminal,
             top_byte,
             len,
             top_line,

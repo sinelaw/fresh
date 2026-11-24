@@ -41,6 +41,11 @@ pub(crate) struct LineRenderOutput {
     pub last_line_end: Option<LastLineEnd>,
     pub content_lines_rendered: usize,
     pub view_line_mappings: Vec<ViewLineMapping>,
+    /// Whether the rows painted the primary cursor as a block themselves.
+    /// When the editor draws the primary (`primary_cursor_by_terminal` is
+    /// false) and this is false, the caret sits where no row drew a cell for
+    /// it, and the paint marks that cell instead.
+    pub primary_cursor_painted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,10 +77,11 @@ pub(crate) struct LineRenderInput<'a> {
     pub left_column: usize,
     /// Whether to show relative line numbers (distance from cursor)
     pub relative_line_numbers: bool,
-    /// Skip REVERSED style on the primary cursor (session mode or non-block cursor style)
-    pub session_mode: bool,
-    /// No hardware cursor: always render software cursor indicators
-    pub software_cursor_only: bool,
+    /// The terminal's hardware cursor draws the primary cursor: true only
+    /// when the frontend has one and this is the pane's only cursor. Every
+    /// other cursor — and the primary otherwise — is painted by the editor
+    /// (see `char_style::CursorPaint`).
+    pub primary_cursor_by_terminal: bool,
     /// Whether to show line numbers in the gutter
     pub show_line_numbers: bool,
     /// Whether the gutter shows byte offsets instead of line numbers
@@ -108,6 +114,9 @@ struct CursorTracker {
     x: u16,
     y: u16,
     found: bool,
+    /// Whether the pass painted the primary cursor as a block itself —
+    /// on its character, its line break, or past the end of its line.
+    painted: bool,
 }
 
 impl CursorTracker {
@@ -499,8 +508,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         estimated_lines,
         left_column,
         relative_line_numbers,
-        session_mode,
-        software_cursor_only,
+        primary_cursor_by_terminal,
         show_line_numbers,
         byte_offset_mode,
         show_tilde,
@@ -880,7 +888,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 max_chars_to_process,
                 lsp_waiting,
                 is_active,
-                session_mode,
+                primary_cursor_by_terminal,
                 is_on_cursor_line,
                 highlight_current_line,
                 indentation_guide,
@@ -967,7 +975,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     buffer_len: state.buffer.len(),
                     theme,
                     is_active,
-                    software_cursor_only,
+                    primary_cursor_by_terminal,
                     gutter_width,
                     left_col,
                     col_offset: cells.col_offset,
@@ -1254,6 +1262,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         last_line_end,
         content_lines_rendered: lines_rendered,
         view_line_mappings,
+        primary_cursor_painted: cursor.painted,
     }
 }
 
@@ -1316,7 +1325,7 @@ struct LineEndCursorInput<'a> {
     buffer_len: usize,
     theme: &'a Theme,
     is_active: bool,
-    software_cursor_only: bool,
+    primary_cursor_by_terminal: bool,
     gutter_width: usize,
     left_col: usize,
     /// Visual column after the last processed character.
@@ -1400,14 +1409,19 @@ fn place_line_end_cursor(
         }
     }
 
-    // When software_cursor_only, always add the indicator space because
-    // the backend does not render a hardware cursor.  In terminal mode,
-    // the primary cursor at end-of-line relies on the hardware cursor.
-    let should_add_indicator = if input.is_active {
-        input.software_cursor_only || !is_primary_at_end
-    } else {
-        true
-    };
+    // Every cursor here the terminal does not draw gets the indicator: the
+    // secondaries always, the primary unless the hardware cursor draws it.
+    //
+    // A primary on a virtual line below the buffer's end has this byte but is
+    // drawn rows further down (`caret_cell` floats it there), so its block is
+    // not drawn here: the paint marks the caret's own cell instead.
+    let primary_floats_below =
+        is_primary_at_end && input.selection.primary_virtual_lines > 0 && input.is_active;
+    let should_add_indicator = !primary_floats_below
+        && (!input.is_active || !input.primary_cursor_by_terminal || !is_primary_at_end);
+    if should_add_indicator && is_primary_at_end && input.is_active {
+        cursor.painted = true;
+    }
     if should_add_indicator {
         if virtual_pad > 0 {
             push_span_with_map(

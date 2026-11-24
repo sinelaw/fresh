@@ -926,6 +926,7 @@ fn view_event(
         "count": count,
         "gutter": r.gutter,
         "caret": r.caret.map(|(c, row)| json!([c, row])),
+        "caretInCells": r.caret_in_cells,
         "top": r.top_byte,
         "len": r.len,
         "topLine": r.top_line,

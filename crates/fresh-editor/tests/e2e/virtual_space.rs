@@ -763,7 +763,9 @@ fn test_backspace_in_virtual_space_steps_back_with_multiple_cursors() {
             .unwrap();
     }
     harness.render().unwrap();
-    assert_eq!(harness.screen_cursor_position(), (x1 + 4, y1));
+    // With two cursors the editor paints both as blocks and the terminal
+    // draws none, so the cursor is the painted cell on its row.
+    assert_eq!(painted_cursor_columns(&harness, y1), vec![x1 + 4]);
 
     // Deletes nothing, moves one column left — and must actually happen.
     harness
@@ -771,5 +773,17 @@ fn test_backspace_in_virtual_space_steps_back_with_multiple_cursors() {
         .unwrap();
     harness.assert_buffer_content("ab\nxy\nzz");
     harness.render().unwrap();
-    assert_eq!(harness.screen_cursor_position(), (x1 + 3, y1));
+    assert_eq!(painted_cursor_columns(&harness, y1), vec![x1 + 3]);
+}
+
+/// Columns of `row` the editor painted as a cursor block.
+fn painted_cursor_columns(harness: &EditorTestHarness, row: u16) -> Vec<u16> {
+    use ratatui::style::Modifier;
+    (0..harness.buffer().area.width)
+        .filter(|&x| {
+            harness
+                .get_cell_style(x, row)
+                .is_some_and(|s| s.add_modifier.contains(Modifier::REVERSED))
+        })
+        .collect()
 }

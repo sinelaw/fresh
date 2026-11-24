@@ -185,7 +185,10 @@ class EditorView {
     // window typing must not leave a second caret blinking in the text.
     const typing = document.activeElement === kb && document.hasFocus() && !panelHasKeyboard();
     const show = !!(d && d.caret && active && !core.ask && typing);
-    this.caret.hidden = !show;
+    // With several cursors the cells already draw every one of them, the
+    // primary included, as the same block; a caret of ours on top would make
+    // the primary look unlike the rest. The input method still sits there.
+    this.caret.hidden = !show || !!d.caretInCells;
     this.root.classList.toggle("active", !!active);
     if (!show) return;
     this.caret.style.left = d.caret[0] * CW + "px";

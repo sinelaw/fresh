@@ -62,6 +62,10 @@ pub(crate) struct BufferLayoutOutput {
     pub gutter_width: usize,
     pub buffer_ends_with_newline: bool,
     pub selection: SelectionContext,
+    /// The terminal's hardware cursor draws the primary cursor (one cursor,
+    /// and the frontend has a hardware cursor). False when the editor paints
+    /// it, and the display list's cursor is then hidden.
+    pub primary_cursor_by_terminal: bool,
 }
 
 /// The gutter one pane draws this frame.
@@ -197,8 +201,7 @@ pub(crate) fn compute_buffer_layout(
     highlight_context_bytes: usize,
     relative_line_numbers: bool,
     use_terminal_bg: bool,
-    session_mode: bool,
-    software_cursor_only: bool,
+    hardware_cursor: bool,
     show_line_numbers: bool,
     highlight_current_line: bool,
     fold_indicators_visible: bool,
@@ -212,6 +215,14 @@ pub(crate) fn compute_buffer_layout(
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
     crate::view::ui::split_rendering::instrument::count_buffer_layout();
+
+    // **Who draws the primary cursor, decided once for the pane.** The
+    // terminal does when there is a hardware cursor and the primary is the
+    // only cursor; otherwise the editor paints every cursor as a block and
+    // the pane hides the hardware one (see `char_style::CursorPaint`). The
+    // rows, the caret's fallback mark and the display list's cursor all read
+    // this one answer.
+    let primary_cursor_by_terminal = hardware_cursor && cursors.count() == 1;
 
     // Compute effective editor background: terminal default or theme-defined
     let effective_editor_bg = if use_terminal_bg {
@@ -498,8 +509,7 @@ pub(crate) fn compute_buffer_layout(
         estimated_lines,
         left_column: row_left_column,
         relative_line_numbers,
-        session_mode,
-        software_cursor_only,
+        primary_cursor_by_terminal,
         show_line_numbers,
         byte_offset_mode,
         show_tilde,
@@ -533,6 +543,7 @@ pub(crate) fn compute_buffer_layout(
         gutter_width,
         buffer_ends_with_newline,
         selection,
+        primary_cursor_by_terminal,
     }
 }
 
@@ -603,7 +614,6 @@ pub(crate) fn draw_buffer_in_split(
     theme: &Theme,
     ansi_background: Option<&AnsiBackground>,
     background_fade: f32,
-    software_cursor_only: bool,
     rulers: &[usize],
     compose_column_guides: Option<Vec<u16>>,
     highlight_current_column: bool,
@@ -624,6 +634,8 @@ pub(crate) fn draw_buffer_in_split(
         effective_editor_bg,
     );
 
+    let primary_cursor_by_terminal = layout_output.primary_cursor_by_terminal;
+    let primary_cursor_painted = layout_output.render_output.primary_cursor_painted;
     let mut lines = layout_output.render_output.lines;
     let background_x_offset = layout_output.left_column;
 
@@ -729,14 +741,18 @@ pub(crate) fn draw_buffer_in_split(
     }
 
     if let Some((screen_x, screen_y)) = caret {
-        // When software_cursor_only the backend has no hardware cursor, so
-        // ensure the cell at the cursor position always has REVERSED style.
-        if software_cursor_only {
+        // The editor draws the primary cursor here (no hardware cursor, or
+        // several cursors — see `char_style::CursorPaint`), but the caret sits
+        // where no row painted a cell for it: mark that cell. A cell a row
+        // already painted as the cursor is left alone; re-inverting it would
+        // undo the cursor inside a reverse-video selection.
+        if !primary_cursor_by_terminal && !primary_cursor_painted {
             let area = buf.area;
             if screen_x < area.x + area.width && screen_y < area.y + area.height {
                 let cell = &mut buf[(screen_x, screen_y)];
+                // The glyph stays: this cell can hold text (a caret snapped
+                // next to concealed bytes), and the block is drawn around it.
                 if !cell.modifier.contains(Modifier::REVERSED) {
-                    cell.set_char(' ');
                     cell.fg = theme.editor_fg;
                     cell.bg = theme.editor_bg;
                     cell.modifier.insert(Modifier::REVERSED);

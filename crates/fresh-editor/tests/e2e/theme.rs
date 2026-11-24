@@ -351,7 +351,7 @@ fn test_theme_selection_colors() {
     assert_eq!(dark_theme.selection_bg, Color::Rgb(50, 50, 60));
 
     // Light theme has a lighter selection background
-    assert_eq!(light_theme.selection_bg, Color::Rgb(225, 232, 242));
+    assert_eq!(light_theme.selection_bg, Color::Rgb(222, 230, 248));
 }
 
 /// Regression test for issue #2033: LSP-hover body text was rendered with

@@ -1312,7 +1312,9 @@ pub struct EditorConfig {
     pub terminal_auto_title: bool,
 
     /// Cursor shape: block, bar or underline, blinking or steady.
-    /// Default: the terminal's own style.
+    /// Default: the terminal's own style. With several cursors, all
+    /// of them, the primary included, are drawn as steady blocks so they look
+    /// alike: a terminal can draw only one cursor in this shape.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_style: CursorStyle,

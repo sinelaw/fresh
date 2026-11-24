@@ -1667,6 +1667,12 @@ pub struct Editor {
     /// pane jumps animate unconditionally; same-pane jumps animate when
     /// the cursor moved more than two rows or at least ten columns.
     pub(crate) previous_cursor_screen_pos: Option<((u16, u16), LeafId)>,
+    /// Where the last frame's caret is when the frame drew it into its own
+    /// cells and showed no hardware cursor (several cursors — see
+    /// `char_style::CursorPaint`). The frontend parks the hidden hardware
+    /// cursor here after drawing ([`Editor::hidden_caret`]), so input methods
+    /// and screen readers that follow it still find the caret.
+    pub(crate) hidden_caret: Option<(u16, u16)>,
     /// ID of the most recent cursor-jump animation, kept so successive jumps
     /// cancel the prior one instead of stacking trail effects.
     pub(crate) cursor_jump_animation: Option<crate::view::animation::AnimationId>,

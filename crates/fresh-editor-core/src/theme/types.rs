@@ -1579,10 +1579,12 @@ pub struct Theme {
     pub cursor: Color,
     pub inactive_cursor: Color,
     pub selection_bg: Color,
-    /// SGR text attributes layered onto selected cells. Empty for
-    /// traditional themes; native-palette themes set
-    /// `Modifier::REVERSED` so the selection inverts the terminal's
-    /// current fg/bg (vim/neovim Visual, helix term16, htop, less).
+    /// SGR text attributes layered onto selected cells. Empty for the
+    /// built-in themes. A user theme may set `Modifier::REVERSED` so the
+    /// selection inverts the terminal's current fg/bg (vim/neovim Visual,
+    /// less); the built-in `terminal` theme no longer does, because a
+    /// terminal's inverting block cursor cancels it on the selected cell
+    /// under the cursor.
     pub selection_modifier: Modifier,
     pub current_line_bg: Color,
     pub line_number_fg: Color,
@@ -3453,9 +3455,14 @@ mod tests {
         assert_eq!(terminal.editor_bg, Color::Reset);
         assert_eq!(terminal.editor_fg, Color::Reset);
         assert_eq!(terminal.terminal_bg, Color::Reset);
-        // Adaptive accents use SGR text attributes so they invert/emphasise
+        // The selection is a colour from the terminal's own palette, not
+        // reverse video: a terminal draws its block cursor by inverting the
+        // cell, and on a reverse-video selection the two inversions cancel —
+        // the selected character under the cursor read as unselected.
+        assert_eq!(terminal.selection_bg, Color::Blue);
+        assert!(!terminal.selection_modifier.contains(Modifier::REVERSED));
+        // The occurrence highlight still uses SGR attributes, which emphasise
         // against whatever fg/bg the terminal already has.
-        assert!(terminal.selection_modifier.contains(Modifier::REVERSED));
         assert!(terminal
             .semantic_highlight_modifier
             .contains(Modifier::BOLD));
@@ -3739,10 +3746,11 @@ mod tests {
         let terminal = Theme::load_builtin(THEME_TERMINAL).expect("Terminal theme must exist");
         // Overlay-driven highlights pick up the same modifier the
         // direct-paint path uses, keyed by bg theme key. The terminal theme
-        // still writes these with the attribute-only keys.
+        // still writes its highlight with the attribute-only key; its
+        // selection is a plain palette colour now.
         assert!(terminal
             .resolve_modifier_key("editor.selection_bg")
-            .contains(Modifier::REVERSED));
+            .is_empty());
         assert!(terminal
             .resolve_modifier_key("ui.semantic_highlight_bg")
             .contains(Modifier::BOLD));
@@ -4831,6 +4839,60 @@ mod tests {
         }
     }
 
+    /// Issue #1900: the selection has to be seen where it starts — on the
+    /// cursor line — and on a 256-color terminal as well as a truecolor one.
+    ///
+    /// The truecolor separation between `editor.selection_bg` and the two
+    /// grounds it is drawn on (`editor.bg`, `editor.current_line_bg`) is the
+    /// theme author's design. 256-color quantization may coarsen it but must
+    /// not erase it: the painted selection keeps at least that separation, up
+    /// to [`MIN_BRIGHTNESS_DELTA`]. On master `high-contrast` — the default
+    /// theme — painted its selection `#00005F` against the cursor line's
+    /// `#121212`, 0.6 apart in luma where truecolor has 40: on a plain
+    /// `xterm-256color`/tmux session a selection simply did not show.
+    #[test]
+    fn test_builtin_selection_survives_256_color() {
+        use crate::color_support::{painted_rgb, ColorCapability};
+
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            let Some(selection) = painted_rgb(theme.selection_bg, ColorCapability::TrueColor)
+            else {
+                continue; // A terminal-palette selection (reverse video) is the terminal's.
+            };
+            let painted_selection = painted_rgb(theme.selection_bg, ColorCapability::Color256)
+                .expect("an RGB colour quantizes to a palette entry");
+
+            for (name, ground) in [
+                ("editor background", theme.editor_bg),
+                ("current line background", theme.current_line_bg),
+            ] {
+                let Some(ground_rgb) = painted_rgb(ground, ColorCapability::TrueColor) else {
+                    continue;
+                };
+                let painted_ground = painted_rgb(ground, ColorCapability::Color256)
+                    .expect("an RGB colour quantizes to a palette entry");
+                let designed = (brightness(selection) - brightness(ground_rgb)).abs();
+                let painted = (brightness(painted_selection) - brightness(painted_ground)).abs();
+                let required = designed.min(MIN_BRIGHTNESS_DELTA);
+                assert!(
+                    painted >= required,
+                    "Theme '{}': at 256 colours the selection {:?} is only {:.1} apart from the \
+                     {} {:?} (truecolor has {:.1}; need {:.1}) — quantization erased the \
+                     selection (#1900)",
+                    builtin.name,
+                    painted_selection,
+                    painted,
+                    name,
+                    painted_ground,
+                    designed,
+                    required
+                );
+            }
+        }
+    }
+
     /// The counterpart to the visibility rule above: a highlight far enough
     /// from `editor.bg` to be seen necessarily sits where syntax foregrounds
     /// live, so some cells collide. `repaired_fg` repairs those, and this
@@ -5212,13 +5274,13 @@ mod tests {
 
     #[test]
     fn recoloring_keeps_attributes_set_by_an_attribute_only_key() {
-        // `terminal` draws its selection with reverse video, set through
+        // A selection drawn with reverse video through the attribute-only
         // `editor.selection_modifier`; recoloring the selection keeps it.
         let theme = Theme::from_json(
             r#"{
                 "name": "recolored",
                 "extends": "builtin://terminal",
-                "editor": { "selection_bg": "Blue" },
+                "editor": { "selection_modifier": ["reversed"], "selection_bg": "Blue" },
                 "ui": { "semantic_highlight_bg": "Blue" }
             }"#,
         )

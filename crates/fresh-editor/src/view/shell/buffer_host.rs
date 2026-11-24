@@ -68,6 +68,14 @@ pub struct PaneView {
     /// while another surface owns the keyboard or a modal is up, when the
     /// caret still has a cell (a popup anchors to it) but is not on screen.
     pub caret_shown: bool,
+    /// Whether the editor painted the caret itself, as a block in the rows —
+    /// several cursors, or a frontend with no hardware cursor (see
+    /// `char_style::CursorPaint`). The leaf then places the display list's
+    /// cursor *hidden*: a terminal cursor drawn on top would make the primary
+    /// unlike the others, or cancel the block out, but input methods and
+    /// screen readers still find it at the caret. Default (false): the
+    /// terminal draws it.
+    pub caret_painted_by_editor: bool,
     /// The buffer the rows show, and its version when they were drawn. An
     /// edit since then moved the bytes under the rows, and keyboard motion
     /// walks them only mapped through it (see [`Self::mapped`]).
@@ -326,7 +334,11 @@ impl RenderObject for BufferHost {
         if let Some((x, y)) = view.caret.filter(|_| view.caret_shown) {
             let at = Point::new(g.rect.x + i32::from(x), g.rect.y + i32::from(y));
             if g.clip.contains(at) {
-                out.set_cursor(at);
+                if view.caret_painted_by_editor {
+                    out.set_hidden_cursor(at);
+                } else {
+                    out.set_cursor(at);
+                }
             }
         }
     }
@@ -481,6 +493,7 @@ impl PaneHandle {
         top_byte: usize,
         caret: Option<(u16, u16)>,
         caret_shown: bool,
+        caret_by_terminal: bool,
         drawn_from: Option<(BufferId, u64)>,
     ) {
         *self.view.borrow_mut() = PaneView {
@@ -491,6 +504,7 @@ impl PaneHandle {
             rows,
             caret,
             caret_shown,
+            caret_painted_by_editor: !caret_by_terminal,
             drawn_from,
         };
     }
@@ -531,6 +545,7 @@ impl PaneHandle {
         let mut v = self.view.borrow_mut();
         v.caret = None;
         v.caret_shown = false;
+        v.caret_painted_by_editor = false;
     }
 }
 
@@ -775,6 +790,7 @@ mod tests {
             0,
             None,
             false,
+            true,
             None,
         );
     }
@@ -869,6 +885,17 @@ mod tests {
             );
             ui.spec().cursor.map(|c| (c.pos.x, c.pos.y))
         };
+        let visible_of = |h: &PaneHandle| {
+            let mut ui: Ui<()> = Ui::new();
+            ui.frame(
+                col().children([
+                    fresh_ui::text("strip").h(fresh_ui::Sizing::Cells(1)),
+                    h.node(),
+                ]),
+                fresh_ui::Size::new(40, 10),
+            );
+            ui.spec().cursor.map(|c| c.visible)
+        };
         assert_eq!(cursor_of(&h), None, "nothing settled, nothing placed");
 
         h.settle(
@@ -878,6 +905,7 @@ mod tests {
             None,
             0,
             Some((3, 2)),
+            true,
             true,
             None,
         );
@@ -895,6 +923,7 @@ mod tests {
             0,
             Some((3, 2)),
             false,
+            true,
             None,
         );
         assert_eq!(
@@ -903,6 +932,31 @@ mod tests {
             "a caret the pane does not show — the keyboard is elsewhere — is a \
              cell a popup anchors to, not a cursor"
         );
+
+        // #620: with several cursors the editor paints every one of them,
+        // the primary included, so the terminal draws none on top.
+        h.settle(
+            Rect::new(0, 1, 40, 9),
+            vec![row(0, "alpha")],
+            0,
+            None,
+            0,
+            Some((3, 2)),
+            true,
+            false,
+            None,
+        );
+        assert_eq!(
+            cursor_of(&h),
+            Some((3, 3)),
+            "a caret the editor painted itself is still where the cursor is parked"
+        );
+        assert_eq!(
+            visible_of(&h),
+            Some(false),
+            "but the terminal draws none on top of it"
+        );
+        assert_eq!(h.view().caret, Some((3, 2)), "popups still anchor to it");
     }
 
     /// **A pane the pass did not settle shows no caret.** Its rows stay —
@@ -918,6 +972,7 @@ mod tests {
             None,
             0,
             Some((3, 2)),
+            true,
             true,
             None,
         );
@@ -940,6 +995,7 @@ mod tests {
             42,
             None,
             false,
+            true,
             None,
         );
         let obj = (h.factory)();

@@ -35,6 +35,7 @@ pub mod csharp_language_coherence;
 pub mod csi_u_session_input;
 pub mod ctrl_j_legacy_terminal;
 pub mod ctrl_slash_legacy_terminal;
+pub mod cursor_paint_model;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
 pub mod daemon_quit_dialog;

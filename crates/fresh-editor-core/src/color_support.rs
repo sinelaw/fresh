@@ -132,45 +132,59 @@ impl ColorCapability {
 /// Convert an RGB color to the nearest 256-color palette index
 ///
 /// The 256-color palette consists of:
-/// - 0-15: Standard ANSI colors (basic 16 colors)
+/// - 0-15: Standard ANSI colors (basic 16 colors) — never chosen here, their
+///   RGB belongs to the user's terminal palette
 /// - 16-231: 6x6x6 color cube (216 colors)
 /// - 232-255: Grayscale ramp (24 shades)
+///
+/// Each channel snaps to its *nearest* cube level, and the result is compared
+/// with the nearest grey on the ramp; whichever is closer wins. That is what
+/// xterm and tmux do. Flooring the channels instead (as this used to) threw
+/// dark, slightly tinted colours to a far-away saturated entry: the default
+/// theme's `#323C5A` selection became `#00005F`, which sits 1.04:1 from the
+/// editor background — a selection nobody could see (issue #1900).
 fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
-    // Check if it's close to grayscale
-    let gray_threshold = 8;
-    if r.abs_diff(g) < gray_threshold && g.abs_diff(b) < gray_threshold {
-        // Use grayscale ramp (232-255)
-        let gray = (r as u16 + g as u16 + b as u16) / 3;
-        if gray < 8 {
-            return 16; // Use black from color cube
+    // Nearest cube level for one channel. The levels are 0, 95, 135, 175,
+    // 215, 255: the midpoints are 47.5, 115, then every 40 from there.
+    fn cube_level(v: u8) -> u8 {
+        if v < 48 {
+            0
+        } else if v < 115 {
+            1
+        } else {
+            (v - 35) / 40
         }
-        if gray > 248 {
-            return 231; // Use white from color cube
-        }
-        // Map to grayscale ramp (232-255, 24 shades = indices 0-23)
-        // Formula maps gray 8-248 to offset 0-23, avoiding u8 overflow
-        return 232 + ((gray - 8) * 23 / 240) as u8;
+    }
+    fn distance((r1, g1, b1): (u8, u8, u8), (r2, g2, b2): (u8, u8, u8)) -> u32 {
+        let d = |a: u8, b: u8| (a as i32 - b as i32).pow(2) as u32;
+        d(r1, r2) + d(g1, g2) + d(b1, b2)
     }
 
-    // Map to 6x6x6 color cube (indices 16-231)
-    // Each RGB component maps to 0-5
-    let r_idx = if r < 48 {
-        0
-    } else {
-        ((r as u16 - 35) * 5 / 220).min(5) as u8
-    };
-    let g_idx = if g < 48 {
-        0
-    } else {
-        ((g as u16 - 35) * 5 / 220).min(5) as u8
-    };
-    let b_idx = if b < 48 {
-        0
-    } else {
-        ((b as u16 - 35) * 5 / 220).min(5) as u8
-    };
+    let (qr, qg, qb) = (cube_level(r), cube_level(g), cube_level(b));
+    let cube_rgb = (
+        CUBE_VALUES[qr as usize],
+        CUBE_VALUES[qg as usize],
+        CUBE_VALUES[qb as usize],
+    );
+    let cube_idx = 16 + 36 * qr + 6 * qg + qb;
+    if cube_rgb == (r, g, b) {
+        return cube_idx;
+    }
 
-    16 + 36 * r_idx + 6 * g_idx + b_idx
+    // Nearest grey on the ramp (8, 18, ..., 238).
+    let average = (r as u16 + g as u16 + b as u16) / 3;
+    let grey_step = if average > 238 {
+        23
+    } else {
+        (average.saturating_sub(3) / 10) as u8
+    };
+    let grey = 8 + 10 * grey_step;
+
+    if distance((grey, grey, grey), (r, g, b)) < distance(cube_rgb, (r, g, b)) {
+        232 + grey_step
+    } else {
+        cube_idx
+    }
 }
 
 /// Convert an RGB color to the nearest basic 16 ANSI color
@@ -708,20 +722,51 @@ mod tests {
         assert_ne!(idx_248, 0, "RGB(248,248,248) overflowed to 0");
     }
 
+    /// Issue #1900: the default theme's selection `#323C5A` quantized to
+    /// `#00005F` (index 17) — a dark navy 1.04:1 from the background — while
+    /// `#444444` sits far closer. Quantization must pick the palette entry
+    /// actually nearest the colour, for every colour.
+    #[test]
+    fn test_rgb_to_256_picks_the_nearest_palette_entry() {
+        let distance = |(r1, g1, b1): (u8, u8, u8), (r2, g2, b2): (u8, u8, u8)| {
+            let d = |a: u8, b: u8| (a as i32 - b as i32).pow(2);
+            d(r1, r2) + d(g1, g2) + d(b1, b2)
+        };
+        assert_eq!(rgb_to_256(50, 60, 90), 238, "#323C5A should become #444444");
+        for r in (0..=255u8).step_by(5) {
+            for g in (0..=255u8).step_by(5) {
+                for b in (0..=255u8).step_by(5) {
+                    let got = distance(idx_to_rgb(rgb_to_256(r, g, b)), (r, g, b));
+                    let best = (16..=255u8)
+                        .map(|i| distance(idx_to_rgb(i), (r, g, b)))
+                        .min()
+                        .unwrap();
+                    assert_eq!(
+                        got,
+                        best,
+                        "({r},{g},{b}) -> {} is not the nearest entry",
+                        rgb_to_256(r, g, b)
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_rgb_to_256_grayscale_never_overflows() {
         // Property test: no grayscale value should ever produce index 0-15 (ANSI colors)
-        // or cause overflow. All grays should map to either:
-        // - 16 (black from color cube) for very dark
-        // - 231 (white from color cube) for very bright
-        // - 232-255 (grayscale ramp) for mid-range
+        // or cause overflow, and a grey must stay a grey — the ramp, or one of
+        // the cube's own greys (black, white, and the diagonal such as
+        // `#5F5F5F`) when that is nearer.
         for gray in 0..=255u8 {
             let idx = rgb_to_256(gray, gray, gray);
+            let (r, g, b) = idx_to_rgb(idx);
             assert!(
-                idx == 16 || idx == 231 || (232..=255).contains(&idx),
-                "Gray {} mapped to invalid index {}, expected 16, 231, or 232-255",
+                idx >= 16 && r == g && g == b,
+                "Gray {} mapped to index {} ({:?}), expected an achromatic palette entry",
                 gray,
-                idx
+                idx,
+                (r, g, b)
             );
         }
     }
@@ -882,21 +927,23 @@ mod tests {
         );
     }
 
-    /// Multiple dark theme backgrounds collapse to the same black (idx 16)
-    /// This documents a known limitation of rgb_to_256 mapping.
-    /// The contrast enforcement step fixes the *readability* issue even though
-    /// the backgrounds still collapse.
+    /// Dark theme backgrounds used to collapse to pure black (idx 16/17),
+    /// a limitation of the old floor-based `rgb_to_256` that this test once
+    /// documented. Nearest-entry quantization keeps each a dark grey of its
+    /// own, so a background and a slightly lighter band on it stay apart.
     #[test]
-    fn test_issue_1239_dark_backgrounds_collapse_to_black() {
-        // These are all conceptually different backgrounds but map to the same index
+    fn test_issue_1239_dark_backgrounds_keep_their_shade() {
         let solarized_bg = rgb_to_256(0, 43, 54);
         let nord_bg = rgb_to_256(46, 52, 64);
         let dracula_bg = rgb_to_256(40, 42, 54);
 
-        // All map to idx 16 or 17 (pure black or near-black)
-        assert!(solarized_bg <= 17, "solarized bg={}", solarized_bg);
-        assert!(nord_bg <= 17, "nord bg={}", nord_bg);
-        assert!(dracula_bg <= 17, "dracula bg={}", dracula_bg);
+        for (name, idx) in [
+            ("solarized", solarized_bg),
+            ("nord", nord_bg),
+            ("dracula", dracula_bg),
+        ] {
+            assert!(idx > 17, "{name} bg={idx} collapsed to black");
+        }
     }
 
     /// The lookup table must agree with the search it replaced, for every
