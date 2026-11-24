@@ -90,9 +90,14 @@ export class Palette {
     this.show({
       label: o.title || "",
       value: o.value || "",
+      // Items holding every typed word; those whose label starts with the
+      // first word come first, each group in the given order.
       source: (q) => {
         const t = q.toLowerCase().split(/\s+/).filter(Boolean);
-        return (o.items || []).filter((it) => t.every((x) => `${it.label} ${it.detail || ""}`.toLowerCase().includes(x)));
+        const hits = (o.items || []).filter((it) => t.every((x) => `${it.label} ${it.detail || ""}`.toLowerCase().includes(x)));
+        if (!t.length) return hits;
+        const lead = (it) => (it.label.toLowerCase().startsWith(t[0]) ? 0 : 1);
+        return hits.map((it, i) => [lead(it), i, it]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
       },
       onSelect: o.onChange,
       onAccept: (it) => it && o.onAccept?.(it),

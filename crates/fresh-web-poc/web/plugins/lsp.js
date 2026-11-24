@@ -31,13 +31,7 @@ export function activate(fresh) {
   const asList = (r) => (r == null ? [] : Array.isArray(r) ? r : [r]);
   const loc = (l) => ({ path: pathOf(l.uri || l.targetUri), range: l.range || l.targetSelectionRange });
 
-  const goto = async (path, range) => {
-    const b = await fresh.buffers.open(path);
-    if (!b) return;
-    const v = fresh.views.active();
-    const p = fresh.lsp.offset(b, range.start.line, range.start.character);
-    if (p != null) v.setCursor(p, { center: true });
-  };
+  const goto = (path, range) => fresh.buffers.open(path, { line: range.start.line + 1, column: range.start.character + 1 });
 
   // ---------------------------------------------------------------- navigation
 
@@ -206,12 +200,14 @@ export function activate(fresh) {
     });
   };
 
+  // Hover contents as text: markdown's code fences dropped (the popup is
+  // monospace already) and its rules shortened.
   const hoverText = (r) => {
     const c = r?.contents;
     if (!c) return null;
-    if (typeof c === "string") return c;
-    if (Array.isArray(c)) return c.map((x) => (typeof x === "string" ? x : x.value)).join("\n");
-    return c.value || null;
+    const md = typeof c === "string" ? c : Array.isArray(c) ? c.map((x) => (typeof x === "string" ? x : x.value)).join("\n\n") : c.value;
+    if (!md) return null;
+    return md.split("\n").filter((l) => !/^\s*```/.test(l)).map((l) => (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l) ? "───" : l)).join("\n").trim() || null;
   };
   fresh.hover.provide(async (b, pos) => {
     const diags = fresh.lsp.diagnostics(b).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
@@ -240,8 +236,10 @@ export function activate(fresh) {
     if (!local || !fresh.lsp.available(buffer)) return;
     const op = ops[0];
     if (op?.t !== "ins") return;
-    if (op.text === "(" || op.text === ",") setTimeout(signatureHelp, 50);
-    if (op.text === ".") setTimeout(completion, 50);
+    // The inserted text's first character: typing "(" inserts "()".
+    const ch = op.text[0];
+    if (ch === "(" || ch === ",") setTimeout(signatureHelp, 50);
+    else if (ch === "." && op.text.length === 1) setTimeout(completion, 50);
   });
 
   // ---------------------------------------------------------------- diagnostics

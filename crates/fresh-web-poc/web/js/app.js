@@ -238,11 +238,15 @@ class App {
     return b;
   }
 
+  // Show a file, at a line and (UTF-16) column when given. A navigation:
+  // Go Back returns to where the active view was.
   async openFile(path, { line, column, place } = {}) {
     try {
+      const from = this.view();
       const b = await this.loadFile(path);
+      if (from) this.pushHistory(from);
       const v = this.showBuffer(b, place);
-      if (line != null) await this.gotoLine(line - 1, column != null ? column - 1 : 0);
+      if (line != null) await this.gotoLine(line - 1, column != null ? column - 1 : 0, { history: false });
       this.updateStatus();
       return v;
     } catch (e) {
