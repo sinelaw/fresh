@@ -362,9 +362,19 @@ impl Session {
                 json!({})
             }
 
-            "doc.open" => {
-                let path = ws.resolve(s(m, "path")?);
+            "doc.new" => {
                 let mut docs = self.docs.lock().unwrap();
+                let id = docs.create(client, ws.fs());
+                docs.get(id)?.info()
+            }
+            "doc.open" => {
+                let mut docs = self.docs.lock().unwrap();
+                // An untitled document kept for its unsaved text.
+                if let Some(n) = m.get("untitled").and_then(Value::as_u64) {
+                    let id = docs.join_untitled(client, n)?;
+                    return docs.get(id).map(|d| d.info());
+                }
+                let path = ws.resolve(s(m, "path")?);
                 let (id, new) = docs.open(client, &path, ws.fs())?;
                 let d = docs.get(id)?;
                 if new && d.buffer.line_count().is_none() {
@@ -399,9 +409,12 @@ impl Session {
                 let mut docs = self.docs.lock().unwrap();
                 let d = docs.get(u(m, "doc")?)?;
                 let fs = ws.fs();
-                let now = workspace::signature(&fs, &d.path);
+                let Some(path) = d.path.clone() else {
+                    fail!(NotFound, "{} has no file", d.display());
+                };
+                let now = workspace::signature(&fs, &path);
                 if now.is_none() {
-                    fail!(NotFound, "{} is not on disk", d.path.display());
+                    fail!(NotFound, "{} is not on disk", path.display());
                 }
                 let fresh = match m.get("encoding").and_then(Value::as_str) {
                     Some(name) => {
@@ -409,19 +422,19 @@ impl Session {
                             fail!(BadRequest, "no encoding {name}");
                         };
                         if d.buffer.is_large_file() {
-                            fail!(BadRequest, "{} is a large file, read as it is viewed; it is read in the detected encoding", d.path.display());
+                            fail!(BadRequest, "{} is a large file, read as it is viewed; it is read in the detected encoding", path.display());
                         }
                         docs::Buffer::load_from_file_with_encoding(
-                            &d.path,
+                            &path,
                             enc,
                             fs,
                             docs::BufferConfig::default(),
                         )?
                     }
-                    None => docs::Buffer::load_from_file(&d.path, docs::LARGE_FILE_THRESHOLD, fs)?,
+                    None => docs::Buffer::load_from_file(&path, docs::LARGE_FILE_THRESHOLD, fs)?,
                 };
                 if fresh.is_binary() {
-                    fail!(Binary, "{} is now a binary file", d.path.display());
+                    fail!(Binary, "{} is now a binary file", path.display());
                 }
                 self.reload_with(d, fresh, now)?;
                 d.info()
@@ -509,7 +522,7 @@ impl Session {
                 if let Some(server) = d.language.as_deref().and_then(|l| self.lsp.running(l)) {
                     server.notify(
                         "textDocument/didSave",
-                        json!({"textDocument": {"uri": lsp::uri_of(&d.path)}}),
+                        json!({"textDocument": {"uri": d.uri()}}),
                     );
                 }
                 let ev = json!({"ev": "doc.saved", "doc": d.id, "info": info});
@@ -518,6 +531,7 @@ impl Session {
                 }
                 info
             }
+            "doc.save_as" => self.save_as(m)?,
 
             "term.open" => {
                 let cols = m.get("cols").and_then(Value::as_u64).unwrap_or(80) as u16;
@@ -623,7 +637,7 @@ impl Session {
                 .collect();
             server.notify(
                 "textDocument/didChange",
-                json!({"textDocument": {"uri": lsp::uri_of(&d.path), "version": d.version}, "contentChanges": changes}),
+                json!({"textDocument": {"uri": d.uri(), "version": d.version}, "contentChanges": changes}),
             );
         }
         Ok(applied
@@ -674,13 +688,13 @@ impl Session {
             let docs = self.docs.lock().unwrap();
             docs.docs
                 .values()
-                .map(|d| {
-                    (
+                .filter_map(|d| {
+                    Some((
                         d.id,
-                        d.path.clone(),
+                        d.path.clone()?,
                         d.disk,
                         d.buffer.is_large_file() || !d.buffer.is_modified(),
-                    )
+                    ))
                 })
                 .collect()
         };
@@ -698,7 +712,7 @@ impl Session {
             let mut docs = self.docs.lock().unwrap();
             let Ok(d) = docs.get(id) else { continue };
             // Renamed or saved meanwhile: look again next time.
-            if d.path != path || d.disk != disk {
+            if d.path.as_ref() != Some(&path) || d.disk != disk {
                 continue;
             }
             self.disk_changed(d, now, fresh);
@@ -735,7 +749,7 @@ impl Session {
         match fresh {
             Some(Ok(b)) if !b.is_binary() && (d.buffer.is_large_file() || !modified) => {
                 if let Err(e) = self.reload_with(d, b, now) {
-                    eprintln!("{}: not followed: {e}", d.path.display());
+                    eprintln!("{}: not followed: {e}", d.display());
                 }
             }
             _ if d.reported != Some(now) => {
@@ -865,6 +879,37 @@ impl Session {
         Ok(info)
     }
 
+    /// Save a document as a file and bind it there (`doc.save_as {doc,
+    /// path, overwrite}`): an untitled document gets its file, a file's
+    /// document moves to the new one (the old file stays as last saved).
+    /// The language server sees the old URI closed and the new one opened;
+    /// the document's clients get `doc.renamed` (`from`: the old path, or
+    /// null) and `doc.saved`.
+    fn save_as(&self, m: &Value) -> Result<Value> {
+        let path = self.ws.resolve(s(m, "path")?);
+        let overwrite = m.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
+        let id = u(m, "doc")?;
+        let mut docs = self.docs.lock().unwrap();
+        if docs.get(id)?.path.as_deref() == Some(path.as_path()) {
+            fail!(
+                BadRequest,
+                "{} is the document's own file: save it",
+                path.display()
+            );
+        }
+        self.lsp_close(docs.get(id)?);
+        let saved = docs.save_as(id, &path, &self.ws.recovery_dir(), overwrite);
+        let d = docs.get(id)?;
+        if self.trusted() {
+            self.lsp_open(d)?;
+        }
+        let from = saved?;
+        let info = d.info();
+        self.send_to(d, &json!({"ev": "doc.renamed", "doc": id, "from": from.map(|p| p.to_string_lossy().into_owned()), "info": info}));
+        self.send_to(d, &json!({"ev": "doc.saved", "doc": id, "info": info}));
+        Ok(info)
+    }
+
     fn send_to(&self, d: &docs::Doc, ev: &Value) {
         for c in &d.clients {
             self.room.send(*c, ev);
@@ -930,7 +975,7 @@ impl Session {
                 fail!(
                     InUse,
                     "{} is open as a large file, read from disk as it is viewed; close it before it is {what}",
-                    d.path.display()
+                    d.display()
                 );
             }
         }
@@ -951,7 +996,7 @@ impl Session {
             server.notify(
                 "textDocument/didOpen",
                 json!({"textDocument": {
-                    "uri": lsp::uri_of(&d.path), "languageId": lang,
+                    "uri": d.uri(), "languageId": lang,
                     "version": d.version, "text": text,
                 }}),
             );
@@ -963,7 +1008,7 @@ impl Session {
         if let Some(server) = d.language.as_deref().and_then(|l| self.lsp.running(l)) {
             server.notify(
                 "textDocument/didClose",
-                json!({"textDocument": {"uri": lsp::uri_of(&d.path)}}),
+                json!({"textDocument": {"uri": d.uri()}}),
             );
         }
     }
@@ -989,7 +1034,7 @@ impl Session {
                         "no language server for this document",
                     )
                 })?;
-            params["textDocument"] = json!({"uri": lsp::uri_of(&d.path)});
+            params["textDocument"] = json!({"uri": d.uri()});
             if let Some(p) = m.get("pos").and_then(Value::as_u64) {
                 let (l, c) = d.buffer.position_to_lsp_position(p as usize);
                 params["position"] = json!({"line": l, "character": c});
@@ -1014,7 +1059,7 @@ impl Session {
                     )
                 })?;
             let (l, c) = d.buffer.position_to_lsp_position(u(m, "pos")? as usize);
-            (server, lsp::uri_of(&d.path), l, c)
+            (server, d.uri(), l, c)
         };
         let params = json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
         let method = match op {
@@ -1430,6 +1475,120 @@ mod tests {
         let mut docs = s.docs.lock().unwrap();
         assert!(docs.get(a).is_err(), "closed by every client: dropped");
         assert!(docs.get(b).is_ok());
+    }
+
+    #[test]
+    fn an_untitled_document_is_kept_while_unsaved_and_saved_as_a_file() {
+        let (dir, orch, _s) = app(true);
+        let root = dir.path().canonicalize().unwrap();
+        let (c, rx) = client(&orch);
+        let new = |c: u64| orch.dispatch(c, "doc.new", &json!({})).unwrap();
+        let a = new(c);
+        assert_eq!(
+            (a["path"].clone(), a["untitled"].clone()),
+            (Value::Null, json!(1))
+        );
+        let b = new(c);
+        assert_eq!(b["untitled"], 2, "the smallest number not taken");
+        let (a, b) = (a["doc"].as_u64().unwrap(), b["doc"].as_u64().unwrap());
+        let e = orch
+            .dispatch(c, "doc.save", &json!({"doc": a}))
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::BadRequest, "no file to save to");
+
+        // Closed empty, it goes; its number is free again.
+        orch.dispatch(c, "doc.close", &json!({"doc": b})).unwrap();
+        assert_eq!(new(c)["untitled"], 2);
+
+        // With text, it outlives its client, and the next one joins it.
+        orch.dispatch(
+            c,
+            "doc.edit",
+            &json!({"doc": a, "base": 0, "ops": [{"t": "ins", "pos": 0, "text": "hello\n"}]}),
+        )
+        .unwrap();
+        orch.drop_client(c);
+        drop(rx);
+        let (c, mut rx) = client(&orch);
+        let info = orch
+            .dispatch(c, "doc.open", &json!({"untitled": 1}))
+            .unwrap();
+        assert_eq!(
+            (info["doc"].as_u64(), info["modified"].clone()),
+            (Some(a), json!(true))
+        );
+        let e = orch
+            .dispatch(c, "doc.open", &json!({"untitled": 9}))
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::NotFound);
+
+        // Saved as a file: bound to it, its language detected; a file that
+        // is there is overwritten only when asked.
+        std::fs::write(root.join("taken.py"), "x\n").unwrap();
+        let e = orch
+            .dispatch(c, "doc.save_as", &json!({"doc": a, "path": "taken.py"}))
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::Exists);
+        let info = orch
+            .dispatch(c, "doc.save_as", &json!({"doc": a, "path": "sub/n.py"}))
+            .unwrap();
+        assert_eq!(info["path"], json!(root.join("sub/n.py")));
+        assert_eq!(
+            (
+                info["untitled"].clone(),
+                info["language"].clone(),
+                info["modified"].clone()
+            ),
+            (Value::Null, json!("python"), json!(false))
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("sub/n.py")).unwrap(),
+            "hello\n"
+        );
+        let ev = event(&mut rx, "doc.renamed", Duration::from_secs(1)).unwrap();
+        assert_eq!(ev["from"], Value::Null);
+        let again = orch
+            .dispatch(c, "doc.open", &json!({"path": "sub/n.py"}))
+            .unwrap();
+        assert_eq!(again["doc"], a, "found by its file now");
+
+        // A file's document saved as another: it moves there, the old file
+        // stays as it was last saved.
+        orch.dispatch(
+            c,
+            "doc.edit",
+            &json!({"doc": a, "base": 1, "ops": [{"t": "ins", "pos": 0, "text": "# "}]}),
+        )
+        .unwrap();
+        orch.dispatch(
+            c,
+            "doc.save_as",
+            &json!({"doc": a, "path": "taken.py", "overwrite": true}),
+        )
+        .unwrap();
+        let ev = event(&mut rx, "doc.renamed", Duration::from_secs(1)).unwrap();
+        assert_eq!(ev["from"], json!(root.join("sub/n.py")));
+        assert_eq!(
+            std::fs::read_to_string(root.join("taken.py")).unwrap(),
+            "# hello\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("sub/n.py")).unwrap(),
+            "hello\n"
+        );
+        let other = orch
+            .dispatch(c, "doc.open", &json!({"path": "sub/n.py"}))
+            .unwrap()["doc"]
+            .as_u64()
+            .unwrap();
+        let e = orch
+            .dispatch(
+                c,
+                "doc.save_as",
+                &json!({"doc": other, "path": "taken.py", "overwrite": true}),
+            )
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::Exists, "open as another document");
     }
 
     #[test]

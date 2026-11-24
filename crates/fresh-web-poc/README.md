@@ -74,6 +74,23 @@ are). The client asks Save / Discard / Cancel when the last tab of a
 modified file (or a split holding it) closes. Saving refuses
 if the file changed on disk since it was loaded or last saved, unless forced.
 
+A document need not have a file. `doc.new` makes an **untitled** one
+(File ▸ New File, Ctrl+N): empty, named `Untitled-N` with the smallest
+number no open untitled document has, its language server URI
+`untitled:Untitled-N`. It is a document like any other — edited through
+the log, shared, kept by the server while it has unsaved text after its
+last client went — except that it cannot be saved in place: Save asks for
+a name and sends `doc.save_as`, which writes the text through the
+document's filesystem and binds the document to that file (path, language
+detected from the name, disk signature; the language server sees the
+untitled URI closed and the file's opened). Save As on a file's document is
+the same operation: the document moves to the new file, and the old one
+stays as it was last saved. An empty untitled document closes without a
+question and is gone; one with text asks Save / Discard / Cancel. A
+browser remembers an untitled tab in its layout by its number and gets it
+back on reload (`doc.open {untitled}`) while the server still keeps it —
+it is unsaved text, so it does not outlive the server.
+
 Documents follow the workspace's own file operations. `fs.rename` of an
 open file, or of a folder holding open files, moves their documents with
 them: the path changes, the language is detected again from the new name,
@@ -179,10 +196,15 @@ Operations:
 - `fs.list`, `fs.stat`, `fs.read`, `fs.write`, `fs.find`, `fs.create`,
   `fs.rename`, `fs.delete`, `fs.copy`, `fs.watch`, `fs.unwatch`,
   `search.project`
-- `doc.open`, `doc.close` (`discard` to give up unsaved edits; answers
-  `{dropped, others}`), `doc.info`, `doc.lines`, `doc.lines_before`,
+- `doc.new` (an untitled document), `doc.open` (`{path}`, or `{untitled:
+  N}` to join an untitled document the server keeps), `doc.close`
+  (`discard` to give up unsaved edits; answers `{dropped, others}`), `doc.info`, `doc.lines`, `doc.lines_before`,
   `doc.window`, `doc.text`, `doc.search`, `doc.line_start`, `doc.edit`,
-  `doc.save` (`force` to overwrite an external change), `doc.reload`
+  `doc.save` (`force` to overwrite an external change; an untitled
+  document has no file to save to: `bad_request`), `doc.save_as` (`{doc,
+  path, overwrite}`: write it to `path` and bind it there; `exists` when a
+  file is there and `overwrite` is not set, or another document is open on
+  it), `doc.reload`
   (`encoding` to read the file in that one), `doc.formats` (the languages,
   encodings and line endings a document can be set to), `doc.set` (a
   document's `language`, or the `line_ending` and `encoding` its next save
@@ -223,7 +245,13 @@ Error codes (`src/error.rs`):
 | `io` | Any other I/O error on the host |
 | `failed` | Anything else |
 
-Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
+A document's info (`doc.open`, `doc.new`, events) is `{doc, path,
+untitled, len, version, lines, large, modified, language, encoding,
+line_ending, readonly}`; `path` is null and `untitled` the number for an
+untitled document.
+
+Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`; `from`
+is null for an untitled document saved as a file),
 `doc.deleted` (`{doc, info}`), `doc.changed_on_disk` (`{doc, info}`),
 `doc.reloaded` (`{doc, lost, info}`), `doc.info` (`{doc, info}`, after `doc.set`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,

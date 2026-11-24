@@ -22,7 +22,7 @@ export class RpcError {
 // edit and the save after it). Reads, searches and language-server requests
 // go at once.
 const ORDERED = new Set([
-  "doc.open", "doc.close", "doc.edit", "doc.save", "doc.reload", "doc.set",
+  "doc.new", "doc.open", "doc.close", "doc.edit", "doc.save", "doc.save_as", "doc.reload", "doc.set",
   "fs.write", "fs.create", "fs.rename", "fs.delete", "fs.copy", "workspace.trust",
 ]);
 let ordered = Promise.resolve();

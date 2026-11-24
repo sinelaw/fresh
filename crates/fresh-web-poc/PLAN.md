@@ -188,7 +188,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Files | Close All, Close Others | fixed |
 | Files | Save As (the text written through `fs.write`, then opened; overwrite confirmed) | fixed |
 | Files | Set line ending (LF / CRLF / CR), reopen or save with an encoding, set language, revert | fixed (server `doc.set`, `doc.reload` with `encoding`) |
-| Files | New untitled buffer (Ctrl+N) | missing (documents are files on the server; New File asks for a name) |
+| Files | New untitled buffer (Ctrl+N, File ▸ New File): `Untitled-N`, a server document bound to no file (`doc.new`); Save asks for a name (`doc.save_as`, which Save As uses too: the document moves to the new file); closing one with text asks Save / Discard / Cancel; restored on reload while the server keeps its unsaved text | fixed |
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |
 | Palette | Go to symbol in the file: the palette's `@` (Ctrl+Shift+O), previewed as selected, Escape goes back; plugins provide prefixes (`fresh.palette.provide`) | fixed |
 | Palette | Go to symbol in the workspace | missing (`workspace/symbol` through the server is the way) |

@@ -19,7 +19,7 @@ const view = (app) => app.view();
 const setting = (k) => (app) => !!app.settings[k];
 export const MENUS = [
   { label: "File", key: "f", items: [
-    { command: "explorer.newFile", label: "New File…" },
+    { command: "file.new", label: "New File" },
     { command: "palette.files", label: "Open File…" },
     { command: "file.recent", label: "Open Recent…" },
     null,

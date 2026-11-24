@@ -81,7 +81,7 @@ export class Palette {
       const t = q.slice(1).toLowerCase();
       return [...app.buffers.values()]
         .filter((b) => (b.path || b.name).toLowerCase().includes(t))
-        .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : "virtual", run: () => app.showBuffer(b) }));
+        .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", run: () => app.showBuffer(b) }));
     }
     const pr = this.providers.get(q[0]);
     if (pr) return pr.items(q.slice(1).trim());

@@ -145,12 +145,13 @@ class App {
   // ------------------------------------------------------------- the workspace's layout, remembered
 
   // What is open, for the next visit (session.js): the splits and their
-  // ratios, each split's file tabs with their cursor and scroll, the
-  // active split and tab, and whether the sidebar and the terminal show.
+  // ratios, each split's document tabs (a file by its path, an untitled
+  // document by its number) with their cursor and scroll, the active split
+  // and tab, and whether the sidebar and the terminal show.
   layoutSnapshot() {
-    const tab = (v) => (v.buf.path ? { path: v.buf.path, pos: v.primary.pos, top: v.top } : null);
+    const tab = (v) => (this.tabKey(v.buf) ? { path: v.buf.path || null, untitled: v.buf.untitled, pos: v.primary.pos, top: v.top } : null);
     const node = (n) => (n.pane
-      ? { tabs: n.pane.views.map(tab).filter(Boolean), active: n.pane.view?.buf.path || null }
+      ? { tabs: n.pane.views.map(tab).filter(Boolean), active: n.pane.view ? this.tabKey(n.pane.view.buf) : null }
       : { dir: n.dir, ratio: n.ratio, a: node(n.a), b: node(n.b) });
     return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden"), terminal: !!this.term?.visible };
   }
@@ -158,9 +159,14 @@ class App {
     if (this.restoring || !this.layoutTree) return;
     this.session.set("layout", this.layoutSnapshot());
   }
-  // Put the remembered layout back: the splits, then each split's files
-  // (one that cannot be opened any more is left out, and a split left
-  // with none closes). Resolves false when there was nothing to restore.
+  // A document buffer as the remembered layout names it: its path, or
+  // `untitled:N`; null for any other buffer.
+  tabKey(b) { return b.path || (b.untitled ? `untitled:${b.untitled}` : null); }
+  // Put the remembered layout back: the splits, then each split's
+  // documents (one that cannot be opened any more is left out — an
+  // untitled one is there only while the server keeps it for its unsaved
+  // text — and a split left with none closes). Resolves false when there
+  // was nothing to restore.
   async restoreLayout() {
     const s = this.session.get("layout");
     if (!s || !s.tree) return false;
@@ -176,13 +182,13 @@ class App {
     for (const { pane, n } of specs) {
       for (const t of n.tabs) {
         let b;
-        try { b = await this.loadFile(t.path); } catch { continue; }
+        try { b = t.untitled ? await this.loadUntitled(t.untitled) : await this.loadFile(t.path); } catch { continue; }
         const v = pane.show(b);
         const pos = Math.max(0, Math.min(t.pos | 0, b.len));
         v.cursors = [{ pos, anchor: null, goalX: null }];
         v.setTop(Math.max(0, Math.min(t.top | 0, pos)));
       }
-      const active = pane.views.find((v) => v.buf.path === n.active);
+      const active = pane.views.find((v) => this.tabKey(v.buf) === n.active);
       if (active) pane.show(active.buf);
     }
     for (const { pane } of specs) if (!pane.views.length && this.panes().length > 1) await this.closePane(pane);
@@ -558,8 +564,23 @@ class App {
     const abs = path.startsWith("/") ? path : `${this.root}/${path}`;
     let b = [...this.buffers.values()].find((x) => x.path === abs);
     if (b) return b;
-    const info = await rpc("doc.open", { path: abs });
-    b = this.docs.get(info.doc);
+    return this.adoptDoc(await rpc("doc.open", { path: abs }));
+  }
+  // The buffer for an untitled document the server keeps (the page was
+  // reloaded with its unsaved text).
+  async loadUntitled(n) {
+    return [...this.buffers.values()].find((x) => x.untitled === n) || this.adoptDoc(await rpc("doc.open", { untitled: n }));
+  }
+  // A new untitled document, shown: an empty buffer bound to no file,
+  // named Untitled-N, until it is saved as one.
+  async newUntitled() {
+    const b = await this.adoptDoc(await rpc("doc.new"));
+    this.showBuffer(b);
+    return b;
+  }
+  // The buffer of an opened document ({doc, path, ...} from the server).
+  async adoptDoc(info) {
+    let b = this.docs.get(info.doc);
     if (b) return b;
     b = fileBuffer(info);
     this.buffers.set(b.id, b);
@@ -619,6 +640,8 @@ class App {
   // overwrite it, auto-save leaves it and says so.
   async saveBuffer(b, { ask = true } = {}) {
     if (!b.doc) return;
+    // An untitled document is saved as a file, asked for.
+    if (!b.path) { await this.saveBufferAs(b); return; }
     try {
       // Keeping one's changes over the file's (`askChangedOnDisk`) was the
       // choice to overwrite it.
@@ -632,6 +655,38 @@ class App {
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
     this.host.emit("buffer.saved", { buffer: b });
+  }
+
+  // Save As: a document is written to the file asked for and bound to it
+  // (`doc.save_as`: an untitled one gets its file, a file's moves to the
+  // new one and the old file stays as last saved); a file there is
+  // overwritten once confirmed. A buffer with no document (a plugin's
+  // panel) has its text written to the file, which then opens.
+  async saveBufferAs(b) {
+    const rel = (p) => (p && p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p || "");
+    const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name });
+    if (!name) return;
+    const path = name.startsWith("/") ? name : `${this.root}/${name}`;
+    if (path === b.path) { await this.saveBuffer(b); return; }
+    const st = await rpc("fs.stat", { path });
+    if (st.dir) { this.setStatus(`${name} is a folder`); return; }
+    if (st.exists && !(await this.confirm(`${name} exists. Overwrite it?`, "Overwrite"))) return;
+    try {
+      if (b.doc) {
+        while (!b.synced) await new Promise((r) => setTimeout(r, 20));
+        const info = await rpc("doc.save_as", { doc: b.doc, path, overwrite: st.exists });
+        b.setInfo(info);
+        b.modified = info.modified;
+        this.noteRecent(b.path);
+        this.renderAll();
+        this.updateStatus();
+        this.host.emit("buffer.saved", { buffer: b });
+      } else {
+        await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
+        await this.openFile(path);
+      }
+    } catch (e) { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
+    this.setStatus(`Saved as ${name}`);
   }
 
   async askChangedOnDisk(b) {
@@ -654,7 +709,8 @@ class App {
     if (!this.settings.auto_save) return;
     const now = Date.now();
     for (const b of this.buffers.values()) {
-      if (b.doc && b.modified && b.synced && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
+      // An untitled document waits for a name.
+      if (b.path && b.modified && b.synced && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
         b.lastEdit = now;
         this.saveBuffer(b, { ask: false });
       }
@@ -991,7 +1047,7 @@ class App {
 
   keymap() {
     const base = {
-      "C-s": "file.save", "C-M-s": "file.saveAll", "C-M-t": "skin.next", "C-z": "edit.undo", "C-y": "edit.redo", "C-S-z": "edit.redo",
+      "C-s": "file.save", "C-n": "file.new", "C-M-s": "file.saveAll", "C-M-t": "skin.next", "C-z": "edit.undo", "C-y": "edit.redo", "C-S-z": "edit.redo",
       "C-p": "palette.commands", "C-S-p": "palette.commands", F1: "palette.commands", "C-o": "palette.files", "C-'": "palette.files", "C-;": "palette.buffers", "C-g": "palette.line",
       "C-`": "terminal.toggle", "C-\\": "view.splitRight", "C-w": "view.closeTab", "C-Tab": "view.nextTab", "C-S-Tab": "view.prevTab", "C-PageDown": "view.nextTab", "C-PageUp": "view.prevTab",
       "M-Left": "go.back", "M-Right": "go.forward", "M-z": "view.toggleWrap",
@@ -1069,24 +1125,8 @@ class App {
     cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b.readOnly = !b.readOnly; this.renderAll(); } });
     // Save As: the text written to another file (through the server's
     // file operations), which then opens; the original stays as it is.
-    cmd("file.saveAs", "File: Save As…", async () => {
-      const b = V()?.buf;
-      if (!b) return;
-      if (b.large) { this.setStatus("A large file is read from disk as it is viewed; copy it in the explorer instead"); return; }
-      const rel = (p) => (p && p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p || "");
-      const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name });
-      if (!name) return;
-      const path = name.startsWith("/") ? name : `${this.root}/${name}`;
-      if (path === b.path) { await this.saveBuffer(b); return; }
-      const st = await rpc("fs.stat", { path });
-      if (st.dir) { this.setStatus(`${name} is a folder`); return; }
-      if (st.exists && !(await this.confirm(`${name} exists. Overwrite it?`, "Overwrite"))) return;
-      try {
-        await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
-      } catch (e) { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
-      await this.openFile(path);
-      this.setStatus(`Saved as ${name}`);
-    });
+    cmd("file.saveAs", "File: Save As…", () => V() && this.saveBufferAs(V().buf));
+    cmd("file.new", "File: New File", () => this.newUntitled());
     cmd("file.language", "Set Language…", () => this.pickLanguage());
     cmd("file.encoding", "Set Encoding… (reopen or save with)", () => this.pickEncoding());
     cmd("file.lineEnding", "Set Line Ending…", () => this.pickLineEnding());

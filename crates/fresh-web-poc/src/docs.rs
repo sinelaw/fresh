@@ -43,7 +43,12 @@ pub struct LogEntry {
 
 pub struct Doc {
     pub id: u64,
-    pub path: PathBuf,
+    /// The file the document is bound to; `None` for an untitled document
+    /// (made by `doc.new`), until it is saved as a file (`doc.save_as`).
+    pub path: Option<PathBuf>,
+    /// An untitled document's number (`Untitled-N`); `None` once it has a
+    /// file.
+    pub untitled: Option<u64>,
     pub buffer: Buffer,
     /// Log version: the number of edit batches sequenced so far.
     pub version: u64,
@@ -217,10 +222,28 @@ impl Doc {
         self.buffer.line_count().is_some()
     }
 
+    /// How messages name it: its path, or `Untitled-N`.
+    pub fn display(&self) -> String {
+        match &self.path {
+            Some(p) => p.display().to_string(),
+            None => format!("Untitled-{}", self.untitled.unwrap_or(0)),
+        }
+    }
+
+    /// The document's URI for a language server: its file's, or an
+    /// `untitled:` one.
+    pub fn uri(&self) -> String {
+        match &self.path {
+            Some(p) => crate::lsp::uri_of(p),
+            None => format!("untitled:Untitled-{}", self.untitled.unwrap_or(0)),
+        }
+    }
+
     pub fn info(&self) -> Value {
         json!({
             "doc": self.id,
-            "path": self.path.to_string_lossy(),
+            "path": self.path.as_ref().map(|p| p.to_string_lossy()),
+            "untitled": self.untitled,
             "len": self.len(),
             "version": self.version,
             "lines": self.buffer.line_count(),
@@ -518,22 +541,29 @@ impl Doc {
     /// recovery folder. Refused when the file changed on disk since it was
     /// loaded or last saved, unless `force`.
     pub fn save(&mut self, recovery: &Path, force: bool) -> Result<()> {
+        let Some(path) = self.path.clone() else {
+            fail!(
+                BadRequest,
+                "{} has no file: save it as one (doc.save_as)",
+                self.display()
+            );
+        };
         let fs = self.buffer.filesystem().clone();
-        if !force && signature(&fs, &self.path) != self.disk {
+        if !force && signature(&fs, &path) != self.disk {
             fail!(
                 ChangedOnDisk,
                 "{} changed on disk since it was opened; save with force to overwrite it",
-                self.path.display()
+                path.display()
             );
         }
         if self.disk.is_none() {
             // A new file, or one deleted while open: its folder may be gone.
-            if let Some(parent) = self.path.parent() {
+            if let Some(parent) = path.parent() {
                 fs.create_dir_all(host(parent).as_host_path())?;
             }
         }
         self.buffer.save(recovery)?;
-        self.disk = signature(&fs, &self.path);
+        self.disk = signature(&fs, &path);
         self.reported = None;
         Ok(())
     }
@@ -582,7 +612,8 @@ impl Docs {
             Doc {
                 id,
                 language: language_of(&path),
-                path: path.clone(),
+                path: Some(path.clone()),
+                untitled: None,
                 buffer,
                 version: 0,
                 log: VecDeque::new(),
@@ -594,6 +625,83 @@ impl Docs {
         );
         self.by_path.insert(path, id);
         Ok((id, true))
+    }
+
+    /// A new untitled document for `client`: empty, bound to no file,
+    /// numbered with the smallest number no open untitled document has.
+    pub fn create(&mut self, client: u64, fs: Fs) -> u64 {
+        let taken: HashSet<u64> = self.docs.values().filter_map(|d| d.untitled).collect();
+        let n = (1..).find(|n| !taken.contains(n)).unwrap_or(1);
+        self.next_id += 1;
+        let id = self.next_id;
+        self.docs.insert(
+            id,
+            Doc {
+                id,
+                language: None,
+                path: None,
+                untitled: Some(n),
+                buffer: Buffer::empty(fs),
+                version: 0,
+                log: VecDeque::new(),
+                clients: HashSet::from([client]),
+                readonly: false,
+                disk: None,
+                reported: None,
+            },
+        );
+        id
+    }
+
+    /// `client` joins untitled document `n` (one kept for its unsaved text
+    /// after its last client went: a page reloaded).
+    pub fn join_untitled(&mut self, client: u64, n: u64) -> Result<u64> {
+        let Some(d) = self.docs.values_mut().find(|d| d.untitled == Some(n)) else {
+            fail!(NotFound, "no document Untitled-{n}");
+        };
+        d.clients.insert(client);
+        Ok(d.id)
+    }
+
+    /// Save document `id` as the file `path` and bind it there: the text is
+    /// written through the document's filesystem (unloaded parts of a huge
+    /// file copied from its old file), and the document's path, language
+    /// (detected from the new name, else kept) and disk signature follow.
+    /// Refused when another document is open on `path`, or when a file is
+    /// there and `overwrite` is not given. Returns the path it had.
+    pub fn save_as(
+        &mut self,
+        id: u64,
+        path: &Path,
+        recovery: &Path,
+        overwrite: bool,
+    ) -> Result<Option<PathBuf>> {
+        if self.by_path.get(path).is_some_and(|&other| other != id) {
+            fail!(Exists, "{} is open as another document", path.display());
+        }
+        let d = self.get(id)?;
+        let fs = d.buffer.filesystem().clone();
+        if d.path.as_deref() != Some(path) && signature(&fs, path).is_some() && !overwrite {
+            fail!(Exists, "{} exists", path.display());
+        }
+        if let Some(parent) = path.parent() {
+            fs.create_dir_all(host(parent).as_host_path())?;
+        }
+        d.buffer.save_to_file(path, recovery)?;
+        let path = fs
+            .canonicalize(host(path).as_host_path())
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| path.to_path_buf());
+        d.disk = signature(&fs, &path);
+        d.reported = None;
+        d.language = language_of(&path).or(d.language.take());
+        d.untitled = None;
+        let old = d.path.replace(path.clone());
+        if let Some(o) = &old {
+            self.by_path.remove(o);
+        }
+        self.by_path.insert(path, id);
+        Ok(old)
     }
 
     pub fn get(&mut self, id: u64) -> Result<&mut Doc> {
@@ -612,7 +720,9 @@ impl Docs {
         d.clients.remove(&client);
         if d.clients.is_empty() && (discard || !d.buffer.is_modified()) {
             let d = self.docs.remove(&id)?;
-            self.by_path.remove(&d.path);
+            if let Some(p) = &d.path {
+                self.by_path.remove(p);
+            }
             return Some(d);
         }
         None
@@ -640,16 +750,18 @@ impl Docs {
             let Some(d) = self.docs.get_mut(&id) else {
                 continue;
             };
-            let np = match d.path.strip_prefix(from) {
+            let Some(old) = d.path.clone() else { continue };
+            let np = match old.strip_prefix(from) {
                 Ok(rel) if !rel.as_os_str().is_empty() => to.join(rel),
                 _ => to.to_path_buf(),
             };
-            self.by_path.remove(&d.path);
+            self.by_path.remove(&old);
             self.by_path.insert(np.clone(), id);
             d.buffer.rename_file_path(np.clone());
+            d.path = Some(np.clone());
             out.push(Moved {
                 id,
-                path: std::mem::replace(&mut d.path, np.clone()),
+                path: old,
                 language: std::mem::replace(&mut d.language, language_of(&np)),
             });
         }
@@ -666,7 +778,7 @@ impl Docs {
                 continue;
             };
             let fs = d.buffer.filesystem().clone();
-            if signature(&fs, &d.path).is_none() {
+            if d.path.as_ref().is_some_and(|p| signature(&fs, p).is_none()) {
                 d.disk = None;
                 d.buffer.set_modified(true);
                 out.push(id);
@@ -762,7 +874,7 @@ mod tests {
     #[test]
     fn a_document_goes_when_its_last_client_closes_it_unmodified() {
         let (_d, mut docs, id) = doc_with("text\n");
-        let p = docs.get(id).unwrap().path.clone();
+        let p = docs.get(id).unwrap().path.clone().unwrap();
         let fs: Fs = std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem);
         let (again, new) = docs.open(2, &p, fs.clone()).unwrap();
         assert_eq!((again, new), (id, false), "the second client joins it");

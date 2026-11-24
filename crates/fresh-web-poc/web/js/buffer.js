@@ -153,6 +153,7 @@ export class Buffer {
     this.source = source;
     this.name = "";
     this.path = "";
+    this.untitled = null; // an untitled document's number (Untitled-N)
     // What the server says of a file (`setInfo`); a virtual buffer's
     // language is its creator's.
     this.language = null;
@@ -190,11 +191,12 @@ export class Buffer {
   get full() { const L = this.text; return !!L && L.bof && L.eof; }
 
   // The server's word on the document's file (after an open, a save, a
-  // rename or a delete): its path, name, language, format and whether it is
-  // unsaved.
+  // Save As, a rename or a delete): its path (none while untitled), name,
+  // language, format and whether it is unsaved.
   setInfo(info) {
-    this.path = info.path;
-    this.name = info.path.split("/").pop();
+    this.path = info.path || "";
+    this.untitled = info.untitled ?? null;
+    this.name = info.path ? info.path.split("/").pop() : `Untitled-${info.untitled}`;
     this.language = info.language;
     this.modified = info.modified;
     this.encoding = info.encoding;
