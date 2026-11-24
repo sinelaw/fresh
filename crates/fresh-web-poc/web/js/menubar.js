@@ -36,6 +36,11 @@ export const MENUS = [
     { command: "view.closeAllTabs", label: "Close All Tabs" },
     null,
     { command: "workspace.trust", label: "Trust Workspace" },
+    { command: "orchestrator.overview", label: "Workspaces…" },
+    { command: "orchestrator.switch", label: "Switch Workspace…" },
+    { command: "orchestrator.new", label: "New Workspace…" },
+    { command: "orchestrator.agent", label: "Start Agent Session…" },
+    { command: "orchestrator.close", label: "Close Workspace" },
   ] },
   { label: "Edit", key: "e", items: [
     { command: "edit.undo", label: "Undo" },
