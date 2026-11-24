@@ -14,7 +14,7 @@
 //! ([`Authority::command`], [`Authority::shell_command`]): directly here, `ssh`
 //! to a remote host, `docker exec` into a container.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use fresh::services::remote::ConnectionParams;
 use fresh_editor_core::model::filesystem::{
     EntryType, FileSearchOptions, FileSystem, StdFileSystem, WalkOptions,
@@ -316,9 +316,10 @@ impl Workspace {
         let fs = self.fs();
         let p = host(path);
         if fs.metadata(p.as_host_path())?.size > max {
-            return Err(anyhow!(
+            fail!(
+                TooLarge,
                 "file too large to read whole; open it as a document"
-            ));
+            );
         }
         Ok(String::from_utf8_lossy(&fs.read_file(p.as_host_path())?).into_owned())
     }
@@ -347,7 +348,7 @@ impl Workspace {
             fs.create_dir_all(host(p).as_host_path())?;
         } else {
             if self.exists(p) {
-                return Err(anyhow!("{} exists", p.display()));
+                fail!(Exists, "{} exists", p.display());
             }
             self.write_file(p, "")?;
         }
@@ -356,7 +357,7 @@ impl Workspace {
 
     pub fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         if self.exists(to) {
-            return Err(anyhow!("{} exists", to.display()));
+            fail!(Exists, "{} exists", to.display());
         }
         self.fs()
             .rename(host(from).as_host_path(), host(to).as_host_path())?;
@@ -502,7 +503,9 @@ impl Workspace {
         max: usize,
     ) -> Result<Value> {
         if is_regex {
-            regex::Regex::new(pattern)?;
+            if let Err(e) = regex::Regex::new(pattern) {
+                fail!(BadRequest, "{e}");
+            }
         }
         let fs = self.fs();
         let mut paths = Vec::new();

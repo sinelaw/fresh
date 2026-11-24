@@ -9,6 +9,8 @@
 //!
 //! Usage: `fresh-poc [--port N] [DIR]`, then open the printed URL.
 
+#[macro_use]
+mod error;
 mod docs;
 mod hub;
 mod lsp;
@@ -19,6 +21,7 @@ mod workspace;
 
 use anyhow::{anyhow, Result};
 use docs::Docs;
+use error::{err, Code};
 use fresh_editor_core::model::filesystem::StdFileSystem;
 use hub::Hub;
 use serde_json::{json, Value};
@@ -45,17 +48,17 @@ pub struct App {
 fn arg<'a>(m: &'a Value, k: &str) -> Result<&'a Value> {
     m.get(k)
         .filter(|v| !v.is_null())
-        .ok_or_else(|| anyhow!("missing {k}"))
+        .ok_or_else(|| err(Code::BadRequest, format!("missing {k}")))
 }
 fn u(m: &Value, k: &str) -> Result<u64> {
     arg(m, k)?
         .as_u64()
-        .ok_or_else(|| anyhow!("{k} is not a number"))
+        .ok_or_else(|| err(Code::BadRequest, format!("{k} is not a number")))
 }
 fn s<'a>(m: &'a Value, k: &str) -> Result<&'a str> {
     arg(m, k)?
         .as_str()
-        .ok_or_else(|| anyhow!("{k} is not a string"))
+        .ok_or_else(|| err(Code::BadRequest, format!("{k} is not a string")))
 }
 
 impl App {
@@ -91,12 +94,15 @@ impl App {
         // terminals, no language servers, until the user trusts it.
         let trusted = self.trusted.load(std::sync::atomic::Ordering::SeqCst);
         if !trusted && (op.starts_with("proc.") || op == "term.open" || op.starts_with("lsp.")) {
-            return Err(anyhow!("workspace is restricted: trust it to run processes, terminals and language servers"));
+            fail!(
+                Untrusted,
+                "workspace is restricted: trust it to run processes, terminals and language servers"
+            );
         }
         // What a client opens is released when its event stream ends, so
         // only a client with a live stream can open anything.
         if matches!(op, "doc.open" | "fs.watch" | "proc.run") && !self.hub.has(client) {
-            return Err(anyhow!("unknown client {client}: say hello first"));
+            fail!(UnknownClient, "unknown client {client}: say hello first");
         }
         Ok(match op {
             "hello" => {
@@ -326,7 +332,7 @@ impl App {
             "lsp.call" => self.lsp_call(m)?,
             "lsp.status" => self.lsp.status(),
 
-            _ => return Err(anyhow!("unknown op {op}")),
+            _ => fail!(UnknownOp, "unknown op {op}"),
         })
     }
 
@@ -420,7 +426,12 @@ impl App {
                 .language
                 .as_deref()
                 .and_then(|l| self.lsp.running(l))
-                .ok_or_else(|| anyhow!("no language server for this document"))?;
+                .ok_or_else(|| {
+                    err(
+                        Code::NoLanguageServer,
+                        "no language server for this document",
+                    )
+                })?;
             params["textDocument"] = json!({"uri": lsp::uri_of(&d.path)});
             if let Some(p) = m.get("pos").and_then(Value::as_u64) {
                 let (l, c) = d.buffer.position_to_lsp_position(p as usize);
@@ -439,7 +450,12 @@ impl App {
                 .language
                 .as_deref()
                 .and_then(|l| self.lsp.running(l))
-                .ok_or_else(|| anyhow!("no language server for this document"))?;
+                .ok_or_else(|| {
+                    err(
+                        Code::NoLanguageServer,
+                        "no language server for this document",
+                    )
+                })?;
             let (l, c) = d.buffer.position_to_lsp_position(u(m, "pos")? as usize);
             (server, lsp::uri_of(&d.path), l, c)
         };
@@ -821,11 +837,11 @@ async fn api(
             .to_string();
         match app.dispatch(client, &op, &msg) {
             Ok(v) => json!({ "ok": v }),
-            Err(e) => json!({ "error": e.to_string() }),
+            Err(e) => json!({ "error": error::to_json(&e) }),
         }
     })
     .await
-    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+    .unwrap_or_else(|e| json!({ "error": {"code": "failed", "message": e.to_string()} }));
     (
         [(axum::http::header::CACHE_CONTROL, "no-store")],
         axum::Json(reply),
@@ -961,8 +977,8 @@ mod tests {
             ),
             ("lsp.hover", json!({"doc": 1, "pos": 0})),
         ] {
-            let e = app.dispatch(c, op, &m).unwrap_err().to_string();
-            assert!(e.contains("restricted"), "{op}: {e}");
+            let e = app.dispatch(c, op, &m).unwrap_err();
+            assert_eq!(error::code_of(&e), Code::Untrusted, "{op}: {e}");
         }
         // Files and documents work as ever, without a language server.
         app.dispatch(c, "doc.open", &json!({"path": "a.py"}))
@@ -1026,7 +1042,7 @@ mod tests {
         let e = app
             .dispatch(c, "doc.open", &json!({"path": "a.txt"}))
             .unwrap_err();
-        assert!(e.to_string().contains("unknown client"), "{e}");
+        assert_eq!(error::code_of(&e), Code::UnknownClient, "{e}");
 
         app.drop_client(other);
         let mut docs = app.docs.lock().unwrap();

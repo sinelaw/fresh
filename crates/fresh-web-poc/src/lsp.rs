@@ -227,10 +227,13 @@ impl Server {
             .send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
         let reply = rx.recv_timeout(timeout).map_err(|_| {
             self.pending.lock().unwrap().remove(&id);
-            anyhow!("{method}: no reply from {} server", self.language)
+            crate::error::err(
+                crate::error::Code::LanguageServer,
+                format!("{method}: no reply from {} server", self.language),
+            )
         })?;
         if let Some(e) = reply.get("error") {
-            return Err(anyhow!("{method}: {e}"));
+            fail!(LanguageServer, "{method}: {e}");
         }
         Ok(reply["result"].clone())
     }

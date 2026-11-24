@@ -113,7 +113,9 @@ impl Terms {
     /// The replay buffer, and the stream offset it ends at.
     pub fn attach(&self, id: u64) -> Result<Value> {
         let m = self.map.lock().unwrap();
-        let t = m.get(&id).ok_or_else(|| anyhow!("no terminal {id}"))?;
+        let t = m.get(&id).ok_or_else(|| {
+            crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
+        })?;
         let o = t.out.lock().unwrap();
         let (a, b) = o.replay.as_slices();
         let mut bytes = a.to_vec();
@@ -126,7 +128,9 @@ impl Terms {
 
     pub fn input(&self, id: u64, data: &str) -> Result<()> {
         let mut m = self.map.lock().unwrap();
-        let t = m.get_mut(&id).ok_or_else(|| anyhow!("no terminal {id}"))?;
+        let t = m.get_mut(&id).ok_or_else(|| {
+            crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
+        })?;
         t.writer.write_all(data.as_bytes())?;
         t.writer.flush()?;
         Ok(())
@@ -136,7 +140,9 @@ impl Terms {
     /// as with a shared tmux window.
     pub fn resize(&self, hub: &Hub, id: u64, cols: u16, rows: u16) -> Result<()> {
         let mut m = self.map.lock().unwrap();
-        let t = m.get_mut(&id).ok_or_else(|| anyhow!("no terminal {id}"))?;
+        let t = m.get_mut(&id).ok_or_else(|| {
+            crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
+        })?;
         if t.size != (cols, rows) {
             t.master
                 .resize(PtySize {

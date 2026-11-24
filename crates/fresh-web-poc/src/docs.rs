@@ -11,9 +11,10 @@
 //! newline count it removed, so a client can move line numbers past an edit
 //! in text it never fetched.
 
+use crate::error::{err, Code};
 use crate::ot::{transform_seqs, Prim};
 use crate::workspace::{host, signature, Fs};
-use anyhow::{anyhow, bail, Result};
+use anyhow::Result;
 use fresh_editor_core::model::buffer::Buffer;
 
 use serde_json::{json, Value};
@@ -271,7 +272,7 @@ impl Doc {
         let end = end.min(self.len());
         let start = start.min(end);
         if end - start > READ_CAP {
-            bail!("range too large");
+            fail!(TooLarge, "range too large");
         }
         let b = self.read(start, end - start)?;
         Ok(String::from_utf8_lossy(&b).into_owned())
@@ -341,7 +342,8 @@ impl Doc {
         lsp_positions: bool,
     ) -> Result<Vec<Applied>> {
         if base > self.version {
-            bail!(
+            fail!(
+                BadRequest,
                 "base version {base} is ahead of the document ({})",
                 self.version
             );
@@ -352,7 +354,10 @@ impl Doc {
             .map(|e| e.version - 1)
             .unwrap_or(self.version);
         if base < oldest {
-            bail!("resync: base version {base} is older than the kept log");
+            fail!(
+                Resync,
+                "resync: base version {base} is older than the kept log"
+            );
         }
         // Everything sequenced after `base` was sequenced before this edit,
         // so it goes first at a tie.
@@ -366,7 +371,7 @@ impl Doc {
             match p {
                 Prim::Ins { pos, text } => {
                     if *pos > len {
-                        bail!("insert at {pos} past the end ({len})");
+                        fail!(BadRequest, "insert at {pos} past the end ({len})");
                     }
                     let lsp = lsp_positions.then(|| {
                         let at = self.buffer.position_to_lsp_position(*pos);
@@ -381,7 +386,7 @@ impl Doc {
                 }
                 Prim::Del { pos, len: n } => {
                     if pos + n > len {
-                        bail!("delete {pos}+{n} past the end ({len})");
+                        fail!(BadRequest, "delete {pos}+{n} past the end ({len})");
                     }
                     let gone = self.read(*pos, *n)?;
                     let lsp = lsp_positions.then(|| {
@@ -417,7 +422,8 @@ impl Doc {
     pub fn save(&mut self, recovery: &Path, force: bool) -> Result<()> {
         let fs = self.buffer.filesystem().clone();
         if !force && signature(&fs, &self.path) != self.disk {
-            bail!(
+            fail!(
+                ChangedOnDisk,
                 "{} changed on disk since it was opened; save with force to overwrite it",
                 self.path.display()
             );
@@ -460,7 +466,7 @@ impl Docs {
             b
         };
         if buffer.is_binary() {
-            return Err(anyhow!("binary file"));
+            fail!(Binary, "{} is a binary file", path.display());
         }
         self.next_id += 1;
         let id = self.next_id;
@@ -487,7 +493,7 @@ impl Docs {
     pub fn get(&mut self, id: u64) -> Result<&mut Doc> {
         self.docs
             .get_mut(&id)
-            .ok_or_else(|| anyhow!("no document {id}"))
+            .ok_or_else(|| err(Code::NotFound, format!("no document {id}")))
     }
 
     /// `client` closes `id`. The document goes when no client has it open
@@ -595,8 +601,8 @@ mod tests {
 
         std::fs::write(&p, "another writer\n").unwrap();
         d.edit(2, ins(0, "b\n"), false).unwrap();
-        let err = d.save(&recovery, false).unwrap_err().to_string();
-        assert!(err.contains("changed on disk"), "{err}");
+        let e = d.save(&recovery, false).unwrap_err();
+        assert_eq!(crate::error::code_of(&e), Code::ChangedOnDisk, "{e}");
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "another writer\n");
         d.save(&recovery, true).unwrap();
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "b\na\nzero\none\n");

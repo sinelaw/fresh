@@ -290,8 +290,7 @@ class App {
     try {
       await b.save();
     } catch (e) {
-      const msg = String(e.message || e).replace(/^doc\.save: /, "");
-      if (!ask || !/changed on disk/.test(msg)) { this.setStatus(`Not saved: ${msg}`); return; }
+      if (!ask || e.code !== "changed_on_disk") { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
       if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
       await b.save({ force: true });
     }

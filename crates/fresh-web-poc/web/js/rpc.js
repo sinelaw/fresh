@@ -3,13 +3,24 @@
 
 export const session = { client: 0 };
 
+// A refused operation: `code` is the server's stable reason (see the
+// README's protocol section), `detail` its message for people.
+export class RpcError extends Error {
+  constructor(op, error) {
+    super(`${op}: ${error.message}`);
+    this.op = op;
+    this.code = error.code;
+    this.detail = error.message;
+  }
+}
+
 export async function rpc(op, args = {}) {
   const r = await fetch("/api", {
     method: "POST",
     body: JSON.stringify({ ...args, op, client: session.client }),
   });
   const j = await r.json();
-  if (j.error) throw new Error(`${op}: ${j.error}`);
+  if (j.error) throw new RpcError(op, j.error);
   return j.ok;
 }
 
@@ -20,7 +31,7 @@ export function rpcSync(op, args = {}) {
   x.open("POST", "/api", false);
   x.send(JSON.stringify({ ...args, op, client: session.client }));
   const j = JSON.parse(x.responseText);
-  if (j.error) throw new Error(`${op}: ${j.error}`);
+  if (j.error) throw new RpcError(op, j.error);
   return j.ok;
 }
 

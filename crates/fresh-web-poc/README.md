@@ -70,7 +70,8 @@ API. See `PLAN.md` for how each editor feature is ported.
 ## Protocol
 
 `POST /api` with a JSON object `{op, client, ...}` answers `{"ok": ...}` or
-`{"error": "..."}`. `hello` registers a client and returns its id; the
+`{"error": {"code", "message"}}`: `code` is stable and meant for programs,
+`message` is for people. `hello` registers a client and returns its id; the
 client then opens `GET /events?client=ID`, a Server-Sent Events stream of
 JSON events. When that stream ends the client is forgotten: its documents
 are closed, its watches removed and its processes killed.
@@ -88,6 +89,26 @@ Operations:
 - `proc.run`, `proc.kill`
 - `lsp.call` (any request about a document), `lsp.hover`,
   `lsp.definition`, `lsp.completion`, `lsp.status`
+
+Error codes (`src/error.rs`):
+
+| Code | Meaning |
+|---|---|
+| `bad_request` | A missing or mistyped argument, or one out of range |
+| `unknown_op` | No such operation |
+| `unknown_client` | The client has no live event stream (no `hello`, or the stream ended) |
+| `untrusted` | The workspace is restricted; trust it to run processes, terminals and language servers |
+| `not_found` | No such file, folder, document or terminal |
+| `exists` | The target name is taken, by a file or by an open document |
+| `changed_on_disk` | `doc.save`: the file changed since it was loaded or last saved; `force` overwrites it |
+| `resync` | `doc.edit`: the base version is older than the kept log; reopen the document |
+| `binary` | `doc.open`: a binary file |
+| `too_large` | A whole read over the cap (`fs.read`, `doc.text`) |
+| `no_language_server` | No running language server for the document's language |
+| `language_server` | The language server answered with an error, or not in time |
+| `permission_denied` | The host refused the file operation |
+| `io` | Any other I/O error on the host |
+| `failed` | Anything else |
 
 Events: `doc.ops`, `doc.saved`, `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
