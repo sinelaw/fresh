@@ -47,7 +47,11 @@ import {
 } from "./lib/widgets.ts";
 import { WindowMachines } from "./lib/window_machines.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
-import { legacyProjectStateDir, projectStateDir } from "./lib/path_slug.ts";
+import {
+  legacyProjectStateDir,
+  projectStateDir,
+  safeNameComponent,
+} from "./lib/path_slug.ts";
 import {
   AGENT_REGISTRY,
   agentEntryForBase,
@@ -9656,9 +9660,8 @@ async function listLinkedWorktrees(
 /// collapse anything outside `[A-Za-z0-9._-]` to a dash; the name
 /// doubles as the worktree branch.
 function sessionNameBaseFor(repoRoot: string): string {
-  const raw = editor.pathBasename(repoRoot) || "";
-  const slug = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "session";
+  const name = safeNameComponent(editor.pathBasename(repoRoot) || "");
+  return name.length > 0 ? name : "session";
 }
 
 // Advance the persisted counter past `name` when it is one of this project's
@@ -13965,8 +13968,11 @@ function localBodyFields(): WidgetSpec[] {
 
 // What the workspace will be called: the typed name, or the auto-generated
 // default the Workspace Name field is showing as its placeholder.
+/// The name the launch will use, which is also the worktree's directory and
+/// the branch cut for it — so a typed name is reduced to what both can hold
+/// *here*, where the form previews it, rather than quietly somewhere later.
 function plannedWorkspaceName(f: NewSessionForm): string {
-  return f.name.value.trim() || formDefaultSessionName(f);
+  return safeNameComponent(f.name.value.trim()) || formDefaultSessionName(f);
 }
 
 // The auto-name an empty Workspace field launches with. The folder probe names
@@ -15524,10 +15530,15 @@ interface LocalSpecInputs extends AgentOptionInputs {
 }
 
 function buildLocalSpec(o: LocalSpecInputs): CreateSpec {
+  // `name` becomes a directory under the data dir and the branch cut for it,
+  // so it is reduced to what both can hold. `displayLabel` is not: what the
+  // dock calls a workspace is the caller's string, and the rename path is
+  // free to make it anything.
+  const name = safeNameComponent(o.name);
   return {
     backend: "local",
     projectPath: o.projectPath,
-    name: o.name,
+    name,
     cmd: o.cmd,
     ...gateAgentOptions(o.cmd, o),
     branch: o.branch,
