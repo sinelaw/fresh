@@ -298,6 +298,12 @@ body {
 .orch-note { font-size: var(--ui-font-xs); padding-left: 96px; }
 .orch-recent { flex-wrap: wrap; }
 .orch-import .orch-import-list { min-height: 260px; }
+.wb { gap: 6px; }
+.wb .wb-list { min-height: 320px; }
+.wb-why { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-board { align-items: stretch; gap: 8px; min-height: 320px; }
+.wb-column { flex: 1 1 0; gap: 4px; min-width: 0; padding: 4px; border: 1px solid var(--border); }
+.wb-column .ui-list { min-height: 280px; }
 .orch-agent-name { color: var(--accent); flex-shrink: 0; width: 6ch; }
 /* On the focused selection, the selection's own colours. */
 .ui-list:focus .ui-list-row.sel .orch-row :is(.ui-text, .ui-badge) { color: inherit; }

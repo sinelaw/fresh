@@ -110,9 +110,12 @@ change. When the file changed:
 stream offsets and keeps a replay buffer, and each client runs its own
 emulator (xterm.js). Terminals belong to the workspace and outlive clients.
 The server also reads each terminal's stream for the orchestrator: the title
-a program sets, the bell, and its state — `working` (output in the last two
-seconds), `waiting` (quiet, its last line a question or a `[y/n]` prompt),
-`idle`, `exited`. **Language servers** (`src/lsp.rs`): one per
+a program sets, the bell, and its state as the editor's orchestrator reads
+it — `working` (output in the last five seconds, or shell integration, OSC
+133 and OSC 9;4, says a command runs), `waiting` (quiet, and one of its last
+lines matches the editor's detection rules: `[y/n]`, "Do you want to…",
+"Esc to cancel", …), `done` (quiet after at least 1.5 s of output nobody
+has looked at), `idle`, `unknown` (no output yet), `exited`. **Language servers** (`src/lsp.rs`): one per
 language, kept in sync from the edit log; requests are routed in, and
 diagnostics go out as data tagged with the version they describe.
 **Ignore rules** (`Ignores` in `src/workspace.rs`) are git's:
@@ -155,14 +158,24 @@ Operations:
 
 - `hello`, `workspace.trust`, `workspace.seen` (the user has seen what
   needed attention)
-- `workspace.list`, `workspace.open` (`{root, host, trusted, agent}`; `host`
+- `workspace.list` (`{workspaces, folders}`), `workspace.open` (`{root, host, trusted, agent, worktree, name, folder}`; `host`
   is `{kind: "local"}`, `{kind: "ssh", target}`, `{kind: "container", id}`
   or `{kind: "agent"}`; `~` is the home folder on that host; a folder
   already open on the same host answers that workspace as it is; `agent`, a
-  command, starts an agent session in it, which needs `trusted`; answers
-  `{workspace, agent}`), `workspace.close` (`{workspace, discard}`: stops its
-  terminals, processes and language servers; refused with `unsaved` while
-  it holds unsaved documents, unless `discard`)
+  command, starts an agent session in it, which needs `trusted`;
+  `worktree: {branch, base}` makes a new git worktree of the folder's
+  repository and opens that, also `trusted` only; `name` and `folder` place
+  it in the dock; answers `{workspace, agent}`), `workspace.close`
+  (`{workspace, discard, remove_worktree}`: stops its terminals, processes
+  and language servers; refused with `unsaved` while it holds unsaved
+  documents, unless `discard`; `remove_worktree` deletes its worktree, the
+  branch stays; a workspace that could not be opened again is dismissed),
+  `workspace.retry` (open again one that could not be), `workspace.set`
+  (`{workspace, name, folder, pinned}`), `folder.create` / `folder.rename`
+  / `folder.delete` (the dock's folders, `A/B` nested; a renamed folder's
+  subfolders and workspaces follow, a deleted one's move up),
+  `agents.scan` (`{host}`: Claude Code and Codex sessions on the host, each
+  `{agent, id, cwd, branch, title, mtime, resume}`)
 - `fs.list`, `fs.stat`, `fs.read`, `fs.write`, `fs.find`, `fs.create`,
   `fs.rename`, `fs.delete`, `fs.copy`, `fs.watch`, `fs.unwatch`,
   `search.project`
@@ -216,17 +229,24 @@ Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
 `fs.changed`, `workspace.trusted` (with the available language servers) —
 to the clients of the workspace they concern; and to every client,
-`workspace.added` (`{workspace}`), `workspace.removed` (`{workspace: id}`)
-and `workspace.status` (`{workspace: id, status}`, when it changes).
+`workspace.added` (`{workspace}`), `workspace.removed` (`{workspace: id}`),
+`workspace.changed` (`{workspace}`: its name, folder, pin, or a retry),
+`orchestrator.folders` (`{folders}`) and `workspace.status` (`{workspace:
+id, status}`, when it changes). A workspace entry: `{id, name, label,
+root, host, folder, pinned, created, worktree, status, error}` — `label`
+the user's name, `error` (and no `status`) for one that could not be
+opened again.
 
 A workspace's `status`: `trusted`; `docs` and `modified` (open and unsaved
 documents); `terminals` (each `{id, name, command, agent, title, state,
-bells}`); `procs`; `errors` and `warnings` (from the language servers'
+bells}`; `state` is `working`, `waiting`, `done`, `idle`, `unknown` or
+`exited`); `procs`; `errors` and `warnings` (from the language servers'
 latest reports for its open documents); `branch` (read from `.git/HEAD`
-through its filesystem); `viewers` (clients viewing it); and `attention`,
-why it needs the user — a terminal rang the bell, or an agent session went
-from working to waiting, idle ("finished") or exited — until a client
-viewing it sends `workspace.seen`.
+through its filesystem); `viewers` (clients viewing it); `worked` (when
+the user last typed into its files or terminals); and `attention`, why it
+needs the user — a terminal rang the bell, or an agent session turned
+waiting, done or exited — until a client viewing it sends
+`workspace.seen` (which also sees its terminals' finished work).
 
 ## Orchestrator
 
@@ -238,24 +258,51 @@ switching loads the page for the other one, so its tabs, splits, terminals
 and plugins come back as this browser left them and never mix with
 another's. Two tabs can view two workspaces side by side.
 
-- **Workspaces** (Alt+O, or the workspace's name in the top bar): every
-  workspace with its live status — `●` it needs you (and why), `*` an agent
-  is working; its branch, host and folder, `restricted`, open and unsaved
-  files, terminals, each agent session and its state, diagnostics, how
-  many pages view it — with **switch** and **close** (Enter, Delete).
-- **Switch Workspace…** (Ctrl+Alt+O): the same as a quick pick.
-- **New Workspace…**: a folder (`~` for home, recent ones offered), the host,
-  whether to trust it, and optionally an agent command (a coding agent's
-  CLI, or any long-running program) to start in a terminal there. **Open**
-  (Ctrl+Enter) switches to it; **Open in Background** (Alt+Enter) stays.
-- **Start Agent Session…**: a terminal running a command here; its tab
-  shows its state (`*` working, `●` waiting for you, `·` idle, `✕` exited).
-- The status bar counts the other workspaces that need you
-  (`● 1 needs you`); a click, or **Jump to Attention**, switches to the one
-  that has. Viewing a workspace that needed you says why in the status bar.
-- **Close Workspace** stops its terminals and agents (asking first) and
-  asks before discarding unsaved files; pages viewing it are told and show
-  the overview.
+- **The dock** (View ▸ Orchestrator Dock, the workspace's name in the top
+  bar; Alt+O moves the keyboard to it and back): a column left of the
+  sidebar listing every workspace, its state at the right edge — `●` needs
+  you, `✓` finished work you haven't looked at, `*` working, `·` idle, `?`
+  no signal, `!` could not be opened (Enter retries) — with its branch,
+  unsaved files, `⊘` restricted and a remote host's mark. Pinned ones come
+  first, then folders (nested; each rolls up its `●` and `✓`) and the rest,
+  or **By date** (Today, This week, Older, by when you last typed in it).
+  A click switches; right-click or F2: Switch, Rename (until renamed, a
+  workspace takes its agent terminal's title), Move to Folder, Pin to Top,
+  Run Agent, Close, Close and Delete Worktree; on a folder: New Subfolder,
+  Rename, Delete. `/` searches. **Menu ▾**: grouping, New Workspace, New
+  Folder, Import Sessions, Workboard, Jump to Attention and Back.
+- **New Workspace…** (`+ New`): the agent — Claude Code, Codex, OpenCode or
+  Aider from the editor's registry (`web/js/agents.js`: how each takes a
+  first prompt, its auto-mode flags), a plain terminal, or a command — and
+  its first prompt; the host and folder (`~` for home, recent ones
+  offered); git: **a new worktree on a new branch** (the default; in
+  `~/.local/share/fresh-poc/worktrees/<repo>/` on the host, the branch
+  `<repo>-N` cut from the default branch unless named) or the folder as it
+  is; trust; a name and a dock folder. **Launch** (Ctrl+Enter) switches to
+  it; **Launch in Background** (Alt+Enter) stays, and the dock shows it being
+  made, and why it failed, with Retry.
+- **Run Agent…**: an agent from the same registry, here, in a terminal; its
+  tab shows its state (`*` working, `●` waiting, `✓` done, `·` idle).
+- **Import Sessions…**: the Claude Code and Codex sessions run outside the
+  editor on a machine (their transcripts, read through its authority);
+  Enter opens New Workspace filled in to resume one (`claude --resume`,
+  `codex resume`) in its folder.
+- **Workboard** (Workboard: Open): every workspace on one board by what it
+  needs — Inbox (Needs you, Ready to review, Working, Parked) or Board
+  (Backlog, Needs me, Working, Review); Tab switches, Enter opens, `n` goes
+  to the next that needs you.
+- The status bar counts the other workspaces that need you or finished
+  (`● 1 needs you  ✓ 1 done`); a click, or **Jump to Attention**, goes to
+  the one waiting longest (**Jump Back** returns). Viewing a workspace that
+  needed you says why in the status bar.
+- **Close Workspace** stops its terminals and agents (asking first) and asks
+  before discarding unsaved files; with **Delete Worktree** its git worktree
+  goes too (the branch stays). Pages viewing it are told.
+- The registry — workspaces with their names, folders, pins, trust,
+  worktrees, and the folders — is kept in
+  `~/.local/share/fresh-poc/orchestrator-<port>.json` on this machine and
+  opened again at start, with the same ids; one that cannot be opened again
+  is listed with why, to retry or dismiss.
 
 ## Themes and colours
 
@@ -371,7 +418,7 @@ A skin is CSS against the client's stable structure. `<html>` carries
 | `#device` | the frame a bezel skin's furniture is built in; `#app` is inset in it by `--shell-pad` and `--bezel-top`/`-side`/`-bot` (set them on `:root.skin-<id>`); `.dv-screen` is a dark well around the client |
 | `#app` | the window: `#topbar`, `#main`, `#status`, top to bottom |
 | `#topbar` | `.brand`, `#menubar` (the menu bar: `.mtop` titles, `.mtop.open`; a column when a skin lays it out as one, and its menus open beside it), `#ws-name` (the workspace), `.hint`, `#skin-btn` |
-| `#main` | `#sidebar` (`#side-panels`: plugin panels, the explorer first), its `.sash`, and `#work` |
+| `#main` | `#left-dock` (the orchestrator's dock), `#sidebar` (`#side-panels`: plugin panels, the explorer first), its `.sash`, and `#work` |
 | `#work` | `#bar` (a plugin bar), `#center` (`#editor-area`, `.sash`, `#right-dock`), `.sash`, `#dock` (`.dock-tabs`, `.dock-body`), `.sash`, `#terminal` (`.term-tabs`, `.term-screens`) |
 | `.sash` | a drag handle between two parts (`.sash.x` moves sideways, `.sash.y` up and down; `.dragging` while dragged): no size in the layout, its grip reaches 3px either side; a split's sash is its dividing line (its border) |
 | `#editor-area` | `.split.h` / `.split.v` of `.pane`s with a `.sash` between them; a pane is `.tabs` (`.tab`, `.tab.active`, `.x`) over `.surface`; the focused pane is `.pane.active`; while a tab is dragged, `<html>` has `.tab-dragging` and its landing place is `.tab.drop-before` / `.tab.drop-after` or `.pane.drop-into` |
@@ -459,8 +506,8 @@ properties, most of the plugin API — have no type yet.
 - Ignore rules are git's own files only (`.git/info/exclude` and every
   `.gitignore`), not `core.excludesFile`. Each folder's `.gitignore` costs one
   read through the filesystem per walk (a round trip on a remote host).
-- The open workspaces are not remembered across a server restart (each
-  browser remembers its own layout per workspace); an SSH connection is not
-  re-established if it drops. Agent sessions are terminals: the state is
-  read from the stream, not from the agent; there is no worktree creation,
-  project list or import of sessions run elsewhere.
+- An SSH connection is not re-established if it drops. Agent sessions are
+  terminals: their state is read from the stream, as the editor does; an
+  agent is not resumed when the server restarts (Import Sessions resumes
+  one by hand). The orchestrator's gaps against the editor's are in
+  `PLAN.md`.

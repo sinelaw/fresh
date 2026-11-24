@@ -123,7 +123,7 @@ pub fn scan(fs: &Fs, home: &Path) -> Vec<Value> {
     walk(fs, &home.join(".claude/projects"), 2, "claude", &mut found);
     walk(fs, &home.join(".codex/sessions"), 4, "codex", &mut found);
     found.retain(|f| f.agent != "claude" || f.rel.matches('/').count() == 1);
-    found.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    found.sort_by_key(|f| std::cmp::Reverse(f.mtime));
     found
         .into_iter()
         .take(MAX)

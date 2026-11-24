@@ -72,14 +72,64 @@ days; where they matter the feature is reimplemented rather than run.
 | **Remote editing (SSH)** | Adapt | Done (`--ssh`): files through the editor's remote agent (ranged reads, line counting, walking and searching on the remote side); processes, terminals and language servers through `ssh` with the connection's port, identity and options. Exercised end to end against a local sshd, with and without `--slow-network` |
 | **Devcontainers** | Adapt | Done (`--container`): files stay local; processes, terminals and language servers run through `docker exec -w <dir>` in a container whose workspace is bind-mounted at the same path (checked at start). Exercised against a `docker` stand-in; not yet against a real daemon |
 | **Daemon mode** | Adapt | The server *is* the daemon: clients come and go, documents and terminals stay; a disconnected client's documents, watches and processes are released. Done in substance |
-| **Orchestrator**, agent sessions | Native + server | Done: one server holds many workspaces (registry in `src/orchestrator.rs`; each workspace a `Session` with its own authority, trust, documents, terminals, processes, watches and language servers); a client views one (`?ws=`), switching reloads the page for the other; overview with live status (attention, agents' states, branch, files, diagnostics), quick switcher, New Workspace (any host, trust, an agent command), agent sessions as terminals running a command, attention beacon and jump, close. Not ported: worktree creation, folders and pins, projects and machines lists, importing external sessions, persisting the workspace list across restarts |
-| **Workboard** | Skip | The overview covers the at-a-glance list; lenses and the kanban board are not ported |
+| **Orchestrator**, agent sessions | Native + server | Done; the gap table against the editor's is below ("Orchestrator: against the editor's") |
+| **Workboard** | Native | Inbox and Board lenses (see below) |
 | **Keybinding editor** | Native | A table of the client's keymap with search; edits saved in the browser |
 | **Emacs keymap** | Native | An alternative keymap table for the common movement/editing keys |
 | **Vi mode** | Skip | `vi_mode` depends on key capture and modal editor state across ~4k lines; a native vi layer is its own project |
 | **Dashboard** | Skip | Widgets (git, disk, weather, PRs) are terminal-panel UI |
 | **Workspace trust** | Adapt | Done (`--restricted`): an untrusted workspace refuses processes, terminals and language servers and runs no probe for them; trusting starts the servers for open documents |
 | **Web UI skins** | Native + server | Done: a skin is a folder (`skin.css` with a header, optional `furniture.html` and `theme.json`, images, fonts) against the client's documented DOM and theme variables; frames (full / bezel with furniture), density (`@scale`, the editor cell re-measured), `@extends`, and an editor theme that is an ordinary theme (`skin/<id>`). Built-in skins embedded (Default, Compact, Winamp Classic, Bridge), user skins from `~/.config/fresh/web-skins` through the authority; live readouts from the host's `/proc`. Picker with live preview, Ctrl+Alt+T, `?skin=`. Not ported: installing from a URL or files in the browser, `@keys symbols`, `@explorer-side`, live re-apply on save |
+
+## Orchestrator: against the editor's
+
+Reviewed against `crates/fresh-editor/plugins/orchestrator.ts` (+ i18n),
+`workboard.ts`, `agent_sessions*.ts`, `agent_discovery.ts`,
+`live_sessions.ts`, `lib/agent_*.ts`, and `docs/features/orchestrator.md`,
+`workboard.md`, `session-persistence.md`, `docs/internal/orchestrator-*.md`,
+`tmux-native-sessions.md`, `agent-fresh-cli-exposure-plan.md`.
+Present = done here; Adapt = done differently for this split; Later = worth
+porting, not yet; Skip = with the reason.
+
+| Editor feature | Here | Notes |
+|---|---|---|
+| Workspaces, each with its own files, terminals, LSP, authority, trust | Present | `Session` per workspace in one server; a page views one (`?ws=`) |
+| Dock: persistent left column, Alt+O focus, View menu, × | Present | `#left-dock` (UI kit place `left`); open state remembered per browser |
+| State marks ● ✓ * · ? and ! (failed + Retry) | Present | Server-side state (`src/terminal.rs`) with the editor's rules: 5 s idle window, 1.5 s work burst, OSC 133 / 9;4, built-in question rules |
+| Attention line, status-bar beacon, Jump to Attention / Jump Back | Present | Waiting first, then done; jump-back per tab |
+| Folders (nested, roll-ups), Move to Folder, New/Rename/Delete folder | Present | Server registry (`folder.*`); drag and drop into folders: Later |
+| Group by date (Today / This week / Older by last worked in) | Present | "Worked in" = typed into its files or terminals |
+| Pins, Rename, auto-name from the agent terminal's title | Present | |
+| Search `/` | Present | |
+| Compact view | Present | |
+| Cards view (branch, changes, PR per card) | Later | The UI kit's virtual list has fixed rows; cards need a variable-height list |
+| Show empty workspaces / All worktrees (on-disk worktrees not open) | Later | Needs `git worktree list` per repository through the authority |
+| Project scope (limit the dock to one project) | Later | |
+| New Workspace: agent picker from the registry (Claude, Codex, OpenCode, Aider, terminal, custom), prompt, auto mode | Present | `web/js/agents.js` mirrors `lib/agent_*.ts` |
+| New Workspace: git — new worktree on a new branch (default) / work in folder; branch and base | Present | Through the workspace's authority; `~/.local/share/fresh-poc/worktrees/<repo>/` on the host (the editor: its data dir, `~/.fresh/worktrees` remotely) |
+| Launch / Launch in background, pending row, failure with Retry / Dismiss | Present | Pending rows are this page's; a failed restore is the server's |
+| "Here" mode (run the agent in the current workspace) | Adapt | Run Agent… (palette pick from the registry, then the task) |
+| Teach Fresh CLI (agent drives the editor) | Skip | No scripting surface in this split (PLAN: Scripting) |
+| Agent resume across restarts (`--session-id` provision / `--continue`) | Later | Workspaces come back; their agents do not restart on their own (the editor resumes them) |
+| Projects list (repos and folders, main clone per machine, clone from URL) | Adapt / Later | Recent folders per browser; a server-kept project list and cloning: Later |
+| Machines list (saved SSH hosts, Test connection, ssh config hints, host-key prompt) | Adapt / Later | Host and target remembered per browser; SSH runs with `BatchMode`, so no host-key prompt |
+| Kubernetes / devcontainer up | Skip | Containers attach to a running one (`docker exec`); no `devcontainer up` |
+| Workspace persistence across restarts | Present | `~/.local/share/fresh-poc/orchestrator-<port>.json`, same ids |
+| Disconnected / unreachable host: listed with why, Retry | Present | Not reconnected in the background |
+| Archive (worktree to `.archived/`, unarchive) | Later | Close and Delete Worktree is there |
+| Delete worktree (branch kept) | Present | `git worktree remove --force` |
+| Stop (kill the agent's process group) | Adapt | Closing a terminal hangs up its process group; per-row Stop: Later |
+| PR pills (gh) | Skip | Needs `gh` and network; out of scope |
+| Git summary (↑ ahead, + changes) | Later | Branch only (read from `.git/HEAD`, no process) |
+| Explain State, detection rules file / URL, Reload Detection Rules | Later | The rules are built in |
+| Notifications settings (needs-you / all / off, bell sound) | Adapt | Status bar beacon and message; no settings |
+| Import Sessions (Claude Code, Codex transcripts) | Present | `agents.scan` through the host's authority; opens New Workspace to resume |
+| Import: tmux / screen / zellij panes, other orchestrators' worktrees, aider/opencode history | Later | Scanners to add to `src/agents.rs` |
+| External live sessions (Claude Desktop, cloud), Teleport, Take Over | Skip | Needs those products' local and cloud APIs |
+| Workboard: Inbox and Board lenses, `n`, Enter | Present | Dialog; lenses Tab / 1–2 |
+| Workboard: Projects and Folders lenses, pins on the Board, time in state, sources API | Later | |
+| Quick switcher | Present | Ctrl+Alt+O (the editor's Open dialog is the dock here) |
+| Kill selected / bulk actions | Later | |
 
 ## Order
 
@@ -158,7 +208,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Terminal | Restart the terminal, send the selection (or line) to it | fixed |
 | Help | Welcome, keyboard shortcuts (keybinding editor), show log | present |
 | Help | Settings screen | skipped (settings are palette toggles in the browser; a settings UI needs the editor's schema) |
-| Workspaces | Orchestrator / multi-session management | present (overview Alt+O, switcher Ctrl+Alt+O, New Workspace, agent sessions, attention beacon) |
+| Workspaces | Orchestrator / multi-session management | present (dock Alt+O, switcher Ctrl+Alt+O, New Workspace, Run Agent, Import Sessions, Workboard, attention beacon) |
 
 In all: 56 rows — 17 present, 28 fixed by this audit, 9 missing, 2 skipped.
 What is missing is behind the chrome: preview tabs, explorer

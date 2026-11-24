@@ -89,8 +89,9 @@ export class Orchestrator {
     this.filter = "";
     this.pending = []; // workspaces being made in the background: {key, spec, name, error}
     this.nextPending = 0;
-    this.prefs = { dock: false, group: "folders", agent: "claude", auto: false, custom: "", recent: [] };
+    this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [] };
     this.formGo = null; // the open New Workspace form's launch
+    this.renderBoard = null; // the open Workboard's redraw
   }
 
   // The workspace this page views (null: none).
@@ -112,6 +113,8 @@ export class Orchestrator {
     cmd("orchestrator.pin", "Orchestrator: Pin / Unpin Workspace", () => this.pin(this.byId(this.current)));
     cmd("orchestrator.newFolder", "Orchestrator: New Folder…", () => this.newFolder(""));
     cmd("orchestrator.import", "Orchestrator: Import Sessions…", () => this.importSessions());
+    cmd("workboard.open", "Workboard: Open", () => this.workboard());
+    cmd("workboard.next", "Workboard: Next Waiting Agent", () => this.jump());
     cmd("orchestrator.group", "Orchestrator: Group by Folders / by Date", () => this.setGroup(this.prefs.group === "folders" ? "date" : "folders"));
     cmd("orchestrator.jump", "Orchestrator: Jump to Attention", () => this.jump());
     cmd("orchestrator.jumpBack", "Orchestrator: Jump Back", () => this.jumpBack());
@@ -177,6 +180,7 @@ export class Orchestrator {
     }
     this.renderDock();
     this.renderBeacon();
+    this.renderBoard?.();
   }
 
   looked() { return document.visibilityState === "visible" && document.hasFocus(); }
@@ -468,6 +472,7 @@ export class Orchestrator {
       { label: "New Workspace…", run: () => this.newWorkspace() },
       { label: "New Folder…", run: () => this.newFolder("") },
       { label: "Import Sessions…", run: () => this.importSessions() },
+      { label: "Workboard", run: () => this.workboard() },
       null,
       { label: "Jump to Attention", run: () => this.jump() },
       { label: "Jump Back", run: () => this.jumpBack() },
@@ -585,6 +590,91 @@ export class Orchestrator {
         term.select(id);
       },
     });
+  }
+
+  // ----------------------------------------------------------- workboard
+
+  // The Workboard (docs/features/workboard.md): every workspace on one
+  // board, by what it needs from you. Inbox: Needs you, Ready to review,
+  // Working, Parked. Board: Backlog, Needs me, Working, Review. Tab or 1–2
+  // switch the lens, Enter opens, n goes to the next one that needs you.
+  workboard() {
+    const panel = this.app.ui.panel({ id: "workboard", title: "Workboard", place: "dialog" });
+    // Where each workspace goes, from its state; idle with unsaved files
+    // is work to review.
+    const column = (w) => {
+      const st = stateOf(w);
+      if (st === "waiting" || st === "failed") return "needs";
+      if (st === "done" || (st === "idle" && w.status?.modified)) return "review";
+      if (st === "working" || st === "pending") return "working";
+      return "parked";
+    };
+    const lenses = {
+      inbox: [["needs", "Needs you"], ["review", "Ready to review"], ["working", "Working"], ["parked", "Parked"]],
+      board: [["parked", "Backlog"], ["needs", "Needs me"], ["working", "Working"], ["review", "Review"]],
+    };
+    const SAYS = { waiting: "waiting for you", done: "finished, not looked at", working: "working", idle: "idle", unknown: "no signal", exited: "ended", pending: "being made" };
+    const why = (w) => w.error || w.status?.attention || SAYS[stateOf(w)];
+    const lensKey = (e) => {
+      if (e.key === "Tab" || e.key === "1" || e.key === "2") {
+        e.preventDefault();
+        this.prefs.lens = e.key === "1" ? "inbox" : e.key === "2" ? "board" : this.prefs.lens === "board" ? "inbox" : "board";
+        this.savePrefs();
+        render();
+        panel.focus(this.prefs.lens === "board" ? "" : "cards");
+        return true;
+      }
+      if (e.key === "n") { e.preventDefault(); panel.close(); this.jump(); return true; }
+      return false;
+    };
+    // A workspace on the board: its state, name, and what it needs.
+    const card = (w) => h("row", { class: "orch-row" }, [
+      h("text", { class: `orch-mark ${stateOf(w)}` }, [MARKS[stateOf(w)]]),
+      h("text", { class: "orch-name keep", bold: w.id === this.current, title: [w.root, w.folder, w.status?.branch].filter(Boolean).join(" · ") }, [displayName(w)]),
+      h("text", { class: "wb-why" }, [why(w)]),
+    ]);
+    const render = () => {
+      const lens = this.prefs.lens === "board" ? "board" : "inbox";
+      const ws = this.list;
+      const tabs = h("row", { class: "wb-lenses" }, [
+        h("toggle", { on: lens === "inbox", onChange: () => { this.prefs.lens = "inbox"; this.savePrefs(); render(); } }, ["1 Inbox"]),
+        h("toggle", { on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, ["2 Board"]),
+        h("spacer", {}),
+        h("text", { dim: true }, ["Tab: lens · Enter: open · n: next that needs you · Esc: close"]),
+      ]);
+      if (lens === "inbox") {
+        const items = [];
+        for (const [key, label] of lenses.inbox) {
+          const group = ws.filter((w) => column(w) === key);
+          if (!group.length) continue;
+          items.push({ header: true, label: `${label}  ${group.length}` });
+          for (const w of group) items.push({ w });
+        }
+        panel.render(h("col", { class: "wb" }, [tabs, h("list", {
+          key: "cards", class: "wb-list", items,
+          render: (it) => (it.header ? h("text", { bold: true }, [it.label]) : h("row", { class: "orch-row" }, [
+            card(it.w),
+            h("text", { dim: true }, [[it.w.folder, it.w.status?.branch].filter(Boolean).join(" · ")]),
+          ])),
+          onActivate: (it) => it && !it.header && this.switchTo(it.w.id),
+        })]));
+      } else {
+        panel.render(h("col", { class: "wb" }, [tabs, h("row", { class: "wb-board" }, lenses.board.map(([key, label]) => {
+          const group = ws.filter((w) => column(w) === key);
+          return h("col", { class: "wb-column" }, [
+            h("text", { bold: true }, [`${label}  ${group.length}`]),
+            h("list", { key: `column-${key}`, items: group, render: card, onActivate: (w) => w && this.switchTo(w.id) }),
+          ]);
+        }))]));
+      }
+    };
+    if (!WIRED.has(panel)) {
+      WIRED.add(panel);
+      panel.el.addEventListener("keydown", (e) => { if (e.target.tagName !== "INPUT") lensKey(e); });
+    }
+    this.renderBoard = () => { if (panel.open) render(); };
+    render();
+    panel.focus(this.prefs.lens === "board" ? "" : "cards");
   }
 
   // ----------------------------------------------------------- import
@@ -777,3 +867,5 @@ const ago = (ms) => {
 
 // The New Workspace panels whose keys are wired.
 const FORMS = new WeakSet();
+// The Workboard panels whose keys are wired.
+const WIRED = new WeakSet();
