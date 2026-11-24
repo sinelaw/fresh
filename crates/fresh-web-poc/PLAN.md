@@ -136,7 +136,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
 | Files | Recent files (File ▸ Open Recent, and the file palette with nothing typed) | fixed |
 | Files | Close All, Close Others | fixed |
-| Files | Save As | missing (a copy of a document to a new path: needs a server op) |
+| Files | Save As (the text written through `fs.write`, then opened; overwrite confirmed) | fixed |
 | Files | Set line ending (LF / CRLF / CR), reopen or save with an encoding, set language, revert | fixed (server `doc.set`, `doc.reload` with `encoding`) |
 | Files | New untitled buffer (Ctrl+N) | missing (documents are files on the server; New File asks for a name) |
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |

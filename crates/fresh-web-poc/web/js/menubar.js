@@ -24,6 +24,7 @@ export const MENUS = [
     { command: "file.recent", label: "Open Recent…" },
     null,
     { command: "file.save", label: "Save" },
+    { command: "file.saveAs", label: "Save As…" },
     { command: "file.saveAll", label: "Save All" },
     { command: "file.revert", label: "Revert File" },
     null,

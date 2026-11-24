@@ -1071,6 +1071,26 @@ class App {
       this.setStatus(mod.length ? `Saved ${mod.length} file(s)` : "Nothing to save");
     });
     cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b._readOnly = !b._readOnly; this.renderAll(); } });
+    // Save As: the text written to another file (through the server's
+    // file operations), which then opens; the original stays as it is.
+    cmd("file.saveAs", "File: Save As…", async () => {
+      const b = V()?.buf;
+      if (!b) return;
+      if (b.large) { this.setStatus("A large file is read from disk as it is viewed; copy it in the explorer instead"); return; }
+      const rel = (p) => (p && p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p || "");
+      const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name });
+      if (!name) return;
+      const path = name.startsWith("/") ? name : `${this.root}/${name}`;
+      if (path === b.path) { await this.saveBuffer(b); return; }
+      const st = await rpc("fs.stat", { path });
+      if (st.dir) { this.setStatus(`${name} is a folder`); return; }
+      if (st.exists && !(await this.confirm(`${name} exists. Overwrite it?`, "Overwrite"))) return;
+      try {
+        await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
+      } catch (e) { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
+      await this.openFile(path);
+      this.setStatus(`Saved as ${name}`);
+    });
     cmd("file.language", "Set Language…", () => this.pickLanguage());
     cmd("file.encoding", "Set Encoding… (reopen or save with)", () => this.pickEncoding());
     cmd("file.lineEnding", "Set Line Ending…", () => this.pickLineEnding());
