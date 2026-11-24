@@ -209,6 +209,8 @@ export class Host {
         active: () => host.view(app.view(), name),
         all: () => app.panes().flatMap((p) => p.views).map((v) => host.view(v, name)),
       },
+      // A palette mode for a prefix: fresh.palette.provide("@", {hint, items(q)})
+      palette: { provide: (prefix, o) => app.prompt.provide(prefix, o) },
       // A row at the end of a menu bar menu: fresh.menus.add("Go", {command, label})
       menus: { add: (menu, row) => app.menubar.add(menu, row) },
       // Keys for a buffer kind: fresh.modes.define("git-log", { Enter: fn, q: fn })

@@ -4,6 +4,8 @@
 //   >      commands  every registered command, with its key
 //   #      buffers   open buffers by name
 //   :      line      go to a line, previewed as you type
+//   @      symbols   (and any prefix a plugin provides: `provide`) the
+//                    selected item previewed, Escape puts the view back
 // — and the general pick-from-a-list / ask-for-text prompts plugins use.
 
 import { rpc } from "./rpc.js";
@@ -22,7 +24,13 @@ export class Palette {
     this.sel = 0;
     this.spec = null;
     this.seq = 0;
+    this.providers = new Map(); // prefix -> {hint, items(query)}
   }
+
+  // A mode for prefix `prefix` (one character): `items(query)` resolves
+  // with [{label, detail, run, preview?}]; `preview()` runs as the item is
+  // selected (Escape puts the view back where it was).
+  provide(prefix, o) { this.providers.set(prefix, o); }
 
   // Take the input's events (once, after `new`).
   listen() {
@@ -37,10 +45,11 @@ export class Palette {
   palette(prefix) {
     const v = this.app.view();
     const origin = v ? { v, pos: v.primary.pos, top: v.top } : null;
+    let previewed = false;
     this.show({
       label: "",
       value: prefix,
-      hint: "files · > commands · # buffers · : go to line",
+      hint: ["files · > commands · # buffers · : go to line", ...[...this.providers].map(([k, o]) => `${k} ${o.hint}`)].join(" · "),
       source: (q) => this.paletteItems(q),
       onChange: (q) => {
         // Preview a `:N` jump; Escape puts the view back.
@@ -53,7 +62,9 @@ export class Palette {
         if (/^:\d/.test(q) && origin) this.app.pushHistory(origin.v, origin.pos);
         it?.run ? it.run() : this.openTyped(q);
       },
-      onCancel: () => { if (origin && /^:\d/.test(this.input.value)) { origin.v.setTop(origin.top); this.app.editing.place(origin.v.pane, origin.pos, false); } },
+      // A provider's item previews where it goes.
+      onSelect: (it) => { if (it?.preview) { previewed = true; it.preview(); } },
+      onCancel: () => { if (origin && (previewed || /^:\d/.test(this.input.value))) { origin.v.setTop(origin.top); this.app.editing.place(origin.v.pane, origin.pos, false); } },
     });
   }
 
@@ -72,6 +83,8 @@ export class Palette {
         .filter((b) => (b.path || b.name).toLowerCase().includes(t))
         .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : "virtual", run: () => app.showBuffer(b) }));
     }
+    const pr = this.providers.get(q[0]);
+    if (pr) return pr.items(q.slice(1).trim());
     if (q.startsWith(":")) {
       const n = parseInt(q.slice(1), 10);
       return [{ label: n > 0 ? `Go to line ${n}` : "Type a line number", run: () => n > 0 && app.gotoLine(n - 1, 0, { history: false }) }];
@@ -91,7 +104,7 @@ export class Palette {
 
   openTyped(q) {
     const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
-    if (m && !/^[>#:]/.test(q)) this.app.openFile(m[1], m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {});
+    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app.openFile(m[1], m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {});
   }
 
   // Pick from a list: {title, items: [{label, detail, value}], onAccept(item), onChange(item)}

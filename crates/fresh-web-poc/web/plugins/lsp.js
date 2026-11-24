@@ -74,29 +74,31 @@ export function activate(fresh) {
     refsPanel.focus("refs");
   };
 
-  const symbols = async () => {
-    const v = active();
-    if (!v) return;
-    const r = asList(await ask(v, "textDocument/documentSymbol"));
-    const KIND = { 5: "class", 6: "method", 12: "function", 13: "variable", 14: "constant", 23: "struct", 10: "enum", 11: "interface", 8: "field", 2: "module" };
-    const flat = [];
-    const walk = (list, depth) => {
-      for (const s of list) {
-        const range = s.selectionRange || s.location?.range || s.range;
-        flat.push({ label: `${"  ".repeat(depth)}${s.name}`, detail: KIND[s.kind] || "", value: range });
-        if (s.children) walk(s.children, depth + 1);
-      }
-    };
-    walk(r, 0);
-    if (!flat.length) return fresh.ui.message("No symbols");
-    const b = v.buffer;
-    fresh.ui.pick({
-      title: "Symbols",
-      items: flat,
-      onChange: (it) => { if (it) { const p = fresh.lsp.offset(b, it.value.start.line, it.value.start.character); if (p != null) v.setCursor(p, { center: true }); } },
-      onAccept: (it) => { const p = fresh.lsp.offset(b, it.value.start.line, it.value.start.character); if (p != null) v.setCursor(p, { center: true }); },
-    });
-  };
+  // The palette's `@`: the active file's symbols, filtered by what is
+  // typed, each previewed as it is selected. Asked once per opening.
+  let symCache = null;
+  const KINDS = { 5: "class", 6: "method", 12: "function", 13: "variable", 14: "constant", 23: "struct", 10: "enum", 11: "interface", 8: "field", 2: "module" };
+  fresh.palette.provide("@", {
+    hint: "symbols",
+    items: async (q) => {
+      const v = active();
+      if (!v) return [{ label: "No language server for this file" }];
+      const key = `${v.buffer.id}:${v.buffer.length}`;
+      if (!symCache || symCache.key !== key) symCache = { key, list: asList(await ask(v, "textDocument/documentSymbol")) };
+      const out = [];
+      const walk = (list, path) => {
+        for (const s of list) {
+          const range = s.selectionRange || s.location?.range || s.range;
+          const go = (o) => { const p = fresh.lsp.offset(v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true, ...o }); };
+          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [KINDS[s.kind], path || s.containerName].filter(Boolean).join(" · "), run: () => go({}), preview: () => go({}) });
+          if (s.children) walk(s.children, path ? `${path}.${s.name}` : s.name);
+        }
+      };
+      walk(symCache.list, "");
+      return out.length ? out : [{ label: q ? "No symbol matches" : "No symbols" }];
+    },
+  });
+  const symbols = () => fresh.commands.run("palette.open", "@");
 
   // ---------------------------------------------------------------- edits
 
@@ -312,7 +314,7 @@ export function activate(fresh) {
   reg("lsp.rename", "LSP: Rename Symbol", rename, "F2");
   reg("lsp.codeActions", "LSP: Code Actions", codeActions, "C-.");
   reg("lsp.format", "LSP: Format Document", format, "M-S-f");
-  reg("lsp.symbols", "LSP: Document Symbols", symbols, "C-S-o");
+  reg("lsp.symbols", "Go to Symbol in File…", symbols, "C-S-o");
   reg("lsp.signatureHelp", "LSP: Signature Help", signatureHelp, "C-S-Space");
   reg("lsp.diagnostics", "Diagnostics: Show Panel", diagnosticsPanel, "C-S-m");
   // The next (previous) diagnostic after (before) the cursor, round the

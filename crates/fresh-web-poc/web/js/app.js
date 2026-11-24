@@ -1090,6 +1090,7 @@ class App {
     cmd("palette.files", "Open File…", () => this.prompt.palette(""));
     cmd("palette.buffers", "Switch Buffer…", () => this.prompt.palette("#"));
     cmd("palette.line", "Go to Line…", () => this.prompt.palette(":"));
+    cmd("palette.open", "Palette with a Prefix", (prefix) => this.prompt.palette(prefix || ""), true);
     cmd("terminal.toggle", "Terminal: Toggle", () => this.term.toggle());
     cmd("terminal.new", "Terminal: New", async () => { if (!this.term.visible) await this.term.toggle(); await this.term.create(); });
     cmd("skin.select", "Select Skin…", () => this.skins.pick());

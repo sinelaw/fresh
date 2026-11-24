@@ -139,7 +139,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Files | Set line ending (LF / CRLF / CR), reopen or save with an encoding, set language, revert | fixed (server `doc.set`, `doc.reload` with `encoding`) |
 | Files | New untitled buffer (Ctrl+N) | missing (documents are files on the server; New File asks for a name) |
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |
-| Palette | Go to symbol in the file (`@`), in the workspace | missing (`LSP: Document Symbols` is a panel) |
+| Palette | Go to symbol in the file: the palette's `@` (Ctrl+Shift+O), previewed as selected, Escape goes back; plugins provide prefixes (`fresh.palette.provide`) | fixed |
+| Palette | Go to symbol in the workspace | missing (`workspace/symbol` through the server is the way) |
 | Navigation | Back / forward, go to definition / references, matching bracket, paragraphs | present |
 | Navigation | Next / previous problem (F8 / Shift+F8), its message in the status bar | fixed |
 | Navigation | Bookmarks (Ctrl+Shift+N set, Alt+N jump) | missing |
