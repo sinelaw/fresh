@@ -1549,19 +1549,50 @@ impl DirectoryContext {
     }
 
     /// Get the terminal directory for a specific working directory
+    /// (`<data_dir>/terminals/<key>/`; see [`Self::keyed_dir_for`]).
     pub fn terminal_dir_for(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
-        let encoded = crate::path_encode::encode_path_for_filename(working_dir);
-        self.terminals_dir().join(encoded)
+        Self::keyed_dir_for(&self.terminals_dir(), working_dir)
     }
 
-    /// Per-working-directory data root (`<data_dir>/workdirs/<encoded-cwd>/`).
+    /// The directory under `base` that holds what the editor keeps about
+    /// `path`.
+    ///
+    /// New directories are named by
+    /// [`storage_key_for_path`](crate::path_encode::storage_key_for_path) —
+    /// short, one encoding, the same on every platform. A directory an earlier
+    /// release made under the spelled-out
+    /// [`encode_path_for_filename`](crate::path_encode::encode_path_for_filename)
+    /// name keeps being used while it exists, rather than being moved: the
+    /// workspace snapshot records its terminals' scrollback files by absolute
+    /// path, so a renamed directory would orphan every one of them, and a
+    /// plugin's saved per-worktree state would vanish the same way. Nothing is
+    /// lost by leaving those where they are; only paths that have no directory
+    /// yet get the new name (sinelaw/fresh#1971).
+    ///
+    /// Both names are derived from `path` as given, without canonicalising
+    /// it, exactly as the spelled-out name always was — callers pass a
+    /// shell's or a workspace's cwd, and resolving symlinks here would move
+    /// one workspace's data out from under it.
+    fn keyed_dir_for(base: &std::path::Path, path: &std::path::Path) -> std::path::PathBuf {
+        let keyed = base.join(crate::path_encode::storage_key_for_path(path));
+        if keyed.is_dir() {
+            return keyed;
+        }
+        let legacy = base.join(crate::path_encode::encode_path_for_filename(path));
+        if legacy.is_dir() {
+            return legacy;
+        }
+        keyed
+    }
+
+    /// Per-working-directory data root (`<data_dir>/workdirs/<key>/`; see
+    /// [`Self::keyed_dir_for`]).
     /// The canonical home for plugin state that should be scoped to a single
     /// project root / worktree rather than shared across all of them — each
     /// worktree gets its own subtree. Plugins reach this via
     /// `editor.getWorkingDataDir()`.
     pub fn working_data_dir_for(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
-        let encoded = crate::path_encode::encode_path_for_filename(working_dir);
-        self.data_dir.join("workdirs").join(encoded)
+        Self::keyed_dir_for(&self.data_dir.join("workdirs"), working_dir)
     }
 
     /// Get the config file path
@@ -1639,6 +1670,79 @@ impl DirectoryContext {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// A workspace the orchestrator creates lives *inside* the data dir, under
+    /// a slug of the repository's path, so the spelled-out encoding named its
+    /// terminal directory after the home directory, the data dir and the
+    /// repository path a second time (`…_orchestrator_home%5Fu%5F…`) and
+    /// folded it to exactly `NAME_MAX`. Anything that appended to that name
+    /// failed — deleting the workspace could not move its scrollback to the
+    /// trash, whose `<name>.trashinfo` no longer fit (sinelaw/fresh#1971).
+    #[test]
+    fn a_nested_workspace_gets_a_short_single_encoding_storage_dir() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = DirectoryContext::for_testing(tmp.path());
+        let repo_slug = "home_some_user_with_a_long_name_code_my_repo_checkout";
+        let root = ctx
+            .data_dir
+            .join("orchestrator")
+            .join(repo_slug)
+            .join("gamma-very-long-session-name-for-truncation-test");
+
+        for dir in [ctx.terminal_dir_for(&root), ctx.working_data_dir_for(&root)] {
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            assert!(
+                name.len() + ".trashinfo".len() <= 255,
+                "room for a suffix: {} bytes in {name}",
+                name.len()
+            );
+            assert!(!name.contains('%'), "one encoding, no escapes: {name}");
+            let data_dir = ctx.data_dir.to_string_lossy().replace('/', "_");
+            assert!(
+                !name.contains(data_dir.trim_start_matches('_')),
+                "the data dir's own path is not spelled into the name: {name}"
+            );
+            assert!(
+                name.starts_with("gamma-very-long-session-name-for-truncation-test-"),
+                "the workspace's own name stays readable: {name}"
+            );
+        }
+    }
+
+    /// Directories an earlier release created under the spelled-out name keep
+    /// being used: a workspace snapshot records its terminals' scrollback by
+    /// absolute path, and a plugin's per-worktree state is found by this
+    /// lookup, so moving either to the new name would orphan it.
+    #[test]
+    fn an_existing_legacy_storage_dir_is_still_found() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = DirectoryContext::for_testing(tmp.path());
+        let project = tmp.path().join("work_dir").join("my_repo");
+
+        let fresh_terminal = ctx.terminal_dir_for(&project);
+        assert!(fresh_terminal
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("my_repo-"));
+
+        let legacy_terminal = ctx
+            .terminals_dir()
+            .join(crate::path_encode::encode_path_for_filename(&project));
+        let legacy_workdir = ctx
+            .data_dir
+            .join("workdirs")
+            .join(crate::path_encode::encode_path_for_filename(&project));
+        std::fs::create_dir_all(&legacy_terminal).unwrap();
+        std::fs::create_dir_all(&legacy_workdir).unwrap();
+        assert_eq!(ctx.terminal_dir_for(&project), legacy_terminal);
+        assert_eq!(ctx.working_data_dir_for(&project), legacy_workdir);
+
+        // Once a directory exists under the new name it is the one used.
+        std::fs::create_dir_all(&fresh_terminal).unwrap();
+        assert_eq!(ctx.terminal_dir_for(&project), fresh_terminal);
+    }
 
     // These resolve against paths the function under test *probes*, so each
     // needs a workdir of its own: on shared `std::env::temp_dir()` paths a
