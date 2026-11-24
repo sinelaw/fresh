@@ -118,7 +118,11 @@ export class TerminalPanel {
     for (const [id, t] of this.terms) {
       const b = document.createElement("div");
       b.className = "tab" + (id === this.current ? " active" : "");
-      b.textContent = `${t.done ? "✕ " : ""}${t.title || "Terminal " + id}`;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = `${t.done ? "✕ " : ""}${t.title || "Terminal " + id}`;
+      b.title = label.textContent;
+      b.appendChild(label);
       b.onmousedown = (e) => { e.preventDefault(); this.select(id); };
       const x = document.createElement("span");
       x.className = "x";

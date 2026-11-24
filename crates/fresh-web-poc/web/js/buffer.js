@@ -263,6 +263,7 @@ export class FileBuffer extends Buffer {
   // A local edit: apply now, send when nothing is in flight.
   edit(ops, { undoable = true, typing = null } = {}) {
     const inverse = [];
+    this.modified = true; // before the edit events, which redraw the tabs
     for (const op of ops) {
       const gone = op.t === "del" ? this.textRange(op.pos, op.pos + op.len) : null;
       if (op.t === "del") op.nl = gone != null ? nl(gone) : 0;
@@ -274,7 +275,6 @@ export class FileBuffer extends Buffer {
     if (undoable) { pushUndo(this, inverse, typing); this.redo = []; }
     this.lastEdit = Date.now();
     this.pending.push(...ops.map((o) => ({ ...o })));
-    this.modified = true;
     this.flush();
     return inverse;
   }

@@ -53,6 +53,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #terminal { height: 40%; min-height: 120px; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: #181818; }
 #terminal.hidden { display: none; }
 .term-tabs { display: flex; background: var(--panel); }
+.term-tabs .tab { display: flex; max-width: 260px; } .term-tabs .tab .label { overflow: hidden; text-overflow: ellipsis; }
 .term-tabs .plus { color: var(--fg); }
 .term-screens { flex: 1; min-height: 0; padding: 2px 4px; }
 .xterm-host { height: 100%; }
