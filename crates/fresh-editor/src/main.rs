@@ -6972,6 +6972,7 @@ fn real_main() -> AnyhowResult<()> {
         // editor instance (authority-swap restarts rebuild the editor).
         editor.set_mouse_capture(terminal_modes.mouse_capture_enabled());
         editor.set_linux_console(linux_console);
+        editor.set_terminal_hyperlinks(true);
 
         if let Some(p) = status_log_path {
             editor.set_status_log_path(p);

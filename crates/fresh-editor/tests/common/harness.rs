@@ -2021,8 +2021,10 @@ impl EditorTestHarness {
     }
 
     /// Assert that the terminal model shows exactly the frame ratatui meant
-    /// to draw: the same cluster starting in every column. A write that
-    /// landed in the wrong column leaves a stray glyph or a hole here.
+    /// to draw: the same cluster starting in every column, and the same
+    /// hyperlink on every column. A write that landed in the wrong column
+    /// leaves a stray glyph or a hole here; a link the diff failed to redraw
+    /// leaves a stale or missing link.
     pub fn assert_terminal_model_matches_frame(&self) {
         let model = self.terminal_model();
         let frame = self.buffer();
@@ -2036,6 +2038,12 @@ impl EditorTestHarness {
                 model.row_text(row),
                 self.screen_row_text(row as u16),
                 self.screen_to_string()
+            );
+            assert_eq!(
+                model.links(row),
+                crate::common::terminal_model::expected_links(frame, row as u16),
+                "row {row} ({:?}): the terminal's hyperlinks differ from the frame's",
+                model.row_text(row),
             );
         }
     }

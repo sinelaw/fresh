@@ -550,7 +550,8 @@ fn cut_wide_glyph_before(buf: &mut Buffer, x: u16, y: u16) {
     // Only as far back as the buffer goes: its area need not start at 0.
     for back in 1..=x.saturating_sub(buf.area.x).min(3) {
         let cell = &mut buf[(x - back, y)];
-        if fresh_ui::glyph::width(cell.symbol()) > back {
+        let drawn = crate::view::ui::terminal_flush::visible_symbol(cell.symbol());
+        if fresh_ui::glyph::width(drawn) > back {
             cell.set_symbol(" ");
             return;
         }

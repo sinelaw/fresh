@@ -1140,8 +1140,8 @@ candidate depended on what its tests tested:
   binary.
 - **Left alone:** accessors integration tests observe the editor through
   (`get_split_ratio`, the `*_for_test` family), and anything marked
-  `#[allow(dead_code)]` (`apply_hyperlink_overlays` is parked for OSC 8
-  links, with a test's TODO pointing at it).
+  `#[allow(dead_code)]` (`apply_hyperlink_overlays` was then parked for
+  OSC 8 links; it has since been enabled, see `view/ui/terminal_flush.rs`).
 
 About 1,700 lines went. The pass ran to the fixed point this section
 describes, and the deletions exposed a few dead test helpers along the way.

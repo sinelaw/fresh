@@ -59,8 +59,11 @@ eliminating the round-trip. Two supporting techniques: a proactive line refresh 
 Rust before the async cursor-moved hook, and atomic clear-and-rebuild batching
 within a single command-drain pass.
 
-**Not shipped (plan items still open):** OSC-8 clickable links (links are styled
-but no terminal hyperlink escape), header marker concealment (headings keep their
+Links are terminal hyperlinks (OSC 8): the plugin puts the target on the label's
+and the shown URL's overlays (`url`), and the editor draws those cells as links,
+so a URL that wraps opens from any of its rows.
+
+**Not shipped (plan items still open):** header marker concealment (headings keep their
 markers), and task-list/code-fence concealment into checkbox glyphs (parsed but
 not concealed). The remaining-work list (multi-pass transforms, column-guide
 rendering) is also still pending.

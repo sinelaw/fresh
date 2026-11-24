@@ -776,7 +776,9 @@ impl WaveEffect {
                 continue;
             }
             let depth = (p.y - Self::surface_at(p.x, t, water_top_mean, amp)).max(0.0);
-            let sym = p.cell.symbol().to_string();
+            // The glyph alone: a hyperlinked cell's link (and the forced
+            // width it relies on) does not travel with it.
+            let sym = crate::view::ui::terminal_flush::visible_symbol(p.cell.symbol()).to_string();
             let base = color_to_rgb(p.cell.fg).unwrap_or((230, 230, 230));
             let fg = lerp_rgb(base, water_rgb(depth), 0.55);
             let bg = water_rgb(depth + 0.5);

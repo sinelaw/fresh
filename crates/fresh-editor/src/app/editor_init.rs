@@ -802,6 +802,7 @@ impl Editor {
             last_lock_sync: None,
             session_mode: false,
             software_cursor_only: false,
+            terminal_hyperlinks: false,
             session_name: None,
             session_display_name: None,
             pending_escape_sequences: Vec::new(),

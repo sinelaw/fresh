@@ -82,6 +82,9 @@ pub struct EditorRenderConfig<'a> {
     pub hide_current_line_on_selection: bool,
     pub background_fade: f32,
     pub software_cursor_only: bool,
+    /// Whether link overlays are drawn as terminal hyperlinks (OSC 8): only
+    /// when the frame goes to a terminal that can take them.
+    pub terminal_hyperlinks: bool,
 }
 
 impl<'a> EditorRenderConfig<'a> {
@@ -94,6 +97,7 @@ impl<'a> EditorRenderConfig<'a> {
         background_fade: f32,
         software_cursor_only: bool,
         linux_console: bool,
+        terminal_hyperlinks: bool,
     ) -> Self {
         Self {
             large_file_threshold_bytes: editor.large_file_threshold_bytes,
@@ -117,6 +121,8 @@ impl<'a> EditorRenderConfig<'a> {
             hide_current_line_on_selection: editor.hide_current_line_on_selection,
             background_fade,
             software_cursor_only,
+            // The Linux console has no hyperlinks and prints OSC 8's payload.
+            terminal_hyperlinks: terminal_hyperlinks && !linux_console,
         }
     }
 }
@@ -274,6 +280,8 @@ impl SplitRenderer {
             compose_column_guides,
             false,
             None,
+            // A preview shows another window's pane; links stay plain there.
+            false,
         );
         // No horizontal bar here, so no clamp and no width to clamp to.
         orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
@@ -386,6 +394,9 @@ impl SplitRenderer {
             compose_column_guides.clone(),
             highlight_current_column,
             caret,
+            // A client view is drawn for the web client, which is not a
+            // terminal: its cells must hold only the text they show.
+            false,
         );
         orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
         (rows, caret)
@@ -421,7 +432,6 @@ mod tests {
     use super::orchestration::render_line::{
         render_view_lines, LastLineEnd, LineRenderInput, LineRenderOutput,
     };
-    use super::post_pass::apply_osc8_to_cells;
     use super::transforms::apply_wrapping_transform;
     use super::view_data::build_view_data;
     use super::*;
@@ -3131,179 +3141,6 @@ mod tests {
                 line.text.len()
             );
         }
-    }
-
-    /// Helper: strip OSC 8 escape sequences from a string, returning plain text.
-    fn strip_osc8(s: &str) -> String {
-        let mut result = String::with_capacity(s.len());
-        let bytes = s.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            if i + 3 < bytes.len()
-                && bytes[i] == 0x1b
-                && bytes[i + 1] == b']'
-                && bytes[i + 2] == b'8'
-                && bytes[i + 3] == b';'
-            {
-                i += 4;
-                while i < bytes.len() && bytes[i] != 0x07 {
-                    i += 1;
-                }
-                if i < bytes.len() {
-                    i += 1;
-                }
-            } else {
-                result.push(bytes[i] as char);
-                i += 1;
-            }
-        }
-        result
-    }
-
-    /// Read a row from a ratatui buffer, skipping the second cell of 2-char
-    /// OSC 8 chunks so we get clean text.
-    fn read_row(buf: &ratatui::buffer::Buffer, y: u16) -> String {
-        let width = buf.area().width;
-        let mut s = String::new();
-        let mut col = 0u16;
-        while col < width {
-            let cell = &buf[(col, y)];
-            let stripped = strip_osc8(cell.symbol());
-            let chars = stripped.chars().count();
-            if chars > 1 {
-                s.push_str(&stripped);
-                col += chars as u16;
-            } else {
-                s.push_str(&stripped);
-                col += 1;
-            }
-        }
-        s.trim_end().to_string()
-    }
-
-    #[test]
-    fn test_apply_osc8_to_cells_preserves_adjacent_cells() {
-        use ratatui::buffer::Buffer;
-        use ratatui::layout::Rect;
-
-        // Simulate: "[Quick Install](#installation)" in a 40-wide buffer row 0
-        let text = "[Quick Install](#installation)";
-        let area = Rect::new(0, 0, 40, 1);
-        let mut buf = Buffer::empty(area);
-        for (i, ch) in text.chars().enumerate() {
-            if (i as u16) < 40 {
-                buf[(i as u16, 0)].set_symbol(&ch.to_string());
-            }
-        }
-
-        // Overlay covers "Quick Install" = cols 1..14 (bytes 9..22 mapped to screen)
-        let url = "https://example.com";
-
-        // Apply with cursor at col 0 (not inside the overlay range)
-        apply_osc8_to_cells(&mut buf, 1, 14, 0, url, Some((0, 0)));
-
-        let row = read_row(&buf, 0);
-        assert_eq!(
-            row, text,
-            "After OSC 8 application, reading the row should reproduce the original text"
-        );
-
-        // Cell 14 = ']' must not be touched
-        let cell14 = strip_osc8(buf[(14, 0)].symbol());
-        assert_eq!(cell14, "]", "Cell 14 (']') must not be modified by OSC 8");
-
-        // Cell 0 = '[' must not be touched
-        let cell0 = strip_osc8(buf[(0, 0)].symbol());
-        assert_eq!(cell0, "[", "Cell 0 ('[') must not be modified by OSC 8");
-    }
-
-    #[test]
-    fn test_apply_osc8_stable_across_reapply() {
-        use ratatui::buffer::Buffer;
-        use ratatui::layout::Rect;
-
-        let text = "[Quick Install](#installation)";
-        let area = Rect::new(0, 0, 40, 1);
-
-        // First render: apply OSC 8 with cursor at col 0
-        let mut buf1 = Buffer::empty(area);
-        for (i, ch) in text.chars().enumerate() {
-            if (i as u16) < 40 {
-                buf1[(i as u16, 0)].set_symbol(&ch.to_string());
-            }
-        }
-        apply_osc8_to_cells(&mut buf1, 1, 14, 0, "https://example.com", Some((0, 0)));
-        let row1 = read_row(&buf1, 0);
-
-        // Second render: fresh buffer, same text, apply OSC 8 with cursor at col 5
-        let mut buf2 = Buffer::empty(area);
-        for (i, ch) in text.chars().enumerate() {
-            if (i as u16) < 40 {
-                buf2[(i as u16, 0)].set_symbol(&ch.to_string());
-            }
-        }
-        apply_osc8_to_cells(&mut buf2, 1, 14, 0, "https://example.com", Some((5, 0)));
-        let row2 = read_row(&buf2, 0);
-
-        assert_eq!(row1, text);
-        assert_eq!(row2, text);
-    }
-
-    #[test]
-    #[ignore = "OSC 8 hyperlinks disabled pending ratatui diff fix"]
-    fn test_apply_osc8_diff_between_renders() {
-        use ratatui::buffer::Buffer;
-        use ratatui::layout::Rect;
-
-        // Simulate ratatui's diff-based update: a "concealed" render followed
-        // by an "unconcealed" render. The backend buffer accumulates diffs.
-        let area = Rect::new(0, 0, 40, 1);
-
-        // --- Render 1: concealed text "Quick Install" at cols 0..12, rest is space ---
-        let concealed = "Quick Install";
-        let mut frame1 = Buffer::empty(area);
-        for (i, ch) in concealed.chars().enumerate() {
-            frame1[(i as u16, 0)].set_symbol(&ch.to_string());
-        }
-        // OSC 8 covers cols 0..13 (concealed mapping)
-        apply_osc8_to_cells(&mut frame1, 0, 13, 0, "https://example.com", Some((0, 5)));
-
-        // Simulate backend: starts empty, apply diff from frame1
-        let prev = Buffer::empty(area);
-        let mut backend = Buffer::empty(area);
-        let diff1 = prev.diff(&frame1);
-        for (x, y, cell) in &diff1 {
-            backend[(*x, *y)] = (*cell).clone();
-        }
-
-        // --- Render 2: unconcealed "[Quick Install](#installation)" ---
-        let full = "[Quick Install](#installation)";
-        let mut frame2 = Buffer::empty(area);
-        for (i, ch) in full.chars().enumerate() {
-            if (i as u16) < 40 {
-                frame2[(i as u16, 0)].set_symbol(&ch.to_string());
-            }
-        }
-        // OSC 8 covers cols 1..14 (unconcealed mapping)
-        apply_osc8_to_cells(&mut frame2, 1, 14, 0, "https://example.com", Some((0, 0)));
-
-        // Apply diff from frame1→frame2 to backend
-        let diff2 = frame1.diff(&frame2);
-        for (x, y, cell) in &diff2 {
-            backend[(*x, *y)] = (*cell).clone();
-        }
-
-        // Backend should now show the full text when read
-        let row = read_row(&backend, 0);
-        assert_eq!(
-            row, full,
-            "After diff-based update from concealed to unconcealed, \
-             backend should show full text"
-        );
-
-        // Specifically, cell 14 must be ']'
-        let cell14 = strip_osc8(backend[(14, 0)].symbol());
-        assert_eq!(cell14, "]", "Cell 14 must be ']' after unconcealed render");
     }
 
     // --- Current line highlight tests ---

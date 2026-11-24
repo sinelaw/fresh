@@ -210,6 +210,24 @@ Width is centralized so the editor, plugins, and wrap all measure identically.
 - Grapheme-cluster navigation uses Unicode segmentation (UAX #29): previous/next grapheme boundary, grapheme-at, grapheme-count. Editing and cursor movement operate on grapheme clusters (Thai base+combining, ZWJ emoji, combining diacritics count as one user-perceived character).
 - A lower-level visual-layout primitive builds per-line mappings handling ANSI escapes (zero width), tabs (expand to the next tab stop), and double-width and zero-width chars, with fast paths when no escape or tab is present. This is the lower-level analogue the `ViewLine` maps build on.
 
+### From cells to the terminal
+
+ratatui's flush diffs each frame against the previous one and lets the backend
+skip the cursor move for a cell that is the previous one's right-hand neighbour.
+Terminals disagree about how far multi-codepoint clusters (`❤️`, keycaps, flags)
+advance the cursor, so every backend the editor draws a terminal through — the
+local `CrosstermBackend` and the session server's `CaptureBackend` — is wrapped
+in `ClusterSafeBackend` (`view/ui/terminal_flush.rs`). It writes a wide cell's
+trailing columns before the cell and positions the cursor explicitly after any
+multi-codepoint cluster, so no write depends on the terminal's advance (#2877).
+
+The same module encodes terminal hyperlinks. Overlays with a `url` are drawn as
+OSC 8 links inside the linked cells' symbols, each cell declaring a one-column
+`CellDiffOption::ForcedWidth` so the diff measures it by what it shows (#1227).
+Only terminal frames get them (`EditorRenderConfig::terminal_hyperlinks`: set by
+the binary and the session server, never the GUI, the Linux console or web
+views); anything else that reads a cell's text uses `visible_symbol`.
+
 ---
 
 ## Implemented vs planned

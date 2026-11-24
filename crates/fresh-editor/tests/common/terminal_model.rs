@@ -337,6 +337,25 @@ pub fn expected_columns(frame: &Buffer, row: u16) -> Vec<String> {
     out
 }
 
+/// The hyperlink target `frame` gives each column of `row`, in the shape of
+/// [`TerminalModel::links`]: a wide cluster's link covers its columns.
+pub fn expected_links(frame: &Buffer, row: u16) -> Vec<Option<String>> {
+    use fresh::view::ui::terminal_flush::{cell_hyperlink, visible_symbol};
+    let area = frame.area;
+    let mut out = vec![None; area.width as usize];
+    let mut x = area.left();
+    while x < area.right() {
+        let symbol = frame[(x, row)].symbol();
+        let width = visible_symbol(symbol).width().max(1) as u16;
+        let link = cell_hyperlink(symbol).map(str::to_string);
+        for col in x..(x + width).min(area.right()) {
+            out[(col - area.left()) as usize] = link.clone();
+        }
+        x += width;
+    }
+    out
+}
+
 fn utf8_len(first: u8) -> usize {
     match first {
         0x00..=0x7f => 1,

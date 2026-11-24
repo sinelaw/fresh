@@ -882,6 +882,8 @@ impl EditorServer {
 
         // Enable session mode - use hardware cursor only, no REVERSED software cursor
         editor.set_session_mode(true);
+        // Frames go to the clients' terminals through the capture backend.
+        editor.set_terminal_hyperlinks(true);
 
         // Only a *named* daemon scopes persistence to itself. An unnamed
         // working-directory daemon is the same editor state a direct-mode

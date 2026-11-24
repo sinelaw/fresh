@@ -239,6 +239,8 @@ impl Editor {
                 self.background_fade,
                 self.software_cursor_only,
                 self.linux_console,
+                // A web client is not a terminal.
+                false,
             ),
         };
         let window = self.active_window;

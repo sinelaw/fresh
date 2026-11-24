@@ -984,7 +984,9 @@ fn runs(cells: &[(u16, &ratatui::buffer::Cell)], width: u16) -> Value {
             cur = Some((x, Vec::new(), style));
         }
         if let Some((_, t, _)) = cur.as_mut() {
-            t.push(cell.symbol().to_string());
+            // The drawn glyph: a terminal hyperlink's escape sequence is for
+            // terminals, not the web client.
+            t.push(crate::view::ui::terminal_flush::visible_symbol(cell.symbol()).to_string());
             t.extend((x + 1..end).map(|_| String::new()));
         }
     }

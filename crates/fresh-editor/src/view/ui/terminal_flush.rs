@@ -35,11 +35,102 @@
 //! (ratatui/ratatui#2686), applied at the backend boundary so it covers every
 //! backend Fresh draws through — the local terminal and the session server's
 //! capture backend alike — and does not wait on a ratatui release.
+//!
+//! # Hyperlinks
+//!
+//! A terminal hyperlink (OSC 8) is an escape sequence around the linked text,
+//! so the only way to get one through ratatui is inside a cell's symbol —
+//! [`set_cell_hyperlink`]. That used to break the frame diff (#1227): the
+//! diff measures a cell by its symbol, and a symbol carrying a URL measures
+//! dozens of columns, so the cells after it were skipped. Each linked cell
+//! therefore declares a width with `CellDiffOption::ForcedWidth`, and this
+//! backend and every other reader that needs the drawn text
+//! ([`visible_symbol`]) measure what it shows. Because the URL is part of
+//! the symbol, a cell whose link appears, changes or disappears differs from
+//! the previous frame's and is rewritten, like any other change.
 
 use ratatui::backend::{Backend, ClearType, WindowSize};
-use ratatui::buffer::Cell;
+use ratatui::buffer::{Cell, CellDiffOption, CellWidth};
 use ratatui::layout::{Position, Size};
+use std::num::NonZeroU16;
 use unicode_width::UnicodeWidthStr;
+
+/// Opens an OSC 8 hyperlink; followed by the link parameters, `;`, the URI
+/// and [`OSC8_END`].
+const OSC8_START: &str = "\x1b]8;";
+/// Terminates an OSC 8 sequence (BEL; every terminal that supports OSC 8
+/// accepts it, as does tmux's passthrough).
+const OSC8_END: char = '\x07';
+/// Closes the active hyperlink.
+const OSC8_CLOSE: &str = "\x1b]8;;\x07";
+
+/// Make `cell` a hyperlink to `url` when drawn on a terminal.
+///
+/// The URL is sanitised before it goes near the terminal: OSC 8 allows only
+/// bytes 0x21–0x7E in a URI, and a document is untrusted input, so anything
+/// else — control characters that could end the sequence early and inject
+/// others, spaces, non-ASCII — is percent-encoded.
+///
+/// Cells that show nothing of their own (the trailing columns of a wide
+/// character) and cells that are already links are left alone. `id` groups
+/// every cell of one link — across the rows it wraps over — so terminals
+/// highlight it as a whole on hover.
+///
+/// The cell is declared one column wide even when its glyph is wider. The
+/// diff then still visits a wide glyph's trailing columns as cells of their
+/// own and rewrites them when they change — the clearing it does for an
+/// unlinked emoji, which a forced width of two would skip, leaving a stale
+/// character beside a linked `❤️` on terminals that draw it wide.
+/// [`ClusterSafeBackend`] measures the glyph itself and writes those
+/// trailing cells before it.
+pub fn set_cell_hyperlink(cell: &mut Cell, url: &str, id: &str) {
+    let symbol = cell.symbol();
+    if symbol.starts_with(OSC8_START) || symbol.width() == 0 {
+        return;
+    }
+    let mut linked = String::with_capacity(symbol.len() + url.len() + id.len() + 16);
+    linked.push_str(OSC8_START);
+    linked.push_str("id=");
+    push_uri_safe(&mut linked, id);
+    linked.push(';');
+    push_uri_safe(&mut linked, url);
+    linked.push(OSC8_END);
+    linked.push_str(symbol);
+    linked.push_str(OSC8_CLOSE);
+    cell.set_symbol(&linked);
+    cell.set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+}
+
+/// Append `text` with every byte outside 0x21–0x7E percent-encoded. `;` and
+/// `:` stay — they are legal in both the URI and (`:`-separated) params.
+fn push_uri_safe(out: &mut String, text: &str) {
+    for byte in text.bytes() {
+        if (0x21..=0x7e).contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+}
+
+/// The text a cell draws: its symbol without the hyperlink sequence
+/// [`set_cell_hyperlink`] wrapped it in.
+pub fn visible_symbol(symbol: &str) -> &str {
+    let Some(rest) = symbol.strip_prefix(OSC8_START) else {
+        return symbol;
+    };
+    let Some((_, inner)) = rest.split_once(OSC8_END) else {
+        return symbol;
+    };
+    inner.strip_suffix(OSC8_CLOSE).unwrap_or(inner)
+}
+
+/// The hyperlink target of a cell [`set_cell_hyperlink`] linked.
+pub fn cell_hyperlink(symbol: &str) -> Option<&str> {
+    let rest = symbol.strip_prefix(OSC8_START)?;
+    let (params_and_uri, _) = rest.split_once(OSC8_END)?;
+    params_and_uri.split_once(';').map(|(_, uri)| uri)
+}
 
 /// A [`Backend`] wrapper that makes the frame's cell writes independent of
 /// how wide the terminal draws each grapheme cluster. See the module docs.
@@ -62,10 +153,15 @@ impl<B> ClusterSafeBackend<B> {
     }
 }
 
-/// The number of columns the frame reserves for `cell` — the same measure
-/// ratatui's `Buffer::diff` uses to skip the columns a wide cell covers.
+/// The number of columns `cell` covers on screen.
+///
+/// Normally the measure ratatui's `Buffer::diff` uses (`cell_width`, which
+/// honours a forced width). A cell can outlive its forced width — a widget
+/// drawn over a hyperlink keeps the link cell's diff option while replacing
+/// its symbol — so the drawn text's own width wins when it is wider.
 fn reserved_width(cell: &Cell) -> u16 {
-    u16::try_from(cell.symbol().width()).unwrap_or(u16::MAX)
+    let drawn = u16::try_from(visible_symbol(cell.symbol()).width()).unwrap_or(u16::MAX);
+    cell.cell_width().max(drawn)
 }
 
 /// Whether terminals may disagree about how far `cell` advances the cursor.
@@ -76,7 +172,7 @@ fn reserved_width(cell: &Cell) -> u16 {
 /// keycap, a flag, a ZWJ sequence, a base with combining marks — is sized
 /// differently by different terminals.
 fn advance_is_uncertain(cell: &Cell) -> bool {
-    cell.symbol().chars().nth(1).is_some()
+    visible_symbol(cell.symbol()).chars().nth(1).is_some()
 }
 
 /// Reorder a frame's updates so that every wide cell's trailing columns are
@@ -262,5 +358,149 @@ mod tests {
         let runs = plan_runs(vec![(9, 0, &heart), (0, 1, &a)]);
         let order: Vec<_> = runs.concat().iter().map(|&(x, y, _)| (x, y)).collect();
         assert_eq!(order, vec![(9, 0), (0, 1)]);
+    }
+}
+
+#[cfg(test)]
+mod hyperlink_tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    const URL: &str = "https://example.com/a/long/path";
+
+    fn row(text: &str, width: u16) -> Buffer {
+        let mut buf = Buffer::empty(Rect::new(0, 0, width, 1));
+        buf.set_string(0, 0, text, ratatui::style::Style::default());
+        buf
+    }
+
+    fn link(buf: &mut Buffer, cols: std::ops::Range<u16>) {
+        for x in cols {
+            set_cell_hyperlink(&mut buf[(x, 0)], URL, "id1");
+        }
+    }
+
+    /// The text a terminal shows after replaying the diff of `frames`, one
+    /// frame after another, onto a terminal that starts blank — each update
+    /// overwrites its cell; wide cells cover the column after them.
+    fn replay(frames: &[Buffer]) -> (String, Vec<Option<String>>) {
+        let area = frames[0].area;
+        let mut screen = Buffer::empty(area);
+        let mut previous = Buffer::empty(area);
+        for frame in frames {
+            for (x, y, cell) in previous.diff(frame) {
+                screen[(x, y)] = cell.clone();
+            }
+            previous = frame.clone();
+        }
+        let mut text = String::new();
+        let mut links = Vec::new();
+        let mut x = 0;
+        while x < area.width {
+            let symbol = screen[(x, 0)].symbol();
+            let shown = visible_symbol(symbol);
+            text.push_str(shown);
+            links.push(cell_hyperlink(symbol).map(str::to_string));
+            x += u16::try_from(shown.width()).unwrap_or(1).max(1);
+        }
+        (text.trim_end().to_string(), links)
+    }
+
+    #[test]
+    fn linked_cell_shows_its_text_and_targets_the_url() {
+        let mut buf = row("ab", 4);
+        link(&mut buf, 0..1);
+        let symbol = buf[(0, 0)].symbol();
+        assert_eq!(visible_symbol(symbol), "a");
+        assert_eq!(cell_hyperlink(symbol), Some(URL));
+        assert_eq!(buf[(0, 0)].cell_width(), 1);
+        assert_eq!(visible_symbol(buf[(1, 0)].symbol()), "b");
+        assert_eq!(cell_hyperlink(buf[(1, 0)].symbol()), None);
+    }
+
+    #[test]
+    fn url_cannot_inject_escape_sequences() {
+        let mut buf = row("a", 1);
+        set_cell_hyperlink(&mut buf[(0, 0)], "https://x/\u{7}\u{1b}[2J é", "i\u{1b}d");
+        let symbol = buf[(0, 0)].symbol();
+        assert_eq!(cell_hyperlink(symbol), Some("https://x/%07%1B[2J%20%C3%A9"));
+        // One OSC 8 opener, one closer, and no other escape or BEL.
+        assert_eq!(symbol.matches('\u{1b}').count(), 2, "{symbol:?}");
+        assert_eq!(symbol.matches('\u{7}').count(), 2, "{symbol:?}");
+        assert_eq!(visible_symbol(symbol), "a");
+    }
+
+    #[test]
+    fn empty_cells_are_not_linked_and_links_do_not_nest() {
+        let mut buf = row("ab", 2);
+        buf[(1, 0)].set_symbol("");
+        link(&mut buf, 0..2);
+        assert_eq!(cell_hyperlink(buf[(0, 0)].symbol()), Some(URL));
+        assert_eq!(
+            buf[(1, 0)].symbol(),
+            "",
+            "a cell drawing nothing stays as it is"
+        );
+        let before = buf[(0, 0)].symbol().to_string();
+        link(&mut buf, 0..1);
+        assert_eq!(buf[(0, 0)].symbol(), before);
+    }
+
+    /// The case that kept hyperlinks disabled (#1227): a concealed link
+    /// whose markup is revealed on the next frame. The URL inside the cell
+    /// symbol used to make the diff skip the cells after each linked one,
+    /// so the revealed text came out garbled.
+    #[test]
+    fn diff_between_renders_shows_every_cell() {
+        let mut concealed = row("Quick Install", 40);
+        link(&mut concealed, 0..13);
+        let full = "[Quick Install](#installation)";
+        let mut revealed = row(full, 40);
+        link(&mut revealed, 1..14);
+
+        let (text, links) = replay(&[concealed.clone(), revealed.clone()]);
+        assert_eq!(text, full);
+        assert_eq!(links[0], None);
+        assert!(links[1..14].iter().all(|l| l.as_deref() == Some(URL)));
+        assert_eq!(links[14], None, "`]` is not part of the link");
+
+        // And back: the link moves left again and the markup disappears.
+        let (text, links) = replay(&[concealed.clone(), revealed, concealed]);
+        assert_eq!(text, "Quick Install");
+        assert!(links[..13].iter().all(|l| l.as_deref() == Some(URL)));
+        assert!(links[13..].iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn link_appearing_or_disappearing_on_unchanged_text_is_redrawn() {
+        let plain = row("see docs", 10);
+        let mut linked = plain.clone();
+        link(&mut linked, 4..8);
+        let (_, links) = replay(&[plain.clone(), linked.clone()]);
+        assert!(links[4..8].iter().all(|l| l.as_deref() == Some(URL)));
+        let (text, links) = replay(&[plain, linked, row("see docs", 10)]);
+        assert_eq!(text, "see docs");
+        assert!(links.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn wide_linked_glyph_keeps_its_trailing_column_in_the_diff() {
+        // A linked emoji replacing ASCII: the column it covers changed, and
+        // the diff must still say so, or a terminal that does not clear it
+        // keeps showing the old character there.
+        let before = row("abcd", 4);
+        let mut after = row("\u{2764}\u{FE0F}cd", 4);
+        link(&mut after, 0..1);
+        let updated: Vec<u16> = before.diff(&after).iter().map(|&(x, _, _)| x).collect();
+        assert_eq!(updated, vec![0, 1]);
+        // And the backend writes the covered column before the emoji.
+        let updates = before.diff(&after);
+        let order: Vec<u16> = plan_runs(updates)
+            .concat()
+            .iter()
+            .map(|&(x, _, _)| x)
+            .collect();
+        assert_eq!(order, vec![1, 0]);
     }
 }

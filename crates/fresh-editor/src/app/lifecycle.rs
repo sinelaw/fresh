@@ -45,6 +45,13 @@ impl Editor {
         self.software_cursor_only = enabled;
     }
 
+    /// Mark that frames are drawn to a terminal, so link overlays (a `url`
+    /// on an overlay) are emitted as OSC 8 hyperlinks a terminal can open
+    /// from every row the link wraps over.
+    pub fn set_terminal_hyperlinks(&mut self, enabled: bool) {
+        self.terminal_hyperlinks = enabled;
+    }
+
     /// Set the daemon name that scopes this editor's persistence.
     ///
     /// `Some` means a *named* daemon (`fresh --cmd daemon new NAME`), which owns

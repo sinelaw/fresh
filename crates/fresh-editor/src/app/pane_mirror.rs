@@ -253,7 +253,7 @@ fn mirror_of(
             let mut row = String::new();
             let mut x = 0u16;
             while x < extent.w {
-                let sym = buf[(x, y)].symbol();
+                let sym = crate::view::ui::terminal_flush::visible_symbol(buf[(x, y)].symbol());
                 row.push_str(sym);
                 // A wide glyph keeps both cells layout measured for it; the
                 // fold blanks the second, and the row is the glyph once.

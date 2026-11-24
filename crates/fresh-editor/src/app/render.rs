@@ -5326,6 +5326,7 @@ impl Editor {
                 self.background_fade,
                 self.software_cursor_only,
                 self.linux_console,
+                self.terminal_hyperlinks,
             ),
         };
         let __win = self

@@ -6,7 +6,6 @@
 use super::spans::compress_chars;
 use crate::app::types::ViewLineMapping;
 use crate::primitives::ansi_background::AnsiBackground;
-use crate::view::overlay::Overlay;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
@@ -147,110 +146,73 @@ pub(super) fn tint_columns_in_lines(
     }
 }
 
-/// Post-process the rendered frame to apply OSC 8 hyperlink escape sequences
-/// for any overlays that have a URL set.
+/// Turn the cells showing hyperlinked text into terminal hyperlinks (OSC 8).
 ///
-/// Uses `view_line_mappings` to translate overlay byte ranges into screen
-/// positions, then wraps the corresponding cells with OSC 8 sequences so they
-/// become clickable in terminals that support the protocol.
-#[allow(dead_code)]
+/// `links` are the byte ranges of the buffer that link somewhere — the
+/// overlays a plugin gave a `url`. Each visual row's mapping says which
+/// source byte every screen column shows, so a link is found wherever its
+/// text was laid out: across soft-wrapped rows, after a horizontal scroll,
+/// around wide characters and concealed markup. Every cell of it becomes a
+/// hyperlink to the whole URL, which is what lets a terminal open a long link
+/// from any of the rows it wraps over (#1227).
+///
+/// Only text that comes from the buffer can be linked; virtual text has no
+/// source byte to match.
 pub(super) fn apply_hyperlink_overlays(
     buf: &mut ratatui::buffer::Buffer,
-    viewport_overlays: &[(Overlay, Range<usize>)],
+    links: &[(Range<usize>, String)],
     view_line_mappings: &[ViewLineMapping],
     render_area: Rect,
     gutter_width: usize,
-    cursor_screen_pos: Option<(u16, u16)>,
 ) {
-    let hyperlink_overlays: Vec<_> = viewport_overlays
-        .iter()
-        .filter(|(overlay, _)| overlay.url.is_some())
-        .collect();
+    use crate::view::ui::terminal_flush::set_cell_hyperlink;
 
-    if hyperlink_overlays.is_empty() {
+    if links.is_empty() {
         return;
     }
-
-    for (screen_row, mapping) in view_line_mappings.iter().enumerate() {
-        let y = render_area.y + screen_row as u16;
-        if y >= render_area.y + render_area.height {
+    let ids: Vec<String> = links.iter().map(|(_, url)| hyperlink_id(url)).collect();
+    let content_x = render_area.x.saturating_add(gutter_width as u16);
+    let area = buf.area;
+    let right = render_area.right().min(area.right());
+    let bottom = render_area.bottom().min(area.bottom());
+    for (row, mapping) in view_line_mappings.iter().enumerate() {
+        let Some(y) = u16::try_from(row)
+            .ok()
+            .and_then(|r| render_area.y.checked_add(r))
+            .filter(|&y| y < bottom)
+        else {
             break;
-        }
-        for (overlay, range) in &hyperlink_overlays {
-            let url = overlay.url.as_ref().unwrap();
-            // Find screen columns in this row whose source byte falls in range
-            let mut run_start: Option<u16> = None;
-            let content_x_offset = render_area.x + gutter_width as u16;
-            for (char_idx, maybe_byte) in mapping.char_source_bytes.iter().enumerate() {
-                let in_range = maybe_byte
-                    .map(|b| b >= range.start && b < range.end)
-                    .unwrap_or(false);
-                let screen_x = content_x_offset + char_idx as u16;
-                if in_range && screen_x < render_area.x + render_area.width {
-                    if run_start.is_none() {
-                        run_start = Some(screen_x);
-                    }
-                } else if let Some(start_x) = run_start.take() {
-                    apply_osc8_to_cells(buf, start_x, screen_x, y, url, cursor_screen_pos);
-                }
+        };
+        let mut previous_char = None;
+        for (col, &char_idx) in mapping.visual_to_char.iter().enumerate() {
+            // A wide character spans several columns; its cell is the first.
+            if previous_char.replace(char_idx) == Some(char_idx) {
+                continue;
             }
-            // Flush trailing run
-            if let Some(start_x) = run_start {
-                let end_x = content_x_offset + mapping.char_source_bytes.len() as u16;
-                let end_x = end_x.min(render_area.x + render_area.width);
-                apply_osc8_to_cells(buf, start_x, end_x, y, url, cursor_screen_pos);
+            let Some(x) = u16::try_from(col)
+                .ok()
+                .and_then(|c| content_x.checked_add(c))
+                .filter(|&x| x < right)
+            else {
+                break;
+            };
+            let Some(byte) = mapping.char_source_bytes.get(char_idx).copied().flatten() else {
+                continue;
+            };
+            if let Some(i) = links.iter().position(|(range, _)| range.contains(&byte)) {
+                set_cell_hyperlink(&mut buf[(x, y)], &links[i].1, &ids[i]);
             }
         }
     }
 }
 
-/// Apply OSC 8 hyperlink escape sequences to a run of buffer cells.
-///
-/// Uses 2-character chunking to work around Crossterm width accounting issues
-/// with OSC sequences. When the cursor falls on the second character of a
-/// 2-char chunk, the chunk is split into two 1-char chunks so the terminal
-/// cursor remains visible on the correct cell.
-#[allow(dead_code)]
-pub(super) fn apply_osc8_to_cells(
-    buf: &mut ratatui::buffer::Buffer,
-    start_x: u16,
-    end_x: u16,
-    y: u16,
-    url: &str,
-    cursor_pos: Option<(u16, u16)>,
-) {
-    let area = *buf.area();
-    if y < area.y || y >= area.y + area.height {
-        return;
-    }
-    let max_x = area.x + area.width;
-    let cursor_x = cursor_pos.and_then(|(cx, cy)| if cy == y { Some(cx) } else { None });
-    let mut x = start_x;
-    while x < end_x {
-        if x >= max_x {
-            break;
-        }
-        let chunk_size = if cursor_x == Some(x + 1) { 1 } else { 2 };
-
-        let mut chunk = String::new();
-        let chunk_start = x;
-        for _ in 0..chunk_size {
-            if x >= end_x || x >= max_x {
-                break;
-            }
-            let sym = buf[(x, y)].symbol().to_string();
-            chunk.push_str(&sym);
-            x += 1;
-        }
-        if !chunk.is_empty() {
-            let actual_chunk_len = x - chunk_start;
-            let hyperlink = format!("\x1B]8;;{}\x07{}\x1B]8;;\x07", url, chunk);
-            buf[(chunk_start, y)].set_symbol(&hyperlink);
-            for cx in (chunk_start + 1)..chunk_start + actual_chunk_len {
-                buf[(cx, y)].set_symbol("");
-            }
-        }
-    }
+/// A stable OSC 8 link id for `url`: the same on every row and every frame,
+/// so a terminal treats all the cells of one link as one.
+fn hyperlink_id(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("fresh-{:016x}", hasher.finish())
 }
 
 /// Apply an `AnsiBackground` fade to a rendered line-of-spans buffer.

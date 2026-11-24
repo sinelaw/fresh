@@ -16,7 +16,8 @@ use super::super::layout::{
     ComposeLayout,
 };
 use super::super::post_pass::{
-    apply_background_to_lines, render_column_guides, tint_columns_in_lines,
+    apply_background_to_lines, apply_hyperlink_overlays, render_column_guides,
+    tint_columns_in_lines,
 };
 use super::super::view_data::build_view_data;
 use super::super::view_data::BuildAnchor;
@@ -62,6 +63,9 @@ pub(crate) struct BufferLayoutOutput {
     pub gutter_width: usize,
     pub buffer_ends_with_newline: bool,
     pub selection: SelectionContext,
+    /// The viewport's hyperlinked byte ranges and their targets: the overlays
+    /// that carry a `url`.
+    pub hyperlinks: Vec<(std::ops::Range<usize>, String)>,
 }
 
 /// The gutter one pane draws this frame.
@@ -513,6 +517,11 @@ pub(crate) fn compute_buffer_layout(
     });
 
     let view_line_mappings = render_output.view_line_mappings.clone();
+    let hyperlinks = decorations
+        .viewport_overlays
+        .iter()
+        .filter_map(|(overlay, range)| Some((range.clone(), overlay.url.clone()?)))
+        .collect();
 
     let buffer_ends_with_newline = if !state.buffer.is_empty() {
         let last_char = state.get_text_range(state.buffer.len() - 1, state.buffer.len());
@@ -533,6 +542,7 @@ pub(crate) fn compute_buffer_layout(
         gutter_width,
         buffer_ends_with_newline,
         selection,
+        hyperlinks,
     }
 }
 
@@ -608,6 +618,7 @@ pub(crate) fn draw_buffer_in_split(
     compose_column_guides: Option<Vec<u16>>,
     highlight_current_column: bool,
     caret: Option<(u16, u16)>,
+    terminal_hyperlinks: bool,
 ) {
     let render_area = layout_output.render_area;
     let effective_editor_bg = layout_output.effective_editor_bg;
@@ -711,6 +722,16 @@ pub(crate) fn draw_buffer_in_split(
     Paragraph::new(lines)
         .block(editor_block)
         .render(render_area, buf);
+
+    if terminal_hyperlinks {
+        apply_hyperlink_overlays(
+            buf,
+            &layout_output.hyperlinks,
+            &layout_output.render_output.view_line_mappings,
+            render_area,
+            gutter_width,
+        );
+    }
 
     // Render compose column guides
     if let Some(guides) = compose_column_guides {

@@ -350,6 +350,7 @@ pub(crate) fn paint_leaf(
         content.guides,
         content.highlight_column,
         content.caret.filter(|_| content.caret_shown),
+        style.cfg.terminal_hyperlinks,
     );
     drop(_render_buf_span);
 }

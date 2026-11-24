@@ -775,6 +775,11 @@ pub struct Editor {
     /// Backend does not render a hardware cursor — always use software cursor indicators.
     software_cursor_only: bool,
 
+    /// The frame is drawn to a terminal, so link overlays can be terminal
+    /// hyperlinks (OSC 8). Off for the GUI and headless renders, whose cells
+    /// must hold only the text they show.
+    terminal_hyperlinks: bool,
+
     /// Name of the *named* daemon whose persistence scope this editor uses
     /// (`fresh --cmd daemon new NAME`). `None` in direct mode and for an
     /// unnamed working-directory daemon, which shares the directory's

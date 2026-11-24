@@ -2249,6 +2249,9 @@ interface InlineSpan {
   contentEnd: number;    // char offset of visible content end
   concealRanges: Array<{start: number; end: number; replacement: string | null}>;
   linkUrl?: string;
+  // Char offsets of the link's destination as it appears in the source.
+  linkUrlStart?: number;
+  linkUrlEnd?: number;
 }
 
 /** Find all inline spans that would produce conceals in the given text. */
@@ -2389,15 +2392,25 @@ function findInlineSpans(text: string, bufferId: number | null = null): InlineSp
     const ms = m.index;
     const me = ms + m[0].length;
     const textEnd = ms + 1 + m[1].length;
+    // `[text](url)` reads as `text — url`. The URL is left as the source's
+    // own text rather than drawn as part of a replacement: replacement text
+    // belongs to no source byte, so it could not carry the link, and a long
+    // URL that wraps would be plain text a terminal cuts at every row
+    // (#1227). Only the `](` and `)` around it are concealed.
+    const urlStart = textEnd + 2;
+    const urlEnd = me - 1;
     spans.push({
       type: 'link',
       matchStart: ms, matchEnd: me,
       contentStart: ms + 1, contentEnd: textEnd,
       concealRanges: [
         { start: ms, end: ms + 1, replacement: null },
-        { start: textEnd, end: me, replacement: ` — ${m[2]}` },
+        { start: textEnd, end: urlStart, replacement: ' — ' },
+        { start: urlEnd, end: me, replacement: null },
       ],
       linkUrl: m[2],
+      linkUrlStart: urlStart,
+      linkUrlEnd: urlEnd,
     });
   }
 
@@ -3296,6 +3309,15 @@ function processLineConceals(
           underline: true,
           url: span.linkUrl,
         });
+        // The shown URL links too, so it opens from any row it wraps over.
+        if (span.linkUrlStart !== undefined && span.linkUrlEnd !== undefined) {
+          addComposeOverlay(
+            bufferId, "md-emphasis",
+            charToByte(lineContent, span.linkUrlStart, byteStart),
+            charToByte(lineContent, span.linkUrlEnd, byteStart),
+            { url: span.linkUrl },
+          );
+        }
         break;
       // entities: no overlay
     }

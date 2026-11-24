@@ -821,6 +821,7 @@ fn with_grid<R>(
         editor.background_fade,
         editor.software_cursor_only,
         editor.linux_console,
+        editor.terminal_hyperlinks,
     );
     let session_mode = editor.session_mode || !editor.software_cursor_only;
 
