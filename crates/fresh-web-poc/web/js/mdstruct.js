@@ -9,15 +9,23 @@
 const FENCE = /^(\s*)(`{3,}|~{3,})(.*)$/;
 const DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
+/** type FenceRole = "open" | "body" | "close" */
+/** type TableRow = {role: "header" | "delimiter" | "row", first_row: Boolean, last: Boolean} */
+
+/** function classify(lines: String[]) => {region: (FenceRole | Undefined)[], table: (TableRow | Undefined)[]} */
 export function classify(lines) {
+  /** const region: (FenceRole | Undefined)[] */
   const region = new Array(lines.length).fill(undefined);
+  /** const table: (TableRow | Undefined)[] */
   const table = new Array(lines.length).fill(undefined);
-  let fence = null; // {ch, n}
+  /** let fence: {ch: String, n: Number} | Null */
+  let fence = null;
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i];
     const m = FENCE.exec(t);
-    if (fence) {
-      if (m && m[2][0] === fence.ch && m[2].length >= fence.n && m[3].trim() === "") {
+    const open = fence;
+    if (open) {
+      if (m && m[2][0] === open.ch && m[2].length >= open.n && m[3].trim() === "") {
         region[i] = "close";
         fence = null;
       } else region[i] = "body";
@@ -30,16 +38,11 @@ export function classify(lines) {
     }
     // A table: a header row with a pipe, then a delimiter row.
     if (t.includes("|") && i + 1 < lines.length && DELIM.test(lines[i + 1]) && lines[i + 1].includes("-")) {
-      table[i] = { role: "header", first_row: false, last: false };
-      table[i + 1] = { role: "delimiter", first_row: false, last: false };
       let j = i + 2;
-      let first = true;
-      while (j < lines.length && lines[j].includes("|") && lines[j].trim() !== "" && !FENCE.test(lines[j])) {
-        table[j] = { role: "row", first_row: first, last: false };
-        first = false;
-        j++;
+      while (j < lines.length && lines[j].includes("|") && lines[j].trim() !== "" && !FENCE.test(lines[j])) j++;
+      for (let k = i; k < j; k++) {
+        table[k] = { role: k === i ? "header" : k === i + 1 ? "delimiter" : "row", first_row: k === i + 2, last: k === j - 1 };
       }
-      table[j - 1].last = true;
       i = j - 1;
     }
   }

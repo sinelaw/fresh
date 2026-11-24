@@ -5,6 +5,7 @@
 // sequenced first.
 
 export const enc = new TextEncoder();
+/** const byteLen: (String) => Number */
 export const byteLen = (s) => {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
@@ -17,38 +18,40 @@ export const byteLen = (s) => {
   return n;
 };
 
+/** function len(p: Op) => Number */
 function len(p) { return p.t === "ins" ? byteLen(p.text) : p.len; }
+/** const noop: (Op) => Boolean */
 const noop = (p) => (p.t === "ins" ? p.text.length === 0 : p.len === 0);
 
 // `a` made against the same document as `b`, moved to apply after `b`.
+/** function transform(a: Op, b: Op, aFirst: Boolean) => Op[] */
 export function transform(a, b, aFirst) {
-  let out;
-  if (a.t === "ins" && b.t === "ins") {
-    out = a.pos < b.pos || (a.pos === b.pos && aFirst) ? [a] : [{ ...a, pos: a.pos + len(b) }];
-  } else if (a.t === "ins" && b.t === "del") {
-    let p = a.pos <= b.pos ? a.pos : a.pos >= b.pos + b.len ? a.pos - b.len : b.pos;
-    out = [{ ...a, pos: p }];
-  } else if (a.t === "del" && b.t === "ins") {
-    const bl = len(b);
-    if (b.pos <= a.pos) out = [{ ...a, pos: a.pos + bl }];
-    else if (b.pos >= a.pos + a.len) out = [a];
-    else {
-      const before = b.pos - a.pos;
-      out = [{ t: "del", pos: a.pos, len: before }, { t: "del", pos: a.pos + bl, len: a.len - before }];
-    }
-  } else {
-    const a0 = a.pos, a1 = a.pos + a.len, b0 = b.pos, b1 = b.pos + b.len;
-    if (a1 <= b0) out = [a];
-    else if (a0 >= b1) out = [{ ...a, pos: a0 - b.len }];
-    else {
-      const overlap = Math.min(a1, b1) - Math.max(a0, b0);
-      out = [{ t: "del", pos: Math.min(a0, b0), len: a.len - overlap }];
-    }
+  return moved(a, b, aFirst).filter((p) => !noop(p));
+}
+
+/** function moved(a: Op, b: Op, aFirst: Boolean) => Op[] */
+function moved(a, b, aFirst) {
+  if (a.t === "ins") {
+    if (b.t === "ins") return a.pos < b.pos || (a.pos === b.pos && aFirst) ? [a] : [{ ...a, pos: a.pos + len(b) }];
+    const p = a.pos <= b.pos ? a.pos : a.pos >= b.pos + b.len ? a.pos - b.len : b.pos;
+    return [{ ...a, pos: p }];
   }
-  return out.filter((p) => !noop(p));
+  if (b.t === "ins") {
+    const bl = len(b);
+    if (b.pos <= a.pos) return [{ ...a, pos: a.pos + bl }];
+    if (b.pos >= a.pos + a.len) return [a];
+    const before = b.pos - a.pos;
+    return [{ t: "del", pos: a.pos, len: before }, { t: "del", pos: a.pos + bl, len: a.len - before }];
+  }
+  const a0 = a.pos, a1 = a.pos + a.len, b0 = b.pos, b1 = b.pos + b.len;
+  if (a1 <= b0) return [a];
+  if (a0 >= b1) return [{ ...a, pos: a0 - b.len }];
+  const overlap = Math.min(a1, b1) - Math.max(a0, b0);
+  return [{ t: "del", pos: Math.min(a0, b0), len: a.len - overlap }];
 }
 
 // Returns [a', b']: a' applies after b, b' after a.
+/** function transformSeqs(a: Op[], b: Op[], aFirst: Boolean) => [Op[], Op[]] */
 export function transformSeqs(a, b, aFirst) {
   if (a.length === 0 || b.length === 0) return [a, b];
   if (a.length === 1 && b.length === 1) return [transform(a[0], b[0], aFirst), transform(b[0], a[0], !aFirst)];
@@ -64,6 +67,7 @@ export function transformSeqs(a, b, aFirst) {
 
 // Where position `p` goes through primitive `op`. `right` decides an insert
 // exactly at `p`: true moves p past it.
+/** function shiftPos(p: Number, op: Op, right: Boolean) => Number */
 export function shiftPos(p, op, right) {
   if (op.t === "ins") {
     return p > op.pos || (p === op.pos && right) ? p + len(op) : p;
