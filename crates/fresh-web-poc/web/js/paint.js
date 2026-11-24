@@ -11,11 +11,6 @@ export const NO_SPANS = [];
 // them. Each span carries its finished style.
 const spanCache = new Map();
 const cssCache = new Map();
-// After a theme change: styles are rebuilt from the new colours.
-export function resetStyleCaches() {
-  spanCache.clear();
-  cssCache.clear();
-}
 export function spansFor(lang, text) {
   if (!lang) return NO_SPANS;
   const key = lang + "\u0000" + text;
@@ -41,7 +36,7 @@ const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 export const esc = (t) => t.replace(/[&<>"]/g, (c) => ESC[c]);
 
 // Theme keys and names resolve through the theme; CSS colours pass.
-export const css = (x) => (typeof x === "string" && (x.startsWith("#") || x.startsWith("rgb")) ? x : color(x));
+export const css = (x) => (typeof x === "string" && /^(#|rgb|var\()/.test(x) ? x : color(x));
 
 export function styleKey(s) {
   return `${s.fg || ""}|${s.bg || ""}|${s.bold ? 1 : 0}${s.italic ? 1 : 0}${s.underline ? 1 : 0}${s.strike ? 1 : 0}${s.mono ? 1 : 0}${s.markup ? 1 : 0}|${s.wavy || ""}`;
@@ -53,9 +48,9 @@ export function cssFor(st, key = styleKey(st)) {
   let c = cssCache.get(key);
   if (c == null) {
     c = "";
-    if (st.markup) c += "color:var(--doc-markup);";
+    if (st.markup) c += "color:var(--faint);";
     else if (st.fg) c += `color:${css(st.fg)};`;
-    if (st.mono) c += "font-family:var(--mono);font-size:.88em;background:var(--doc-code-bg);border-radius:3px;";
+    if (st.mono) c += "font-family:var(--mono);font-size:.88em;background:var(--code-bg);border-radius:3px;";
     if (st.bg) c += `background:${css(st.bg)};`;
     if (st.bold) c += "font-weight:bold;";
     if (st.italic) c += "font-style:italic;";

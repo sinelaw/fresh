@@ -26,7 +26,6 @@
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { applies, cursorIn } from "./layout.js";
-import { THEME } from "./highlight.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, css, cssFor, styleKey } from "./paint.js";
 
 // Node types that live inside a block rather than being one.
@@ -77,9 +76,6 @@ export class DocView {
     const room = (pane.size.w || pane.surfaceEl.clientWidth) - 12 - 2 * FOLD_MARGIN;
     const w = `${Math.max(10 * cw, Math.min(g.width * cw, room))}px`;
     if (this.content.style.width !== w) this.content.style.width = w;
-    // Theme colours the stylesheet reads.
-    const vars = `--doc-accent:${THEME["syntax.keyword"]};--doc-markup:${THEME["editor.line_number_fg"]}`;
-    if (this.el._vars !== vars) { this.el.style.cssText = vars; this.el._vars = vars; }
     const ctx = this.context(v);
     // A frame is normally one pass; a jump (keeping a far cursor in view)
     // or an offset beyond what was drawn takes another, from the new top.

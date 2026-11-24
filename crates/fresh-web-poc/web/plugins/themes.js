@@ -1,60 +1,143 @@
-// Themes: the editor's colours (syntax, UI, diagnostics) and the page's
-// CSS variables, switched live. The choice is remembered in the browser.
+// Themes: the editor's own themes (served by the server, `theme.list` /
+// `theme.get`, fully resolved) mapped onto the page's colour variables.
+// Every theme sets every variable (`VARS`), so a theme styles the whole UI
+// and switching back restores exactly what the previous one replaced. The
+// picker previews live; the choice is remembered in the browser.
 
-import { THEME } from "../js/highlight.js";
+import { NAMED } from "../js/highlight.js";
 
-const THEMES = {
-  dark: {},
-  light: {
-    "--bg": "#ffffff", "--fg": "#1f1f1f", "--panel": "#f3f3f3", "--border": "#d4d4d4", "--accent": "#005fb8", "--muted": "#6e6e6e",
-    "editor.fg": "#1f1f1f", "editor.line_number_fg": "#8a8a8a", "editor.selection_bg": "#add6ff", "editor.occurrence_bg": "#e4e4e4",
-    "syntax.keyword": "#0000ff", "syntax.string": "#a31515", "syntax.comment": "#008000", "syntax.number": "#098658", "syntax.constant": "#0070c1",
-    "syntax.type": "#267f99", "syntax.function": "#795e26", "syntax.variable": "#001080", "syntax.link": "#006ab1", "ui.split_separator_fg": "#bbbbbb",
-    "search.match_bg": "#f8c9a1", "search.current_bg": "#f2a96b", "editor.current_line_bg": "#f3f3f3",
-    "editor.diff_add_bg": "#dafbe1", "editor.diff_remove_bg": "#ffebe9", "ui.tour_step_bg": "#add6ff",
-    "ui.terminal_bg": "#ffffff", "ui.terminal_fg": "#1f1f1f", "ui.accent_fg": "#795e26",
-  },
-  "high-contrast": {
-    "--bg": "#000000", "--fg": "#ffffff", "--panel": "#0b0b0b", "--border": "#6fc3df", "--accent": "#f38518", "--muted": "#c0c0c0",
-    "editor.fg": "#ffffff", "editor.line_number_fg": "#c0c0c0", "editor.selection_bg": "#264f78", "editor.occurrence_bg": "#333333",
-    "syntax.keyword": "#569cd6", "syntax.string": "#ce9178", "syntax.comment": "#7ca668", "syntax.number": "#b5cea8", "syntax.constant": "#4fc1ff",
-    "syntax.type": "#4ec9b0", "syntax.function": "#dcdcaa", "syntax.variable": "#9cdcfe", "syntax.link": "#3794ff",
-    "editor.current_line_bg": "#1a1a1a", "editor.diff_add_bg": "#003a00", "editor.diff_remove_bg": "#4a0000",
-    "ui.tour_step_bg": "#264f78", "ui.terminal_bg": "#000000", "ui.terminal_fg": "#ffffff", "ui.accent_fg": "#f38518",
-  },
-  solarized: {
-    "--bg": "#002b36", "--fg": "#93a1a1", "--panel": "#073642", "--border": "#0b4452", "--accent": "#268bd2", "--muted": "#657b83",
-    "editor.fg": "#93a1a1", "editor.line_number_fg": "#586e75", "editor.selection_bg": "#0b4f61", "editor.occurrence_bg": "#0a4150",
-    "syntax.keyword": "#859900", "syntax.string": "#2aa198", "syntax.comment": "#586e75", "syntax.number": "#d33682", "syntax.constant": "#cb4b16",
-    "syntax.type": "#b58900", "syntax.function": "#268bd2", "syntax.variable": "#6c71c4", "syntax.link": "#268bd2",
-    "editor.current_line_bg": "#073642", "editor.diff_add_bg": "#0b3b2e", "editor.diff_remove_bg": "#3b1d1d",
-    "ui.tour_step_bg": "#0b4f61", "ui.terminal_bg": "#002b36", "ui.terminal_fg": "#93a1a1", "ui.accent_fg": "#b58900",
-  },
+// A theme colour ([r, g, b], a colour name, "#rrggbb", or {color, modifier})
+// as [r, g, b], or null for "Default" (the terminal's own colour).
+function rgb(def) {
+  if (def && !Array.isArray(def) && typeof def === "object") def = def.color;
+  if (Array.isArray(def)) return def;
+  if (typeof def !== "string") return null;
+  const hex = def.startsWith("#") ? def : NAMED[def.toLowerCase()];
+  if (!hex) return null;
+  const n = hex.length === 4 ? [...hex.slice(1)].map((c) => parseInt(c + c, 16)) : [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return n.some(Number.isNaN) ? null : n;
+}
+const mix = (a, b, t) => a.map((x, i) => Math.round(x * (1 - t) + b[i] * t));
+const hex = (c) => "#" + c.map((x) => x.toString(16).padStart(2, "0")).join("");
+const luminance = ([r, g, b]) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+// Each variable from the theme's keys. A "Default" colour (the terminal's
+// own) is the editor's background or foreground; the few the editor has no
+// key for are mixed from the ones it has.
+const VARS = {
+  // The page
+  "--bg": (k) => k("editor.bg"),
+  "--fg": (k) => k("editor.fg"),
+  "--muted": (k, c) => mix(c.fg, c.bg, 0.4),
+  "--faint": (k) => k("editor.line_number_fg", "fg"),
+  "--border": (k, c) => mix(c.fg, c.bg, 0.82),
+  "--panel": (k, c) => mix(k("ui.file_explorer_bg", "bg"), c.fg, 0.04),
+  "--accent": (k) => k("ui.menu_highlight_bg", "fg"),
+  "--on-accent": (k) => k("ui.menu_highlight_fg", "bg"),
+  "--emphasis": (k) => k("ui.help_key_fg", "fg"),
+  "--link": (k) => k("diagnostic.info_fg", "fg"),
+  "--status-bg": (k) => k("ui.status_bar_bg", "bg"),
+  "--status-fg": (k) => k("ui.status_bar_fg", "fg"),
+  "--control-bg": (k) => k("ui.menu_bg", "bg"),
+  "--control-fg": (k) => k("ui.menu_fg", "fg"),
+  "--hover-bg": (k) => k("ui.menu_hover_bg", "bg"),
+  "--sel-bg": (k) => k("ui.popup_selection_bg", "bg"),
+  "--sel-fg": (k) => k("ui.popup_selection_fg", "fg"),
+  "--sel-inactive-bg": (k, c) => mix(k("ui.popup_selection_bg", "bg"), c.bg, 0.5),
+  "--popup-bg": (k) => k("ui.popup_bg", "bg"),
+  "--popup-fg": (k) => k("ui.popup_text_fg", "fg"),
+  "--popup-border": (k) => k("ui.popup_border_fg", "fg"),
+  "--shadow": (k, c) => (luminance(c.bg) > 0.5 ? "rgba(0,0,0,.18)" : "rgba(0,0,0,.5)"),
+  "--terminal-bg": (k) => k("ui.terminal_bg", "bg"),
+  "--terminal-fg": (k) => k("ui.terminal_fg", "fg"),
+  // The text
+  "--caret": (k) => k("editor.cursor", "fg"),
+  "--selection": (k) => k("editor.selection_bg", "bg"),
+  "--current-line": (k) => k("editor.current_line_bg", "bg"),
+  "--occurrence": (k) => k("ui.semantic_highlight_bg", "bg"),
+  "--whitespace": (k) => k("editor.whitespace_indicator_fg", "fg"),
+  "--ruler": (k) => k("editor.ruler_bg", "bg"),
+  "--match-bg": (k) => k("search.match_bg", "bg"),
+  "--match-fg": (k) => k("search.match_fg", "fg"),
+  "--match-current-bg": (k) => k("search.current_match_bg", "bg"),
+  "--match-current-fg": (k) => k("search.current_match_fg", "fg"),
+  "--code-bg": (k) => k("ui.inline_code_bg", "bg"),
+  "--tour-step-bg": (k) => k("ui.tour_step_bg", "bg"),
+  "--diff-add-bg": (k) => k("editor.diff_add_bg", "bg"),
+  "--diff-remove-bg": (k) => k("editor.diff_remove_bg", "bg"),
+  "--git-added": (k) => k("ui.file_status_added_fg", "fg"),
+  "--git-modified": (k) => k("ui.file_status_modified_fg", "fg"),
+  "--git-deleted": (k) => k("ui.file_status_deleted_fg", "fg"),
+  // Syntax
+  "--syntax-keyword": (k) => k("syntax.keyword", "fg"),
+  "--syntax-string": (k) => k("syntax.string", "fg"),
+  "--syntax-comment": (k) => k("syntax.comment", "fg"),
+  "--syntax-function": (k) => k("syntax.function", "fg"),
+  "--syntax-type": (k) => k("syntax.type", "fg"),
+  "--syntax-variable": (k) => k("syntax.variable", "fg"),
+  "--syntax-constant": (k) => k("syntax.constant", "fg"),
+  "--syntax-number": (k) => k("syntax.number", "fg"),
+  "--syntax-operator": (k) => k("syntax.operator", "fg"),
+  "--syntax-punctuation": (k) => k("syntax.punctuation_delimiter", "fg"),
+  // Diagnostics
+  "--error": (k) => k("diagnostic.error_fg", "fg"),
+  "--warning": (k) => k("diagnostic.warning_fg", "fg"),
+  "--info": (k) => k("diagnostic.info_fg", "fg"),
+  "--hint": (k) => k("diagnostic.hint_fg", "fg"),
 };
 
+// A theme file (as `theme.get` serves it) as {"--var": css} for every
+// variable.
+export function themeVars(theme) {
+  const at = (key) => key.split(".").reduce((o, p) => o?.[p], theme);
+  // The page's own colours first: "Default" for those is the terminal's,
+  // which xterm draws as white on black.
+  const c = { bg: rgb(at("editor.bg")) || [0, 0, 0], fg: rgb(at("editor.fg")) || rgb("White") };
+  const k = (key, fallback) => rgb(at(key)) || c[fallback];
+  const out = {};
+  for (const [name, f] of Object.entries(VARS)) {
+    const v = f(k, c);
+    out[name] = Array.isArray(v) ? hex(v) : v;
+  }
+  return out;
+}
+
+const STORE = "fresh-poc:theme";
+
 export function activate(fresh) {
-  // The dark theme is the page's own colours and the built-in editor
-  // colours, captured before any theme changes them.
-  const DARK = { ...THEME };
-  const base = {};
-  const css = getComputedStyle(document.documentElement);
-  for (const t of Object.values(THEMES)) for (const k of Object.keys(t)) if (k.startsWith("--")) base[k] = css.getPropertyValue(k).trim();
-  const apply = (name) => {
-    const t = THEMES[name] || {};
-    const keys = new Set(Object.values(THEMES).flatMap(Object.keys));
-    const full = {};
-    for (const k of keys) full[k] = k in t ? t[k] : k.startsWith("--") ? base[k] : DARK[k];
-    fresh.ui.theme(full);
-    fresh.settings.theme = name;
-    try { localStorage.setItem("fresh-poc:theme", name); } catch {}
+  const cache = new Map();
+  const load = (key) => {
+    if (!cache.has(key)) cache.set(key, fresh.host.theme(key).then(themeVars));
+    return cache.get(key);
+  };
+  let current = "dark";
+  // Applying in order: a slow fetch for an earlier preview never lands
+  // after a later one.
+  let shown = Promise.resolve();
+  const show = (key) => (shown = shown.then(() => load(key)).then((vars) => fresh.ui.theme(vars)).catch((e) => fresh.ui.message(`Theme ${key}: ${e.message || e}`)));
+  const choose = (key) => {
+    current = key;
+    fresh.settings.theme = key;
+    try { localStorage.setItem(STORE, key); } catch {}
+    return show(key);
   };
   fresh.events.on("app.ready", () => {
     let saved = null;
-    try { saved = localStorage.getItem("fresh-poc:theme"); } catch {}
-    if (saved && saved !== "dark") apply(saved);
+    try { saved = localStorage.getItem(STORE); } catch {}
+    choose(saved || "dark");
   });
   fresh.commands.register("theme.select", {
     title: "Select Theme…",
-    run: () => fresh.ui.pick({ title: "Theme", items: Object.keys(THEMES).map((n) => ({ label: n, value: n })), onChange: (it) => it && apply(it.value), onAccept: (it) => apply(it.value) }),
+    run: async () => {
+      const themes = await fresh.host.themes();
+      const before = current;
+      fresh.ui.pick({
+        title: "Theme",
+        items: themes.map((t) => ({ label: t.name, detail: t.key === current ? "current" : "", value: t.key })),
+        onChange: (it) => it && show(it.value),
+        onAccept: (it) => choose(it.value),
+        onCancel: () => show(before),
+      });
+    },
   });
 }

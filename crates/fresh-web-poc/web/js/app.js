@@ -7,7 +7,7 @@
 import { rpc, session, connectEvents } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { FileBuffer, VirtualBuffer, byteToIdx } from "./buffer.js";
-import { Pane, resetStyleCaches } from "./view.js";
+import { Pane } from "./view.js";
 import { Editing } from "./editing.js";
 import { TerminalPanel } from "./terminal.js";
 import { UIKit } from "./ui.js";
@@ -601,16 +601,11 @@ class App {
     });
   }
 
-  applyTheme(t) {
-    for (const [k, v] of Object.entries(t)) {
-      if (k.startsWith("--")) document.documentElement.style.setProperty(k, v);
-      else THEME[k] = v;
-    }
-    resetStyleCaches();
-    for (const p of this.panes()) p.clearRows();
-    this.ui.redraw();
+  // A theme: every colour variable ({"--bg": "#1e1e1e", ...}). Everything
+  // the page draws reads them; only the terminal's canvas copies them.
+  applyTheme(vars) {
+    for (const [k, v] of Object.entries(vars)) document.documentElement.style.setProperty(k, v);
     this.term.applyTheme();
-    this.renderAll();
   }
 
   keymap() {

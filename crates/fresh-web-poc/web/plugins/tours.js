@@ -41,7 +41,7 @@ export function activate(fresh) {
         h("text", { dim: true }, `${step + 1} / ${tour.steps.length}`),
         h("button", { primary: true, onClick: () => go(step + 1), disabled: step >= tour.steps.length - 1 }, "Next ▶")),
       h("text", { bold: true }, label(s)),
-      h("box", { class: "ui-markdown" }, s.description || ""),
+      h("markdown", { text: s.description || "" }),
       h("list", {
         key: "steps",
         items: tour.steps.map((x, i) => ({ ...x, i })),

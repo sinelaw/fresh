@@ -9,7 +9,6 @@ import { classify } from "./mdstruct.js";
 import { EMPTY, NO_SPANS, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey } from "./paint.js";
 import { DocView } from "./doc.js";
 
-export { resetStyleCaches } from "./paint.js";
 
 let nextPaneId = 1;
 

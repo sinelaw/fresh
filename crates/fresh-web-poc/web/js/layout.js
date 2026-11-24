@@ -157,7 +157,7 @@ export function layout(buf, top, maxRows, o) {
           breakAt = row.cells.length;
           continue;
         }
-        if (fold) putText(" ⋯", null, { fg: "#808080" });
+        if (fold) putText(" ⋯", null, { fg: "editor.line_number_fg" });
         inlineAt(b, "after");
         row.eol = b;
         if (o.extendAt) row.fill = o.extendAt(b);
@@ -193,9 +193,9 @@ export function layout(buf, top, maxRows, o) {
       }
       const st = o.styleAt(b, cur, i);
       if (cp === 9) {
-        put(o.whitespace ? "→" : " ", b, o.whitespace ? { ...st, fg: "#505050" } : st, 1);
+        put(o.whitespace ? "→" : " ", b, o.whitespace ? { ...st, fg: "editor.whitespace_indicator_fg" } : st, 1);
         for (let k = 1; k < w; k++) put(" ", null, st, 1);
-      } else if (cp === 32 && o.whitespace) put("·", b, { ...st, fg: "#505050" }, 1);
+      } else if (cp === 32 && o.whitespace) put("·", b, { ...st, fg: "editor.whitespace_indicator_fg" }, 1);
       else put(ch, b, st, w);
       inlineAt(b, "after");
       if (cp === 32 || cp === 9) breakAt = row.cells.length;

@@ -1,48 +1,58 @@
 // Colours and a small line-local syntax highlighter.
 //
-// The theme maps the editor's theme keys (what plugins pass as `fg`/`bg`
-// strings: "syntax.keyword", "editor.fg", ...) to colours. The highlighter is
-// a stand-in for the editor's grammars: a regex lexer per language that
-// colours keywords, strings, comments, numbers and markdown markup, line by
-// line (a block comment's continuation lines are not tracked).
+// Every colour is a CSS variable (`style.css` holds the dark defaults; a
+// theme sets them all, `plugins/themes.js`). THEME maps the theme keys
+// plugins pass as `fg`/`bg` strings ("syntax.keyword", "editor.fg", ...) to
+// those variables, so whatever is drawn with a key follows a theme change
+// without being drawn again. The highlighter is a stand-in for the editor's
+// grammars: a regex lexer per language that colours keywords, strings,
+// comments, numbers and markdown markup, line by line (a block comment's
+// continuation lines are not tracked).
 
-export const THEME = {
-  "editor.fg": "#d4d4d4",
-  "editor.bg": "#1e1e1e",
-  "editor.line_number_fg": "#6e7681",
-  "editor.selection_bg": "#264f78",
-  "editor.current_line_bg": "#2a2d2e",
-  "ui.split_separator_fg": "#5a5a5a",
-  "ui.status_bar_bg": "#007acc",
-  "syntax.keyword": "#569cd6",
-  "syntax.string": "#ce9178",
-  "syntax.comment": "#6a9955",
-  "syntax.number": "#b5cea8",
-  "syntax.constant": "#4fc1ff",
-  "syntax.type": "#4ec9b0",
-  "syntax.function": "#dcdcaa",
-  "syntax.variable": "#9cdcfe",
-  "syntax.operator": "#d4d4d4",
-  "syntax.link": "#3794ff",
-  "syntax.punctuation": "#808080",
-  "diagnostic.error": "#f14c4c",
-  "diagnostic.warning": "#cca700",
-  "diagnostic.info": "#3794ff",
-  "diagnostic.hint": "#b0b0b0",
-  "search.match_bg": "#613214",
-  "search.current_bg": "#9e6a03",
-  "editor.occurrence_bg": "#343a40",
-  "git.added": "#2ea043",
-  "git.modified": "#0078d4",
-  "git.deleted": "#f85149",
-  "editor.diff_add_bg": "#1e3a1e",
-  "editor.diff_remove_bg": "#4b1818",
-  "ui.tour_step_bg": "#264f78",
-  "ui.terminal_bg": "#181818",
-  "ui.terminal_fg": "#d4d4d4",
-  "ui.accent_fg": "#d7ba7d",
-};
-const NAMED = {
+const v = (name) => `var(--${name})`;
+export const THEME = Object.freeze({
+  "editor.fg": v("fg"),
+  "editor.bg": v("bg"),
+  "editor.line_number_fg": v("faint"),
+  "editor.selection_bg": v("selection"),
+  "editor.current_line_bg": v("current-line"),
+  "editor.occurrence_bg": v("occurrence"),
+  "editor.whitespace_indicator_fg": v("whitespace"),
+  "editor.diff_add_bg": v("diff-add-bg"),
+  "editor.diff_remove_bg": v("diff-remove-bg"),
+  "ui.split_separator_fg": v("border"),
+  "ui.status_bar_bg": v("status-bg"),
+  "ui.status_bar_fg": v("status-fg"),
+  "ui.tour_step_bg": v("tour-step-bg"),
+  "ui.terminal_bg": v("terminal-bg"),
+  "ui.terminal_fg": v("terminal-fg"),
+  "ui.accent_fg": v("emphasis"),
+  "syntax.keyword": v("syntax-keyword"),
+  "syntax.string": v("syntax-string"),
+  "syntax.comment": v("syntax-comment"),
+  "syntax.number": v("syntax-number"),
+  "syntax.constant": v("syntax-constant"),
+  "syntax.type": v("syntax-type"),
+  "syntax.function": v("syntax-function"),
+  "syntax.variable": v("syntax-variable"),
+  "syntax.operator": v("syntax-operator"),
+  "syntax.punctuation": v("syntax-punctuation"),
+  "syntax.link": v("link"),
+  "diagnostic.error": v("error"),
+  "diagnostic.warning": v("warning"),
+  "diagnostic.info": v("info"),
+  "diagnostic.hint": v("hint"),
+  "search.match_bg": v("match-bg"),
+  "search.match_fg": v("match-fg"),
+  "search.current_bg": v("match-current-bg"),
+  "search.current_fg": v("match-current-fg"),
+  "git.added": v("git-added"),
+  "git.modified": v("git-modified"),
+  "git.deleted": v("git-deleted"),
+});
+// Colour names (as themes and plugins write them) in the terminal's
+// palette, so a named colour looks the same in the editor and the terminal.
+export const NAMED = {
   black: "#000000", red: "#cd3131", green: "#0dbc79", yellow: "#e5e510", blue: "#2472c8", magenta: "#bc3fbc",
   cyan: "#11a8cd", gray: "#808080", grey: "#808080", darkgray: "#666666", lightred: "#f14c4c",
   lightgreen: "#23d18b", lightyellow: "#f5f543", lightblue: "#3b8eea", lightmagenta: "#d670d6",
@@ -70,7 +80,7 @@ export function color(spec) {
   if (Array.isArray(spec)) return `rgb(${spec[0]},${spec[1]},${spec[2]})`;
   if (typeof spec !== "string") return null;
   if (spec in THEME) return THEME[spec];
-  if (spec.startsWith("#")) return spec;
+  if (spec.startsWith("#") || spec.startsWith("var(")) return spec;
   if (spec.startsWith("Indexed:")) return ansi(+spec.slice(8));
   const n = NAMED[spec.toLowerCase()];
   if (n) return n;

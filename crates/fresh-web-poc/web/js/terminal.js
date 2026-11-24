@@ -8,15 +8,15 @@
 // only the bytes after it, so nothing is lost or written twice.
 
 import { rpc } from "./rpc.js";
-import { THEME } from "./highlight.js";
 
-// The terminal's colours, from the theme.
-const xtermTheme = () => ({
-  background: THEME["ui.terminal_bg"],
-  foreground: THEME["ui.terminal_fg"],
-  cursor: THEME["ui.terminal_fg"],
-  selectionBackground: THEME["editor.selection_bg"],
-});
+// The terminal's colours, from the theme's variables (xterm draws on a
+// canvas, so it takes values, not variables). Its ANSI colours are kept
+// readable on any background by xterm's contrast floor.
+const xtermTheme = () => {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  return { background: v("--terminal-bg"), foreground: v("--terminal-fg"), cursor: v("--caret"), selectionBackground: v("--selection") };
+};
 
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
@@ -36,6 +36,7 @@ class Term {
       allowProposedApi: true,
       scrollback: 5000,
       theme: xtermTheme(),
+      minimumContrastRatio: 4.5,
     });
     this.fit = new FitAddon.FitAddon();
     this.xt.loadAddon(this.fit);
@@ -171,8 +172,8 @@ export class TerminalPanel {
   }
 
   applyTheme() {
-    for (const t of this.terms.values()) t.xt.options.theme = xtermTheme();
-    this.screens.style.background = THEME["ui.terminal_bg"];
+    const theme = xtermTheme();
+    for (const t of this.terms.values()) t.xt.options.theme = theme;
   }
 
   refit() {

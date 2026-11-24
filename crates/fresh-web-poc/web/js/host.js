@@ -219,9 +219,9 @@ export class Host {
         status: (id) => app.statusItem(id),
         message: (text) => app.setStatus(text),
         popup: (text, at) => app.popup(text, at),
-        // Colours: {key: css} for theme keys ("syntax.keyword", ...) and
-        // CSS variables ("--bg", ...).
-        theme: (t) => app.applyTheme(t),
+        // Colours: {"--var": css} for the page's colour variables (see
+        // style.css; theme keys resolve to them).
+        theme: (vars) => app.applyTheme(vars),
       },
       host: {
         run: (program, args = [], opts = {}) => app.runProcess(program, args, opts),
@@ -239,6 +239,9 @@ export class Host {
         // The next (or previous) occurrence of `query` in a document, found by
         // the server: how a huge file is searched.
         searchDocument: async (buffer, query, from, backward) => (await rpc("doc.search", { doc: buffer.b.doc, query, from, backward })).pos,
+        // The editor's themes: [{key, name}], and one fully resolved.
+        themes: async () => (await rpc("theme.list", {})).themes,
+        theme: (key) => rpc("theme.get", { key }),
       },
       lsp: {
         available: (buffer) => app.lspAvailable(buffer.b),

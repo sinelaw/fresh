@@ -103,6 +103,7 @@ Operations:
 - `proc.run`, `proc.kill`
 - `lsp.call` (any request about a document), `lsp.hover`,
   `lsp.definition`, `lsp.completion`, `lsp.status`
+- `theme.list`, `theme.get` (the editor's built-in themes, resolved)
 
 Error codes (`src/error.rs`):
 
@@ -129,6 +130,45 @@ Events: `doc.ops`, `doc.saved`, `doc.renamed` (`{doc, from, info}`),
 `doc.deleted` (`{doc, info}`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
 `fs.changed`, `workspace.trusted` (with the available language servers).
+
+## Themes and colours
+
+Every colour the client draws is a CSS variable; `web/style.css` names no
+colour except in `:root`, which holds the dark theme's values. Theme keys
+that plugins pass as `fg`/`bg` (`"syntax.keyword"`, `"editor.selection_bg"`,
+`"search.match_bg"`, ...) resolve to these variables (`THEME` in
+`web/js/highlight.js`), so whatever is drawn follows a theme change without
+being drawn again; the terminal (a canvas) copies them when they change.
+
+The themes are the editor's own (`crates/fresh-editor-core/themes`, embedded
+in the binary by the core crate): `theme.list` names them and `theme.get`
+returns one fully resolved by the editor's loader. `web/plugins/themes.js`
+maps a theme's keys onto every variable (`themeVars`), so each theme styles
+the whole UI; `Select Theme…` previews live and the choice is remembered in
+the browser. A skin or plugin sets them with `fresh.ui.theme({"--bg": ...})`.
+
+| Variable | What it colours |
+|---|---|
+| `--bg`, `--fg` | the page and the editor text |
+| `--muted`, `--faint` | secondary text; line numbers and revealed Markdown markup |
+| `--border`, `--panel` | separators; sidebars, docks, tab and top bars |
+| `--accent`, `--on-accent` | focus marks, primary buttons, toggles; text on them |
+| `--emphasis`, `--link` | highlighted names (keys, hashes, the brand); links |
+| `--status-bg`, `--status-fg` | the status bar |
+| `--control-bg`, `--control-fg` | inputs, buttons, selects, badges |
+| `--hover-bg` | a row under the pointer |
+| `--sel-bg`, `--sel-fg`, `--sel-inactive-bg` | the selected row (focused list, palette, menu); in an unfocused list |
+| `--popup-bg`, `--popup-fg`, `--popup-border` | palette, popups, context menus, dialogs |
+| `--shadow` | shadows and the dialog backdrop |
+| `--terminal-bg`, `--terminal-fg` | the terminal |
+| `--caret`, `--selection`, `--current-line`, `--occurrence` | the editor's cursor, selection, current line, occurrences |
+| `--whitespace`, `--ruler` | whitespace indicators; rulers |
+| `--match-bg`, `--match-fg`, `--match-current-bg`, `--match-current-fg` | search matches |
+| `--code-bg` | code in documents and Markdown text |
+| `--tour-step-bg`, `--diff-add-bg`, `--diff-remove-bg` | a tour's step line; added and removed lines |
+| `--git-added`, `--git-modified`, `--git-deleted` | git marks |
+| `--syntax-keyword`, `-string`, `-comment`, `-function`, `-type`, `-variable`, `-constant`, `-number`, `-operator`, `-punctuation` | syntax |
+| `--error`, `--warning`, `--info`, `--hint` | diagnostics |
 
 ## Limits
 

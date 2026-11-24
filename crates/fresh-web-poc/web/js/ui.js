@@ -49,7 +49,7 @@ export class UIKit {
     document.querySelector(".ctxmenu")?.remove();
     const m = div("ctxmenu");
     for (const it of items) {
-      if (!it) { const hr = document.createElement("hr"); hr.style.cssText = "border:0;border-top:1px solid var(--border);margin:4px 0"; m.appendChild(hr); continue; }
+      if (!it) { m.appendChild(document.createElement("hr")); continue; }
       const d = div("");
       d.textContent = it.label;
       d.onmousedown = (e) => { e.preventDefault(); m.remove(); it.run(); };
@@ -61,9 +61,6 @@ export class UIKit {
     const off = (e) => { if (!m.contains(e.target)) { m.remove(); window.removeEventListener("mousedown", off, true); } };
     window.addEventListener("mousedown", off, true);
   }
-
-  // Draw every panel again (the theme changed).
-  redraw() { for (const p of this.panels.values()) if (p.tree) p.render(p.tree); }
 
   dockShow(p) {
     this.activeDock = p;
@@ -257,6 +254,10 @@ class Panel {
       case "tree": el = this.treeView(n); break;
       case "table": el = this.table(n); break;
       case "spacer": el = div("ui-spacer"); break;
+      case "markdown":
+        el = div("ui-markdown");
+        el.innerHTML = markdownHtml(p.text || "");
+        break;
       default: el = kids(div(`ui-${n.type}`));
     }
     if (p.key) el.dataset.key = p.key;
@@ -391,6 +392,64 @@ class Panel {
     });
     return t;
   }
+}
+
+// Markdown as HTML, for text a plugin shows (a tour step's description):
+// headings, paragraphs, lists, quotes, fenced code, rules, and inline code,
+// bold, italic and links. Everything is escaped first; links keep only web,
+// mail and relative targets.
+const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (t) => t.replace(/[&<>"']/g, (c) => ESC[c]);
+function inline(t) {
+  return t.split(/(`[^`]+`)/).map((part, i) => {
+    if (i % 2) return `<code>${esc(part.slice(1, -1))}</code>`;
+    return esc(part)
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, url) => (/^(https?:|mailto:|#|\.{0,2}\/|[\w.-]+(\/|$|#))/i.test(url) ? `<a href="${url}" target="_blank" rel="noopener">${label}</a>` : label))
+      .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (m, a, b) => `<strong>${a || b}</strong>`)
+      .replace(/(^|[^\w*])\*([^*\s][^*]*)\*|(^|\W)_([^_\s][^_]*)_(?!\w)/g, (m, p1, a, p2, b) => `${p1 ?? p2}<em>${a ?? b}</em>`);
+  }).join("");
+}
+export function markdownHtml(text) {
+  const out = [];
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let para = [], list = null;
+  const flush = () => {
+    if (para.length) out.push(`<p>${inline(para.join(" "))}</p>`);
+    para = [];
+    if (list) out.push(`<${list.tag}>${list.items.map((x) => `<li>${inline(x)}</li>`).join("")}</${list.tag}>`);
+    list = null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    let m;
+    if ((m = /^\s*(```|~~~)/.exec(l))) {
+      flush();
+      const code = [];
+      while (++i < lines.length && !lines[i].trimStart().startsWith(m[1])) code.push(lines[i]);
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+    } else if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) {
+      flush();
+      out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
+    } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) {
+      flush();
+      out.push("<hr>");
+    } else if ((m = /^\s*>\s?(.*)$/.exec(l))) {
+      flush();
+      out.push(`<blockquote>${inline(m[1])}</blockquote>`);
+    } else if ((m = /^\s*(?:([-*+])|\d+[.)])\s+(.*)$/.exec(l))) {
+      const tag = m[1] ? "ul" : "ol";
+      if (para.length || (list && list.tag !== tag)) flush();
+      list = list || { tag, items: [] };
+      list.items.push(m[2]);
+    } else if (!l.trim()) flush();
+    else if (list && /^\s+\S/.test(l)) list.items[list.items.length - 1] += " " + l.trim();
+    else {
+      if (list) flush();
+      para.push(l.trim());
+    }
+  }
+  flush();
+  return out.join("");
 }
 
 function div(cls) {

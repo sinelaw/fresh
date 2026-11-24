@@ -17,6 +17,7 @@ mod lsp;
 mod ot;
 mod process;
 mod terminal;
+mod themes;
 mod workspace;
 
 use anyhow::{anyhow, Result};
@@ -330,6 +331,9 @@ impl App {
             "lsp.hover" | "lsp.definition" | "lsp.completion" => self.lsp_request(op, m)?,
             "lsp.call" => self.lsp_call(m)?,
             "lsp.status" => self.lsp.status(),
+
+            "theme.list" => themes::list(),
+            "theme.get" => themes::get(s(m, "key")?)?,
 
             _ => fail!(UnknownOp, "unknown op {op}"),
         })
