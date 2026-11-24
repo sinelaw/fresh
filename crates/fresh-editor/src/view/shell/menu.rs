@@ -21,8 +21,7 @@
 //! clamped for the top level, flipped to the left for a submenu that would
 //! run off the right edge. [`describe`] derives the content from the menu
 //! state; the walk that decided all of this by hand
-//! (`MenuRenderer::compute_layout`) is deleted, and the web reads the same
-//! rectangles the tree produced (design §3.4).
+//! (`MenuRenderer::compute_layout`) is deleted (design §3.4).
 
 use std::rc::Rc;
 
@@ -529,7 +528,7 @@ pub struct MenuModel<'a> {
 /// Which menus are visible, which label is active or hovered and where its
 /// mnemonic is cut, which rows each open level holds and how each is styled —
 /// all of that is the menu state's to say. Where a label sits and how wide a
-/// box is are the tree's, and are read back off it (`scene::menu_view`).
+/// box is are the tree's.
 pub fn describe(m: &MenuModel<'_>) -> (MenuBar, Vec<DropdownLevel>) {
     use crate::config::MenuItem;
     use crate::view::ui::menu::{

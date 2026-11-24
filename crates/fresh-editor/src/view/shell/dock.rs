@@ -122,8 +122,7 @@ fn ground(painted: bool) -> Node<UiMsg> {
 /// a *second* layout reading the runtime's scroll offset, so a scrolled list
 /// raised the menu for a different row from the one clicked — has been gone
 /// since 2.4, and the applier destructures the cell away.
-/// The dock column's key — what the web reads the dock's display-list items
-/// under (`Editor::tree_view`).
+/// The dock column's key.
 pub fn column_key() -> Key {
     Key::Str("dock_column".into())
 }

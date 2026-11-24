@@ -75,20 +75,20 @@ async function open(sb, args) {
   const app = await launch(sb, args);
   const page = await app.firstWindow();
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\/$/, { timeout: 60_000 });
-  // Connected and holding the editor's scene. Not `frames > 0`: a page that
-  // re-attaches to an editor already at its size gets the scene in the
-  // hello and no frame after it, because nothing changed.
-  await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && !!window.fresh.scene, null, { timeout: 60_000 });
+  // Connected, and drawing the core's lines in an editor view.
+  await page.waitForFunction(() => typeof core !== 'undefined' && !!core.layout
+    && [...views.values()].some((v) => v.data), null, { timeout: 60_000 });
   return { app, page };
 }
 
 const windowCount = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
 const closeWindow = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
-const confirmShown = (page) => page.evaluate(() =>
-  (window.fresh.scene?.regions?.tree?.surfaces || []).some((s) => s.kind === 'confirm'));
-const sceneHas = (page, text) => page.evaluate((t) => JSON.stringify(window.fresh.scene).includes(t), text);
-const typeChar = (page, ch) => page.evaluate((key) => window.fresh.sendKey({
-  key, code: `Key${key.toUpperCase()}`, ctrl: false, meta: false, shift: key !== key.toLowerCase(), alt: false,
+const confirmShown = (page) => page.evaluate(() => !!(core.ask && core.ask.kind === 'confirm'));
+/** Whether the page shows `text` anywhere: a tab, the status bar, or an editor view's rows. */
+const pageHas = (page, text) => page.evaluate((t) => document.getElementById('app').textContent.includes(t)
+  || [...views.values()].some((v) => v.data && v.data.rows.some((row) => rowText(row).includes(t))), text);
+const typeChar = (page, ch) => page.evaluate((key) => api.send('key', {
+  view: activeView().id, key, code: `Key${key.toUpperCase()}`, shift: key !== key.toLowerCase(),
 }), ch);
 const closed = (app, timeout = 20_000) =>
   app.waitForEvent('close', { timeout }).then(() => true, () => false);
@@ -110,7 +110,7 @@ test('a second launch hands its files to the running window', async (sb) => {
     const second = spawn(electron, ['--no-sandbox', desktop, 'b.txt'], { cwd: sb.project, env: sb.env, stdio: 'ignore' });
     const code = await new Promise((r) => second.on('exit', r));
     assert(code === 0, `the second instance exited with ${code}`);
-    await until(() => sceneHas(page, 'b.txt'), 'b.txt to open in the first window');
+    await until(() => pageHas(page, 'b.txt'), 'b.txt to open in the first window');
     assert(await windowCount(app) === 1, 'a second window was opened');
   } finally {
     await app.evaluate(({ app: a }) => a.exit(0)).catch(() => {});
@@ -131,7 +131,7 @@ test('links never open a window of the app', async (sb) => {
 test('closing asks about unsaved work; cancel keeps everything, discard closes', async (sb) => {
   const { app, page } = await open(sb);
   await typeChar(page, 'Q');
-  await until(() => sceneHas(page, 'Qhello'), 'the edit to show');
+  await until(() => pageHas(page, 'Qhello'), 'the edit to show');
   const [pid] = editorsIn(sb.project);
 
   await closeWindow(app);
@@ -175,14 +175,14 @@ test('closing during startup leaves no editor behind', async (sb) => {
 test('quitting from the editor closes the window', async (sb) => {
   const { app, page } = await open(sb);
   const gone = closed(app);
-  await page.evaluate(() => fetch('/action', { method: 'POST', body: JSON.stringify({ action: 'force_quit' }) }));
+  await page.evaluate(() => api.send('action', { name: 'force_quit' }));
   assert(await gone, 'the window outlived its editor');
 });
 
 test('an editor that outlives a crashed app is re-attached, unsaved edit and all', async (sb) => {
   let { app, page } = await open(sb);
   await typeChar(page, 'Q');
-  await until(() => sceneHas(page, 'Qhello'), 'the edit to show');
+  await until(() => pageHas(page, 'Qhello'), 'the edit to show');
   const url = page.url();
   process.kill(app.process().pid, 'SIGKILL');
   await new Promise((r) => setTimeout(r, 1_500));
@@ -192,7 +192,7 @@ test('an editor that outlives a crashed app is re-attached, unsaved edit and all
   ({ app, page } = await open(sb));
   try {
     assert(page.url() === url, `re-attached to ${page.url()}, not ${url}`);
-    await until(() => sceneHas(page, 'Qhello'), 'the unsaved edit after re-attach');
+    await until(() => pageHas(page, 'Qhello'), 'the unsaved edit after re-attach');
     assert(editorsIn(sb.project).length === 1, 'a second editor was started');
   } finally {
     await app.evaluate(({ app: a }) => a.exit(0)).catch(() => {});
@@ -222,7 +222,12 @@ for (const { name, fn } of cases) {
     for (const pid of editorsIn(sb.project)) {
       try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
     }
-    fs.rmSync(sb.root, { recursive: true, force: true });
+    // A kill and an app's exit are asynchronous: the editors, and Electron
+    // writing its profile into the sandbox as it shuts down, may still be at
+    // work. Wait for the editors, and let the removal retry while the last
+    // writes land, rather than race them.
+    await until(() => editorsIn(sb.project).length === 0, 'the editors to exit', 5_000).catch(() => {});
+    fs.rmSync(sb.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 console.log(failed ? `\n${failed} failed` : '\nall passed');

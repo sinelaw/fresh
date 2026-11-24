@@ -2750,6 +2750,12 @@ impl Window {
     /// Window-local in every respect — reads `terminal_manager`,
     /// `terminal_link_hover` and `resources.theme` from `self`; the caller
     /// picks the window and has decided the pane is not in scroll-back.
+    ///
+    /// Returns the cursor's cell (column, row) in `content_rect` when the
+    /// terminal's cursor is to be shown (the terminal shows it, in the focused
+    /// live split) — painted into the cells only when `cursor_visible_if_active`.
+    /// A web view draws it as its own caret instead, so it has one cursor,
+    /// where the terminal's is.
     pub fn paint_terminal_grid(
         &self,
         buf: &mut ratatui::buffer::Buffer,
@@ -2757,21 +2763,15 @@ impl Window {
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
         cursor_visible_if_active: bool,
-    ) {
-        let Some(terminal_id) = self.get_terminal_id(buffer_id) else {
-            return;
-        };
-        let Some(handle) = self.terminal_manager.get(terminal_id) else {
-            return;
-        };
-        let Ok(state) = handle.state.lock() else {
-            return;
-        };
+    ) -> Option<(u16, u16)> {
+        let terminal_id = self.get_terminal_id(buffer_id)?;
+        let handle = self.terminal_manager.get(terminal_id)?;
+        let state = handle.state.lock().ok()?;
         let cursor_pos = state.cursor_position();
-        let cursor_visible = state.cursor_visible()
+        let cursor_shown = state.cursor_visible()
             && split_id == self.effective_active_split()
-            && self.focused_terminal_live()
-            && cursor_visible_if_active;
+            && self.focused_terminal_live();
+        let cursor_visible = cursor_shown && cursor_visible_if_active;
         let (_, rows) = state.size();
         let mut content = Vec::with_capacity(rows as usize);
         for row in 0..rows {
@@ -2795,6 +2795,8 @@ impl Window {
             Style::default().theme_bg(&theme, "ui.terminal_bg"),
             link_highlight,
         );
+        let inside = cursor_pos.0 < content_rect.width && cursor_pos.1 < content_rect.height;
+        (cursor_shown && inside).then_some(cursor_pos)
     }
 }
 
@@ -2889,9 +2891,11 @@ pub mod render {
         // `set_string` can add text attributes but not clear them, so the
         // default keys' attributes here would reach cells that carry colors
         // of their own. Those go on default-colored cells, below.
-        let mut ground = Style::default();
-        ground.fg = default_fg.fg;
-        ground.bg = default_bg.bg;
+        let ground = Style {
+            fg: default_fg.fg,
+            bg: default_bg.bg,
+            ..Style::default()
+        };
         buf.set_style(area, ground);
 
         for (row_idx, row) in content.iter().enumerate() {

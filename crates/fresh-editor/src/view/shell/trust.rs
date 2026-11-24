@@ -258,31 +258,6 @@ fn buttons(t: &Trust) -> Node<UiMsg> {
     ])
 }
 
-/// The prompt's rectangles, read back off the laid-out tree.
-///
-/// What `TrustDialogLayout` was: four rects the painter recorded so a hit test
-/// could compare a click against them. The TUI's clicks are the nodes' own
-/// now, so the only caller left is the web projection — which draws from
-/// rectangles, and gets them from the layout that placed the controls.
-#[derive(Debug, Clone, Default)]
-pub struct Rects {
-    pub dialog: ratatui::layout::Rect,
-    pub radios: [ratatui::layout::Rect; 3],
-    pub ok: ratatui::layout::Rect,
-    pub secondary: ratatui::layout::Rect,
-}
-
-pub fn rects(ui: &fresh_ui::Ui<UiMsg>, size: ratatui::layout::Rect) -> Option<Rects> {
-    let at = |k: Key| super::rect_of(ui, &k, size).unwrap_or_default();
-    let dialog = super::rect_of(ui, &key(), size)?;
-    Some(Rects {
-        dialog,
-        radios: [at(radio_key(0)), at(radio_key(1)), at(radio_key(2))],
-        ok: at(ok_key()),
-        secondary: at(secondary_key()),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,188 +1,202 @@
-# Web UI: Gaps to Desktop-Grade Polish
+# Web UI
 
-Purpose: the state of the non-terminal (web) frontend — the unified-scene architecture it is built on, what ships and works today, and a consolidated analysis of the **design gaps** (decisions still to be made) and **implementation gaps** (work items inside the current design) between the current prototype and the polish bar set by desktop-class web editors, VS Code in particular.
+> **Status: built.** This is the one design document for the web frontend. It
+> replaced every earlier web design (the shared-scene design, the per-client
+> `fresh-ui` tree design, and the "browser lays out the editor's semantic
+> surfaces" design — all in git history, and their code is deleted). *As
+> built* says where each part lives and what is still open. Where this
+> disagrees with the source, the source is authoritative.
 
-This doc replaces the retired `UNIFIED_SCENE_DESIGN.md` and `NON_TERMINAL_UI_RESEARCH.md` (in git history) as the referenced design home for the web UI. The evaluation evidence behind the "verified" claims is the 2026-07 rendering evaluation (in git history as `web-ui-rendering-eval.md`): a full build, the then-50-assertion Playwright suite, the `scene_parity` test, and custom headless-Chromium probes.
-
-**Status (2026-07-06).** Since the evaluation, three waves landed on top of it: the test suite was packaged and wired into CI (§4 Testing & tooling); the Phase-A input/interop work shipped (desktop IME text sink, OS clipboard both ways, click-count forwarding — §3.5/§3.6); and the §3.1 transport was rewritten to a WebSocket pushing scene region diffs (input batching and the unchanged-scene short-circuit fell out of it). Release-build serving is now the documented default for interactive use, with measured release numbers in §3.1. A fourth wave landed the remaining Phase-A/B frontend items: per-region DOM patching (§3.4), measured font metrics + app zoom (§3.3), and touch pan/scroll on mobile, plus TUI-parity placement fixes (dropdown flush under the menu bar, palette as a bottom sheet) — the suite now stands at 72 assertions. The biggest open items, in rough order of value: per-row patching inside panes (§3.4), then the Phase-C reach work (preedit overlay, accessibility, auth/multi-session).
+**Goal.** The core is a headless editor engine; the web UI is an ordinary
+client-side web application built on it. The web client is free to look and
+behave differently from the terminal. What it gets from the core is the
+editor's engine — above all the lazy, high-performance buffer machinery — as
+data and commands, never as UI.
 
 ---
 
-## 1. What ships today — IMPLEMENTED
+## The shape
 
-The architecture is described operationally in `crates/fresh-editor/web-ui/README.md` and, for the render side, in [retained-mode-ui.md](retained-mode-ui.md) (the chrome both frontends consume) and [rendering-and-layout.md](rendering-and-layout.md) (the text inside panes and the `Scene` projections). The short version:
+```
+┌────────────── Rust core (headless engine) ──────────────┐      ┌──────── Web client (app) ────────┐
+│ buffers · piece tree · lazy loading · wrap/row caches   │      │ layout · menus · palette · panels │
+│ syntax · LSP · search · git · plugins · terminals       │ ───► │ focus · hover · scroll · dialogs  │
+│ cursors · selections · undo · editing commands          │ data │ its own keymap and theming        │
+│ settings · sessions · files                             │ ◄─── │ draws buffer lines it is sent     │
+└──────────────────────────────────────────────────────────┘ cmds └───────────────────────────────────┘
+          the terminal frontend keeps its own shell (fresh-ui), unchanged
+```
 
-- **One semantic model, two renderers.** Everything semantic — menu trees with enabled/checked state and accelerators, tabs, status segments, palette, popups, file explorer, the file browser behind Open File / Save As / Switch Project, trust dialog, plugin widget specs, context menus, the keybinding editor, the full Settings tree — is derived once in the core (`Scene` projections on `Editor`) and consumed by both the TUI cell renderer and the web bridge. A Rust parity test drives one editor through both and fails if they disagree on what the chrome *is*.
-- **Buffer interiors are the real pipeline's cells.** The bridge runs the actual `Editor::render` into an in-memory buffer with chrome-cell drawing suppressed (`suppress_chrome_cells`), slices pane interiors (line-number gutter as its own block), and the frontend draws them as SVG text with every glyph pinned to its exact cell column. Layout, wrapping, highlighting, folding, scrollbars and split geometry are all the pipeline's own.
-- **Input is real.** DOM key/mouse/wheel events are forwarded to the real `handle_key` / `handle_mouse` / shared hit-dispatch paths at cell coordinates; the browser re-renders from the editor's new state. The frontend holds **no** editor model.
-- **The frame pump is server push.** One WebSocket (`/ws`) carries everything: the server's event loop ticks the editor (drains async LSP/plugin/file events, steps animations) at ~40 ms while the scene reports activity and ~250 ms when idle, and **pushes** a region-diff frame only when the scene actually changed (§3.1). All input rides the same socket; the HTTP routes stay alive for curl and the parity harness.
+There is no UI loop between the two: the client reads data, subscribes to
+changes, and sends commands. The core holds no web UI state — no menu open, no
+hover, no focus, no layout.
 
-Verified working end-to-end (the bundled Playwright suite — now exercising the WebSocket input path and the push/diff/single-client behavior of §3.1 — plus custom probes): every chrome surface renders as native HTML with zero cell/SVG leakage; splits, drag selection, wide CJK/emoji glyphs, theme switching (native chrome restyles from the live `Theme`, light and dark), and a genuinely capable mobile touch shell (sticky one-shot modifiers, soft-keyboard summoning, breakpoint re-fit).
+## What the core provides
 
-Strengths to preserve through any of the work below:
+### Buffers, through views
 
-- The **parity discipline** — divergence between TUI and web is a test failure, not a bug class. Any new surface must land as a scene projection consumed by both renderers, never as web-only logic.
-- **Theme fidelity with taste** — chrome colors seed from the editor theme, but surfaces/hairlines are derived (`color-mix`), so even high-contrast terminal palettes read as a designed UI.
-- **DOM hygiene** — when nothing changed, no frame arrives at all (the server diffs before pushing, §3.1), so the DOM is never touched; scroll positions of natively-scrolled panels survive rebuilds; wheel events over natively-scrolled chrome are deliberately not forwarded.
-- The **gutter/text split** in the bridge output, which exists precisely so a future native selection/copy layer can cover code without line numbers.
+The core's value to the web is its text engine, so text stays there and only
+windows of it travel.
 
-### 1.1 Native layout of the shell's surfaces — IMPLEMENTED (opt-in per web theme)
+- **A view** is the client's window onto a buffer: `{buffer, width, height,
+  top}`, where `width` is in columns. The client opens one per editor pane it
+  shows and tells the core when its size or scroll changes.
+- **Visual lines on request.** The core lays the buffer out at the view's
+  width — wrapping, folds, virtual text, conceal, wide and combined
+  characters — from its piece tree and its wrap and visual-row caches, and
+  sends the visual lines in the window: for each, its text and styled spans
+  (syntax, selections, cursors, diagnostics, search matches, inlay hints, fold
+  markers) and the buffer position it starts at. A huge file costs what its
+  window costs: nothing outside the requested range is loaded or laid out.
+- **Scrolling is the client's**, by visual line; the core answers for any
+  window and keeps the view's cursor in sight only when asked (after an edit
+  or a jump).
+- **Positions are the core's.** A click is sent as (view, visual line,
+  column); the core resolves it to a buffer position, because only it knows
+  the wrapping, folds and character widths that produced the line.
 
-The display list (`regions.tree`) ships what the shell's layout *drew*: items at character cells, labels padded and elided to the cell width. A page that folds it faithfully looks like a terminal because it is one, which is right for Cosmos and Winamp and wrong for an app that wants to look native (Fresh Desktop, the Compact and macOS themes). So the same surfaces are also projected one step earlier, as **content** (`regions.native`, `view::native`):
+### Editing, as commands
 
-- **The confirmation card** as its `Confirm` model: title, question, detail, buttons with tone, accelerator, selection, and each button's tree key.
-- **Plugin panels** (dock, floating panel, sidebar sections, and panels mounted into a pane — Search & Replace, the welcome page, a review diff) as their mounted `WidgetSpec` plus the host's instance state (text values and carets, selections, expanded rows, …), the interior's rect, and for a floating panel its frame rect, title and close key. Every style in the spec also carries its colours resolved to CSS (`fgCss`/`bgCss`): a plugin colours text by theme key, and only the host knows the theme in use.
+Cursors, selections, multi-cursor, undo and every editing operation stay in
+the core, so text editing behaves like Fresh everywhere. The client sends
+commands — insert text, delete, move by word/line/page, select, undo, indent,
+add cursor, run any editor action by name — and receives the changed lines of
+the views affected.
 
-The page lays those out itself (`js/73-native.js`, the toolbar's `widgetEl` renderer, `css/46-native.css`) and hides the display-list items they replace — hides, never removes: the tree still lays them out.
+### Everything else, as data plus change events
 
-**The parity discipline holds, because input never stops being the tree's:**
+- Files and the project tree; open buffers and their state (modified, read
+  only, language, encoding).
+- The command list with names and keybindings (the client may use or ignore
+  them), settings and their schema, themes.
+- Diagnostics; LSP results on request (completion, hover, signature help,
+  definitions, references, code actions); search and replace; git.
+- Sessions, windows and splits as data (the client decides how to show them).
+- Terminals: PTY output as a cell grid per terminal, input as bytes.
+- Notifications and messages (what the terminal shows in its status bar).
 
-- **By key** (`node` messages): a control that mirrors a tree node (a confirm button, a panel's close box) names that node's key, and the bridge presses it where the shell's layout put it (`Editor::node_rect`). The node's own handler decides what the press means. `scene_parity` checks that every key a projection hands out resolves to a laid-out node.
-- **By identity** (`widget` messages, `surface: "panel"`): a panel control names its widget key, the event its kind answers a press with, and the row. `app::native_panels` rebuilds the very `WidgetEvent` the tree's description builds for that control — from the mounted spec and instance state, never from the page — and applies it as the same `UiFact`. A name that matches nothing in the spec is dropped. This also resolves rows the terminal has scrolled out of its window, which a natively scrolled list renders.
+### Plugins
 
-Some specs are written as terminal layouts, and the renderer reads them for what they are rather than copying their cells:
+Plugins keep their API. What they show is already data — a plugin panel is a
+`WidgetSpec`, a prompt is a list of suggestions, a popup is content — so the
+core forwards it to the client as data, and the client's events come back as
+the same widget events and prompt answers plugins receive from the terminal.
+How a panel looks and where it goes is the client's.
 
-- A column of rows that each mix `raw` cells with controls, all with the same number of cells (the orchestrator's dock menu: two columns of entries, a `│` between them), is a **table** — one CSS grid, a `│` cell as a hairline, an upper-case caption as a heading.
-- A label that is a caption followed (or surrounded) by a run of `─` is a **section heading** with a drawn rule.
-- A menu entry prefixed `(•)`/`( )` or `[✓]`/`[ ]` draws a radio or check mark.
-- Blank `raw` rows stacked to push a hint bar down are a flexible gap.
-- Any other row containing `raw` cells is a **grid row**: the buffer's font at the cell pitch, so it still lines up, controls still live.
+## What the client owns
 
-Panels mounted into panes are also surfaces of the display list (`kind: "pane"`), so the themes that fold it draw them as cells; before, those panes were left empty in the web.
+All of the UI: layout, menus, palette, explorer, tabs, status, dialogs,
+settings screens, focus, hover, scrolling, drag and drop, theming, and its own
+keymap. It decides what is on screen and how it behaves, and calls core
+commands for anything that changes the editor. Its interactions never wait on
+the core unless they change editor state or need data it has not fetched.
 
-`NATIVE_PANEL_THEMES` (Compact, macOS light and dark) turns it on; `fresh.nativePanels` in localStorage (`on`/`off`) overrides. Cosmos and Winamp keep the faithful fold.
+## Per-client state
 
-## 2. The benchmark — what "VS Code-level polish" decomposes into
+Several clients may connect to one core (browsers, and terminals through the
+session daemon). Shared: buffers, their content and undo. Each browser's own:
+its views (size, scroll, wrap width), its cursors and selections in each of
+them, and all of its UI state. The terminals share the panes' own cursors.
+A command a browser sends without naming a view (a palette entry, a menu
+item, an answer to a prompt) acts in that browser's active view, and the
+status it is sent is that view's.
 
-"Polish" is not one feature. Measured against VS Code in a browser (vscode.dev / code-server), the bar decomposes into:
+Positions put aside while another client edits — a browser's cursors and
+scroll between its turns, the terminal's during one — are carried through
+the edits made meanwhile (the buffer's coordinate map) when they come back,
+so typing above someone's cursor moves it along with the text.
 
-1. **Complete text input**: IME composition with inline preedit, dead keys, AltGr, autorepeat, and no keystrokes eaten by the browser.
-2. **OS integration**: system clipboard both directions, drag-and-drop files, installable app shell, window title, file-association-ish deep links.
-3. **Instant feel**: sub-frame perceived latency for typing and pointer interactions; no visible re-layout; 60 fps scrolling.
-4. **Typographic control**: user font family/size, browser-zoom and HiDPI correctness, optional ligatures.
-5. **Rich surfaces**: markdown hover cards with highlighted code blocks and working links, smooth-scrolling lists, pixel-granular scrollbars with hover/drag affordances.
-6. **Accessibility**: screen-reader access to buffer and chrome, focus visibility, keyboard-only completeness.
-7. **Deployment**: survives being more than one localhost tab — authentication, TLS, reconnect, more than one concurrent client.
+## Transport
 
-The minimap remains an **editor-core feature gap, not a web-frontend gap**, and therefore is out of scope here. Explorer sticky scroll is derived by the core and projected to both renderers. Pixel-smooth *sub-cell* scrolling is likewise bounded by the cell model itself — the web can only scroll in whole visual rows for as long as the pipeline thinks in cells. These belong to core rendering discussions, not this doc.
+One WebSocket per client, carrying JSON:
 
-## 3. Design gaps — PLANNED, decisions needed before code
+- **Requests and replies** for data the client asks for (view lines, LSP
+  results, file listings, settings), tagged with an id.
+- **Commands** (editing, actions, file operations), answered with the result
+  or an error.
+- **Events** pushed by the core when something the client subscribed to
+  changes: lines of an open view, buffer state, diagnostics, files, settings,
+  plugin surfaces, terminal output, notifications.
 
-These are the places where reaching the bar requires choosing an architecture, not just writing more of the current kind of code. Each lists the tension and a recommended direction.
+Same-origin and `Host` checks, bounded requests, a heartbeat and non-blocking
+writes carry over from today's bridge unchanged.
 
-### 3.1 Transport and update model — IMPLEMENTED (WebSocket push with region diffs)
+## As built
 
-The recommended end state is now the shipped transport. The bridge (`crates/fresh-editor/src/webui/mod.rs`) runs one nonblocking event loop on the editor's thread (the editor is not `Send`; nothing moved off-thread):
+- **The API** is `crates/fresh-editor/src/webui/api.rs`: one `ApiClient` per
+  connection holds its views and a fingerprint of each topic it was last sent;
+  after every pass the host pushes what changed. The transport, the security
+  checks and the heartbeat are `webui/mod.rs`; the same `WebBridge` runs
+  standalone (`webui::run`) and inside the session daemon (`fresh --web`).
+- **Views** are `app/client_pane.rs`. A `ClientPane` is a client's window onto
+  one split leaf: its size, its scroll and cursors in each buffer the leaf
+  shows, and the visual rows it was last drawn with. They are swapped into the leaf for that
+  client's render and its commands and swapped back out, so motion by visual
+  line and clicks resolve against the rows the client sees, and the terminal's
+  own pane — and every other client's — is untouched. The render is the text
+  pipeline's per-pane path (`SplitRenderer::render_view`), laid out at the
+  client's width; the client gets styled runs per visual row and the caret.
+  The editor's own frame is still laid out headlessly each pass at the
+  editor's size, because plugin render hooks and mounted panels run in it.
+- **Workspaces.** A `ClientPane` names its window as well as its leaf: leaf
+  ids are numbered per window, and the Orchestrator switches the active
+  window. The `root` and `layout` events carry the active window's root and
+  id. A view of a window switched away from is not drawn; the client, seeing
+  another window in `layout`, closes its views and opens the new window's.
+  A view closed while its window is merely inactive is kept by the
+  `ApiClient`, keyed by window and leaf, and handed back when the client
+  opens that pane again, so its scroll and cursors survive the round trip.
+- **Data** is `app/engine_data.rs`: layout, buffers, status facts, commands,
+  menus, the question being asked, popups, plugin panels, settings, files.
+- **Editing** goes through the same entry points the terminal uses: keys
+  through the core's keymap (`handle_key`) in the view's pane, actions by
+  name, the palette and menu commands, the editor's own click handling.
+- **The client** is `crates/fresh-editor/web-ui/` (see its README).
 
-- **`GET /ws`** upgrades to a hand-rolled RFC 6455 WebSocket (matching the bridge's hand-rolled HTTP; `sha1` + `base64` for the handshake, 7/16/64-bit frame lengths, masked client frames, ping/pong, close echo, defensive continuation handling).
-- **On connect**: `{"type":"hello","seq":0,"scene":<full scene>}` — the same object `GET /state` returns, clipboard field included. A reconnect (or server restart) gets a fresh hello; `seq` restarts.
-- **On change**: `{"type":"frame","seq":N,"changed":{<path>:<value>,…}}` where paths are `"w"`, `"h"`, `"theme"`, `"clipboard"`, and `"regions.<key>"` — except **panes**, which diff one level deeper (`"regions.panes.<i>"` plus `"regions.panes.len"` when the count changes), since panes carry the bulk of the bytes: typing resends only the changed pane. A changed value replaces the old one wholesale (null is legal — regions are frequently null). Change detection compares each unit's serialized JSON against the last-sent copy, cached per session; the cache is written only by the WS push path, so HTTP `/state` calls can't confuse it.
-- **Input** (client→server) is JSON text frames with the exact field shapes of the HTTP POST bodies, tagged `"type":"key"|"mouse"|"action"|"widget"|"settings"|"kbedit"|"paste"|"resize"`. Both transports run through one shared dispatch (`apply_message`), so they cannot drift. Inbound frames are drained as a batch and applied in order with **one** render per batch, not per message — the input batching §3.2 asked for fell out of the transport.
-- **Pacing**: the editor ticks at ~40 ms while the scene's `poll.active` hint is true, ~250 ms when idle, client or no client (async LSP/plugin/file events never stall). The scene build+diff is additionally gated on `editor_tick`'s own needs-render signal, so a connected-but-idle session measures ~1.6 % CPU (debug build; ~0.7 % with no client).
-- **Session model**: MANY WebSocket clients, all **mirroring the one editor** (shared-view). Every `/ws` upgrade joins the client set — a second tab, another device, or the page loaded after a server restart all stay live; none is bounced. This replaced the old first-come **`409 Conflict`** model, whose failure mode was a stale/half-open background tab holding the single slot until a server restart, so a fresh page "couldn't load". The scene is built once per tick and pushed to each client as its own region diff; input is accepted from all and applied to the single editor (interleaving is fine for one user across tabs/devices — independent per-client cursors/viewports are the deeper §3.7 work). One editor means one grid, so the render is fit to the **element-wise min of every client's viewport** (`effective_size`) — it fits the smallest window and bigger ones letterbox. A **liveness heartbeat** keeps a half-open peer from lingering: the server pings every `WS_PING_INTERVAL` (15 s) and drops a client silent past `WS_LIVENESS_TIMEOUT` (45 s); browsers auto-pong, so a live-but-idle client stays, while a dead one is reaped and, in particular, can't pin the shared grid to a dead small window's size. The upgrade's `Origin` must be same-origin with the `Host` header **and** that Host must be a loopback/LAN literal or the bind address, else `403 Forbidden`: the first half blocks a cross-origin page, the second blocks DNS rebinding (an attacker name resolved to us makes `Origin` and `Host` agree). Non-browser tools send no `Origin` and pass. Writes to each client are queued and flushed nonblocking, so a slow/stalled peer can never stall the single-threaded loop (a backlog past a cap drops that client). Independent-session isolation and real auth remain §3.7.
-- **HTTP stays**: every route still answers as before (full-scene responses, `Connection: close`) — curl-ability, the Playwright suite (which fires actions via `POST /action`, `/widget`, `/reset`) and the parity harness (`/step`, `/reset`) all depend on them. State-mutating `POST`s are now gated by the **same** same-origin/Host check as the `/ws` upgrade (in `serve_request`): a cross-origin browser page sends its own `Origin` and is rejected, so the guard can't be sidestepped by choosing HTTP over WS, while non-browser callers (curl, the Playwright request API) send no `Origin` and pass. A mutation made over HTTP is pushed to the connected browser as a diff in the same loop pass.
-- **Frontend**: the poll loop is gone. The client applies hello/frames into its scene object, renders once per frame, and reconnects with backoff (500 ms doubling to 5 s, non-modal banner); input while disconnected is dropped, never queued — the hello resync is the recovery story.
+- **Terminals** are buffers in views like any other: the view paints the
+  live grid over its rows, and the PTY takes the size of the view last
+  opened, resized or typed into (the terminal's pane does the same on its
+  relayouts), the way tmux's `window-size latest` does.
+- **Screens with a model of their own** are edited through it: the
+  keybinding editor's `KeybindingEditor` is held per client (`keys.*`) and
+  saved as the terminal's screen saves it; the file prompts carry the
+  directory they browse (`browser.*`).
+- **Keyboard calibration** is the terminal's alone: it calibrates a
+  terminal's key encoding, and a browser reports keys directly. The web is
+  sent neither its menu item nor its command, and a web request that opens it
+  anyway is answered with a message instead of an invisible modal.
+- **Skins** are the client's ([web-ui-skins.md](../features/web-ui-skins.md)):
+  CSS, inert furniture and an optional editor theme, chosen per browser and
+  applied by `web-ui/js/15-skins.js`. The client lays itself out, so a skin
+  arranges it with plain CSS; nothing about a skin reaches the core's layout.
+  The core serves the skins folder (`/skins/…`, `webui/skins.rs`), installs a
+  skin's editor theme on a pick (`skin.theme`, since the editor theme is the
+  editor's shared, saved setting), and sends the live values furniture binds
+  to (`skinValues`: what plugins publish with `editor.setSkinValue`, and the
+  host's `skin_data:*` figures).
+- **The editor's own frame** is still laid out each pass that pushes, headless
+  at the editor's size: plugin render hooks and the mounting of plugin panels
+  run there, and the terminals attached to a daemon are drawn from it.
 
-Measured (140×44, loopback; 20 samples per probe, same probes for both profiles, 2026-07-06). **Debug build**: key→frame RTT over WS min 55.5 / avg 62.9 / max 92.7 ms (an earlier run measured 51.8 / ~60 / 77.8) vs the same box's HTTP `/key` avg 64.1 / max 142 ms; `GET /state` min 53.0 / avg 60.2 / max 72.1 ms — the transport overhead over a bare scene build is a few ms, and the remaining latency is the debug-build render itself. **Release build** — now the recommended way to serve interactively (`cargo run --release …`; `PROFILE=release crates/fresh-editor/web-ui/test/run.sh` for the suite; §4): key→frame RTT over WS min 14.8 / avg 16.7 / max 18.8 ms; `GET /state` min 23.0 / avg 25.6 / max 26.3 ms — the server round-trip stops being the bottleneck. End-to-end in headless Chromium (key sent via `window.fresh.sendKey`, awaiting the pushed-frame counter — i.e. including the page's own paint): debug min 51.2 / avg 74.2 / max 113.1 ms; release min 17.9 / avg 42.1 / max 66.6 ms, so in release the tail above the ~17 ms socket RTT is the frontend's own render (§3.4's per-row patching is the remaining lever). Idle CPU over 10 s with a connected idle client: ~1.1 % release, ~1.5 % debug; zero frames pushed when nothing changes.
+## Decisions — settled, not re-argued
 
-Still PLANNED from the original option list: gzip/deflate (less urgent now that idle traffic is zero and typing sends per-pane diffs), and the multi-client / auth posture of §3.7.
+- **The web client is free to diverge from the terminal.** One behaviour
+  across both frontends is not a goal for the UI; it remains one for editing,
+  because editing is in the core.
+- **Text layout stays in the core.** Wrapping and visual lines are computed by
+  the core at the client's width, because that is where the lazy buffer's
+  performance lives; the client only draws the lines it receives.
+- **No shared UI tree.** The web does not consume `fresh-ui` descriptions,
+  elements, layout or display lists, nor the shell's per-surface projections.
+- **One authority for editor state.** The core owns buffers, cursors and undo;
+  the client never edits text optimistically.
+- **No editor code in the browser.** No WebAssembly build of the core for the
+  web client.
 
-### 3.2 Perceived latency vs. the no-mocks principle
+## Related
 
-The founding rule — the frontend re-implements nothing — means every echo of a keystroke waits on the server round-trip. VS Code (local) is in-process; VS Code remote solves the same problem with *speculative local echo* (type-ahead rendered locally, reconciled when the server catches up), which is a deliberate, bounded re-implementation.
-
-Decision to make: how far to push honest latency before considering speculation. Recommended order: (1) ~~release-build serving~~ **IMPLEMENTED/measured** (release is the documented default; §3.1 numbers — WS key→frame p95 ≈ 19 ms in release, browser-measured end-to-end p95 ≈ 66 ms with the excess being frontend paint), (2) ~~WebSocket transport~~ **IMPLEMENTED** (§3.1 — removes per-request connection setup), (3) ~~input batching~~ **IMPLEMENTED** (the WS loop drains all pending input as one batch → one editor pass → one render). Only if measured p95 echo still exceeds ~50 ms should speculative echo be designed — and then as a clearly-labeled, reconciled overlay (the cursor cell + inserted glyphs only), never as a second text model. Getting this wrong quietly forfeits the architecture's core guarantee. **Verdict with release serving measured:** the server round-trip — the only thing speculative echo could hide — is ~17 ms (p95 ≈ 19 ms), comfortably under the ~50 ms bar, so by this section's own criterion speculative local echo is NOT warranted; the residual end-to-end tail is the page's own paint, which speculation would still have to pay (§3.4 per-row patching is the honest fix).
-
-### 3.3 Typography and metrics model — measured metrics + zoom IMPLEMENTED
-
-The measured-metrics + zoom half of this section is now shipped; the grid is no longer hardcoded. At boot — and again on every zoom or `devicePixelRatio` change (matchMedia re-arm pattern, catching browser zoom and monitor moves) — the frontend measures the real glyph advance of the SVG's own monospace stack via canvas `measureText` and derives the cell size from it: `CW` = measured advance × the shipped cell/advance ratio (so the default stack renders **pixel-identical to the old constants at zoom 1.0** — verified byte-identical screenshots — while a differently-resolved font re-derives the whole grid), `CH` keeps the shipped line-height:font-size ratio. The measured values feed every cell↔pixel mapping — placement, the SVG viewBox/font-size, caret, hit-testing (`cellAt` divides by the live values, so clicks stay exact under zoom) — and a `resize` re-fits cols/rows whenever they change. App zoom is Ctrl+= / Ctrl+- / Ctrl+0 and Ctrl+wheel, **frontend-owned keys that never reach the editor** (they change view typography only; the editor sees just the cols/rows re-fit); the factor is persisted in localStorage as a pure view preference, never editor state. `window.fresh.metrics` exposes `{cw, ch, font, zoom}` for the test suite.
-
-Still PLANNED: a user font-family setting, and the ligature story — per-glyph x-pinning (chosen so runs can't drift) is fundamentally ligature-hostile; supporting them means pinning per *run* and accepting measured cluster widths, or explicitly documenting ligatures as out of scope for cell-grid fidelity. Recommended: per-run pinning behind a setting, ligatures deferred.
-
-### 3.4 Buffer rendering medium
-
-Today: one `<svg>` per pane, one `<tspan>` per style run with a per-character `x` list, vector rules replacing box-drawing glyphs. Visually excellent (verified crisp at 2× DPR, exact column alignment, no run-boundary drift) and fine at 140×44. It scales linearly with visible cells and rebuild frequency; a 4K fullscreen grid with several splits multiplies both.
-
-**Per-region DOM patching is IMPLEMENTED** (the frontend half of the §4 performance item): `#app` holds one stable `display:contents` container per region family — panes one per index — and `applyFrame` maps each frame's changed paths to the set of dirty regions, rebuilding only those containers. A typing frame re-emits one pane's SVG and touches nothing else in the DOM (scroll positions, caret blink phase and IME focus survive by construction; the caret is additionally patched in place so unrelated frames don't restart its blink). `window.fresh.renderedRegions` exposes the rebuilt set for the suite. Per-ROW patching *inside* a pane's SVG is the remaining PLANNED step:
-
-Options: keep SVG but patch per row (keyed rows, only re-emit changed ones — the bridge already sends rows as arrays, so row-level dirty detection is a string compare); absolutely-positioned DOM line divs (what VS Code uses — cheap partial updates, native selection possible, but sub-pixel column alignment is harder); canvas/WebGL (xterm.js route — fastest, but forfeits DOM text, accessibility and crisp zoom for free).
-
-Recommended: **SVG with per-row keyed patching** as the next step (smallest delta, keeps every current fidelity property), canvas only if profiling of realistic large-viewport use demands it. Whatever the medium, the switch must not leak into the bridge contract — cells in, pixels out.
-
-### 3.5 Selection and clipboard model
-
-Buffer selection is entirely editor-side (drag → real selection cells, rendered as background runs — verified). Two further selection surfaces are IMPLEMENTED on top of that:
-
-**Live-terminal selection — IMPLEMENTED core-side (TUI + web).** A live terminal grid has no cursor/selection model, so a left-button *drag* on it (recorded as `MouseState::terminal_drag_pending` on the down — a bare click still only focuses, preserving click-to-focus-and-type) drops that split into read-only scrollback, exactly the Ctrl+Space / scroll-up transition. `sync_terminal_to_buffer` pins the scrollback viewport to the first byte of the just-appended visible screen, so the view is pixel-identical to the grid and both the press origin and the drag position resolve to exact byte positions by line arithmetic (`begin_terminal_grid_selection` in `app/terminal_mouse.rs`); the standard text-selection drag machinery then takes over, Ctrl+C copies through the editor clipboard (→ browser via the scene `clipboard` field below), Ctrl+Space resumes the shell. Double-/triple-click word/line selection works in the scrollback view (still inert on the live grid). `jump_to_end_on_output` yields while a selection drag is pending/active or a selection exists, so chatty programs can't yank the view mid-copy. Mouse *forwarding* to the inner program is now subscription-based rather than alternate-screen-based: button/drag events forward only when the program enabled mouse reporting (DECSET 1000/1002/1003), buttonless motion only under all-motion (1003), wheels additionally under the old alternate-screen rule (alternate-scroll arrow synthesis for pagers is unchanged) — and Shift bypasses forwarding entirely (xterm convention), so text is always selectable even under a mouse-hungry program. Both are configurable: `terminal.mouse_drag_selects = false` keeps the live grid inert under drags, and `terminal.mouse_forwarding = "alt_screen"` restores the legacy forward-everything-to-alt-screen rule.
-
-**Alt-hold native browser selection — IMPLEMENTED (web frontend only).** `user-select:none` plus preventDefault-everywhere normally forecloses browser-native selection. Holding Alt flips ownership: capture-phase guards stop every forwarding handler (element- and document-level, without preventDefault), `body.natsel` re-enables `user-select` (line-number gutters stay excluded — the gutter/text split exists for exactly this), and the browser's own drag/double-click selection works over ANY text — buffer SVG, live terminals (without pausing them), file explorer, menus, dialogs. Ctrl+C (or right-click → Copy; the context menu stays native while Alt is held) copies it; `natselText()` rebuilds SVG cell-grid selections row-aware, since grid rows are separate `<text>` elements that `Selection.toString()` would run together, and trims the grid's cell padding. Alt is free to own: the editor's menu accelerators are Alt+letter chords (still forwarded) and its mouse paths only read Shift/Ctrl. A selection left behind is cleared by the next ordinary mousedown. Known limitation: a pushed frame that rebuilds the pane under a still-held native drag collapses that DOM selection — the core-side terminal path above is the robust route for streaming terminals; Alt is the universal escape hatch for chrome and glance-copies. Ctrl+Alt+S toggles the whole mode off/on (a frontend view preference persisted in localStorage, same class as zoom / palette placement) for users whose workflow clashes with Alt-drag.
-
-**Inbound (paste) — IMPLEMENTED.** A document `paste` listener reads `clipboardData` and delivers the whole text in one `paste` message over the WebSocket (the `POST /paste` route stays for curl/harness use); the bridge runs the editor's real bracketed-paste path (`paste_bracketed_into_focused_panel` → `paste_text`, the same routing the terminal's `Ev::Paste` takes), so focused panels, prompts, terminals and column-mode paste behave exactly as in the TUI. The bare Ctrl/Cmd+V keystroke is deliberately **not** forwarded (and not `preventDefault`-ed): the DOM paste event that follows is the one paste path, mirroring how the terminal frontend receives a bracketed paste rather than a Ctrl+V key. Long pastes never loop through per-char `/key` posts.
-
-**Outbound (copy/cut) — IMPLEMENTED** via the scene-field approach (the editor stays the source of truth for what "copy" means, including block selections and multi-cursor): browser-facing scenes carry `"clipboard": {"seq": N, "text": "..."}`, where `seq` increments whenever the editor's internal clipboard text changed — the bridge tracks a hash per server (`ClipboardSync` in `webui/mod.rs`), so no new core-editor state; the core only gained the read-only `Editor::clipboard_text()` accessor. The frontend calls `navigator.clipboard.writeText` when it sees a new `seq`; the write happens while handling the pushed frame that answers the very Ctrl+C / menu click that ran the copy, i.e. inside that gesture's transient-activation window (a reconnect hello adopts the seq without writing, so a stale copy is never replayed). The exposed text is capped at 1 MiB and never logged; a rejected write (no permission, non-secure origin) degrades silently to editor-internal copy/paste. Still PLANNED: a dedicated fetch for over-cap copies, and rich-text (`copy_html`) pass-through.
-
-### 3.6 Input model beyond keydown
-
-**Hidden-input text sink — IMPLEMENTED as the universal text path.** The mobile shell's hidden input is now created and kept focused on desktop too (`focus({preventScroll:true})`; refocused on non-chrome clicks and window focus; visually hidden but never `display:none`, which would break IME). Desktop keeps `keydown` for plain printable keys, shortcuts and the named-key allowlist — that handler `preventDefault`s, which suppresses the matching `beforeinput`, so there is no double delivery and the mobile-only `kdHandledAt` de-dupe window never needs to engage on desktop. Text the keydown path can't express arrives through the sink: composition-less `insertText` via the existing `beforeinput` translation, and IME composition (CJK candidate commit, dead-key accents — `key` arrives as `"Process"`/`"Dead"`) via `compositionend`, with `isComposing` guards on keydown/beforeinput/input so the IME owns the sink until commit.
-
-Still PLANNED — the **preedit story**: the uncommitted composition currently lives invisibly in the hidden input; real IME polish means rendering it inline at the caret, which needs a small new scene affordance (a transient "preedit overlay" the frontend paints at the cursor cell — deliberately *not* an edit to the buffer). Also still open: browser-reserved shortcuts (Ctrl+W/T/N are uninterceptable in a normal tab — the honest fixes are the Keyboard Lock API (fullscreen/PWA only), an installable PWA shell, and a documented alternate-binding fallback). AltGr and autorepeat fall out of the implemented paths for free.
-
-### 3.7 Deployment and security posture
-
-Today: plain HTTP, localhost, no auth, single thread, one implicit client, README warns accordingly. That is the correct scope for a dev prototype and the code says so honestly.
-
-**Session hosting — IMPLEMENTED.** `fresh --web [ADDR]` no longer runs a private editor in its own process: it runs the ordinary **session daemon** (`server::EditorServer`) in the foreground with the `WebBridge` hosted inside it. The daemon binds the usual per-working-directory (or `--session-name`) sockets first, so `fresh -a` in that directory attaches a terminal to *the editor the browser is looking at* — one editor, two transports. Input from either reaches the other; closing the browser or detaching the terminal leaves the session running, and the workspace/hot-exit restore that terminals always had now applies to `--web` too. Consequences that fall out of sharing one editor: the rendered grid is the element-wise MIN of every viewport watching it (browsers *and* the primary terminal — the same letterboxing rule §3.1 already applied across browsers); chrome suppression is scoped to the browser's render so terminals still get chrome in their cells; `POST /reset` is refused with `409` (it rebuilds the editor from scratch, which would silently discard the recovery session, the restored workspace and the attached terminals — the standalone `webui_server` bridge, which owns its editor, still allows it); cell animations are forced off for the whole session while `--web` is serving, as the standalone bridge always did; and the idle timeout counts a connected browser as a client. A session that is *already* live in the directory is not shadowed — `--web` refuses and points at `fresh -a` or `--session-name NAME`. Attaching the bridge to an already-running daemon (the reverse direction) stays PLANNED and needs a new client-control message.
-
-Decision to make *only if* the web UI graduates: session model first (one editor per client vs. shared editor with presence), then the boring hardening (token auth, TLS or bind-behind-reverse-proxy, reconnect/resync semantics beyond the implemented full-scene hello). The **shared-view** half of that decision has now landed (§3.1): many clients mirror the one editor, the scene broadcasts to all, and the grid fits the smallest viewport — so a stale tab no longer locks out a new page (the old first-come-`409`). What stays PLANNED is the harder half: **independent per-client sessions** (each its own cursor/viewport/selection over shared buffers, i.e. presence), which needs the core to separate *view* state from *document* state — the trap to avoid is accreting that onto the shared-mutable-editor accident. The transport already takes the other defensive steps this section asked for: upgrades that aren't same-origin, or whose `Host` isn't a loopback/LAN literal or the bind address, get `403 Forbidden` (the DNS-rebinding guard); the SAME origin check gates the state-mutating HTTP POST routes so it can't be sidestepped over HTTP (non-browser tools, which send no `Origin`, still pass); a `Content-Length` is bounded so a crafted header can't crash the parser; a liveness heartbeat reaps half-open clients; and client writes are queued/flushed nonblocking so a slow peer can't wedge the single-threaded loop. Real auth/TLS stay PLANNED, and the "local-dev bridge, not for shared exposure" stance stays loud in the docs.
-
-### 3.8 Accessibility architecture
-
-Today: effectively none. Buffer text lives in SVG `<tspan>`s (invisible to most screen readers as structured text), chrome divs carry no ARIA roles, and the stylesheet suppresses focus outlines globally.
-
-The semantic-scene architecture is actually an unusual *advantage* here — the chrome is already a typed model (menus with enabled/checked state, rows, dialogs), so emitting `role="menu"/"menuitem"/"dialog"/"tree"` and `aria-*` from the projections is mechanical in a way it never is for pixel-first editors. The buffer needs the VS Code trick: a hidden accessible region mirroring the caret's line/viewport as plain text. Decision to make: whether the accessible-text mirror is a frontend derivation from cells (cheap, approximate) or a first-class scene projection (correct, one more surface under parity discipline). Recommended: scene projection — it's the same single-source principle, and the TUI could use it for its own screen-reader story later.
-
-## 4. Implementation gaps — PLANNED, no design decision required
-
-Work that is well-defined inside the current architecture. Effort: S (hours), M (days), L (week+).
-
-**Input & OS interop**
-- ~~`paste` event handler → editor~~ **IMPLEMENTED:** document `paste` listener → one `paste` message over the WebSocket → the editor's bracketed-paste path (see §3.5; no per-char key loops, and the bare Ctrl+V key is not forwarded).
-- ~~Desktop hidden-input sink~~ **IMPLEMENTED:** the mobile sink is the desktop text path too; composition *commit* works (`beforeinput` + `compositionend`), the preedit overlay of §3.6 remains PLANNED.
-- ~~Forward the browser's click count~~ **IMPLEMENTED:** mouse downs carry `count` (`event.detail`); when `count ≥ 2` the bridge primes the editor's own click-tracking state (`previous_click_time/position`, `click_count`) so `detect_multi_click` resolves the browser's count deterministically — the editor's word/line-selection path itself is untouched, and no timing/cell-slop mismatch across the HTTP hop can drop a double-click.
-- ~~Touch pan/scroll on the mobile buffer~~ **IMPLEMENTED:** document-level touch handlers translate a one-finger pan (axis-locked past an 8px slop) into the existing wheel forwarding — `scrollup`/`scrolldown`/`scrollleft`/`scrollright` at the touch-start cell, one step per whole cell panned, plain 1:1 with no momentum; taps stay untouched so the browser's synthetic mouse events keep driving the unchanged tap-to-position-cursor click path, and `preventDefault` fires only mid-pan so chrome panels keep native touch scrolling and the page never rubber-bands.
-- File drag-and-drop onto the window → open buffer. (S)
-
-**Rendering & visual polish**
-- ~~File browser (Open File / Save As / Switch Project) shipped as a slab of cells~~ **IMPLEMENTED:** it was the one chrome surface with no projection — the bridge sent `browserRect`/`browserCells` and the frontend drew a screenshot of the TUI (box-drawing frame, `☐` glyphs, space-padded columns, a one-cell scrollbar) inside an otherwise native page. Now `Editor::file_browser_view` projects the directory, the toggles, the nav shortcuts, the sortable columns and the visible entry window, each interactive element carrying **the cell span the renderer laid it out at**; the frontend renders a native card and sends clicks to those cells. The dialog is a description now (`shell::file_browser`): the spans are the rectangles of keyed nodes read back off the tree (`file_browser::rects`), each control answers its own press, and the list's window is the viewport's (`file_browser::window`). Recording the spans also fixed a real hit-test bug in **both** frontends: the toggle/shortcut hit-tests used hardcoded 13/24/27/28-character offsets that were wrong for any localized label or a keybinding string of a different length.
-- ~~Status bar projected from stale capture~~ **IMPLEMENTED:** `StatusBarChrome` was never cleared, so `status_view` kept projecting the previous frame's bar whenever the TUI hid it — the web drew a ghost status line under the Open File prompt row, and kept a full status bar after View → Toggle Status Bar. It is now reset on any frame that doesn't draw the bar (which also stops the click/hover hit-tests resolving segments that are no longer on screen).
-- Known remaining TUI-only surfaces (the web renders nothing for them): the **calibration wizard** (deprecated, `render.rs`) and the **quick-open mode-hints line** (skipped under `suppress_chrome_cells`, no projection). Neither leaks cells; both are projection gaps. (S each)
-- Keybinding-editor modal: footer hint row clips against the rounded bottom edge. (S)
-- Boot-noise status ("Activating direnv environment…" persists until overwritten) — cosmetic, but it is the first thing every screenshot shows; clear transient plugin status after a TTL. (S — likely core-side, not web-side)
-- Context-menu / dropdown viewport-edge clamping: verify and clamp native overlays that anchor to cell rects near the right/bottom edges. (S)
-- Focus visibility: replace the global `:focus{outline:none}` with visible focus styling on interactive chrome (prerequisite for §3.8, independent of it). (S)
-- Scrollbar affordances: hover highlight, drag at pixel granularity mapped back to cell scroll, click-to-page — currently the thumb is drawn but interactions are cell-granular editor hits. (M)
-- Hover/popup markdown: LSP hover renders as plain popup lines; the TUI renders markdown with highlighting — port that projection so code blocks in hovers are highlighted runs, and make OSC-8-style links clickable. (M; scene projection may already carry enough structure to start)
-
-**Performance (stepping stones toward §3.2; §3.1's transport is done)**
-- ~~Serve/measure release builds~~ **IMPLEMENTED/measured:** release is the documented default for interactive serving (`fresh --web …`, or `cargo run --release --features web -p fresh-editor --example webui_server -- …`), and the suite runs against it with `PROFILE=release crates/fresh-editor/web-ui/test/run.sh` (debug stays the CI default). Measured release vs debug (140×44, loopback, §3.1): WS key→frame RTT avg 16.7 / max 18.8 ms vs avg 62.9 / max 92.7 ms; `GET /state` avg 25.6 ms vs avg 60.2 ms; idle CPU with a connected client ~1.1 % vs ~1.5 %. The server no longer dominates the echo — the remaining tail is frontend paint (§3.4 per-row patching).
-- ~~Server-side scene hash → tiny "unchanged" response for idle polls~~ **subsumed by §3.1:** the server diffs per region against the last-sent copy and pushes nothing when nothing changed — idle traffic is zero, typing sends only the changed pane.
-- gzip/deflate (now: WS `permessage-deflate`) — less urgent post-§3.1, still worthwhile for big frames like theme switches. (S)
-- ~~Per-region DOM patching keyed by region identity~~ **IMPLEMENTED** (§3.4): `applyFrame` maps each frame's changed paths to dirty region containers and rebuilds only those (panes per index) — a typing frame re-emits one pane's SVG and leaves the rest of the DOM untouched (`window.fresh.renderedRegions`). Per-row patching *inside* panes (§3.4) is the remaining step. (M)
-- ~~Input batching: coalesce same-tick keystrokes into one `/key` batch → one render.~~ **subsumed by §3.1:** the WS loop drains all pending input per pass and renders once per batch.
-
-**Testing & tooling**
-- ~~`crates/fresh-editor/web-ui/test/package.json` declaring `playwright` (the documented test command currently fails from a clean checkout with `ERR_MODULE_NOT_FOUND`) plus a one-command runner that builds the bridge, starts it, runs `drive.mjs`, and tears down.~~ **Done:** `crates/fresh-editor/web-ui/test/package.json` pins `playwright`, and `crates/fresh-editor/web-ui/test/run.sh` builds the bridge, installs deps, starts/polls the server, runs the suite, and tears down (CI: `.github/workflows/web-ui.yml`).
-- ~~CI job running the Playwright suite + `scene_parity` on PRs touching `crates/fresh-editor/web-ui/` or the view/webui crates.~~ **Done:** `.github/workflows/web-ui.yml` runs both jobs (Rust cache + a `~/.cache/ms-playwright` cache keyed on the pinned playwright version) on pushes/PRs touching `crates/fresh-editor/web-ui/**`, the webui bridge, `scene.rs`, the parity test, or the workflow itself.
-- Screenshot-based visual regression on the captured surfaces (the suite already writes deterministic screenshots; a pixel-diff gate is the missing 10%). (M)
-- Cross-browser matrix: the suite is Chromium-only; `color-mix` and per-glyph SVG need at least a Firefox and WebKit smoke pass. (S/M)
-
-**Docs**
-- The pointers to the retired design docs (`UNIFIED_SCENE_DESIGN.md`, `NON_TERMINAL_UI_RESEARCH.md`) in `crates/fresh-editor/web-ui/README.md` and source comments, and the wrong example path in `drive.mjs`'s header, are fixed alongside this doc's introduction; keep them pointing here.
-
-## 5. Suggested phasing
-
-- **Phase A — input correctness & interop** (all S/M, no design risk) — **complete except touch pan**: ~~clipboard paste~~, ~~desktop text sink~~, ~~click-count forwarding~~, touch pan (open), ~~test packaging + CI~~. The web UI is now usable as a daily driver for ASCII-and-IME text alike.
-- **Phase B — feel** — **transport half done**: ~~release serving~~ (implemented + measured, §3.1/§4), ~~unchanged-scene short-circuit~~ and ~~input batching~~ (both subsumed by §3.1), ~~the WebSocket + region-diff transport (§3.1)~~, per-region/row patching (§3.4, open — the frontend half), measured font metrics + zoom (§3.3, open). After the open items, it should be indistinguishable from native at local latencies.
-- **Phase C — reach**: ~~outbound clipboard~~ (implemented ahead of schedule, §3.5), preedit overlay (§3.6), accessibility projection + ARIA (§3.8), PWA shell + Keyboard Lock, and — only with an explicit decision — the remote deployment posture (§3.7; the shared-view multi-client model, Origin 403, and liveness heartbeat already ship; independent per-client sessions + real auth remain).
-
-Each phase keeps the invariant that makes this frontend worth having: the editor remains the single source of truth, and anything semantic added for the web lands as a scene projection under parity test, never as web-only logic.
+- [retained-mode-ui.md](retained-mode-ui.md) — the terminal's shell, which this
+  design leaves as it is.
+- [rendering-and-layout.md](rendering-and-layout.md) — the text pipeline whose
+  wrap and visual-row caches the views are served from.
+- [plugins.md](plugins.md) — the plugin API whose surfaces the client renders.

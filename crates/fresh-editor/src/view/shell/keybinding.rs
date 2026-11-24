@@ -652,9 +652,20 @@ fn search_row(v: &[Span]) -> Node<UiMsg> {
 /// A table row's key: its identity, namespaced by what kind of row it is.
 pub fn table_row_key(r: &Row) -> fresh_ui::Key {
     match r {
-        Row::Section { id, .. } => fresh_ui::Key::Str(format!("section:{id}").into()),
-        Row::Binding { id, .. } => fresh_ui::Key::Str(format!("binding:{id}").into()),
+        Row::Section { id, .. } => section_row_key(id),
+        Row::Binding { id, .. } => binding_row_key(id),
     }
+}
+
+/// A section heading's row key, by the section's id (its plugin, or empty for
+/// the built-in section).
+pub fn section_row_key(id: &str) -> fresh_ui::Key {
+    fresh_ui::Key::Str(format!("section:{id}").into())
+}
+
+/// A binding's row key, by the binding's id.
+pub fn binding_row_key(id: &str) -> fresh_ui::Key {
+    fresh_ui::Key::Str(format!("binding:{id}").into())
 }
 
 /// One row of the table.

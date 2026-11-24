@@ -94,7 +94,7 @@ function pruneLogs(dir) {
   }
 }
 
-// The page's own preferences (web theme, zoom, palette placement) live in its
+// The page's own preferences (zoom, sidebar width) live in its
 // localStorage, which is keyed by origin — port included. A random port per
 // launch would forget them every time, so windows take the first free port of
 // a fixed range: a lone window always lands on the same origin.
@@ -238,6 +238,43 @@ function request(url, { method = 'GET', body } = {}) {
     req.on('error', reject);
     if (body) req.write(body);
     req.end();
+  });
+}
+
+/**
+ * One command to the editor over its API (`/api`, the WebSocket the page
+ * uses; see crates/fresh-editor/src/webui/api.rs).
+ *
+ * Resolves with the reply — or with `null` when the editor closes the
+ * connection after the command went out, which is what an editor that quits
+ * on it does. Rejects on an error reply, a connection that never opened, or a
+ * timeout.
+ */
+function apiCall(baseUrl, op, args = {}) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(baseUrl.replace(/^http/, 'ws') + 'api');
+    let sent = false;
+    let settled = false;
+    const done = (fn, v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ws.close();
+      fn(v);
+    };
+    const timer = setTimeout(() => done(reject, new Error('timeout')), 5_000);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ id: 1, op, ...args }));
+      sent = true;
+    };
+    ws.onmessage = (m) => {
+      const v = JSON.parse(m.data);
+      if (v.re !== 1) return;
+      if (v.error !== undefined) done(reject, new Error(v.error));
+      else done(resolve, v);
+    };
+    ws.onclose = () => (sent ? done(resolve, null) : done(reject, new Error('the editor is not answering')));
+    ws.onerror = () => { if (!sent) done(reject, new Error('the editor is not answering')); };
   });
 }
 
@@ -407,7 +444,7 @@ class Backend {
     if (!rec || !pidAlive(rec.pid)) return false;
     const url = `http://127.0.0.1:${rec.port}/`;
     try {
-      if ((await request(`${url}state`)) !== 200) return false;
+      if ((await request(url)) !== 200) return false;
     } catch {
       return false;
     }
@@ -438,12 +475,17 @@ class Backend {
     // that client first probes whether the daemon is alive, and an editor
     // still busy starting can lose the probe — the client then starts a
     // second, headless daemon and hands *it* the files.
-    request(`${this.url}open`, { method: 'POST', body: JSON.stringify({ files }) })
-      .then((status) => { if (status === 404) this.openFilesBySession(files); })
-      .catch(() => this.openFilesBySession(files));
+    // Only the files the API did not take go the other way: those it opened
+    // must not be opened twice.
+    Promise.all(files.map((f) =>
+      apiCall(this.url, 'file.open', { path: path.resolve(this.workingDir, f) }).then(() => null, () => f)))
+      .then((failed) => {
+        const left = failed.filter((f) => f !== null);
+        if (left.length > 0) this.openFilesBySession(left);
+      });
   }
 
-  /** The session-socket hand-off, for an editor without the bridge's `open`. */
+  /** The session-socket hand-off, for an editor whose API is not answering. */
   openFilesBySession(files) {
     const child = spawn(this.binary, ['--cmd', 'session', 'open-file', '.', ...files], {
       cwd: this.workingDir,
@@ -462,10 +504,7 @@ class Backend {
    */
   async requestQuit() {
     if (!this.running) return;
-    const status = await request(`${this.url}quit`, { method: 'POST', body: '{}' });
-    // An editor too old to know the route quits the unconditional way.
-    if (status === 404) await this.stop();
-    else if (status !== 200) throw new Error(`the editor answered ${status}`);
+    await apiCall(this.url, 'quit');
   }
 
   /**
@@ -476,7 +515,7 @@ class Backend {
     this.cancel();
     if (!this.running) return;
     try {
-      await request(`${this.url}action`, { method: 'POST', body: JSON.stringify({ action: 'force_quit' }) });
+      await apiCall(this.url, 'action', { name: 'force_quit' });
     } catch {
       // Not listening (yet, or any more) or wedged: nothing will quit it.
       this.kill();

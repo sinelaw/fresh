@@ -5897,6 +5897,15 @@ interface EditorAPI {
 	*/
 	setStatusBarValue(bufferId: number, tokenName: string, value: string): boolean;
 	/**
+	* Publish a named value for web UI skins. A skin's `furniture.html` shows
+	* it with `data-bind="<plugin name>:<name>"` (as text), or as a CSS custom
+	* property with `data-bind-var="--prop:<plugin name>:<name>"` (numbers stay
+	* unitless, for gauges and bars). Values are editor-wide, not persisted,
+	* and dropped when the plugin unloads; an empty `value` removes one.
+	* Publishing the same value again costs no redraw.
+	*/
+	setSkinValue(name: string, value: string): boolean;
+	/**
 	* Translate a string - reads plugin name from __pluginName__ global
 	* Args is optional - can be omitted, undefined, null, or an object
 	*/

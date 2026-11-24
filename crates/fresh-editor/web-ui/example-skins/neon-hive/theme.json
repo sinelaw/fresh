@@ -1,0 +1,8 @@
+{
+  "name": "neon-night",
+  "extends": "builtin://dark",
+  "editor": { "bg": [18, 8, 31], "fg": [236, 226, 255], "line_number_fg": [110, 80, 150],
+              "current_line_bg": [32, 14, 52], "selection_bg": [74, 20, 90] },
+  "syntax": { "keyword": [255, 47, 160], "string": [35, 229, 255], "comment": { "color": [140, 110, 180], "modifier": ["italic"] },
+              "function": [255, 210, 63], "type": [125, 255, 106], "constant": [255, 140, 90] }
+}

@@ -905,18 +905,6 @@ pub fn suggestions_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
         .and_then(|(_, r)| spec.items.get(r.start).map(|i| i.rect))
 }
 
-/// The rows' own rectangle — inside the ring and above the hints.
-///
-/// What `SuggestionsRenderer` returned as `inner_rect`, and what the hover and
-/// click rails hit-tested against while they still worked in coordinates.
-pub fn suggestions_list_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
-    let key = LIST_KEY.with(|k| k.clone());
-    spec.index
-        .iter()
-        .find(|(k, _)| *k == key)
-        .and_then(|(_, r)| spec.items.get(r.start).map(|i| i.rect))
-}
-
 /// The scrollbar's track, when the list has one.
 ///
 /// `render` computed this by hand — one column at the popup's right edge, only

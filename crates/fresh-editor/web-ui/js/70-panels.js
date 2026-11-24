@@ -1,153 +1,134 @@
-// Trust dialog, file explorer, border drag handles.
-// (web-ui/js — concatenated in filename order into the page's single
-// <script> by crates/fresh-editor/build.rs; all files share one scope.)
-// ---- native workspace-trust dialog --------------------------------------
-// Blocking modal. Options / OK / Quit forward to handle_mouse at the pipeline's
-// recorded cell rects (the existing handle_workspace_trust_mouse resolves them);
-// keyboard already works through handle_key.
-/** function trustDialogEls(TrustDialog) => El[] */
-function trustDialogEls(t){
-  const out=[];
-  const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
-  const el=aria(div("trustdialog"+(t.cancellable?" cancellable":"")), "alertdialog", {modal:true, label:t.title}); place(el,t.dialog); hugHeight(el);
-  const title=div("td-title"); title.textContent="⚠  "+t.title; el.appendChild(title);
-  const group=aria(div("td-group"), "radiogroup", {label:t.title});
-  if(t.path){ const p=div("td-path"); p.textContent=t.path; el.appendChild(p); }
-  if(t.triggers){ const g=div("td-triggers"); g.textContent="Detected: "+t.triggers; el.appendChild(g); }
-  for(const o of t.options){
-    const row=aria(div("td-opt"+(o.selected?" sel":"")), "radio", {checked:!!o.selected, label:o.label});
-    row.dataset.level=o.data;
-    // The shared radio (47-components.css).
-    const rad=document.createElement("span"); rad.className="td-radio ui-radio"+(o.selected?" on":""); row.appendChild(rad);
-    const tx=document.createElement("div"); tx.className="td-otext";
-    tx.innerHTML='<div class="td-olabel">'+esc(o.label)+'</div><div class="td-odesc">'+esc(o.description)+'</div>';
-    row.appendChild(tx);
-    const c=rectCell(o.rect);
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); };
-    group.appendChild(row);
+// Plugin panels: what the core mounted (the dock, a floating panel, sidebar
+// sections, a pane's panel), each a WidgetSpec drawn by the widget renderer.
+// Where each goes, and how big, is the client's.
+
+function panelEl(p) {
+  const body = div("native-panel panel-body");
+  body.dataset.slot = p.slot;
+  // Pop-overs (a dropdown's list) opened by the last drawing of this slot.
+  for (const old of document.querySelectorAll(`[data-popover-region="${p.slot}"]`)) old.remove();
+  popoverRegionOwner = p.slot;
+  try {
+    body.appendChild(widgetEl(p.spec, {
+      kind: "panel", slot: p.slot, focusKey: p.focusKey, instances: p.instances || {},
+      native: true, page: false,
+    }));
+  } finally {
+    popoverRegionOwner = null;
   }
-  el.appendChild(group);
-  const btns=div("td-buttons");
-  const mk=(label,rect,cls)=>{ const b=aria(div("td-btn "+cls),"button",{}); b.textContent=label; const c=rectCell(rect);
-    b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); }; return b; };
-  btns.appendChild(mk(t.okLabel, t.ok, "primary td-ok"));
-  // Quit, or Cancel when cancellable; only quitting is destructive.
-  btns.appendChild(mk(t.quitLabel, t.quit, t.cancellable?"td-quit":"destructive td-quit"));
-  el.appendChild(btns);
-  out.push(el);
-  return out;
+  body.classList.toggle("has-keyboard", !!p.keyboard);
+  return body;
 }
 
-// ---- native file explorer (sidebar tree) --------------------------------
-// The editor owns the tree (expand/collapse/selection/scroll); we render the
-// visible window natively and forward row clicks / wheel to handle_mouse at the
-// sidebar's content cells, which the existing file-explorer hit-test resolves.
-/** function fileExplorerEl(FileExplorer) => El */
-function fileExplorerEl(fe){
-  const el=div("region fileexplorer"); place(el,fe.rect);
-  // **On the editor's grid.** The editor chose the window for a title of one
-  // cell over one cell per row (the same arithmetic the row clicks below
-  // assume); a theme's taller rows would push the last of them, often the
-  // selection, below the panel's edge. So heights are cells here, and the
-  // themes keep everything else.
-  const onGrid=e=>{ e.style.height=`${CH}px`; e.style.lineHeight=`${CH}px`; e.style.boxSizing="border-box";
-                    e.style.marginTop=e.style.marginBottom="0"; e.style.paddingTop=e.style.paddingBottom="0"; };
-  const title=div("fx-title"); onGrid(title);
-  const tt=document.createElement("span"); tt.className="fx-title-text"; tt.textContent=fe.title||"Explorer"; title.appendChild(tt);
-  // Header buttons (⟳ refresh, × hide) press the tree nodes they mirror.
-  const rk=fe.refreshKey;
-  if(rk){ const b=nativeButton("fx-hbtn fx-refresh ui-chip", rk); b.textContent="⟳"; b.title="Refresh"; title.appendChild(b); }
-  const cb=nativeButton("fx-hbtn fx-close ui-chip", fe.closeKey); cb.textContent="×"; cb.title="Close"; title.appendChild(cb);
-  el.appendChild(title);
-  const list=div("fx-list ui-well"); list.style.paddingTop=list.style.paddingBottom="0";
-  const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
-  // Newer cores provide the exact screen-row mapping, including sticky
-  // ancestors. Keep the contiguous fallback for compatibility with an older
-  // core while the web assets are being refreshed.
-  const viewportRows=fe.viewportRows||Array.from({length:n},(_,j)=>start+j);
-  for(let j=0;j<n;j++){
-    const idx=viewportRows[j], r=fe.rows[idx]; if(!r) break;
-    const row=div("fx-row"+(idx===fe.selected?" sel":"")+(r.multi?" multi":"")+(r.hidden?" hidden":"")+(r.symlink?" symlink":""));
-    onGrid(row);
-    row.style.paddingLeft=`${6 + r.depth*10}px`;
-    const chev=document.createElement("span"); chev.className="fx-chev";
-    chev.textContent=r.isDir?(r.expanded?"▾":"▸"):"";
-    row.appendChild(chev);
-    const ic=document.createElement("span"); ic.className="fx-icon"+(r.isDir?" dir":"");
-    // The editor's Nerd Font icon while `editor.nerd_font_icons` is on, else the web's line icons.
-    const icon=r.icon;
-    if(icon){ ic.classList.add("nerd"); ic.textContent=icon.glyph; const color=icon.color; if(color) ic.style.setProperty("--icon-color",color); }
-    else ic.innerHTML=fileIcon(r.name,{dir:r.isDir,expanded:r.expanded});
-    row.appendChild(ic);
-    const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":"");
-    // A compact row's folded ancestors, `a/b/`.
-    if(r.chain.length>0){ const ch=document.createElement("span"); ch.className="fx-chain"; ch.textContent=r.chain.join("/")+"/"; name.appendChild(ch); }
-    name.append(r.name);
-    const nc=r.nameColor; if(nc) name.style.setProperty("--name-color",nc);
-    if(nc) name.classList.add("tinted");
-    row.appendChild(name);
-    const err=r.error;
-    if(err){ const e=document.createElement("span"); e.className="fx-err"; e.textContent=err.text; row.appendChild(e); }
-    const tr=r.trailing;
-    if(tr){ const t=document.createElement("span"); t.className="fx-slot"; t.textContent=tr.text;
-      const c=tr.color; if(c) t.style.setProperty("--slot-color",c); row.appendChild(t); }
-    const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row
-    // Forward the real button so a right-click opens the explorer context menu.
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:btn(e),col:cell.col,row:cell.row}); };
-    list.appendChild(row);
+/** Drawn specs by slot, so an unchanged panel is not rebuilt. */
+const drawnPanels = new Map();
+
+function changed(p) {
+  const key = JSON.stringify([p.spec, p.instances, p.focusKey, p.keyboard, p.title]);
+  if (drawnPanels.get(p.slot) === key) return false;
+  drawnPanels.set(p.slot, key);
+  return true;
+}
+
+function renderPanels() {
+  const list = core.panels || [];
+  const live = new Set(list.map((p) => p.slot));
+  for (const s of [...drawnPanels.keys()]) if (!live.has(s)) drawnPanels.delete(s);
+
+  // The dock: its own column at the left.
+  const dock = document.getElementById("dock");
+  const d = list.find((p) => p.slot === "dock");
+  dock.hidden = !d;
+  document.getElementById("dock-sash").hidden = !d;
+  if (d && changed(d)) dock.replaceChildren(panelEl(d));
+  if (!d) dock.replaceChildren();
+
+  // Sidebar sections, under the explorer.
+  const side = document.getElementById("sidebar-panels");
+  const sections = list.filter((p) => p.slot.startsWith("sidebar:"));
+  if (sections.some(changed) || side.childElementCount !== sections.length) {
+    side.replaceChildren(...sections.map((p) => {
+      const s = div("side-section");
+      s.appendChild(panelEl(p));
+      return s;
+    }));
   }
-  el.appendChild(list);
-  listen(el,"wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
-  // Resize handle: the editor treats the explorer's width grip as a drag
-  // border (handle_file_explorer_border_drag). The .fileexplorer div is in
-  // onChrome, so the document drag won't fire here — wire it explicitly.
-  //
-  // **Where the tree put it, not where we think it should be.** The grip is
-  // the column's *inner* edge and runs below the header row and above the
-  // bottom border, and on a right-side explorer it is the LEFT wall
-  // (`sidebar::grip_strip`). Re-deriving that here got the row wrong — the
-  // header row's right end is the close button, whose press hides the sidebar,
-  // so grabbing the edge made the panel vanish — and got the column wrong for
-  // `file_explorer.side = right`, where the press never reached the grip at
-  // all. The core projects the real rect now (`FileExplorerView::grip_rect`).
-  const g = fe.gripRect;
-  if (g) el.appendChild(borderDragHandle(g.x, g.y, g.h, fe.rect));
-  return el;
+
+  // A floating panel: centred over everything, or — a plugin's menu,
+  // anchored where it was opened — dropped from the press that opened it,
+  // with no backdrop.
+  const f = list.find((p) => p.slot === "floating");
+  if (!f) overlay("floating", null);
+  else if (changed(f) || !document.querySelector('[data-layer="floating"]')) {
+    const prev = document.querySelector('[data-layer="floating"].anchored');
+    const card = div("floating-panel" + (f.anchored ? " anchored" : ""));
+    if (f.title || f.closable) {
+      const head = div("floating-head");
+      head.append(el("span", "floating-title", f.title || ""));
+      if (f.closable) {
+        const x = el("button", "floating-close", "×");
+        x.addEventListener("click", () => api.send("key", { key: "Escape" }));
+        head.append(x);
+      }
+      card.append(head);
+    }
+    card.append(panelEl(f));
+    if (f.anchored && prev) {
+      // Already open (a choice in it changed it): it stays where it is.
+      card.style.left = prev.style.left;
+      card.style.top = prev.style.top;
+      overlay("floating", card);
+    } else if (f.anchored) {
+      // Below what opened it, or above when there is no room below.
+      const at = lastPanelPress || { x: 80, top: 80, bottom: 80 };
+      card.style.left = at.x + "px";
+      card.style.top = (at.bottom + 2) + "px";
+      overlay("floating", card);
+      const anchor = { left: at.x, top: at.top };
+      const bounds = boundsFor(anchor);
+      const h = card.offsetHeight;
+      if (at.bottom + 2 + h > bounds.bottom && at.top - 2 - h >= bounds.top) card.style.top = (at.top - 2 - h) + "px";
+      keepInside(card, true, anchor);
+    } else {
+      overlay("floating", scrim(card));
+    }
+  }
+
+  renderPanePanels();
+  syncWidgetInputFocus();
 }
 
-// A 1-cell-wide vertical resize grip at editor column `bx`, row `by`, `h` rows
-// tall. Drives a real editor drag: mousedown sends a `down` at that cell,
-// pointer moves send `drag` at the current column (same row), release sends
-// `up` — exactly what the TUI does for the file-explorer / dock borders. Uses
-// window listeners so the drag continues even when the pointer leaves the
-// chrome element.
-//
-// A grip drawn straight onto the grid: its CSS frame IS the screen.
-const ORIGIN_SCREEN = {x:0, y:0};
+/** Where the last press in a panel was: an anchored panel opens there. */
+let lastPanelPress = null;
+document.addEventListener("mousedown", (e) => {
+  const el = e.target.closest && e.target.closest(".native-panel, .w-button");
+  if (!el) return;
+  const r = (e.target.closest(".w-button") || e.target).getBoundingClientRect();
+  lastPanelPress = { x: r.left, top: r.top, bottom: r.bottom };
+}, true);
+// A press outside an anchored panel closes it, as Escape does.
+document.addEventListener("mousedown", (e) => {
+  const card = document.querySelector('[data-layer="floating"].anchored');
+  if (card && !card.contains(e.target)) api.send("key", { key: "Escape" });
+}, true);
 
-// `bx`/`by` are SCREEN cells, because that is what the editor's hit test reads.
-// CSS offsets are measured from the grip's offset parent instead, so `origin`
-// is that parent's own cell position and is REQUIRED — every caller states the
-// frame it is drawing in rather than leaving it to be inferred from how many
-// arguments were passed. The file explorer appends its grip inside its own
-// positioned region and passes that region's rect; the dock's goes on the
-// full-grid tree layer, which sits at the screen origin, so it passes
-// `ORIGIN_SCREEN`. Drawing the explorer's grip at the raw screen cell inside
-// its region added that region's origin a second time, and with a dock open
-// `.region{overflow:hidden}` then clipped the grip away entirely.
-function borderDragHandle(bx, by, h, origin){
-  const grip=div("resize-grip");
-  grip.style.left=`${px(bx-origin.x,CW)}px`; grip.style.top=`${px(by-origin.y,CH)}px`;
-  grip.style.width=`${px(1,CW)}px`; grip.style.height=`${px(h,CH)}px`;
-  grip.onmousedown=e=>{
-    e.preventDefault(); e.stopPropagation();
-    sendMouse({kind:"down",button:"left",col:bx,row:by});
-    const move=ev=>{ const col=Math.max(0,Math.floor((ev.clientX-APPX)/CW));
-      sendMouse({kind:"drag",button:"left",col,row:by}); };
-    const up=ev=>{ const col=Math.max(0,Math.floor((ev.clientX-APPX)/CW));
-      sendMouse({kind:"up",button:"left",col,row:by});
-      window.removeEventListener("mousemove",move); window.removeEventListener("mouseup",up); };
-    window.addEventListener("mousemove",move); window.addEventListener("mouseup",up);
-  };
-  return grip;
+/** Panes whose content is a plugin panel show it instead of their text. */
+function renderPanePanels() {
+  for (const [leaf, pane] of panes) {
+    const p = (core.panels || []).find((x) => x.slot === `pane:${leaf}`);
+    pane.panel.hidden = !p;
+    pane.view.root.hidden = !!p;
+    if (!p) { pane.panel.replaceChildren(); continue; }
+    if (changed(p) || !pane.panel.childElementCount) pane.panel.replaceChildren(panelEl(p));
+  }
 }
+
+/** Whether a plugin panel has the editor's keyboard now. */
+function panelHasKeyboard() {
+  return (core.panels || []).some((p) => p.keyboard);
+}
+
+api.on("panels", renderPanels);
+// A panel taking or giving back the editor's keyboard shows or hides the
+// editor's caret.
+api.on("panels", () => { for (const v of views.values()) v.placeCaret(); });

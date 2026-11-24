@@ -1,0 +1,21 @@
+<!-- Bridge — the console's frame, drawn inside the bezel host (#device).
+     Decoration only: the column's buttons are the real menu bar and the
+     bottom bar is the real status bar (skin.css moves them into the frame);
+     this draws the elbows, the bar segments between them, and the column's
+     readout blocks, which are live values (data-bind). -->
+<div class="br-elbow br-elbow-top"><b>04</b><small>2216</small></div>
+<div class="br-bar br-bar-top">
+  <i class="br-tan"></i>
+  <i class="br-lilac br-blink"></i>
+  <i class="br-peach br-wide"></i>
+  <i class="br-lav"></i>
+</div>
+<div class="br-col">
+  <p class="br-read br-gauge br-peach" data-bind-var="--v:skin_data:cpu"><small>CPU</small><b data-bind="skin_data:cpu">–</b></p>
+  <p class="br-read br-gauge br-lilac" data-bind-var="--v:skin_data:mem"><small>MEM</small><b data-bind="skin_data:mem">–</b></p>
+  <p class="br-read br-tan"><small>LOAD</small><b data-bind="skin_data:load">–</b></p>
+  <p class="br-read br-lav"><small>BUFFERS</small><b data-bind="skin_data:buffers">–</b></p>
+  <p class="br-read br-red"><small>ERRORS</small><b data-bind="skin_data:errors">0</b></p>
+  <p class="br-read br-fill br-orange"><small>UPTIME</small><b data-bind="skin_data:uptime">–</b></p>
+</div>
+<div class="br-elbow br-elbow-bot"><b>47</b><small>0939</small></div>

@@ -766,18 +766,26 @@ impl Editor {
             self.active_window_mut().tab_context_menu = None;
             return;
         };
+        let menu = self.tab_menu_for(pane, buffer_id, col, row + 1);
+        self.active_window_mut().tab_context_menu = Some(menu);
+    }
+
+    /// The menu a tab offers: the editor's items, then the plugins' for a
+    /// tab like it (one a file backs, or any). The terminal's right-press
+    /// opens it at a cell; the web asks for its rows (`menu.rows`).
+    pub(crate) fn tab_menu_for(
+        &self,
+        pane: LeafId,
+        buffer_id: BufferId,
+        x: u16,
+        y: u16,
+    ) -> TabContextMenu {
         let has_file = self.tab_file(buffer_id).is_some();
         let plugin_items = self.plugin_menu_entries(|placement| {
             matches!(placement,
                 fresh_core::api::PluginContextMenuPlacement::Tab(scope) if scope.offers(has_file))
         });
-        self.active_window_mut().tab_context_menu = Some(TabContextMenu::new(
-            buffer_id,
-            pane,
-            col,
-            row + 1,
-            plugin_items,
-        ));
+        TabContextMenu::new(buffer_id, pane, x, y, plugin_items)
     }
 
     /// The `×` on a pane's strip.
@@ -943,7 +951,7 @@ impl Editor {
     }
 
     /// Execute a "+" new-tab popup menu action.
-    pub(super) fn execute_new_tab_menu_action(
+    pub(crate) fn execute_new_tab_menu_action(
         &mut self,
         item: crate::app::types::NewTabMenuItem,
         split_id: LeafId,
@@ -972,7 +980,7 @@ impl Editor {
     }
 
     /// Execute a tab context menu action
-    pub(super) fn execute_tab_context_menu_action(
+    pub(crate) fn execute_tab_context_menu_action(
         &mut self,
         item: crate::app::types::TabContextMenuItem,
         buffer_id: BufferId,

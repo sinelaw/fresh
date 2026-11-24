@@ -42,6 +42,19 @@ The full token key sent to the editor is "plugin_name:token_name".
 setStatusBarValue(bufferId: number, tokenName: string, value: string): boolean;
 ```
 
+### `setSkinValue`
+
+Publish a named value for web UI skins. A skin's `furniture.html` shows
+it with `data-bind="<plugin name>:<name>"` (as text), or as a CSS custom
+property with `data-bind-var="--prop:<plugin name>:<name>"` (numbers stay
+unitless, for gauges and bars). Values are editor-wide, not persisted,
+and dropped when the plugin unloads; an empty `value` removes one.
+Publishing the same value again costs no redraw.
+
+```typescript
+setSkinValue(name: string, value: string): boolean;
+```
+
 ## Logging
 
 ### `debug`

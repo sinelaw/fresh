@@ -1,6 +1,6 @@
 //! Events from a natively laid-out plugin panel.
 //!
-//! A panel the web lays out itself (`view::native`) has no cells to click: its
+//! A panel a web client draws itself (the API's `panel.event`) has no cells to click: its
 //! controls are the page's own elements, sized and placed by CSS. So a press
 //! on one arrives as the widget's *identity* — its key, the event the kind
 //! answers a press with, and the row it is on — and this module turns that

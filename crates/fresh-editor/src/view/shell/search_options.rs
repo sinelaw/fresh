@@ -5,10 +5,7 @@
 //! already computed: the context menu its opening point, a dropdown level its
 //! `x`/`y`/`width`. This row hands over none. It says what the toggles are —
 //! label, shortcut, checked — and layout decides where each one lands, from
-//! the text. The spans the rest of the editor needs (the web projection's
-//! toggle rects) are then *read back* from the laid-out tree by
-//! [`option_spans`], which is the direction the migration is for: geometry
-//! produced by layout and read by everyone, rather than spelled twice and
+//! the text: geometry produced by layout, rather than spelled twice and
 //! reconciled by a `debug_assert_eq!`.
 //!
 //! That assertion is what this replaces. `SearchOptionsLayout::compute` and
@@ -61,16 +58,6 @@ impl SearchOption {
         }
     }
 
-    /// The name the web projection gives this toggle.
-    pub fn web_name(self) -> &'static str {
-        match self {
-            SearchOption::CaseSensitive => "case",
-            SearchOption::WholeWord => "word",
-            SearchOption::Regex => "regex",
-            SearchOption::ConfirmEach => "confirm",
-        }
-    }
-
     fn slot(self) -> u64 {
         match self {
             SearchOption::CaseSensitive => 0,
@@ -80,7 +67,8 @@ impl SearchOption {
         }
     }
 
-    fn key(self) -> Key {
+    /// The toggle's tree key.
+    pub fn key(self) -> Key {
         Key::Pair("search_option".into(), self.slot())
     }
 }
@@ -230,37 +218,6 @@ fn toggle(t: &Toggle, is_hovered: bool) -> Node<UiMsg> {
         .on_leave(hover_msg(None))
 }
 
-/// Where layout put each toggle, in screen cells.
-///
-/// The read-back half. `SearchOptionsLayout`'s `(start, end)` spans were
-/// computed a second time by `compute`; these are the rectangles the one walk
-/// assigned, offset into the frame the same way [`super::frame::regions_of`]
-/// offsets a region's.
-pub fn option_spans(
-    ui: &fresh_ui::Ui<UiMsg>,
-    size: ratatui::layout::Rect,
-) -> Vec<(SearchOption, ratatui::layout::Rect)> {
-    [
-        SearchOption::CaseSensitive,
-        SearchOption::WholeWord,
-        SearchOption::Regex,
-        SearchOption::ConfirmEach,
-    ]
-    .into_iter()
-    .filter_map(|o| {
-        let e = ui.find_by_key(&o.key())?;
-        let r = ui.rect_of(e);
-        // A toggle that is not on the row this frame still has an element
-        // while the tree is reconciling; a zero-width rectangle is how that
-        // shows, and it is not a span.
-        if r.w == 0 {
-            return None;
-        }
-        Some((o, super::screen_rect(r, size)))
-    })
-    .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,55 +323,6 @@ mod tests {
             hovered: None,
         };
         assert_eq!(row_text(o, 32, 6), " [x] Regex | $1   [ ] Confirm   ");
-    }
-
-    /// The spans the web projection routes clicks to are the rectangles layout
-    /// assigned — read back, not recomputed. A toggle's span covers its
-    /// checkbox, its label and its shortcut, which is the extent the old
-    /// `checkbox_at` hit-tested.
-    #[test]
-    fn spans_are_read_back_from_the_layout() {
-        let ui = laid_out(plain(), 52, 6);
-        let spans = option_spans(&ui, Rect::new(0, 0, 52, 6));
-        let cols: Vec<(SearchOption, u16, u16)> =
-            spans.iter().map(|(o, r)| (*o, r.x, r.width)).collect();
-        assert_eq!(
-            cols,
-            vec![
-                (SearchOption::CaseSensitive, 1, 16),
-                (SearchOption::WholeWord, 20, 16),
-                (SearchOption::Regex, 39, 9),
-            ],
-            "one cell of pad, then each toggle's own width and three-cell gaps"
-        );
-    }
-
-    /// A toggle that is not on the row has no span at all, rather than a
-    /// zero-width one that would hit-test as a sliver.
-    #[test]
-    fn a_hidden_toggle_reports_no_span() {
-        let ui = laid_out(plain(), 52, 6);
-        let spans = option_spans(&ui, Rect::new(0, 0, 52, 6));
-        assert!(!spans.iter().any(|(o, _)| *o == SearchOption::ConfirmEach));
-    }
-
-    /// A row too narrow for its toggles clips the last one and reports the
-    /// clipped span, rather than reporting cells nobody drew. The old pair
-    /// disagreed here by construction: the painter's `Paragraph` truncated
-    /// while `compute` went on counting columns past the edge.
-    #[test]
-    fn a_narrow_row_clips_and_says_so() {
-        assert_eq!(
-            row_text(plain(), 44, 6),
-            " [ ] Case (Alt+C)   [ ] Word (Alt+W)   [ ] R"
-        );
-        let ui = laid_out(plain(), 44, 6);
-        let spans = option_spans(&ui, Rect::new(0, 0, 44, 6));
-        assert_eq!(
-            spans.last().map(|(o, r)| (*o, r.x, r.width)),
-            Some((SearchOption::Regex, 39, 5)),
-            "the clipped toggle's span stops where the row does"
-        );
     }
 
     /// Every name this row paints in resolves against the real theme table.

@@ -8,8 +8,8 @@ on:
     paths:
       - 'crates/fresh-editor/web-ui/**'
       - 'crates/fresh-editor/src/webui/**'
-      - 'crates/fresh-editor/src/view/scene.rs'
-      - 'crates/fresh-editor/tests/scene_parity.rs'
+      - 'crates/fresh-editor/src/app/client_pane.rs'
+      - 'crates/fresh-editor/src/app/engine_data.rs'
       - 'crates/fresh-editor/examples/webui_server.rs'
       - '.github/workflows/web-ui.yml'
   push:
@@ -20,8 +20,8 @@ on:
     paths:
       - 'crates/fresh-editor/web-ui/**'
       - 'crates/fresh-editor/src/webui/**'
-      - 'crates/fresh-editor/src/view/scene.rs'
-      - 'crates/fresh-editor/tests/scene_parity.rs'
+      - 'crates/fresh-editor/src/app/client_pane.rs'
+      - 'crates/fresh-editor/src/app/engine_data.rs'
       - 'crates/fresh-editor/examples/webui_server.rs'
       - '.github/workflows/web-ui.yml'
 
@@ -35,8 +35,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  scene-parity:
-    name: scene parity (web/TUI)
+  api:
+    name: core API
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -47,8 +47,8 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Run scene parity test
-        run: cargo test -p fresh-editor --features web --test scene_parity
+      - name: Run the web host and API tests
+        run: "cargo test -p fresh-editor --features web --lib webui::"
 
   playwright:
     name: playwright suite

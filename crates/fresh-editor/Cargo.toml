@@ -66,11 +66,6 @@ required-features = ["web"]
 name = "all_tests"
 path = "tests/all_tests.rs"
 
-[[test]]
-name = "scene_parity"
-path = "tests/scene_parity.rs"
-required-features = ["web"]
-
 [features]
 default = ["plugins", "runtime", "embed-plugins", "precompiled-plugins", "tree-sitter", "http", "self-update", "oxc"]
 plugins = [
@@ -167,7 +162,7 @@ self-update = ["http", "fresh-update/engine"]
 # is self-contained. Opt-in (not in `default`) because it embeds ~140 KiB of
 # HTML and pulls in the sha1 WebSocket-handshake dep. Requires the full
 # editor `runtime`.
-web = ["runtime", "dep:sha1"]
+web = ["runtime", "dep:sha1", "dep:sysinfo"]
 # GUI mode - native window with GPU-accelerated rendering via wgpu
 # All windowing/GPU dependencies live in the fresh-gui crate.
 gui = [
@@ -191,7 +186,6 @@ wasm = [
     "syntect/yaml-load",  # yaml-rust is pure Rust, WASM-compatible
     "syntect/default-syntaxes",
     "syntect/default-themes",
-
 ]
 
 [dependencies]
@@ -320,6 +314,7 @@ vt100 = { version = "0.16", optional = true }
 
 # GUI mode — all windowing/GPU deps are encapsulated in fresh-gui
 fresh-gui = { workspace = true, optional = true }
+sysinfo = { version = "0.33", default-features = false, features = ["system"], optional = true }
 
 [dev-dependencies]
 # Also a normal dependency; declared here so integration tests can reach
@@ -341,6 +336,7 @@ notify = { version = "8.2", default-features = false, features = ["macos_kqueue"
 fresh-winterm.workspace = true
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Networking_WinSock",
     "Win32_System_Threading",
     "Win32_System_Console",
     "Win32_System_LibraryLoader",

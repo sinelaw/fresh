@@ -545,13 +545,18 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             (None, None) => region(HostRegion::Body),
         }
     };
+    // The status bar's row, under the whole window area.
+    let status_node = |f: &Frame| -> Node<UiMsg> {
+        match &f.status_bar_items {
+            Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
+                .h(cells(f.status_bar)),
+            None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
+        }
+    };
+    let body_col = |f: &Frame| -> Node<UiMsg> { body_region(f).flex(1) };
     let body: Node<UiMsg> = match &f.sidebar {
-        Some(s) if s.on_left => row()
-            .flex(1)
-            .children([sidebar(s), body_region(&f).flex(1)]),
-        Some(s) => row()
-            .flex(1)
-            .children([body_region(&f).flex(1), sidebar(s)]),
+        Some(s) if s.on_left => row().flex(1).children([sidebar(s), body_col(&f)]),
+        Some(s) => row().flex(1).children([body_col(&f), sidebar(s)]),
         // No sidebar: the explorer is still in the tree taking nothing, so it
         // has a rectangle to report and the body's own is unaffected.
         None => row().flex(1).children([
@@ -577,11 +582,7 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             // Native: the tree measures the bar from its own elements. The row
             // keeps its region key, so every caller that asks for
             // `HostRegion::StatusBar`'s rectangle still gets one.
-            match &f.status_bar_items {
-                Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
-                    .h(cells(f.status_bar)),
-                None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
-            },
+            status_node(&f),
             // Native: the tree measures this row from its own text. See
             // `shell::search_options`.
             named(
@@ -1195,8 +1196,6 @@ mod tests {
         assert_eq!(a, b, "same window, same element");
     }
 
-    /// A frame with `n` of the optional rows, so a sequence of these makes the
-    /// retained tree add and drop regions between layouts.
     fn frame_with(menu: bool, status: bool, prompt: bool, dock: Option<u16>) -> Frame {
         Frame {
             window: Some(1),

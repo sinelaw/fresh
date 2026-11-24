@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="fresh-build" content="@BUILD@">
+<title>Fresh</title>
+<link rel="preload" href="fonts/symbols-nerd-font-mono-3.5.1.woff2" as="font" type="font/woff2" crossorigin>
+<style>/*@CSS@*/</style>
+<style id="editor-theme"></style>
+<style id="skin-css"></style>
+</head>
+<body>
+<div id="device" aria-hidden="true"></div>
+<div id="mactitle" aria-hidden="true"><span class="mt-lights"><i></i><i></i><i></i></span><span class="mt-name">Fresh</span></div>
+<div id="app">
+  <header id="menubar">
+    <nav id="menus" role="menubar"></nav>
+    <div id="themeswitch">
+      <button id="themebtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Web skin (Ctrl+Alt+T)"></button>
+      <div id="thememenu" role="menu" hidden></div>
+    </div>
+  </header>
+  <main id="workbench">
+    <aside id="dock" hidden></aside>
+    <div id="dock-sash" aria-hidden="true" hidden></div>
+    <aside id="sidebar">
+      <div id="explorer" role="tree" aria-label="Files"></div>
+      <div id="sidebar-panels"></div>
+    </aside>
+    <div id="sash" aria-hidden="true"></div>
+    <section id="center">
+      <div id="editors"></div>
+    </section>
+  </main>
+  <footer id="statusbar" role="status"></footer>
+</div>
+<div id="overlays"></div>
+<div id="live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+<div id="preedit" hidden></div>
+<textarea id="kb" aria-label="Editor input" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+<script>/*@JS@*/</script>
+</body>
+</html>

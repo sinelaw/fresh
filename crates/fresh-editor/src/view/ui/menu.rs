@@ -120,8 +120,8 @@ impl MenuRowStyle {
 pub use fresh_core::menu::MenuContext;
 
 /// Whether a menu item is enabled given the current menu context. Shared by the
-/// TUI renderer and the web `menu_view` projection so both frontends agree on
-/// item state from one definition (see view/scene.rs).
+/// TUI renderer and the web API's menus (`Editor::engine_menus`) so both
+/// frontends agree on item state from one definition.
 pub(crate) fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bool {
     match item {
         MenuItem::Action { when, .. } => {
@@ -135,7 +135,7 @@ pub(crate) fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bo
 }
 
 /// Whether a checkbox menu item is checked given the current context. Shared by
-/// the TUI renderer and the web `menu_view` projection.
+/// the TUI renderer and the web API's menus.
 pub(crate) fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool {
     match checkbox.as_deref() {
         Some(name) => context.get(name),
@@ -144,7 +144,7 @@ pub(crate) fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuConte
 }
 
 /// Whether a top-level menu is visible given its `when` condition. Shared by the
-/// shell's description and the web `menu_view` projection so menu visibility is
+/// shell's description and the web API's menus so menu visibility is
 /// computed in one place rather than independently per frontend.
 pub(crate) fn is_menu_visible(menu: &Menu, context: &MenuContext) -> bool {
     match &menu.when {
@@ -262,7 +262,7 @@ impl MenuState {
     }
 
     /// Check if a menu is visible based on its `when` condition. Delegates to
-    /// the shared `is_menu_visible` so the TUI and the web projection agree.
+    /// the shared `is_menu_visible` so the TUI and the web agree.
     fn is_menu_visible(&self, menu: &Menu) -> bool {
         is_menu_visible(menu, &self.context)
     }

@@ -16,6 +16,7 @@ pub mod calibration_wizard;
 pub(crate) mod chrome;
 pub(crate) mod click_geometry;
 mod click_handlers;
+pub mod client_pane;
 mod clipboard;
 mod closed_files;
 mod composite_buffer_actions;
@@ -26,6 +27,8 @@ mod diagnostic_jumps;
 pub(crate) mod diff_baselines;
 mod editor_accessors;
 mod editor_init;
+mod engine_data;
+pub use engine_data::WebMenu;
 mod event_apply;
 pub mod event_debug;
 mod event_debug_actions;
@@ -1094,6 +1097,8 @@ pub struct Editor {
     /// Key: "plugin_name:token_name" (e.g., "git_statusbar:branch"); value: display title.
     /// Global and lifetime-checked. Per-buffer values live on each `Window`.
     status_bar_token_registry: Mutex<HashMap<String, String>>,
+    /// Values plugins publish for web skins (`set_skin_value`), by "plugin:name".
+    skin_values: std::collections::BTreeMap<String, String>,
 
     /// Registry of plugin-provided config schemas, keyed by plugin name.
     /// Each value is the validated JSON schema describing
@@ -1359,14 +1364,6 @@ pub struct Editor {
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,
 
-    /// When true, the render pipeline computes chrome *layout* (menu, dropdown,
-    /// command palette / suggestions) and records it on the layout caches as
-    /// usual, but SKIPS drawing those chrome layers into the cell buffer. Hosts
-    /// that render chrome from the semantic model instead of cells (the web /
-    /// Tauri frontends) set this so they get pane-only cells with no chrome to
-    /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
-    /// See docs/internal/web-ui.md.
-    pub(crate) suppress_chrome_cells: bool,
     /// The status bar's elements for the frame being rendered.
     ///
     /// Kept because reading a rectangle
@@ -2197,28 +2194,6 @@ impl Editor {
         );
     }
 
-    /// Width (in cells) of the line-number gutter for a given split leaf, or 0
-    /// when that split hides line numbers. The same value the renderer uses, so
-    /// a frontend can peel the gutter off the buffer text at the exact column.
-    pub fn leaf_gutter_width(&self, leaf: fresh_core::LeafId, buffer_id: BufferId) -> u16 {
-        let Some(w) = self.windows.get(&self.active_window) else {
-            return 0;
-        };
-        let Some((_, view_states)) = w.buffers.splits() else {
-            return 0;
-        };
-        let Some(vs) = view_states.get(&leaf) else {
-            return 0;
-        };
-        if !vs.buffer_tab_state().show_line_numbers {
-            return 0;
-        }
-        match w.buffers.get(&buffer_id) {
-            Some(state) => vs.buffer_tab_state().viewport.gutter_width(&state.buffer) as u16,
-            None => 0,
-        }
-    }
-
     /// Get the display name for a buffer (filename or virtual buffer name)
     pub fn get_buffer_display_name(&self, buffer_id: BufferId) -> String {
         // Check composite buffers first
@@ -2351,10 +2326,26 @@ impl Editor {
         None
     }
 
+    /// Set (or, with an empty value, remove) a value published for web skins
+    /// (`PluginCommand::SetSkinValue`), sent to web clients as `skinValues`.
+    pub(crate) fn set_skin_value(&mut self, key: String, value: String) {
+        if value.is_empty() {
+            self.skin_values.remove(&key);
+        } else {
+            self.skin_values.insert(key, value);
+        }
+    }
+
+    /// The values plugins published for web skins, by "plugin:name".
+    pub fn skin_values(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.skin_values
+    }
+
     /// Remove every registry entry and per-buffer value belonging to a plugin.
     /// Called when a plugin is unloaded.
     fn remove_plugin_status_bar_elements(&mut self, plugin_name: &str) {
         let prefix = format!("{}:", plugin_name);
+        self.skin_values.retain(|k, _| !k.starts_with(&prefix));
         self.status_bar_token_registry
             .lock()
             .unwrap()

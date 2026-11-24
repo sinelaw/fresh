@@ -377,10 +377,12 @@ async function smokeTest(entry) {
     throw new Error(`timed out waiting for ${what}`);
   };
   try {
-    await waitFor('!!(window.fresh && window.fresh.wsOpen && window.fresh.scene)', 'the editor\'s scene');
-    const before = await js('window.fresh.frames');
-    await js(`window.fresh.sendKey({key:"x",code:"KeyX",ctrl:false,meta:false,shift:false,alt:false})`);
-    await waitFor(`window.fresh.frames > ${before}`, 'a frame answering a keystroke');
+    const text = `(activeView() && activeView().data ? activeView().data.rows.map((r) => rowText(r)).join('\\n') : '')`;
+    await waitFor(`typeof core !== 'undefined' && !!core.layout && !!(activeView() && activeView().data)`,
+      'the editor\'s first lines');
+    const before = await js(text);
+    await js(`api.send('key', { view: activeView().id, key: 'x', code: 'KeyX' })`);
+    await waitFor(`${text} !== ${JSON.stringify(before)}`, 'the lines answering a keystroke');
     await new Promise((r) => setTimeout(r, 1_000));
     const image = await win.webContents.capturePage();
     if (image.isEmpty()) throw new Error('the window captured as an empty image');

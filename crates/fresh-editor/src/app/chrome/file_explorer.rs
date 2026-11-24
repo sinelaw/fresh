@@ -206,20 +206,7 @@ impl Editor {
                 };
                 (kind, entry.path.to_wire_string().into_owned())
             })
-            .map(|(kind, value)| crate::app::types::ExplorerPluginItems {
-                target: fresh_core::api::FileExplorerMenuTarget {
-                    kind,
-                    path: fresh_core::api::WindowPath {
-                        window: self.active_window_id(),
-                        value,
-                    },
-                },
-                items: self.plugin_menu_entries(|placement| {
-                    matches!(placement,
-                        fresh_core::api::PluginContextMenuPlacement::FileExplorer(scope)
-                            if scope.offers(kind))
-                }),
-            })
+            .map(|(kind, value)| self.explorer_plugin_items(kind, value))
             .filter(|plugin| !plugin.items.is_empty());
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::FileExplorer;
         self.active_window_mut().tab_context_menu = None;
@@ -231,6 +218,31 @@ impl Editor {
                 is_root_selected,
                 plugin_items,
             ));
+    }
+
+    /// Plugins' items for an explorer entry (a file or a folder, by its
+    /// path as the explorer spells it), and the target they act on. The
+    /// terminal's explorer menu shows them after its own; the web's explorer
+    /// asks for them (`menu.rows`).
+    pub(crate) fn explorer_plugin_items(
+        &self,
+        kind: fresh_core::api::FileExplorerEntryKind,
+        value: String,
+    ) -> crate::app::types::ExplorerPluginItems {
+        crate::app::types::ExplorerPluginItems {
+            target: fresh_core::api::FileExplorerMenuTarget {
+                kind,
+                path: fresh_core::api::WindowPath {
+                    window: self.active_window_id(),
+                    value,
+                },
+            },
+            items: self.plugin_menu_entries(|placement| {
+                matches!(placement,
+                    fresh_core::api::PluginContextMenuPlacement::FileExplorer(scope)
+                        if scope.offers(kind))
+            }),
+        }
     }
 
     /// A right-press on the panel that no row claimed — the empty space under

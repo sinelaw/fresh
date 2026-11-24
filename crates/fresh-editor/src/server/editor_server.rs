@@ -425,6 +425,9 @@ impl EditorServer {
             // Process client messages and get input events
             tracing::trace!("[server] main loop: calling process_clients");
             let (input_events, resize_occurred, input_source) = self.process_clients()?;
+            // Whether a terminal sent input this pass (the events are consumed below).
+            #[cfg(feature = "web")]
+            let terminal_input = !input_events.is_empty();
             if let Some(idx) = input_source {
                 self.last_input_client = Some(idx);
             }
@@ -440,7 +443,9 @@ impl EditorServer {
             // quit the session, and folded into `needs_render` so its effect
             // is broadcast to the attached terminals in this same pass.
             #[cfg(feature = "web")]
-            if self.poll_web()? {
+            let web_input = self.poll_web()?;
+            #[cfg(feature = "web")]
+            if web_input {
                 needs_render = true;
             }
 
@@ -631,32 +636,48 @@ impl EditorServer {
                 }
             }
 
-            // Push the browser scene on the web bridge's own (gentler) cadence:
-            // a scene rebuild is a JSON model, not a terminal cell diff, and
-            // 25 fps is what the standalone bridge has always run at. Riding
-            // the same `needs_render` signal keeps the two views in step;
-            // `web_dirty` remembers a frame that fell inside the window so the
-            // last keystroke of a burst still lands.
+            // Push the web clients on the bridge's own (gentler) cadence, at
+            // most 25 times a second. Riding the same `needs_render` signal
+            // keeps them in step with the terminals; `web_dirty` remembers a
+            // frame that fell inside the window so the last keystroke of a
+            // burst still lands. With nothing changing, the bridge still asks
+            // for a slow push (`due`): a skin's machine figures and the clock.
             #[cfg(feature = "web")]
             {
-                const WEB_PUSH_INTERVAL: Duration = Duration::from_millis(40);
-                web_dirty |= needs_render;
-                if web_dirty && last_web_push.elapsed() >= WEB_PUSH_INTERVAL {
-                    self.push_web_scene();
-                    last_web_push = Instant::now();
-                    web_dirty = false;
-                }
+                web_dirty |= needs_render || self.web.as_ref().is_some_and(|b| b.due());
             }
 
             if needs_render {
                 last_activity = Instant::now();
             }
 
-            // Render and broadcast if needed
-            if needs_render && last_render.elapsed() >= FRAME_DURATION {
-                self.render_and_broadcast()?;
+            // Render and broadcast if needed. (Whether a frame was drawn is
+            // read by the web push below.)
+            #[cfg_attr(not(feature = "web"), allow(unused_variables))]
+            let drew_frame = if needs_render && last_render.elapsed() >= FRAME_DURATION {
+                let drew = self.render_and_broadcast()?;
                 last_render = Instant::now();
                 needs_render = false;
+                drew
+            } else {
+                false
+            };
+
+            // The web clients: what input changed goes out in this same pass,
+            // so a keystroke is not held back; what changes on its own
+            // (animations, the clock, a deferred highlight) at most 25 times
+            // a second. `web_dirty` remembers a change that fell inside that
+            // window so it still lands. The frame just drawn for the
+            // terminals is the one the push needs, so it is not drawn twice.
+            #[cfg(feature = "web")]
+            {
+                const WEB_PUSH_INTERVAL: Duration = Duration::from_millis(40);
+                let input = web_input || terminal_input;
+                if web_dirty && (input || last_web_push.elapsed() >= WEB_PUSH_INTERVAL) {
+                    self.push_web(drew_frame);
+                    last_web_push = Instant::now();
+                    web_dirty = false;
+                }
             }
 
             let mut wait = if last_activity.elapsed() < ACTIVE_WINDOW {
@@ -673,7 +694,16 @@ impl EditorServer {
                         .max(until_frame),
                 );
             }
-            std::thread::sleep(wait.max(Duration::from_millis(1)));
+            let wait = wait.max(Duration::from_millis(1));
+            // A browser's input wakes the loop at once; terminals' and the
+            // editor's own events are picked up at the next poll.
+            #[cfg(feature = "web")]
+            match self.web.as_ref() {
+                Some(bridge) => bridge.wait(wait),
+                None => std::thread::sleep(wait),
+            }
+            #[cfg(not(feature = "web"))]
+            std::thread::sleep(wait);
         }
 
         // The same shutdown sequence as the normal (non-daemon) exit path in
@@ -691,26 +721,14 @@ impl EditorServer {
         Ok(())
     }
 
-    /// The size the shared editor renders at: the element-wise MIN of every
-    /// viewport watching it — the terminal that sizes the session (see
-    /// [`Self::sizing_client`]) and, when this daemon hosts the web bridge,
-    /// the smallest connected browser. One editor draws one grid, so the grid
-    /// has to fit them all; a larger window letterboxes rather than being
-    /// shown a grid it can't display.
+    /// The size the shared editor renders at: the terminal that sizes the
+    /// session (see [`Self::sizing_client`]). Browsers do not constrain it —
+    /// each lays out its own views at its own size.
     ///
     /// Returns whether the size actually moved (the caller then pushes it into
     /// the capture backend and the editor via `update_terminal_size`).
     fn recompute_term_size(&mut self) -> bool {
-        // `mut` is exercised only by the `web` branch below.
-        #[cfg_attr(not(feature = "web"), allow(unused_mut))]
-        let mut fit: Option<TermSize> = self.sizing_client().map(|c| c.term_size);
-        #[cfg(feature = "web")]
-        if let Some((wc, wr)) = self.web.as_ref().and_then(|b| b.wanted_size()) {
-            fit = Some(match fit {
-                Some(t) => TermSize::new(t.cols.min(wc), t.rows.min(wr)),
-                None => TermSize::new(wc, wr),
-            });
-        }
+        let fit: Option<TermSize> = self.sizing_client().map(|c| c.term_size);
         match fit {
             Some(t) if t != self.term_size => {
                 self.term_size = t;
@@ -750,12 +768,11 @@ impl EditorServer {
 
     /// Bind the web bridge asked for by `--web`.
     ///
-    /// The editor has to exist first — the bridge seeds its outbound clipboard
-    /// mirror from it — so a web-enabled daemon builds its editor eagerly here
-    /// instead of waiting for a first client the way the TUI-only daemon does.
     /// A browser never speaks the IPC handshake; it has to find a session
-    /// already rendering. The pre-client grid is the bridge's own default
-    /// (`webui::DEFAULT_SIZE`), refit as soon as a real viewport reports in.
+    /// already running, so a web-enabled daemon builds its editor eagerly
+    /// here instead of waiting for a first client the way the TUI-only daemon
+    /// does. Until a terminal attaches, the editor's own frame is laid out at
+    /// `webui::DEFAULT_SIZE`.
     #[cfg(feature = "web")]
     fn start_web_bridge(&mut self) -> io::Result<()> {
         let Some(addr) = self.config.web_addr.clone() else {
@@ -766,61 +783,46 @@ impl EditorServer {
             self.term_size = TermSize::new(cols, rows);
             self.initialize_editor()?;
         }
-        let Some(editor) = self.editor.as_ref() else {
-            return Ok(());
-        };
         // `/reset` rebuilds the editor from scratch — fine for the standalone
         // parity harness that owns its editor, not for a session carrying a
         // recovery log, a restored workspace and attached terminals. Hence
         // `allow_reset: false` (and no file list for it to reopen).
-        let bridge = crate::webui::WebBridge::bind(&addr, editor, &[], false)
+        let bridge = crate::webui::WebBridge::bind(&addr, &[], false)
             .map_err(|e| io::Error::other(format!("failed to serve the web UI on {addr}: {e}")))?;
         tracing::info!("Web UI bridge listening on {}", addr);
         self.web = Some(bridge);
         Ok(())
     }
 
-    /// Apply everything the browsers sent this pass and refit the shared grid.
-    /// Returns whether the editor changed and needs a render.
+    /// Apply everything the browsers sent this pass. Returns whether the
+    /// editor changed and needs a render.
     #[cfg(feature = "web")]
     fn poll_web(&mut self) -> io::Result<bool> {
-        let before = self.term_size;
         let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
             return Ok(false);
         };
-        let mut cols = before.cols;
-        let mut rows = before.rows;
-        let poll = bridge.poll(editor, &mut cols, &mut rows);
-        // Heartbeat/flush here rather than in the render path: reaping a
-        // half-open browser frees a size constraint, and the refit below is
-        // where that gets acted on.
-        let reaped = bridge.maintain();
-        // The `/resize` HTTP route resizes the editor directly. The refit is
-        // the authority on the shared grid, so note the drift and force the
-        // capture backend and the editor back into agreement afterwards.
-        let route_resized = (cols, rows) != (before.cols, before.rows);
-
-        if poll.resize_dirty || reaped || route_resized {
-            let refit = self.recompute_term_size();
-            if refit || route_resized {
-                self.update_terminal_size()?;
-            }
-        }
+        let poll = bridge.poll(editor);
+        bridge.maintain();
         if poll.mutated {
             self.last_client_activity = Instant::now();
         }
-        Ok(poll.mutated || poll.resize_dirty || reaped || route_resized)
+        Ok(poll.mutated)
     }
 
-    /// Build the browser scene once and push each connected browser its own
-    /// region diff.
+    /// Push each connected browser what changed for it. `drew_frame`: the
+    /// editor's frame was just drawn for the terminals, at the same size, so
+    /// the bridge need not draw it again.
     #[cfg(feature = "web")]
-    fn push_web_scene(&mut self) {
+    fn push_web(&mut self, drew_frame: bool) {
         let size = self.term_size;
         let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
             return;
         };
-        bridge.push_scene(editor, size.cols, size.rows);
+        if drew_frame {
+            bridge.push_rendered(editor);
+        } else {
+            bridge.push(editor, size.cols, size.rows);
+        }
     }
 
     /// Build the `Editor` from the current configuration and stored authority.
@@ -1545,7 +1547,9 @@ impl EditorServer {
     }
 
     /// Render the editor and broadcast output to all clients
-    fn render_and_broadcast(&mut self) -> io::Result<()> {
+    /// Draw the editor's frame and send it to the attached terminals.
+    /// Returns whether a frame was drawn (there is an editor and a backend).
+    fn render_and_broadcast(&mut self) -> io::Result<bool> {
         // The pointer is drawn for a GPM console while it is the terminal in
         // use — as the in-process editor does on a console. Set every frame,
         // since it is a property of the active window and windows switch.
@@ -1564,7 +1568,7 @@ impl EditorServer {
             .sizing_client()
             .is_some_and(|c| c.term() == Some("linux"));
         let Some(ref mut editor) = self.editor else {
-            return Ok(());
+            return Ok(false);
         };
         editor.set_gpm_active(gpm_pointer);
         editor.set_linux_console(linux_console);
@@ -1573,7 +1577,7 @@ impl EditorServer {
         }
 
         let Some(ref mut terminal) = self.terminal else {
-            return Ok(());
+            return Ok(false);
         };
 
         // Check if any client needs a full render (e.g., newly connected)
@@ -1622,7 +1626,7 @@ impl EditorServer {
         let output = terminal.backend_mut().take_buffer();
 
         if output.is_empty() && pending_sequences.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
 
         // Broadcast to all clients via non-blocking writer threads (skip waiting clients)
@@ -1649,7 +1653,7 @@ impl EditorServer {
             client.needs_full_render = false;
         }
 
-        Ok(())
+        Ok(true)
     }
 
     /// Disconnect all clients

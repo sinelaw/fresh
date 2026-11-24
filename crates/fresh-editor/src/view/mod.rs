@@ -90,8 +90,6 @@ pub use fresh_editor_core::markdown;
 pub mod confirm;
 #[cfg(feature = "runtime")]
 pub mod keyed_selection;
-#[cfg(feature = "web")]
-pub mod native;
 #[cfg(feature = "runtime")]
 pub mod popup;
 #[cfg(feature = "runtime")]
@@ -102,7 +100,6 @@ pub mod prompt_input;
 pub mod query_replace_input;
 #[cfg(feature = "runtime")]
 pub mod reference_highlight_overlay;
-pub mod scene;
 pub mod shell;
 #[cfg(feature = "runtime")]
 pub mod split;

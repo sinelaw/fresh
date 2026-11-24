@@ -737,6 +737,35 @@ impl KeybindingEditor {
         };
     }
 
+    /// Select the row of `bindings[idx]`, first showing it if a search, a
+    /// filter or a collapsed section hides it. False when there is no such
+    /// binding.
+    pub fn select_binding(&mut self, idx: usize) -> bool {
+        let row = |s: &Self| {
+            s.display_rows
+                .iter()
+                .position(|r| matches!(r, DisplayRow::Binding(i) if *i == idx))
+        };
+        if idx >= self.bindings.len() {
+            return false;
+        }
+        if row(self).is_none() {
+            self.search_query.clear();
+            self.search_active = false;
+            self.context_filter = ContextFilter::All;
+            self.source_filter = SourceFilter::All;
+            self.collapsed_sections.clear();
+            self.apply_filters();
+        }
+        match row(self) {
+            Some(r) => {
+                self.select(r);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Toggle the collapsed state of the section at the current selection
     pub fn toggle_section_at_selected(&mut self) {
         if let Some(DisplayRow::SectionHeader { plugin_name, .. }) =

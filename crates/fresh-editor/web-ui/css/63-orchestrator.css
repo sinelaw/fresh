@@ -1,0 +1,36 @@
+/* The Orchestrator dock, by what its controls are. Its panel names them
+   (data-wkey): the menu, close, New, the search toggle and its field, the
+   sessions list. Every skin starts from this; a skin restyles any of them
+   by the same names (Winamp makes them hardware). The selectors weigh no
+   more than a class or three (`:where(#dock)`), so a skin's own rules win. */
+
+/* The header: the menu reads as the panel's title, close as an icon. */
+:where(#dock) .native-panel .w-button[data-wkey="dock-menu"] { font-weight: 600; padding: 3px 8px; margin-left: -6px; border-radius: var(--r-sm); }
+:where(#dock) .native-panel .w-button[data-wkey="dock-menu"]:hover { background: var(--hover); }
+:where(#dock) .native-panel .w-button[data-wkey="dock-close"] { width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; border-radius: var(--r-sm); opacity: .65; }
+:where(#dock) .native-panel .w-button[data-wkey="dock-close"]:hover { opacity: 1; background: var(--hover); }
+:where(#dock) .native-panel :is(.w-button[data-wkey="dock-menu"], .w-button[data-wkey="dock-close"]).focus { outline: none; }
+
+/* New and the search share a row; the search reads as a search field (its
+   "/" is the key that opens it) and fills what New leaves. */
+:where(#dock) .native-panel .w-row:has(> .w-button[data-wkey="search-toggle"]) > .w-spacer { flex: 0 0 8px !important; }
+:where(#dock) .native-panel .w-button[data-wkey="search-toggle"], :where(#dock) .native-panel .w-text[data-wkey="filter"] {
+  flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 2px 8px;
+  border: 1px solid var(--field-border); border-radius: var(--r-md); background: var(--field-bg); color: var(--muted); }
+:where(#dock) .native-panel .w-button[data-wkey="search-toggle"]::before, :where(#dock) .native-panel .w-text[data-wkey="filter"]::before { content: "⌕"; font-size: 15px; line-height: 1; opacity: .8; }
+:where(#dock) .native-panel .w-button[data-wkey="search-toggle"]:hover { color: var(--fg); border-color: var(--hairline-strong); background: var(--field-bg); }
+:where(#dock) .native-panel .w-text[data-wkey="filter"] { color: var(--fg); }
+:where(#dock) .native-panel .w-text[data-wkey="filter"].focus { border-color: var(--ui-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 25%, transparent); }
+:where(#dock) .native-panel .w-text[data-wkey="filter"] .w-text-input { flex: 1; min-width: 0; padding: 0; border: 0; background: none; box-shadow: none; color: inherit; }
+:where(#dock) .native-panel .w-text[data-wkey="filter"].focus .w-text-input { box-shadow: none; }
+:where(#dock) .native-panel .w-row:has(> .w-text[data-wkey="filter"]) { flex-wrap: nowrap; }
+:where(#dock) .native-panel .w-row:has(> .w-text[data-wkey="filter"]) > .w-spacer { display: none; }
+:where(#dock) .native-panel .w-row:has(> .w-text[data-wkey="filter"]) > .w-label-row { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
+
+/* The sessions: the selected one tinted with an accent edge, not a solid
+   bar; the key hints under the list quiet. */
+:where(#dock .native-panel [data-wkey="sessions"]) .w-tree-row { padding-top: 3px; padding-bottom: 3px; }
+:where(#dock .native-panel [data-wkey="sessions"]) .w-tree-row.w-tree-row.sel { background: color-mix(in srgb, var(--ui-accent) 20%, transparent);
+  color: var(--fg); box-shadow: inset 2px 0 0 var(--ui-accent); }
+:where(#dock) .native-panel .w-divider { opacity: .5; }

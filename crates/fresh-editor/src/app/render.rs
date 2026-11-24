@@ -958,10 +958,6 @@ impl Editor {
         self.paint_shell();
 
         let palette = self.shell_palette();
-        let paints = match self.suppress_chrome_cells {
-            true => crate::view::shell::fold::Paints::HostsOnly,
-            false => crate::view::shell::fold::Paints::All,
-        };
         let ui = self
             .shell_ui
             .take()
@@ -999,7 +995,6 @@ impl Editor {
             frame.buffer_mut(),
             &palette,
             &mut body,
-            paints,
             Some(&mut provenance),
         );
         drop(body);
@@ -1427,27 +1422,6 @@ impl Editor {
         })
     }
 
-    /// Where layout put each search-option toggle, read off the retained tree.
-    ///
-    /// The read-back the web projection uses. `None` when the row is hidden —
-    /// the toggles have no element then, so there is nothing to read.
-    pub(crate) fn search_option_spans_now(
-        &self,
-    ) -> Option<
-        Vec<(
-            crate::view::shell::search_options::SearchOption,
-            ratatui::layout::Rect,
-        )>,
-    > {
-        if !self.active_prompt_has_search_options() {
-            return None;
-        }
-        let ui = self.shell_ui.as_ref()?;
-        let frame = self.active_chrome().last_frame;
-        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        Some(crate::view::shell::search_options::option_spans(ui, size))
-    }
-
     /// Where a popup opened from a status-bar element goes: above that
     /// element while it is on the bar, the bottom-right corner otherwise.
     pub(crate) fn popup_above_status_bar(
@@ -1595,28 +1569,6 @@ impl Editor {
         match self.shell_ui.as_ref() {
             Some(ui) => crate::view::shell::popup::rects_of(ui, total),
             None => vec![ratatui::layout::Rect::default(); total],
-        }
-    }
-
-    /// Where the tree put each popup's content slot — inside the frame, past
-    /// the description. Indexed the same way as [`Self::popup_rects`].
-    pub(crate) fn popup_content_rects(&self) -> Vec<ratatui::layout::Rect> {
-        let (_, total) = self.popup_counts();
-        match self.shell_ui.as_ref() {
-            Some(ui) => crate::view::shell::popup::inner_rects_of(ui, total),
-            None => vec![ratatui::layout::Rect::default(); total],
-        }
-    }
-
-    /// How far each popup's content viewport has scrolled, indexed like
-    /// [`Self::popup_rects`]. `None` where the window is not the tree's — a
-    /// list popup keeps its own, moved by the selection — or where the tree
-    /// did not place the popup.
-    pub(crate) fn popup_scroll_offsets(&self) -> Vec<Option<usize>> {
-        let (_, total) = self.popup_counts();
-        match self.shell_ui.as_ref() {
-            Some(ui) => crate::view::shell::popup::scroll_offsets_of(ui, total),
-            None => vec![None; total],
         }
     }
 
@@ -3493,21 +3445,6 @@ impl Editor {
         })
     }
 
-    /// Shell descriptions of projection rows `indices`, for the web.
-    pub(crate) fn explorer_row_descriptions(
-        &self,
-        indices: &[usize],
-    ) -> Vec<(usize, crate::view::shell::file_explorer::Row)> {
-        let Some(rows) = self.explorer_rows(self.explorer_focused()) else {
-            return Vec::new();
-        };
-        indices
-            .iter()
-            .filter(|&&i| i < rows.projection.rows.len())
-            .map(|&i| (i, rows.describe(i, false)))
-            .collect()
-    }
-
     /// The explorer's projection plus what a row description reads. `None`
     /// while the tree is still being built.
     fn explorer_rows(&self, focused: bool) -> Option<ExplorerRows> {
@@ -3698,6 +3635,9 @@ impl Editor {
             .splits
             .as_ref()
             .map(|s| (s.root.count_leaves(), s.active));
+        // What this layout measured, kept beside the tree that laid it out —
+        // readers ask between frames which element a status-bar cell is.
+        self.shell_frame_status_bar = shell.status_bar_items.clone();
         ui.lay_out(crate::view::shell::frame::frame_tree(shell), size);
         tracing::debug!(
             target: "fresh::keys",
@@ -3762,7 +3702,31 @@ impl Editor {
             .collect()
     }
 
+    /// Settle the editor state a frame's description reads, then describe it.
+    ///
+    /// Two halves, so describing has no side effects of its own: what each
+    /// pane's bars show is *input* to the description — settled here, first,
+    /// by [`Self::settle_frame_inputs`] — and what the tree laid out (the
+    /// measured status bar among it) is recorded where the tree is laid out
+    /// ([`Self::lay_out_shell`]), not by the description.
     pub(crate) fn shell_frame(
+        &mut self,
+        split: (Option<ratatui::layout::Rect>, ratatui::layout::Rect),
+    ) -> crate::view::shell::frame::Frame {
+        self.settle_frame_inputs();
+        self.describe_shell_frame(split)
+    }
+
+    /// The editor state a frame's description reads but does not own: what
+    /// every visible pane's bars show this frame, settled on the panes'
+    /// handles for the bars' leaves to paint (design §3.7.6).
+    pub(crate) fn settle_frame_inputs(&mut self) {
+        let pane_chrome = self.pane_chrome();
+        self.settle_pane_bars(&pane_chrome);
+    }
+
+    /// The frame's description, from editor state already settled.
+    fn describe_shell_frame(
         &mut self,
         split: (Option<ratatui::layout::Rect>, ratatui::layout::Rect),
     ) -> crate::view::shell::frame::Frame {
@@ -3792,8 +3756,7 @@ impl Editor {
         let win_status_bar = self.active_window().status_bar_visible;
         let search_options = self.search_options_content();
         // The menu, as content: its labels and the open chain. Where each
-        // label sits and how wide each box is are the tree's to decide, and
-        // the web reads them back off it (`menu_view`).
+        // label sits and how wide each box is are the tree's to decide.
         // Expand the config menus' dynamic submenus once per theme registry
         // rather than per frame: `all_menus_expanded` reuses this cache, and
         // without it every frame rescanned the themes directory and parsed
@@ -3828,7 +3791,6 @@ impl Editor {
         let status_bar_items = status_row
             .then(|| self.status_bar_description(chrome_area.width))
             .flatten();
-        self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
         let suggestions = self.suggestions_description();
         // A fullscreen card is placed on the whole frame, the dock beside the
@@ -3844,9 +3806,6 @@ impl Editor {
         // borrowed: a description is a value, and this one is a handful of
         // nodes.
         let pane_chrome = self.pane_chrome();
-        // What every bar shows this frame, settled on the panes' handles for
-        // the bars' leaves to paint (design §3.7.6).
-        self.settle_pane_bars(&pane_chrome);
         let groups = self.active_window().pane_groups();
         let interiors = self.pane_interiors();
         let strips = self.pane_strips(&pane_chrome);
@@ -4491,37 +4450,6 @@ impl Editor {
             .find(|(r, _)| *r == region)
             .map(|(_, rect)| rect)
             .unwrap_or_default()
-    }
-
-    /// Where the open context menu landed, read off the retained tree.
-    ///
-    /// The partner of [`Self::shell_region_now`] for a surface that is not a
-    /// host region: layout placed the menu (its anchor point, pulled inside
-    /// the frame by `Fit::CLAMP`) and this reads the answer back. The web
-    /// `Scene` draws its own menu and needs the cells it covers; asking here
-    /// is what keeps the two frontends on one rectangle.
-    pub(crate) fn shell_menu_rect(&self) -> Option<fresh_ui::Rect> {
-        crate::view::shell::context_menu::menu_rect(self.shell_ui.as_ref()?.spec())
-    }
-
-    /// The status bar's screen area THIS instant, derived from live state:
-    /// the same visibility conditions and vertical frame split `render`
-    /// uses ([`Self::shell_frame`]; asserted against the paint pass in
-    /// debug builds). `None` when the bar is hidden (toggled off, or a
-    /// suggestions / file-browser popup takes the bottom rows) — gated on
-    /// the CONDITIONS, not the chunk height: on a tiny terminal the paint
-    /// pass runs over the same squeezed (possibly zero-height) rect and
-    /// records the same (empty) layout, so returning it keeps the parity
-    /// oracle exact.
-    pub(crate) fn status_bar_area_now(&self) -> Option<ratatui::layout::Rect> {
-        let flags = self.bottom_row_flags();
-        if !self.active_window().status_bar_visible
-            || flags.has_suggestions
-            || flags.has_file_browser
-        {
-            return None;
-        }
-        Some(self.shell_region_now(crate::view::shell::frame::HostRegion::StatusBar))
     }
 
     /// The menu's content this frame: the bar's labels and the open dropdown
@@ -5628,6 +5556,7 @@ impl Editor {
         let shell = self.shell_frame(split).resolve_dock(size.width);
         let mut ui = self.shell_ui.take()?;
         crate::view::shell::geometry::stats::note_shell_layout();
+        self.shell_frame_status_bar = shell.status_bar_items.clone();
         ui.layout_only(
             crate::view::shell::frame::frame_tree(shell),
             fresh_ui::Size::new(size.width, size.height),

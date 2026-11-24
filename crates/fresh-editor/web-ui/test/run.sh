@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-# One-command runner for the web UI Playwright suite.
+# One-command runner for the web client's Playwright suite.
 #
 #   web-ui/test/run.sh
 #
-# Builds the webui_server bridge, installs the Playwright deps if missing,
-# starts the bridge on 127.0.0.1:$PORT (default 8141) with a sample file,
-# waits for it to answer GET /state, runs drive.mjs, and tears the server
+# Builds the webui_server host, installs the Playwright deps if missing,
+# starts it on 127.0.0.1:$PORT (default 8141) with a sample file in a
+# throwaway project, waits for the page, runs drive.mjs, and tears the server
 # down again. Works from any CWD.
 #
 # Env:
-#   PORT      port for the bridge (default 8141)
+#   PORT      port for the host (default 8141)
 #   CHROMIUM  path to a Chromium binary; when set, no browser is downloaded
-#             and drive.mjs launches this binary instead
-#   PROFILE   cargo profile for the bridge: "debug" (default, cheap for CI)
-#             or "release" (what humans should serve; see web-ui/README.md)
+#   PROFILE   cargo profile for the host: "debug" (default) or "release"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +19,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 PORT="${PORT:-8141}"
 UI_URL="http://127.0.0.1:${PORT}"
-SAMPLE_FILE="$REPO_ROOT/crates/fresh-editor/src/view/scene.rs"
 
 PROFILE="${PROFILE:-debug}"
 case "$PROFILE" in
@@ -30,21 +27,13 @@ case "$PROFILE" in
   *) echo "PROFILE must be 'debug' or 'release' (got '$PROFILE')" >&2; exit 2 ;;
 esac
 
-# 1) Build the bridge. The example lives behind the `web` feature.
 (cd "$REPO_ROOT" && cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} --features web -p fresh-editor --example webui_server)
 
-# 2) Install the JS deps if missing. With CHROMIUM provided, skip playwright's
-#    browser download entirely; otherwise fetch Chromium only when it isn't
-#    already in the playwright cache.
 if [ -n "${CHROMIUM:-}" ]; then
   export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 fi
 if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
-  if [ -f "$SCRIPT_DIR/package-lock.json" ]; then
-    (cd "$SCRIPT_DIR" && npm ci)
-  else
-    (cd "$SCRIPT_DIR" && npm install)
-  fi
+  (cd "$SCRIPT_DIR" && npm ci)
 fi
 if [ -z "${CHROMIUM:-}" ]; then
   chromium_ok=$(cd "$SCRIPT_DIR" && node -e \
@@ -54,15 +43,40 @@ if [ -z "${CHROMIUM:-}" ]; then
   fi
 fi
 
-# 3) Start the bridge and always tear it down on exit.
-(cd "$REPO_ROOT" && "./target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
+# A throwaway project (the explorer's root) and config (settings the suite
+# changes are saved there).
+PROJECT="$(mktemp -d)"
+CONFIG_HOME="$(mktemp -d)"
+printf 'fn main() {\n    println!("hello");\n}\n' > "$PROJECT/main.rs"
+printf '# Notes\n\nSome text.\n' > "$PROJECT/notes.md"
+mkdir "$PROJECT/src"
+printf 'pub fn lib() {}\n' > "$PROJECT/src/lib.rs"
+# A skins folder with one skin, which the suite edits to see it re-applied.
+SKINS="$(mktemp -d)"
+mkdir "$SKINS/probe"
+cat > "$SKINS/probe/skin.css" <<'EOF_SKIN'
+/* ==FreshSkin==
+@name          Probe
+@frame         bezel
+@furniture     furniture.html
+@explorer-side right
+==/FreshSkin== */
+:root.theme-probe { --menu-bg: rgb(1, 2, 3); }
+EOF_SKIN
+cat > "$SKINS/probe/furniture.html" <<'EOF_SKIN'
+<div class="probe-buffers" data-bind="skin_data:buffers">-</div>
+<div class="probe-gauge" data-bind-var="--v:skin_data:buffers"></div>
+<script>window.skinRan = true</script><a class="probe-link" href="https://example.com">x</a>
+EOF_SKIN
+printf '{"name": "probe-theme", "extends": "builtin://light"}\n' > "$SKINS/probe/theme.json"
+(cd "$PROJECT" && XDG_CONFIG_HOME="$CONFIG_HOME" FRESH_WEB_SKINS="$SKINS" "$REPO_ROOT/target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$PROJECT/main.rs") &
 SERVER_PID=$!
-trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$PROJECT" "$CONFIG_HOME" "$SKINS"' EXIT
 
-echo "Waiting for $UI_URL/state ..."
+echo "Waiting for $UI_URL ..."
 ready=""
 for _ in $(seq 1 60); do
-  if curl -fsS "$UI_URL/state" >/dev/null 2>&1; then ready=1; break; fi
+  if curl -fsS "$UI_URL/" >/dev/null 2>&1; then ready=1; break; fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "webui_server exited before becoming ready" >&2
     exit 1
@@ -70,11 +84,10 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [ -z "$ready" ]; then
-  echo "webui_server did not answer GET /state within 60s" >&2
+  echo "webui_server did not answer within 60s" >&2
   exit 1
 fi
 
-# 4) Run the suite (CHROMIUM, if set, passes through via the environment).
 status=0
-(cd "$SCRIPT_DIR" && UI_URL="$UI_URL" node drive.mjs) || status=$?
+for _ in $(seq 1 "${REPEAT:-1}"); do (cd "$SCRIPT_DIR" && UI_URL="$UI_URL" PROJECT="$PROJECT" SKINS="$SKINS" node drive.mjs) || status=$?; done
 exit "$status"

@@ -23,7 +23,7 @@ impl Editor {
     /// platform-native menus.
     ///
     /// Delegates to [`Self::all_menus_expanded`] so the native menus show
-    /// exactly what the TUI menu bar and the web projection show — the
+    /// exactly what the TUI menu bar and the web client's menus show — the
     /// user's configured menus plus every plugin contribution. Building
     /// from `MenuConfig::translated_menus()` instead would rebuild the
     /// *defaults*, silently dropping both.
@@ -35,7 +35,7 @@ impl Editor {
     /// (`self.menus`, dynamic submenus expanded — reusing the
     /// `expanded_menus_cache` when populated) followed by the plugin-contributed
     /// menus (also expanded). This is the single expansion path shared by the
-    /// TUI renderer and the web `menu_view()` projection, so the two frontends
+    /// TUI renderer and the web API's menus (`Editor::engine_menus`), so the two frontends
     /// never diverge on which menus/items exist.
     pub fn all_menus_expanded(&self) -> Vec<fresh_core::menu::Menu> {
         use crate::config::MenuExt;

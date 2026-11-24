@@ -277,7 +277,7 @@ mod tests {
     /// Every pane the fold reaches, and the rectangle it is handed — the
     /// paint half's answer to [`tree_rects`]'s.
     fn panes_folded(s: &Splits, at: Rect) -> Vec<(LeafId, Rect)> {
-        use crate::view::shell::fold::{fold_band, Band, HostPainter, Paints};
+        use crate::view::shell::fold::{fold_band, Band, HostPainter};
         use crate::view::shell::frame::HostTarget;
 
         #[derive(Default)]
@@ -305,7 +305,6 @@ mod tests {
             &|_: &fresh_ui::ThemeKey| ratatui::style::Style::default(),
             &mut out,
             Band::Background,
-            Paints::All,
             None,
         );
         out.0
@@ -2569,8 +2568,7 @@ impl<M: 'static> PaneSlots<M> {
 /// The column is the width less the one cell the plugin was told to hold
 /// back (`widget_panel_width` hands it `composeWidth - 1`), so a row laid
 /// out to the plugin's number fills it exactly; that cell joins the right
-/// margin. Shared with the web's native layout (`view::native`), which
-/// places the page in the same column.
+/// margin.
 pub(crate) fn compose_column(pane_w: u16, compose: Option<u16>) -> (u16, u16, u16) {
     match compose.map(|cw| cw.max(11)) {
         Some(cw) if cw < pane_w => {

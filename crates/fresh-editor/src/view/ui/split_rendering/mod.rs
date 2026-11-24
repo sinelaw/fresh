@@ -280,6 +280,117 @@ impl SplitRenderer {
         rows
     }
 
+    /// Render one buffer into `area` as a client's view of it: the same
+    /// per-leaf pipeline as [`Self::render_phantom_leaf`], but as the pane
+    /// the user is editing — active, with its caret drawn and reported.
+    /// Returns the per-row mappings (screen column → buffer byte) and the
+    /// caret's cell, both relative to `buf`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_view(
+        buf: &mut ratatui::buffer::Buffer,
+        state: &mut EditorState,
+        view: &mut crate::view::split::BufferViewState,
+        area: Rect,
+        style: RenderStyle<'_>,
+        session_mode: bool,
+        highlight_current_column: bool,
+        cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
+        screen_width: u16,
+    ) -> (Vec<crate::app::types::ViewLineMapping>, Option<(u16, u16)>) {
+        state
+            .margins
+            .set_gutter_separator(style.theme.chrome.gutter_separator);
+        // The same reconcile every other pane goes through: the byte pass
+        // (the only thing that follows the cursor in a large file, which has
+        // no row index), the scrollbar clamp, then the row placement. Going
+        // to the row placement alone, a large file's view never followed its
+        // cursor off the screen.
+        orchestration::reconcile::reconcile_pane(
+            state,
+            view,
+            orchestration::reconcile::ReconcileInputs {
+                content_rect: area,
+                // A pane whose content is pinned to its size does not scroll
+                // to follow the cursor (as the frame's reconcile decides it).
+                pin_to_top: !state.scrollable,
+                show_horizontal_scrollbar: false,
+                gutter_separator: style.theme.chrome.gutter_separator,
+            },
+        );
+        let crate::view::split::BufferViewState {
+            cursors,
+            viewport,
+            folds,
+            view_mode,
+            compose_width,
+            compose_column_guides,
+            rulers,
+            show_line_numbers,
+            highlight_current_line,
+            ..
+        } = view;
+        let crate::view::ui::EditorRenderConfig {
+            estimated_line_length,
+            highlight_context_bytes,
+            relative_line_numbers,
+            use_terminal_bg,
+            software_cursor_only,
+            diagnostics_inline_text,
+            indentation_guide,
+            indentation_guide_glyph,
+            rainbow_indentation,
+            bracket_highlight,
+            background_fade,
+            ..
+        } = style.cfg;
+        let mut layout = orchestration::compute_buffer_layout(
+            state,
+            cursors,
+            viewport,
+            folds,
+            area,
+            /* is_active */ true,
+            style.theme,
+            /* lsp_waiting */ false,
+            view_mode.clone(),
+            *compose_width,
+            estimated_line_length,
+            highlight_context_bytes,
+            relative_line_numbers,
+            use_terminal_bg,
+            session_mode,
+            software_cursor_only,
+            *show_line_numbers,
+            *highlight_current_line,
+            true,
+            diagnostics_inline_text,
+            /* show_tilde */ false,
+            indentation_guide,
+            indentation_guide_glyph,
+            rainbow_indentation,
+            bracket_highlight,
+            Some((cell_theme_map, screen_width)),
+        );
+        let caret = orchestration::render_buffer::caret_cell(&layout, state.buffer.len());
+        let rows = std::mem::take(&mut layout.view_line_mappings);
+        let left_column = layout.left_column;
+        orchestration::draw_buffer_in_split(
+            buf,
+            layout,
+            area,
+            style.theme,
+            style.ansi_background,
+            background_fade,
+            software_cursor_only,
+            rulers,
+            compose_column_guides.clone(),
+            highlight_current_column,
+            caret,
+        );
+        orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
+        (rows, caret)
+    }
+
     /// Public wrapper for building base tokens - used by render.rs for the
     /// plugin hooks.
     pub fn build_base_tokens_for_hook(

@@ -14,8 +14,7 @@
 //! What the painter measured, layout measures: a localized label with a live
 //! keybinding string in it is a `text` node and its width is the tree's
 //! answer. What the painter recorded, the tree keeps: every interactive
-//! element is a keyed node that answers its own press, and the web reads the
-//! rectangles back by key (`rects`) instead of from a side table. And what
+//! element is a keyed node that answers its own press. And what
 //! the model kept for the painter — a scroll offset five places agreed on by
 //! hand, and the viewport height the input handlers had to be told — is the
 //! `List`'s: the window belongs to the viewport, which reveals the selection
@@ -700,47 +699,6 @@ fn entries(b: &Browser, rows: &Entries) -> Node<UiMsg> {
     .flex(1)
 }
 
-/// Where the dialog's parts landed, read back off the laid-out tree.
-///
-/// What `FileBrowserLayout` was — minus the hit tests, which the nodes answer
-/// themselves. The one reader left is the web projection, which draws its own
-/// card from these and sends its clicks to the cells the tree placed the
-/// controls at.
-#[derive(Debug, Clone, Default)]
-pub struct Rects {
-    pub dialog: ratatui::layout::Rect,
-    /// The rows' band; also the bar's height.
-    pub list: ratatui::layout::Rect,
-    /// The bar's track, when the list overflows.
-    pub scrollbar: Option<ratatui::layout::Rect>,
-    pub toggles: Vec<(Toggle, ratatui::layout::Rect)>,
-    pub shortcuts: Vec<ratatui::layout::Rect>,
-    pub columns: Vec<(SortMode, ratatui::layout::Rect)>,
-}
-
-pub fn rects(
-    ui: &fresh_ui::Ui<UiMsg>,
-    size: ratatui::layout::Rect,
-    shortcuts: usize,
-) -> Option<Rects> {
-    let at = |k: Key| super::rect_of(ui, &k, size);
-    let dialog = at(key())?;
-    Some(Rects {
-        dialog,
-        list: at(list_key()).unwrap_or_default(),
-        scrollbar: scrollbar_item(ui.spec()).map(|i| super::screen_rect(i.rect, size)),
-        toggles: [Toggle::ShowHidden, Toggle::DetectEncoding]
-            .into_iter()
-            .filter_map(|t| Some((t, at(toggle_key(t))?)))
-            .collect(),
-        shortcuts: (0..shortcuts).filter_map(|i| at(shortcut_key(i))).collect(),
-        columns: COLUMNS
-            .into_iter()
-            .filter_map(|m| Some((m, at(column_key(m))?)))
-            .collect(),
-    })
-}
-
 fn scrollbar_item(spec: &fresh_ui::LayoutSpec) -> Option<&fresh_ui::Item> {
     let key = list_key();
     let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();
@@ -1139,28 +1097,6 @@ mod tests {
         elsewhere.dir = PathBuf::from("/etc");
         frame(elsewhere, None, 80, 30, &mut ui);
         assert_eq!(window(&ui, size(80, 30)).map(|w| w.first), Some(0));
-    }
-
-    /// The web's readers: every rectangle the projection draws from is on the
-    /// tree, and the bar is there exactly when the list overflows.
-    #[test]
-    fn the_rects_are_read_back_and_the_bar_appears_only_on_overflow() {
-        let ui = laid_out(browser(5, 20), None, 80, 30);
-        let r = rects(&ui, size(80, 30), 3).expect("rects");
-        assert_eq!(r.toggles.len(), 2);
-        assert_eq!(r.shortcuts.len(), 3);
-        assert_eq!(r.columns.len(), 3);
-        assert!(r.scrollbar.is_none(), "five rows fit");
-        assert_eq!(r.list.height, 20 - 2 - 3);
-        let ui = laid_out(browser(40, 12), None, 80, 30);
-        let r = rects(&ui, size(80, 30), 3).expect("rects");
-        let bar = r.scrollbar.expect("forty rows overflow");
-        assert_eq!(bar.height, r.list.height);
-        assert_eq!(
-            bar.x,
-            r.list.x + r.list.width - 1,
-            "on the list's last column"
-        );
     }
 
     /// The loading, error and empty states are one line each, in the band

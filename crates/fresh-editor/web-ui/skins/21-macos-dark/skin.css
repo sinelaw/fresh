@@ -1,0 +1,28 @@
+/* ==FreshSkin==
+@id           macos-dark
+@name         macOS Dark
+@description  Native macOS — dark & vibrant
+@author       Fresh
+@version      2.0.0
+@extends      macos
+@editor-theme builtin://dark
+==/FreshSkin== */
+
+/* macOS Light's structure with the dark System palette. */
+:root.theme-macos-dark {
+  --fg: #e3e3e6; --muted: #909096;
+  --bg2: #2e2e30; --bg3: #252527; --border: #48484b;
+  /* Apple's #0a84ff under white text is 3.6:1; fills use a deeper blue. */
+  --accent: #0a6fe0; --on-accent: #ffffff; --ui-accent: #0a6fe0; --on-ui-accent: #ffffff;
+  --hairline: rgba(255,255,255,.09); --hairline-strong: rgba(255,255,255,.16); --hover: rgba(255,255,255,.07);
+  --shadow: 0 16px 48px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.45);
+  --mac-shell: #2b2b2d;
+  --mac-titlebar: linear-gradient(180deg, #333335, #2a2a2c);
+  --mac-title-fg: #c9c9ce;
+  --mac-panel: #2c2c2f;
+  --mac-menu: #28282b;
+  --field-bg: #3a3a3c; --field-fg: #e3e3e6; --field-border: rgba(255,255,255,.14);
+  --mac-sidebar: #252527;
+  --mac-tabs: #232325;
+  --mac-tab-active: #303033;
+}

@@ -51,18 +51,10 @@ fn main() {
     // The welcome screen's "What's new", from the changelog's latest release.
     generate_release_notes();
 
-    // ---- Assemble the self-contained web-ui page --------------------------
-    // Sources live in web-ui/ split by concern: shell.html (the document
-    // skeleton) plus css/*.css and js/*.js, each directory concatenated in
-    // FILENAME order (the numeric prefixes define CSS cascade / JS
-    // declaration order — order is load-bearing, later files deliberately
-    // override earlier ones). The result replaces the /*@CSS@*/ and /*@JS@*/
-    // markers in shell.html and is written to $OUT_DIR/webui-index.html,
-    // which webui/mod.rs embeds via include_str! — the served page stays a
-    // single fully self-contained file.
-    //
-    // Only the `web` feature compiles webui/mod.rs, so only that build needs
-    // the page — skip the read-and-concatenate work otherwise.
+    // ---- Assemble the self-contained web client page ----------------------
+    // web-ui/index.html plus css/*.css and js/*.js, concatenated in filename
+    // order into $OUT_DIR/webui-index.html (`assemble_webui`). Only the `web`
+    // feature compiles webui/mod.rs, so only that build needs the page.
     if std::env::var_os("CARGO_FEATURE_WEB").is_some() {
         assemble_webui();
     }
@@ -409,10 +401,6 @@ fn generate_test_roots() {
     // ordinary edit to a test file costs nothing extra.
     println!("cargo::rerun-if-changed=tests");
 
-    // Declared in Cargo.toml as their own targets instead, because they are
-    // feature-gated; pulling them in here would build them unconditionally.
-    const SEPARATE_TARGETS: &[&str] = &["scene_parity"];
-
     // Forward slashes, even on Windows: this path is about to be written into
     // a Rust string literal, and `D:\a\fresh\...` makes `\a` and `\f` look
     // like character escapes -- 245 of them, which is how this first failed.
@@ -431,7 +419,7 @@ fn generate_test_roots() {
             }
             let name = entry.file_name().to_string_lossy().into_owned();
             let stem = name.strip_suffix(".rs")?.to_string();
-            if stem == "all_tests" || SEPARATE_TARGETS.contains(&stem.as_str()) {
+            if stem == "all_tests" {
                 return None;
             }
             Some(stem)
@@ -457,58 +445,187 @@ fn generate_test_roots() {
     fs::write(&dest, out).expect("write test_roots.rs");
 }
 
-/// Build the single self-contained web-ui page from its split sources.
+/// Build the single self-contained web client page from its split sources.
 ///
-/// `web-ui/shell.html` is the document skeleton; `web-ui/css/*.css` and
-/// `web-ui/js/*.js` are concatenated in filename order (numeric prefixes
-/// define the order, which is load-bearing) into its `/*@CSS@*/` and
-/// `/*@JS@*/` markers. Output: `$OUT_DIR/webui-index.html`, embedded by
-/// `webui/mod.rs` via `include_str!` so `fresh --web` stays fully
-/// self-contained.
+/// `web-ui/index.html` is the document; `web-ui/css/*.css` and
+/// `web-ui/js/*.js` are concatenated in filename order into its `/*@CSS@*/`
+/// and `/*@JS@*/` markers. Output: `$OUT_DIR/webui-index.html`, embedded by
+/// `webui/mod.rs` via `include_str!` so `fresh --web` stays self-contained.
 fn assemble_webui() {
     // Inside the crate, not at the workspace root: `cargo package` vendors only
-    // files under the package directory, so a path reaching outside it would
-    // leave the published crate unable to build with `--features web`.
+    // files under the package directory.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("web-ui");
     assert!(
         root.is_dir(),
         "the `web` feature needs the web-ui/ sources at {}",
         root.display()
     );
-    println!(
-        "cargo::rerun-if-changed={}",
-        root.join("shell.html").display()
-    );
-    // The directory entries are also watched so ADDING/REMOVING a part
-    // retriggers; per-file lines below catch content edits.
-    println!("cargo::rerun-if-changed={}", root.join("css").display());
-    println!("cargo::rerun-if-changed={}", root.join("js").display());
-
+    // Only what the page is built from: watching web-ui/ itself would scan
+    // test/ (its node_modules, a failed case's screenshots) and rebuild for
+    // them. The css/, js/ and skins/ folders and index.html are watched where
+    // they are read.
     let concat_dir = |dir: &str| -> String {
-        let mut files: Vec<_> = fs::read_dir(root.join(dir))
-            .unwrap_or_else(|e| panic!("web-ui/{dir}: {e}"))
+        let d = root.join(dir);
+        println!("cargo::rerun-if-changed={}", d.display());
+        let mut files: Vec<_> = fs::read_dir(&d)
+            .unwrap_or_else(|e| panic!("read web-ui/{dir}: {e}"))
             .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
             .collect();
         files.sort();
         let mut out = String::new();
-        for f in &files {
+        for f in files {
             println!("cargo::rerun-if-changed={}", f.display());
-            out.push_str(&fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display())));
+            out.push_str(&fs::read_to_string(&f).expect("read web-ui source"));
+            out.push('\n');
         }
         out
     };
+    // Built-in skins: `[{"dir": "<NN-name>", "files": {"<name>": "<text>"}}, …]`,
+    // the same shape a skin folder the user installs is read into. Placed at
+    // the JS's `/*@SKINS@*/[]` marker.
+    let skins_root = root.join("skins");
+    println!("cargo::rerun-if-changed={}", skins_root.display());
+    let mut skin_dirs: Vec<_> = fs::read_dir(&skins_root)
+        .expect("web-ui/skins")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    skin_dirs.sort();
+    let mut skins = Vec::new();
+    for dir in skin_dirs {
+        let dname = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            dir.join("skin.css").is_file(),
+            "web-ui/skins/{dname} has no skin.css"
+        );
+        println!("cargo::rerun-if-changed={}", dir.display());
+        let mut files: Vec<_> = fs::read_dir(&dir)
+            .expect("skin folder")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        files.sort();
+        let mut entries = Vec::new();
+        for f in files {
+            let name = f
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                name.ends_with(".css") || name.ends_with(".html") || name.ends_with(".json"),
+                "web-ui/skins/{dname}/{name}: a built-in skin bundles only .css/.html/.json (inline images as data: URLs)"
+            );
+            println!("cargo::rerun-if-changed={}", f.display());
+            let text = fs::read_to_string(&f).expect("skin file");
+            if name.ends_with(".css") {
+                if let Err(e) = css_comments_balanced(&text) {
+                    panic!("web-ui/skins/{dname}/{name}: {e} (the browser would drop the rule it falls in)");
+                }
+            }
+            entries.push(format!("{}:{}", js_string(&name), js_string(&text)));
+        }
+        skins.push(format!(
+            "{{\"dir\":{},\"files\":{{{}}}}}",
+            js_string(&dname),
+            entries.join(",")
+        ));
+    }
+    // `</` escaped so no skin file can close the page's <script> (`<\/` reads
+    // back as `</` in a JS string).
+    let skins = format!("[{}]", skins.join(",")).replace("</", "<\\/");
 
-    let shell = fs::read_to_string(root.join("shell.html")).expect("web-ui/shell.html");
-    let css = concat_dir("css");
-    let js = concat_dir("js");
+    let index = root.join("index.html");
+    println!("cargo::rerun-if-changed={}", index.display());
+    let shell = fs::read_to_string(&index).expect("web-ui/index.html");
     assert!(
         shell.contains("/*@CSS@*/") && shell.contains("/*@JS@*/"),
-        "web-ui/shell.html must contain the /*@CSS@*/ and /*@JS@*/ markers"
+        "web-ui/index.html must contain the /*@CSS@*/ and /*@JS@*/ markers"
     );
-    let page = shell
-        .replacen("/*@CSS@*/", &css, 1)
-        .replacen("/*@JS@*/", &js, 1);
-
+    let page = shell.replacen("/*@CSS@*/", &concat_dir("css"), 1).replacen(
+        "/*@JS@*/",
+        &concat_dir("js")
+            .replace("</script", "<\\/script")
+            .replacen("/*@SKINS@*/[]", &skins, 1),
+        1,
+    );
+    // The page's build: a hash of the page itself, stamped into it and handed
+    // to the server, which sends it on every connection. A page left open
+    // across an upgrade sees another build and reloads, so a client never
+    // talks to a server whose API it was not built for.
+    assert!(
+        page.contains("@BUILD@"),
+        "web-ui/index.html must contain the @BUILD@ marker (its fresh-build meta)"
+    );
+    let build = format!("{:016x}", fnv1a64(page.as_bytes()));
+    let page = page.replacen("@BUILD@", &build, 1);
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
     fs::write(Path::new(&out_dir).join("webui-index.html"), page).expect("write webui-index.html");
+    fs::write(Path::new(&out_dir).join("webui-build.txt"), build).expect("write webui-build.txt");
+}
+
+/// FNV-1a, 64-bit: a stable hash with no dependency, for the page's build.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Whether every `/*` in a stylesheet is closed and no `*/` stands outside a
+/// comment (strings skipped). A broken comment makes the browser drop the
+/// rule around it without a word, so a built-in skin is checked here.
+fn css_comments_balanced(css: &str) -> Result<(), String> {
+    let b = css.as_bytes();
+    let mut i = 0;
+    let line = |at: usize| css[..at].matches('\n').count() + 1;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q && b[i] != b'\n' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => match css[i + 2..].find("*/") {
+                Some(end) => i += 2 + end + 2,
+                None => return Err(format!("line {}: a comment is never closed", line(i))),
+            },
+            b'*' if b.get(i + 1) == Some(&b'/') => {
+                return Err(format!("line {}: `*/` closes no comment", line(i)));
+            }
+            _ => i += 1,
+        }
+    }
+    Ok(())
+}
+
+/// `s` as a double-quoted JSON (and so JS) string literal.
+fn js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
