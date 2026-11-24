@@ -442,8 +442,8 @@ export function activate(fresh) {
   const renderPanel = () => {
     if (!panel || !panel.open) return;
     const status = pq.busy ? "searching…" : pq.error ? pq.error : pq.query ? `${pq.results.length}${pq.truncated ? "+" : ""} matches in ${pq.files} files` : "";
-    panel.render(h("col", {},
-      h("row", {},
+    panel.render(h("col", {}, [
+      h("row", {}, [
         h("input", {
           key: "q", value: pq.query, placeholder: "Search the workspace", grow: true, list: "results",
           onInput: (q) => { pq.query = q; clearTimeout(timer); timer = setTimeout(runSearch, 250); },
@@ -451,17 +451,19 @@ export function activate(fresh) {
         }),
         ...toggles(() => { update(); runSearch(); }),
         h("input", { key: "r", value: pq.replace, placeholder: "Replace with", grow: true, onInput: (r) => { pq.replace = r; } }),
-        h("button", { onClick: replaceEverywhere, disabled: !pq.results.length }, "Replace All"),
-        h("text", { dim: true }, status)),
+        h("button", { onClick: replaceEverywhere, disabled: !pq.results.length }, ["Replace All"]),
+        h("text", { dim: true }, [status]),
+      ]),
       h("list", {
         key: "results",
         items: rows(),
         render: (m) => m.header
-          ? h("text", { bold: true }, m.path)
-          : h("row", {}, h("text", { dim: true }, `  ${m.line + 1}:${m.col + 1}`), h("text", { mono: true }, m.text.trim())),
+          ? h("text", { bold: true }, [m.path])
+          : h("row", {}, [h("text", { dim: true }, [`  ${m.line + 1}:${m.col + 1}`]), h("text", { mono: true }, [m.text.trim()])]),
         onSelect: (m) => openMatch(m, true),
         onActivate: (m) => openMatch(m, false),
-      })));
+      }),
+    ]));
   };
   const openPanel = () => {
     const v = fresh.views.active();

@@ -2,11 +2,12 @@
 //
 // A plugin asks for a panel in a place — the sidebar, the bottom dock, a
 // column beside the editor, a bar above it, or a dialog — and renders a
-// declarative tree into it, built with `h(type, props, ...children)`:
+// declarative tree into it, built with `h(type, props, children)`:
 //
-//   panel.render(h("col", {},
+//   panel.render(h("col", {}, [
 //     h("input", {key: "q", value: q, placeholder: "Search", onInput: (v) => ...}),
-//     h("list", {key: "hits", items, render: (it) => it.text, onActivate: (it) => ...})));
+//     h("list", {key: "hits", items, render: (it) => it.text, onActivate: (it) => ...}),
+//   ]));
 //
 // Controls are real DOM controls, so focus, text editing, IME and
 // accessibility are the browser's. Re-rendering rebuilds the panel and puts
@@ -16,7 +17,9 @@
 import { color } from "./highlight.js";
 import { Menu } from "./menu.js";
 
-export function h(type, props, ...children) {
+// `children` is one array of nodes and strings; nested arrays are
+// flattened, and null and false left out (for conditional parts).
+export function h(type, props, children = []) {
   return { type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null && c !== false) };
 }
 
@@ -43,6 +46,7 @@ export class UIKit {
     let p = this.panels.get(id);
     if (p) { p.show(); return p; }
     p = new Panel(this, id, title, place, onClose);
+    p.listen();
     this.panels.set(id, p);
     p.show();
     return p;
@@ -97,35 +101,43 @@ class Panel {
     this.el.tabIndex = -1;
     this.body = document.createElement("div");
     this.body.className = "panel-body";
+    this.backdrop = place === "dialog" ? document.createElement("div") : null;
     if (place === "sidebar" || place === "left" || place === "right" || place === "dialog") {
       const head = document.createElement("div");
       head.className = "panel-head";
       head.innerHTML = `<span class="t"></span><span class="x" title="Close">×</span>`;
       head.querySelector(".t").textContent = title;
-      head.querySelector(".x").onmousedown = (e) => { e.preventDefault(); this.close(); };
       this.el.appendChild(head);
     }
     this.el.appendChild(this.body);
+    const backdrop = this.backdrop;
+    if (backdrop) {
+      backdrop.className = "backdrop";
+      backdrop.appendChild(this.el);
+      document.body.appendChild(backdrop);
+    } else if (place === "bottom") kit.dockBody.appendChild(this.el);
+    else if (place === "sidebar") kit.side.appendChild(this.el);
+    else if (place === "left") kit.left.appendChild(this.el);
+    else if (place === "right") kit.right.appendChild(this.el);
+    else if (place === "bar") kit.bar.appendChild(this.el);
+  }
+
+  // Take the close button, Escape and a dialog's backdrop (once, after
+  // `new`).
+  listen() {
+    const x = this.el.querySelector(".panel-head .x");
+    if (x) x.onmousedown = (e) => { e.preventDefault(); this.close(); };
     // Escape closes a dialog or a bar; from a docked panel it goes back to
     // the editor, leaving the panel where it is.
     this.el.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
-      if (place === "dialog" || place === "bar") this.close();
-      else kit.app.focusPane(kit.app.activePane);
+      if (this.place === "dialog" || this.place === "bar") this.close();
+      else this.kit.app.focusPane(this.kit.app.activePane);
     });
-    if (place === "dialog") {
-      this.backdrop = document.createElement("div");
-      this.backdrop.className = "backdrop";
-      this.backdrop.onmousedown = (e) => { if (e.target === this.backdrop) this.close(); };
-      this.backdrop.appendChild(this.el);
-      document.body.appendChild(this.backdrop);
-    } else if (place === "bottom") kit.dockBody.appendChild(this.el);
-    else if (place === "sidebar") kit.side.appendChild(this.el);
-    else if (place === "left") kit.left.appendChild(this.el);
-    else if (place === "right") kit.right.appendChild(this.el);
-    else if (place === "bar") kit.bar.appendChild(this.el);
+    const backdrop = this.backdrop;
+    if (backdrop) backdrop.onmousedown = (e) => { if (e.target === backdrop) this.close(); };
   }
 
   show() {
@@ -458,9 +470,10 @@ class Panel {
       key,
       items: rows,
       depth: (r) => r.depth,
-      render: (r) => h("row", { class: "ui-tree-row" },
-        h("text", { class: "ui-tree-indent" }, " ".repeat(r.depth * 2) + (r.nd.children ? (r.isOpen ? "▾ " : "▸ ") : "  ")),
-        typeof r.nd.label === "string" ? h("text", {}, r.nd.label) : r.nd.label),
+      render: (r) => h("row", { class: "ui-tree-row" }, [
+        h("text", { class: "ui-tree-indent" }, [" ".repeat(r.depth * 2) + (r.nd.children ? (r.isOpen ? "▾ " : "▸ ") : "  ")]),
+        typeof r.nd.label === "string" ? h("text", {}, [r.nd.label]) : r.nd.label,
+      ]),
       onActivate: (r, _i, how) => {
         if (r.nd.children) {
           // A folder opens or closes on its first click.

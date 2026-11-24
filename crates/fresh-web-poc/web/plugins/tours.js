@@ -34,22 +34,24 @@ export function activate(fresh) {
   const render = () => {
     if (!panel || !panel.open || !tour) return;
     const s = tour.steps[step];
-    panel.render(h("col", {},
-      h("text", { bold: true }, tour.title || "Tour"),
-      h("row", {},
-        h("button", { onClick: () => go(step - 1), disabled: step === 0 }, "◀ Previous"),
-        h("text", { dim: true }, `${step + 1} / ${tour.steps.length}`),
-        h("button", { primary: true, onClick: () => go(step + 1), disabled: step >= tour.steps.length - 1 }, "Next ▶")),
-      h("text", { bold: true }, label(s)),
+    panel.render(h("col", {}, [
+      h("text", { bold: true }, [tour.title || "Tour"]),
+      h("row", {}, [
+        h("button", { onClick: () => go(step - 1), disabled: step === 0 }, ["◀ Previous"]),
+        h("text", { dim: true }, [`${step + 1} / ${tour.steps.length}`]),
+        h("button", { primary: true, onClick: () => go(step + 1), disabled: step >= tour.steps.length - 1 }, ["Next ▶"]),
+      ]),
+      h("text", { bold: true }, [label(s)]),
       h("markdown", { text: s.description || "" }),
       h("list", {
         key: "steps",
         items: tour.steps.map((x, i) => ({ ...x, i })),
         selected: step,
-        render: (x) => h("text", { mono: true }, `${x.i + 1}. ${label(x)}`),
+        render: (x) => h("text", { mono: true }, [`${x.i + 1}. ${label(x)}`]),
         onActivate: (x) => go(x.i),
         activateOnClick: true,
-      })));
+      }),
+    ]));
   };
   const open = async () => {
     let files = [];

@@ -247,11 +247,11 @@ export function activate(fresh) {
       ? h("list", {
         key: "toc",
         items,
-        render: (it) => h("text", { bold: it.level === 1 }, "  ".repeat(it.level - 1) + it.text),
+        render: (it) => h("text", { bold: it.level === 1 }, ["  ".repeat(it.level - 1) + it.text]),
         onActivate: (it) => fresh.views.active()?.setCursor(it.pos, { center: true }),
         activateOnClick: true,
       })
-      : h("text", { dim: true }, "No headings"));
+      : h("text", { dim: true }, ["No headings"]));
   };
   const showContents = () => {
     contents = fresh.ui.panel({ id: "md-contents", title: "Contents", place: "sidebar" });

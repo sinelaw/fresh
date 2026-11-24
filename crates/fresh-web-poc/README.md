@@ -527,12 +527,14 @@ shapes modules share: edit primitives, the server's events, documents,
 diagnostics, colours, syntax spans).
 
 `ot.js`, `rpc.js`'s functions, `diff.js`, `mdstruct.js` and `highlight.js`
-are typed. The rest does not check yet: inty does not parse `export class`,
-a class constructor that does more than assign fields, `extends`, or default
-and destructured parameters of class methods; a default parameter can't be
-left out of a call; and a record's optional field (`fg?: Color`) can't be
-read, so option bags and partial styles — decorations, the UI kit's
-properties, most of the plugin API — have no type yet.
+are typed. The client keeps to what inty takes by design: no class
+inheritance (a `Buffer` holds its kind's source), no rest parameters (`h`
+takes its children as one array), no setters or dynamic import, and a
+constructor only sets fields (whatever needs `this`, such as event
+listeners, is set up by a `listen()` its creator calls). The rest does not
+check yet: a record's optional field (`fg?: Color`) can't be read, so option
+bags and partial styles — decorations, the UI kit's properties, most of the
+plugin API — have no type yet.
 
 ## Limits
 

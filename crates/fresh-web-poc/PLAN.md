@@ -20,7 +20,7 @@ browser instead (`web/js/ui.js`):
 - `ui.panel({id, title, place})` — a panel in the sidebar, the bottom dock,
   beside the editor, or a dialog; returns a handle with `render(tree)`,
   `focus()`, `close()`.
-- `h(type, props, ...children)` — a declarative tree of real DOM controls:
+- `h(type, props, children)` (`children` one array) — a declarative tree of real DOM controls:
   `box`/`row`/`col`, `text`, `input`, `button`, `checkbox`, `select`,
   `list` (virtualised, keyboard-navigable, `onActivate`), `tree`, `table`,
   `badge`. Re-rendering keeps focus and caret by element key.

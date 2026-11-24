@@ -69,7 +69,7 @@ export function activate(fresh) {
     refsPanel.render(h("list", {
       key: "refs",
       items,
-      render: (it) => it.header ? h("text", { bold: true }, rel(it.path)) : h("row", {}, h("text", { dim: true }, `  ${it.range.start.line + 1}:${it.range.start.character + 1}`), h("text", { mono: true }, it.text)),
+      render: (it) => it.header ? h("text", { bold: true }, [rel(it.path)]) : h("row", {}, [h("text", { dim: true }, [`  ${it.range.start.line + 1}:${it.range.start.character + 1}`]), h("text", { mono: true }, [it.text])]),
       // Selected, a reference shows in the preview tab (the keyboard stays
       // in the list); Enter or a double-click opens it for good.
       onSelect: (it) => !it.header && goto(it.path, it.range, { preview: true, focus: false }),
@@ -269,8 +269,8 @@ export function activate(fresh) {
       key: "diags",
       items,
       render: (it) => it.header
-        ? h("text", { bold: true }, rel(it.b.path))
-        : h("row", {}, h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, it.d.severity === 1 ? "  ●" : "  ▲"), h("text", { dim: true }, String(it.line)), h("text", { mono: true }, it.d.message.split("\n")[0])),
+        ? h("text", { bold: true }, [rel(it.b.path)])
+        : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [String(it.line)]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
       onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path); fresh.views.active().setCursor(it.d.start, { center: true }); },
     }));
   };

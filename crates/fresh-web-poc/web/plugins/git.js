@@ -155,7 +155,7 @@ export function activate(fresh) {
     logPanel.render(h("list", {
       key: "log",
       items,
-      render: (c) => h("row", {}, h("text", { color: "ui.accent_fg", mono: true }, c.short), h("text", {}, c.subject), h("spacer", {}), h("text", { dim: true }, `${c.author}, ${c.when}`)),
+      render: (c) => h("row", {}, [h("text", { color: "ui.accent_fg", mono: true }, [c.short]), h("text", {}, [c.subject]), h("spacer", {}), h("text", { dim: true }, [`${c.author}, ${c.when}`])]),
       onActivate: async (c) => {
         const s = await git(["show", "--stat", "-p", "--format=commit %H%nAuthor: %an <%ae>%nDate:   %ad%n%n    %s%n%n%b", c.hash]);
         showDiff(`${c.short} ${c.subject}`.slice(0, 40), s.stdout);

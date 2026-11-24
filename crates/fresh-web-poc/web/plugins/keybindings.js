@@ -36,25 +36,28 @@ export function activate(fresh) {
   };
   const render = () => {
     if (!panel || !panel.open) return;
-    panel.render(h("col", {},
-      h("row", {},
+    panel.render(h("col", {}, [
+      h("row", {}, [
         h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; selected = 0; render(); }, onEnter: () => record(rows()[selected]) }),
-        h("text", { dim: true }, recording ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"),
-        h("button", { onClick: () => record(rows()[selected]) }, "Add Key"),
-        h("button", { onClick: () => remove(rows()[selected]) }, "Remove Mine")),
+        h("text", { dim: true }, [recording ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"]),
+        h("button", { onClick: () => record(rows()[selected]) }, ["Add Key"]),
+        h("button", { onClick: () => remove(rows()[selected]) }, ["Remove Mine"]),
+      ]),
       h("list", {
         key: "keys",
         items: rows(),
         selected,
         onSelect: (_r, i) => { selected = i; },
-        render: (r) => h("row", {},
-          h("text", { bold: r.custom }, r.title),
+        render: (r) => h("row", {}, [
+          h("text", { bold: r.custom }, [r.title]),
           h("spacer", {}),
-          h("text", { mono: true, color: "ui.accent_fg" }, recording === r.id ? "…" : r.keys.join(", ")),
-          h("text", { dim: true }, r.source !== "core" ? r.source : "")),
+          h("text", { mono: true, color: "ui.accent_fg" }, [recording === r.id ? "…" : r.keys.join(", ")]),
+          h("text", { dim: true }, [r.source !== "core" ? r.source : ""]),
+        ]),
         onActivate: record,
         onKey: (e, r) => { if (e.key === "Delete") { e.preventDefault(); remove(r); } },
-      })));
+      }),
+    ]));
   };
   fresh.commands.register("keys.editor", {
     title: "Keybindings: Open Editor",
