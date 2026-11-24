@@ -1,7 +1,8 @@
 //! The editor's themes, served to the client: the built-in themes the
 //! editor's core embeds at build time, resolved by its own loader (so a
 //! theme's inherited and defaulted keys arrive filled in), and the themes
-//! skins bring (`skin/<id>`, `src/skins.rs`). The client maps each theme's
+//! skins bring (`skin/<id>`, `src/skins.rs`; a user skin's only from the
+//! workspace's host). The client maps each theme's
 //! keys onto its CSS variables.
 
 use crate::error::{err, Code};
@@ -19,7 +20,7 @@ fn registry() -> &'static ThemeRegistry {
 
 /// `theme.list`: every theme's key and display name, in the editor's order,
 /// then the skins' themes.
-pub fn list(ws: &Workspace) -> Value {
+pub fn list(ws: Option<&Workspace>) -> Value {
     let mut themes: Vec<Value> = registry()
         .list()
         .iter()
@@ -32,7 +33,7 @@ pub fn list(ws: &Workspace) -> Value {
 }
 
 /// `theme.get`: one theme, fully resolved, in the theme file format.
-pub fn get(ws: &Workspace, key: &str) -> Result<Value> {
+pub fn get(ws: Option<&Workspace>, key: &str) -> Result<Value> {
     if key.starts_with(skins::THEME_PREFIX) {
         return skins::theme(ws, key);
     }

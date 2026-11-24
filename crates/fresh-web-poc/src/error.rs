@@ -32,6 +32,9 @@ pub enum Code {
     /// An edit's base version is older than the kept log: reload the
     /// document.
     Resync,
+    /// `workspace.close`: the workspace holds unsaved documents; closing
+    /// with `discard` gives them up.
+    Unsaved,
     Binary,
     TooLarge,
     NoLanguageServer,
@@ -56,6 +59,7 @@ impl Code {
             Code::ChangedOnDisk => "changed_on_disk",
             Code::InUse => "in_use",
             Code::Resync => "resync",
+            Code::Unsaved => "unsaved",
             Code::Binary => "binary",
             Code::TooLarge => "too_large",
             Code::NoLanguageServer => "no_language_server",

@@ -2,7 +2,7 @@
 //! `runOnTarget`, `spawnProcess`), and paths a client watches.
 
 use crate::authority::{Authority, HostProc};
-use crate::hub::Hub;
+use crate::hub::Room;
 use crate::workspace::Workspace;
 use anyhow::Result;
 use serde_json::json;
@@ -58,7 +58,7 @@ impl Procs {
     /// Start `program`; its result is sent to `client` as `proc.exit`.
     pub fn run(
         &self,
-        hub: Arc<Hub>,
+        room: Room,
         ws: &Workspace,
         client: u64,
         program: &str,
@@ -76,7 +76,7 @@ impl Procs {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                hub.send(
+                room.send(
                     client,
                     &json!({"ev": "proc.exit", "proc": id, "code": -1, "stdout": "", "stderr": e.to_string()}),
                 );
@@ -131,7 +131,7 @@ impl Procs {
             }
             let stdout = out_t.join().unwrap_or_default();
             let stderr = err_t.join().unwrap_or_default();
-            hub.send(
+            room.send(
                 client,
                 &json!({"ev": "proc.exit", "proc": id, "code": code, "stdout": stdout, "stderr": stderr}),
             );
@@ -174,7 +174,6 @@ impl Procs {
     }
 
     /// How many processes are running.
-    #[cfg(test)]
     pub fn count(&self) -> usize {
         self.running.lock().unwrap().len()
     }
@@ -196,10 +195,12 @@ pub struct Watches {
 impl Watches {
     /// Poll every watched path's (size, mtime) through the workspace's
     /// filesystem, so a remote host's paths are watched the same way.
-    pub fn start(&self, hub: Arc<Hub>, ws: Arc<Workspace>) {
-        let map = self.map.clone();
+    /// Stops when the watches go (their workspace was closed).
+    pub fn start(&self, room: Room, ws: Arc<Workspace>) {
+        let weak = Arc::downgrade(&self.map);
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(500));
+            let Some(map) = weak.upgrade() else { return };
             let paths: Vec<(u64, PathBuf)> = map
                 .lock()
                 .unwrap()
@@ -213,7 +214,7 @@ impl Watches {
                 let Some(w) = m.get_mut(&id) else { continue };
                 if now != w.last {
                     w.last = now;
-                    hub.send(
+                    room.send(
                         w.client,
                         &json!({"ev": "fs.changed", "watch": id, "path": w.path.to_string_lossy()}),
                     );

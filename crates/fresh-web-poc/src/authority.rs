@@ -83,15 +83,24 @@ pub trait Authority: Send + Sync {
         (local_command(&self.sh(&script, false)), p)
     }
 
-    /// The user's login shell in `cwd` on the host, to be started on a PTY.
-    fn shell_command(&self, cwd: &Path) -> (portable_pty::CommandBuilder, HostProc) {
+    /// The user's login shell in `cwd` on the host, to be started on a PTY:
+    /// interactive, or running `command` (a shell command line) and ending
+    /// with it.
+    fn shell_command(
+        &self,
+        cwd: &Path,
+        command: Option<&str>,
+    ) -> (portable_pty::CommandBuilder, HostProc) {
         let p = HostProc::new("HUP");
         let script = [
             p.record(),
             format!("cd {}", sh_quote(&cwd.to_string_lossy())),
             "TERM=xterm-256color COLORTERM=truecolor".into(),
             "export TERM COLORTERM".into(),
-            "exec \"${SHELL:-/bin/sh}\" -l".into(),
+            match command {
+                None => "exec \"${SHELL:-/bin/sh}\" -l".into(),
+                Some(c) => format!("exec \"${{SHELL:-/bin/sh}}\" -lc {}", sh_quote(c)),
+            },
         ]
         .join("\n");
         let argv = self.sh(&script, true);
@@ -312,6 +321,80 @@ impl Authority for Agent {
     }
 }
 
+/// Which host a workspace is on, as the command line and `workspace.open`
+/// name it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum HostSpec {
+    /// This machine.
+    Local,
+    /// Another machine, `[user@]host[:port]`, through the editor's remote
+    /// agent over `ssh`.
+    Ssh { target: String },
+    /// A running container: files here, processes through `docker exec`.
+    Container { id: String },
+    /// The remote agent on this machine, without `ssh`.
+    Agent,
+}
+
+/// Reach the host `spec` names; `slow` adds network-like delays to every
+/// filesystem call.
+pub fn connect(spec: &HostSpec, slow: bool) -> anyhow::Result<Arc<dyn Authority>> {
+    use anyhow::anyhow;
+    Ok(match spec {
+        HostSpec::Ssh { target } => {
+            let params = ConnectionParams::parse(target)
+                .ok_or_else(|| anyhow!("bad ssh target {target}"))?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            let conn = runtime.block_on(fresh::services::remote::SshConnection::connect(
+                params.clone(),
+            ))?;
+            let rfs = fresh::services::remote::RemoteFileSystem::new(
+                conn.channel(),
+                conn.connection_string(),
+            );
+            runtime.block_on(rfs.prime_sys_info())?;
+            Arc::new(Ssh {
+                params,
+                fs: maybe_slow(Arc::new(rfs), slow),
+                _runtime: runtime,
+                _conn: conn,
+            })
+        }
+        HostSpec::Container { id } => Arc::new(Container {
+            id: id.clone(),
+            fs: maybe_slow(Arc::new(StdFileSystem), slow),
+        }),
+        HostSpec::Agent => {
+            let runtime = tokio::runtime::Runtime::new()?;
+            let channel = runtime.block_on(fresh::services::remote::spawn_local_agent())?;
+            let rfs = fresh::services::remote::RemoteFileSystem::new(channel, "agent".into());
+            runtime.block_on(rfs.prime_sys_info())?;
+            Arc::new(Agent {
+                fs: maybe_slow(Arc::new(rfs), slow),
+                _runtime: runtime,
+            })
+        }
+        HostSpec::Local => {
+            let mut l = Local::new();
+            l.fs = maybe_slow(l.fs, slow);
+            Arc::new(l)
+        }
+    })
+}
+
+/// The filesystem, with network-like delays when asked for.
+fn maybe_slow(fs: Fs, slow: bool) -> Fs {
+    if slow {
+        Arc::new(fresh::services::fs::slow::SlowFileSystem::new(
+            fs,
+            fresh::services::fs::slow::SlowFsConfig::slow_network(),
+        ))
+    } else {
+        fs
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +430,7 @@ mod tests {
             ),
             "{script}"
         );
-        let (sh, _) = c.shell_command(Path::new("/w"));
+        let (sh, _) = c.shell_command(Path::new("/w"), None);
         let sh: Vec<String> = sh
             .get_argv()
             .iter()
@@ -358,6 +441,12 @@ mod tests {
             sh[6].ends_with("exec \"${SHELL:-/bin/sh}\" -l"),
             "{}",
             sh[6]
+        );
+        let (agent, _) = c.shell_command(Path::new("/w"), Some("claude --resume"));
+        let agent = agent.get_argv()[6].to_string_lossy().into_owned();
+        assert!(
+            agent.ends_with("exec \"${SHELL:-/bin/sh}\" -lc 'claude --resume'"),
+            "{agent}"
         );
     }
 

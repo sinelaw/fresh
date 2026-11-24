@@ -7,9 +7,15 @@
 //! on them. A replay buffer of recent output lets a client that attaches
 //! late, or reconnects, rebuild the screen: every chunk carries its offset in
 //! the stream, and the replay says where it ends, so nothing is shown twice.
+//!
+//! A terminal may run a command instead of an interactive shell: an **agent
+//! session** (a coding agent's CLI, or any long-running program). The server
+//! watches every terminal's stream for what the orchestrator shows at a
+//! glance: the title a program sets (OSC 0/2), the bell, and when output last
+//! came, from which a terminal's state is read ([`State`]).
 
 use crate::authority::{Authority, HostProc};
-use crate::hub::Hub;
+use crate::hub::Room;
 use crate::workspace::Workspace;
 use anyhow::{anyhow, Result};
 use base64::Engine;
@@ -19,15 +25,147 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// How much recent output is kept for replay.
 const REPLAY_BYTES: usize = 1 << 20;
+
+/// A terminal with no output for this long is quiet (idle or waiting).
+pub const QUIET: Duration = Duration::from_secs(2);
+
+/// What a terminal is doing, as read from its stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    /// Output within [`QUIET`].
+    Working,
+    /// Quiet, and its last line asks the user something.
+    Waiting,
+    /// Quiet.
+    Idle,
+    /// Its program ended.
+    Exited,
+}
+
+impl State {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            State::Working => "working",
+            State::Waiting => "waiting",
+            State::Idle => "idle",
+            State::Exited => "exited",
+        }
+    }
+}
+
+/// Where the scanner is in the stream: escape sequences are followed only
+/// as far as telling a title (OSC 0/2) and a bell apart, since an OSC ends
+/// with the same BEL byte that rings the bell.
+#[derive(Default)]
+enum Lexer {
+    #[default]
+    Text,
+    Escape,
+    Osc(Vec<u8>),
+    OscEscape(Vec<u8>),
+}
+
+/// What the stream told so far.
+struct Activity {
+    esc: Lexer,
+    title: String,
+    bells: u64,
+    last_output: Option<Instant>,
+}
+
+impl Activity {
+    fn scan(&mut self, bytes: &[u8], now: Instant) {
+        self.last_output = Some(now);
+        for &b in bytes {
+            self.esc = match std::mem::take(&mut self.esc) {
+                Lexer::Text => match b {
+                    0x07 => {
+                        self.bells += 1;
+                        Lexer::Text
+                    }
+                    0x1b => Lexer::Escape,
+                    _ => Lexer::Text,
+                },
+                Lexer::Escape => match b {
+                    b']' => Lexer::Osc(Vec::new()),
+                    0x1b => Lexer::Escape,
+                    _ => Lexer::Text,
+                },
+                Lexer::Osc(mut s) => match b {
+                    0x07 => {
+                        self.osc(&s);
+                        Lexer::Text
+                    }
+                    0x1b => Lexer::OscEscape(s),
+                    _ => {
+                        if s.len() < 4096 {
+                            s.push(b);
+                        }
+                        Lexer::Osc(s)
+                    }
+                },
+                Lexer::OscEscape(s) => {
+                    // ST (ESC \) ends it; anything else abandons it.
+                    if b == b'\\' {
+                        self.osc(&s);
+                    }
+                    Lexer::Text
+                }
+            }
+        }
+    }
+
+    fn osc(&mut self, s: &[u8]) {
+        let s = String::from_utf8_lossy(s);
+        if let Some(t) = s.strip_prefix("0;").or_else(|| s.strip_prefix("2;")) {
+            self.title = t.chars().take(200).collect();
+        }
+    }
+}
 
 struct Output {
     /// The last [`REPLAY_BYTES`] bytes, ending at stream offset `end`.
     replay: VecDeque<u8>,
     end: u64,
     exited: bool,
+    activity: Activity,
+}
+
+/// The last line of text on the screen, roughly: the tail of the stream
+/// without escape sequences, its last line holding anything.
+fn last_line(replay: &VecDeque<u8>) -> String {
+    let n = replay.len();
+    let tail: Vec<u8> = replay.range(n.saturating_sub(2048)..).copied().collect();
+    let text = String::from_utf8_lossy(&tail);
+    let plain = strip_escapes(&text);
+    plain
+        .split(['\n', '\r'])
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn strip_escapes(s: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b\[[0-9;?<>=!]*[ -/]*[@-~]|\x1b[@-Z\\-_]|[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
+            .unwrap()
+    });
+    re.replace_all(s, "").into_owned()
+}
+
+/// Whether a line asks the user something: a question, or a yes/no prompt.
+fn asks(line: &str) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)(\?\s*$|[(\[]\s*y(es)?\s*/\s*n(o)?\s*[)\]]|press enter)").unwrap()
+    });
+    re.is_match(line)
 }
 
 struct Term {
@@ -39,6 +177,33 @@ struct Term {
     authority: Arc<dyn Authority>,
     /// The shell on the host.
     host: HostProc,
+    /// The name it was opened with.
+    name: String,
+    /// The command it runs, `None` for an interactive shell.
+    command: Option<String>,
+}
+
+impl Term {
+    fn describe(&self, id: u64, now: Instant) -> Value {
+        let o = self.out.lock().unwrap();
+        let state = if o.exited {
+            State::Exited
+        } else if o
+            .activity
+            .last_output
+            .is_some_and(|t| now.duration_since(t) < QUIET)
+        {
+            State::Working
+        } else if asks(&last_line(&o.replay)) {
+            State::Waiting
+        } else {
+            State::Idle
+        };
+        json!({
+            "id": id, "name": self.name, "command": self.command, "agent": self.command.is_some(),
+            "title": o.activity.title, "state": state.as_str(), "bells": o.activity.bells,
+        })
+    }
 }
 
 #[derive(Default)]
@@ -47,12 +212,37 @@ pub struct Terms {
     next: AtomicU64,
 }
 
+/// A command line as a terminal's name: itself, cut to 32 characters.
+fn short(command: &str) -> String {
+    let c = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    if c.chars().count() <= 32 {
+        c
+    } else {
+        format!("{}…", c.chars().take(31).collect::<String>())
+    }
+}
+
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+fn not_found(id: u64) -> anyhow::Error {
+    crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
+}
+
 impl Terms {
-    pub fn open(&self, hub: Arc<Hub>, ws: &Workspace, cols: u16, rows: u16) -> Result<u64> {
+    /// A terminal running the user's shell, or `command` in it, in the
+    /// workspace's root. `name` labels it (default: the command, or
+    /// "Terminal").
+    pub fn open(
+        &self,
+        room: Room,
+        ws: &Workspace,
+        size: (u16, u16),
+        name: Option<&str>,
+        command: Option<&str>,
+    ) -> Result<u64> {
+        let (cols, rows) = size;
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -61,10 +251,10 @@ impl Terms {
                 pixel_height: 0,
             })
             .map_err(|e| anyhow!("{e}"))?;
-        let (command, host) = ws.authority.shell_command(&ws.root);
+        let (builder, host) = ws.authority.shell_command(&ws.root, command);
         let child = pair
             .slave
-            .spawn_command(command)
+            .spawn_command(builder)
             .map_err(|e| anyhow!("{e}"))?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(|e| anyhow!("{e}"))?;
@@ -74,6 +264,12 @@ impl Terms {
             replay: VecDeque::new(),
             end: 0,
             exited: false,
+            activity: Activity {
+                esc: Lexer::Text,
+                title: String::new(),
+                bells: 0,
+                last_output: None,
+            },
         }));
         {
             let out = out.clone();
@@ -92,20 +288,24 @@ impl Terms {
                             let over = o.replay.len().saturating_sub(REPLAY_BYTES);
                             o.replay.drain(..over);
                             o.end += n as u64;
-                            hub.broadcast(
+                            o.activity.scan(&buf[..n], Instant::now());
+                            room.broadcast(
                                 &json!({"ev": "term.data", "term": id, "at": at, "data": b64(&buf[..n])}),
-                                None,
                             );
                         }
                     }
                 }
                 out.lock().unwrap().exited = true;
-                hub.broadcast(&json!({"ev": "term.exit", "term": id}), None);
+                room.broadcast(&json!({"ev": "term.exit", "term": id}));
                 // The shell's pid file outlives it (the shell replaced the
                 // script that would have removed it).
                 authority.release(&host);
             });
         }
+        let name = name
+            .map(str::to_string)
+            .or_else(|| command.map(short))
+            .unwrap_or_else(|| "Terminal".into());
         self.map.lock().unwrap().insert(
             id,
             Term {
@@ -116,32 +316,34 @@ impl Terms {
                 size: (cols, rows),
                 authority: ws.authority.clone(),
                 host,
+                name,
+                command: command.map(str::to_string),
             },
         );
         Ok(id)
     }
 
-    /// The replay buffer, and the stream offset it ends at.
+    /// The replay buffer, the stream offset it ends at, and what the
+    /// terminal is.
     pub fn attach(&self, id: u64) -> Result<Value> {
         let m = self.map.lock().unwrap();
-        let t = m.get(&id).ok_or_else(|| {
-            crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
-        })?;
+        let t = m.get(&id).ok_or_else(|| not_found(id))?;
+        let mut v = t.describe(id, Instant::now());
         let o = t.out.lock().unwrap();
         let (a, b) = o.replay.as_slices();
         let mut bytes = a.to_vec();
         bytes.extend_from_slice(b);
-        Ok(json!({
-            "data": b64(&bytes), "end": o.end, "exited": o.exited,
-            "cols": t.size.0, "rows": t.size.1,
-        }))
+        v["data"] = json!(b64(&bytes));
+        v["end"] = json!(o.end);
+        v["exited"] = json!(o.exited);
+        v["cols"] = json!(t.size.0);
+        v["rows"] = json!(t.size.1);
+        Ok(v)
     }
 
     pub fn input(&self, id: u64, data: &str) -> Result<()> {
         let mut m = self.map.lock().unwrap();
-        let t = m.get_mut(&id).ok_or_else(|| {
-            crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
-        })?;
+        let t = m.get_mut(&id).ok_or_else(|| not_found(id))?;
         t.writer.write_all(data.as_bytes())?;
         t.writer.flush()?;
         Ok(())
@@ -149,11 +351,9 @@ impl Terms {
 
     /// Size the PTY. With several clients attached, the last to resize wins,
     /// as with a shared tmux window.
-    pub fn resize(&self, hub: &Hub, id: u64, cols: u16, rows: u16) -> Result<()> {
+    pub fn resize(&self, room: &Room, id: u64, cols: u16, rows: u16) -> Result<()> {
         let mut m = self.map.lock().unwrap();
-        let t = m.get_mut(&id).ok_or_else(|| {
-            crate::error::err(crate::error::Code::NotFound, format!("no terminal {id}"))
-        })?;
+        let t = m.get_mut(&id).ok_or_else(|| not_found(id))?;
         if t.size != (cols, rows) {
             t.master
                 .resize(PtySize {
@@ -164,10 +364,7 @@ impl Terms {
                 })
                 .map_err(|e| anyhow!("{e}"))?;
             t.size = (cols, rows);
-            hub.broadcast(
-                &json!({"ev": "term.size", "term": id, "cols": cols, "rows": rows}),
-                None,
-            );
+            room.broadcast(&json!({"ev": "term.size", "term": id, "cols": cols, "rows": rows}));
         }
         Ok(())
     }
@@ -191,14 +388,69 @@ impl Terms {
     }
 
     pub fn close_all(&self) {
-        for id in self.list() {
+        for id in self.ids() {
             self.close(id);
         }
     }
 
-    pub fn list(&self) -> Vec<u64> {
+    pub fn ids(&self) -> Vec<u64> {
         let mut v: Vec<u64> = self.map.lock().unwrap().keys().copied().collect();
         v.sort();
         v
+    }
+
+    /// Every terminal, in the order opened: `{id, name, command, agent,
+    /// title, state, bells}`.
+    pub fn list(&self) -> Vec<Value> {
+        let now = Instant::now();
+        let m = self.map.lock().unwrap();
+        let mut ids: Vec<&u64> = m.keys().collect();
+        ids.sort();
+        ids.into_iter().map(|id| m[id].describe(*id, now)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn activity() -> Activity {
+        Activity {
+            esc: Lexer::Text,
+            title: String::new(),
+            bells: 0,
+            last_output: None,
+        }
+    }
+
+    #[test]
+    fn titles_and_bells_are_told_apart() {
+        let mut a = activity();
+        let now = Instant::now();
+        // A title ended by BEL is no bell; one split across chunks is read
+        // whole; ST ends one too.
+        a.scan(b"\x1b]0;build: running\x07$ ", now);
+        assert_eq!((a.title.as_str(), a.bells), ("build: running", 0));
+        a.scan(b"\x1b]2;half", now);
+        a.scan(b" and half\x1b\\done\x07", now);
+        assert_eq!((a.title.as_str(), a.bells), ("half and half", 1));
+        a.scan(b"\x1b[31mred\x1b[0m\x07\x07", now);
+        assert_eq!(a.bells, 3);
+    }
+
+    #[test]
+    fn the_last_line_is_read_without_escapes() {
+        let replay: VecDeque<u8> =
+            b"working...\r\n\x1b[1mProceed with the change? \x1b[0m\r\n\x1b[K  \r\n"
+                .iter()
+                .copied()
+                .collect();
+        let line = last_line(&replay);
+        assert_eq!(line, "Proceed with the change?");
+        assert!(asks(&line));
+        assert!(asks("Overwrite file [y/N]"));
+        assert!(asks("Continue (yes/no)"));
+        assert!(!asks("user@host:~/src$"));
+        assert!(!asks("done: 3 files"));
     }
 }

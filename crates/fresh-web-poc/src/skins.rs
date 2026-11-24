@@ -14,8 +14,10 @@
 //! skin's id.
 //!
 //! The client lists skins with the `skin.list` operation and loads a skin's
-//! files from `GET /skins/<id>/<path>`, so a stylesheet's relative `url()`s
-//! resolve inside its own folder. A skin's bundled editor theme is a theme
+//! files from `GET /skins/<id>/<path>` (a built-in one) or
+//! `GET /workspaces/<ws>/skins/<id>/<path>` (one of the workspace's host),
+//! so a stylesheet's relative `url()`s resolve inside its own folder. A
+//! client viewing no workspace has the built-in skins only. A skin's bundled editor theme is a theme
 //! like any other: `skin/<id>`, resolved by the editor's theme loader.
 
 use crate::error::{err, Code};
@@ -86,14 +88,15 @@ fn folder_id(name: &str) -> String {
     }
 }
 
-/// `~/.config/fresh/web-skins` on the workspace's host.
-fn user_dir(ws: &Workspace) -> Option<PathBuf> {
-    let home = ws.fs().home_dir().ok()?;
+/// `~/.config/fresh/web-skins` on the workspace's host; none without a
+/// workspace.
+fn user_dir(ws: Option<&Workspace>) -> Option<PathBuf> {
+    let home = ws?.fs().home_dir().ok()?;
     Some(PathBuf::from(home).join(".config/fresh/web-skins"))
 }
 
-fn read_user(ws: &Workspace, p: &std::path::Path) -> Option<Vec<u8>> {
-    let fs = ws.fs();
+fn read_user(ws: Option<&Workspace>, p: &std::path::Path) -> Option<Vec<u8>> {
+    let fs = ws?.fs();
     let hp = host(p);
     if fs.metadata(hp.as_host_path()).ok()?.size > MAX_FILE {
         return None;
@@ -111,7 +114,7 @@ fn skin(id: String, folder: Folder, css: &[u8]) -> Option<Skin> {
 }
 
 /// Every skin: the built-in ones in their folders' order, then the user's.
-fn all(ws: &Workspace) -> Vec<Skin> {
+fn all(ws: Option<&Workspace>) -> Vec<Skin> {
     let mut out: Vec<Skin> = Vec::new();
     for name in crate::asset_children("skins") {
         if let Some(css) = crate::asset(&format!("skins/{name}/skin.css")) {
@@ -119,8 +122,8 @@ fn all(ws: &Workspace) -> Vec<Skin> {
         }
     }
     let builtin = out.len();
-    if let Some(dir) = user_dir(ws) {
-        let mut entries = ws.list_dir(&dir).unwrap_or_default();
+    if let (Some(dir), Some(w)) = (user_dir(ws), ws) {
+        let mut entries = w.list_dir(&dir).unwrap_or_default();
         entries.retain(|e| e["dir"].as_bool() == Some(true));
         for e in entries {
             let (Some(name), Some(path)) = (e["name"].as_str(), e["path"].as_str()) else {
@@ -147,7 +150,7 @@ impl Skin {
         self.header.get(k).and_then(Value::as_str).unwrap_or("")
     }
 
-    fn file(&self, ws: &Workspace, path: &str) -> Option<Vec<u8>> {
+    fn file(&self, ws: Option<&Workspace>, path: &str) -> Option<Vec<u8>> {
         if !plain_path(path) {
             return None;
         }
@@ -159,7 +162,7 @@ impl Skin {
 
     /// The skin's bundled theme file: `@editor-theme` naming a `.json` file,
     /// or a `theme.json` beside the stylesheet.
-    fn theme_file(&self, ws: &Workspace) -> Option<String> {
+    fn theme_file(&self, ws: Option<&Workspace>) -> Option<String> {
         let named = self.get("editor-theme");
         if named.ends_with(".json") {
             return plain_path(named).then(|| named.to_string());
@@ -169,7 +172,7 @@ impl Skin {
 
     /// The editor theme that goes with the skin, as a theme key: its own
     /// (`skin/<id>`), or an installed theme's (`builtin://nord` → `nord`).
-    fn theme_key(&self, ws: &Workspace) -> Option<String> {
+    fn theme_key(&self, ws: Option<&Workspace>) -> Option<String> {
         if self.theme_file(ws).is_some() {
             return Some(format!("{THEME_PREFIX}{}", self.id));
         }
@@ -182,7 +185,7 @@ impl Skin {
         })
     }
 
-    fn describe(&self, ws: &Workspace) -> Value {
+    fn describe(&self, ws: Option<&Workspace>) -> Value {
         let scale = self
             .get("scale")
             .parse::<f64>()
@@ -206,19 +209,20 @@ impl Skin {
 }
 
 /// `skin.list`: every skin's header, resolved.
-pub fn list(ws: &Workspace) -> Value {
+pub fn list(ws: Option<&Workspace>) -> Value {
     let skins: Vec<Value> = all(ws).iter().map(|s| s.describe(ws)).collect();
     json!({ "skins": skins })
 }
 
-/// A file of a skin, for `GET /skins/<id>/<path>`.
-pub fn file(ws: &Workspace, id: &str, path: &str) -> Option<Vec<u8>> {
+/// A file of a skin, for `GET /skins/<id>/<path>` (no workspace: a
+/// built-in skin's) and `GET /workspaces/<ws>/skins/<id>/<path>`.
+pub fn file(ws: Option<&Workspace>, id: &str, path: &str) -> Option<Vec<u8>> {
     all(ws).into_iter().find(|s| s.id == id)?.file(ws, path)
 }
 
 /// The themes the skins bring, as `(key, name)`: the editor's theme list
 /// shows them beside its own.
-pub fn themes(ws: &Workspace) -> Vec<(String, String)> {
+pub fn themes(ws: Option<&Workspace>) -> Vec<(String, String)> {
     all(ws)
         .iter()
         .filter(|s| s.theme_file(ws).is_some())
@@ -233,7 +237,7 @@ pub fn themes(ws: &Workspace) -> Vec<(String, String)> {
 
 /// A skin's theme (`skin/<id>`), resolved by the editor's theme loader (so
 /// what it `extends` arrives filled in), in the theme file format.
-pub fn theme(ws: &Workspace, key: &str) -> Result<Value> {
+pub fn theme(ws: Option<&Workspace>, key: &str) -> Result<Value> {
     let missing = || err(Code::NotFound, format!("no theme {key}"));
     let id = key.strip_prefix(THEME_PREFIX).ok_or_else(missing)?;
     let s = all(ws)
@@ -293,7 +297,7 @@ pub fn host_stats(ws: &Workspace) -> Value {
         };
         if let (Some(total), Some(avail)) = (kb("MemTotal:"), kb("MemAvailable:")) {
             let used = total.saturating_sub(avail);
-            out.insert("mem".into(), json!((used * 100 / total.max(1)) as u64));
+            out.insert("mem".into(), json!(used * 100 / total.max(1)));
             let g = |k: u64| k as f64 / 1048576.0;
             out.insert(
                 "memText".into(),
@@ -316,8 +320,8 @@ pub fn host_stats(ws: &Workspace) -> Value {
             let mut last = LAST_CPU.lock().unwrap();
             if let Some((t0, i0)) = *last {
                 let (dt, di) = (total.saturating_sub(t0), idle.saturating_sub(i0));
-                if dt > 0 {
-                    out.insert("cpu".into(), json!((dt - di.min(dt)) * 100 / dt));
+                if let Some(cpu) = ((dt - di.min(dt)) * 100).checked_div(dt) {
+                    out.insert("cpu".into(), json!(cpu));
                 }
             }
             *last = Some((total, idle));
@@ -357,7 +361,7 @@ mod tests {
             root: std::env::temp_dir(),
             authority: Arc::new(crate::authority::Local::new()),
         };
-        let l = list(&ws);
+        let l = list(Some(&ws));
         let ids: Vec<&str> = l["skins"]
             .as_array()
             .unwrap()
@@ -367,12 +371,13 @@ mod tests {
         for id in ["default", "compact", "winamp", "bridge"] {
             assert!(ids.contains(&id), "{id} in {ids:?}");
         }
-        let t = theme(&ws, "skin/bridge").unwrap();
+        let t = theme(Some(&ws), "skin/bridge").unwrap();
         assert!(
             t["editor"]["bg"].is_array() || t["editor"]["bg"].is_string(),
             "{t}"
         );
-        assert!(file(&ws, "bridge", "../index.html").is_none());
+        assert!(file(Some(&ws), "bridge", "../index.html").is_none());
+        assert!(file(None, "bridge", "skin.css").is_some(), "built in");
     }
     use std::sync::Arc;
 }
