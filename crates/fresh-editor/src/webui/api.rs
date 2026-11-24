@@ -1848,9 +1848,12 @@ mod tests {
         let (dir, mut ed) = editor_with("precious\n");
         let mut c = ApiClient::default();
         c.push(&mut ed);
-        let root = dir.path().to_string_lossy().to_string();
-        let a = dir.path().join("a.txt");
-        let b = dir.path().join("b.txt");
+        // The paths a client has are the editor's, which are canonical (on
+        // macOS the temp dir is reached through /private).
+        let base = dir.path().canonicalize().expect("canonical");
+        let root = base.to_string_lossy().to_string();
+        let a = base.join("a.txt");
+        let b = base.join("b.txt");
         std::fs::write(&b, "other\n").unwrap();
         // "New File" with a taken name leaves the file as it was.
         call(
@@ -1873,7 +1876,7 @@ mod tests {
             &mut ed,
             json!({"op": "file.rename", "path": a.to_string_lossy(), "name": "c.txt"}),
         );
-        let c_path = dir.path().join("c.txt");
+        let c_path = base.join("c.txt");
         assert!(c_path.exists() && !a.exists(), "renamed");
         let open = ed.engine_buffers();
         assert!(
