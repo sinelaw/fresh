@@ -1660,6 +1660,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fresh-web-poc"
+version = "0.5.9"
+dependencies = [
+ "anyhow",
+ "base64",
+ "fresh-editor-core",
+ "fresh-parser-js",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tiny_http",
+]
+
+[[package]]
 name = "fresh-winterm"
 version = "0.5.9"
 dependencies = [

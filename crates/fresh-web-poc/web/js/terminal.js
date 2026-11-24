@@ -1,0 +1,174 @@
+// Terminals, drawn by xterm.js in this client from the byte stream the
+// server's PTY produces. The server owns the process (on whatever host the
+// workspace's authority is) and a replay buffer; every client runs its own
+// emulator, so the terminal behaves exactly as xterm.js does anywhere.
+//
+// Output chunks carry their offset in the stream. A terminal attached late
+// replays the server's buffer, which ends at a known offset, and then takes
+// only the bytes after it, so nothing is lost or written twice.
+
+import { rpc } from "./rpc.js";
+
+const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+class Term {
+  constructor(panel, id) {
+    this.panel = panel;
+    this.id = id;
+    this.end = null; // stream offset written so far; null until attached
+    this.queue = []; // chunks that arrived before the replay
+    this.el = document.createElement("div");
+    this.el.className = "xterm-host";
+    panel.screens.appendChild(this.el);
+    this.xt = new Terminal({
+      fontFamily: getComputedStyle(document.body).getPropertyValue("--mono"),
+      fontSize: 13,
+      cursorBlink: true,
+      allowProposedApi: true,
+      scrollback: 5000,
+      theme: { background: "#181818", foreground: "#d4d4d4" },
+    });
+    this.fit = new FitAddon.FitAddon();
+    this.xt.loadAddon(this.fit);
+    this.xt.open(this.el);
+    this.xt.onData((data) => rpc("term.input", { term: this.id, data }));
+    this.xt.onBinary((data) => rpc("term.input", { term: this.id, data }));
+    this.xt.onResize(({ cols, rows }) => rpc("term.resize", { term: this.id, cols, rows }).catch(() => {}));
+    this.xt.attachCustomKeyEventHandler((e) => {
+      // Keep the editor's own terminal toggle.
+      if (e.type === "keydown" && e.ctrlKey && e.key === "`") { panel.toggle(); return false; }
+      return true;
+    });
+    this.xt.onTitleChange((t) => { this.title = t; panel.renderTabs(); });
+  }
+
+  async attach() {
+    const r = await rpc("term.attach", { term: this.id });
+    this.xt.write(decode(r.data));
+    this.end = r.end;
+    for (const ev of this.queue) this.data(ev);
+    this.queue = [];
+    if (r.exited) this.exited();
+  }
+
+  data(ev) {
+    if (this.end == null) { this.queue.push(ev); return; }
+    let bytes = decode(ev.data);
+    const at = ev.at;
+    if (at + bytes.length <= this.end) return; // already in the replay
+    if (at < this.end) bytes = bytes.subarray(this.end - at);
+    this.xt.write(bytes);
+    this.end = Math.max(this.end, at + decode(ev.data).length);
+  }
+
+  exited() {
+    this.done = true;
+    this.xt.write("\r\n\x1b[2m[process exited]\x1b[0m\r\n");
+    this.panel.renderTabs();
+  }
+
+  show(on) {
+    this.el.style.display = on ? "block" : "none";
+    if (on) requestAnimationFrame(() => { try { this.fit.fit(); } catch {} this.xt.focus(); });
+  }
+}
+
+export class TerminalPanel {
+  constructor(app, el) {
+    this.app = app;
+    this.el = el;
+    this.tabsEl = el.querySelector(".term-tabs");
+    this.screens = el.querySelector(".term-screens");
+    this.terms = new Map();
+    this.current = null;
+    this.visible = false;
+    new ResizeObserver(() => this.refit()).observe(this.screens);
+  }
+
+  // Terminals the server already runs (from another client, or before a
+  // reload) are attached as they are.
+  async adopt(ids) {
+    for (const id of ids) await this.add(id);
+  }
+
+  async add(id) {
+    if (this.terms.has(id)) return this.terms.get(id);
+    const t = new Term(this, id);
+    this.terms.set(id, t);
+    await t.attach();
+    if (!this.current) this.select(id);
+    this.renderTabs();
+    return t;
+  }
+
+  async create() {
+    const id = (await rpc("term.open", { cols: 100, rows: 24 })).term;
+    await this.add(id);
+    this.select(id);
+  }
+
+  select(id) {
+    this.current = id;
+    for (const [k, t] of this.terms) t.show(k === id && this.visible);
+    this.renderTabs();
+  }
+
+  renderTabs() {
+    this.tabsEl.innerHTML = "";
+    for (const [id, t] of this.terms) {
+      const b = document.createElement("div");
+      b.className = "tab" + (id === this.current ? " active" : "");
+      b.textContent = `${t.done ? "✕ " : ""}${t.title || "Terminal " + id}`;
+      b.onmousedown = (e) => { e.preventDefault(); this.select(id); };
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "×";
+      x.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); this.close(id); };
+      b.appendChild(x);
+      this.tabsEl.appendChild(b);
+    }
+    const plus = document.createElement("div");
+    plus.className = "tab plus";
+    plus.textContent = "+";
+    plus.title = "New terminal";
+    plus.onmousedown = (e) => { e.preventDefault(); this.create(); };
+    this.tabsEl.appendChild(plus);
+  }
+
+  close(id) {
+    const t = this.terms.get(id);
+    if (!t) return;
+    rpc("term.close", { term: id }).catch(() => {});
+    t.xt.dispose();
+    t.el.remove();
+    this.terms.delete(id);
+    if (this.current === id) this.current = this.terms.keys().next().value ?? null;
+    if (this.current != null) this.select(this.current);
+    this.renderTabs();
+  }
+
+  async toggle() {
+    this.visible = !this.visible;
+    this.el.classList.toggle("hidden", !this.visible);
+    if (this.visible) {
+      if (!this.terms.size) await this.create();
+      this.select(this.current);
+    } else this.app.focusPane(this.app.activePane);
+    this.app.relayout();
+  }
+
+  refit() {
+    const t = this.terms.get(this.current);
+    if (t && this.visible) try { t.fit.fit(); } catch {}
+  }
+
+  onEvent(ev) {
+    if (ev.ev === "term.data") {
+      const t = this.terms.get(ev.term);
+      if (t) t.data(ev);
+      else this.add(ev.term); // another client opened it: show it here too
+    } else if (ev.ev === "term.exit") {
+      this.terms.get(ev.term)?.exited();
+    }
+  }
+}

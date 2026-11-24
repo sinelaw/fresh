@@ -17,6 +17,7 @@ members = [
     "crates/fresh-js",
     "crates/fresh-quickjs-sys",
     "crates/fresh-js-macros",
+    "crates/fresh-web-poc",
 ]
 default-members = [
     "crates/fresh-editor",

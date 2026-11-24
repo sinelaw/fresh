@@ -1,0 +1,30 @@
+[package]
+name = "fresh-web-poc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Proof of concept: Fresh as a data server with a thick web client"
+publish = false
+
+[[bin]]
+name = "fresh-poc"
+path = "src/main.rs"
+
+[dependencies]
+fresh-editor-core = { workspace = true, features = ["runtime"] }
+fresh-parser-js = { workspace = true, features = ["oxc"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow = { workspace = true, features = ["std"] }
+tiny_http = "0.12"
+portable-pty = "0.9"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3.25"
+
+[lints]
+workspace = true
