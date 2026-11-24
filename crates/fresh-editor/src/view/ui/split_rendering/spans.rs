@@ -258,6 +258,28 @@ impl DebugSpanTracker {
     }
 }
 
+/// The precondition every cursor walk below shares: `spans` is sorted by
+/// `range.start`. A single span out of order makes the forward-only cursor
+/// return `None` for every position before it, so the cells lose their
+/// colour silently — there is nothing on screen that says "a span was
+/// misplaced" rather than "this text has no span" (issue #3705).
+///
+/// Checked where the walk steps over a span, so it costs one comparison per
+/// advance and fires in the frame that first traverses the inversion.
+#[inline]
+fn debug_assert_in_order(spans: &[HighlightSpan], stepped_over: usize) {
+    debug_assert!(
+        spans
+            .get(stepped_over + 1)
+            .is_none_or(|next| next.range.start >= spans[stepped_over].range.start),
+        "highlight spans must be sorted by range.start for the cursor walk: \
+         span {stepped_over} is {:?} but span {} is {:?}",
+        spans[stepped_over].range,
+        stepped_over + 1,
+        spans[stepped_over + 1].range,
+    );
+}
+
 /// Advance a cursor through sorted, non-overlapping spans to find the color at `byte_pos`.
 /// Returns the color if `byte_pos` falls inside a span, and advances `cursor` past any
 /// spans that end before `byte_pos` so subsequent calls are O(1) amortized.
@@ -280,6 +302,7 @@ pub(super) fn span_at<'a>(
     while *cursor < spans.len() {
         let span = &spans[*cursor];
         if span.range.end <= byte_pos {
+            debug_assert_in_order(spans, *cursor);
             *cursor += 1;
         } else if span.range.start > byte_pos {
             return None;
@@ -333,6 +356,7 @@ pub(super) fn span_info_at(
     while *cursor < spans.len() {
         let span = &spans[*cursor];
         if span.range.end <= byte_pos {
+            debug_assert_in_order(spans, *cursor);
             *cursor += 1;
         } else if span.range.start > byte_pos {
             return (None, None, None);

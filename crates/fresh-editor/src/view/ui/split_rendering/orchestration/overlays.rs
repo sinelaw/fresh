@@ -252,6 +252,13 @@ pub(crate) fn decoration_context(
 
     // Semantic tokens are stored as overlays so their ranges track edits.
     // Convert them into highlight spans for the render pipeline.
+    //
+    // Everything below inherits `query_viewport`'s position order, and all
+    // three uses need it: `semantic_token_spans` is walked per cell by
+    // `span_at`'s forward-only cursor, and the priority sort and the
+    // inline-diagnostic fold are both *tie-breaks* — a stable sort and a
+    // first-seen-wins — so their input order decides which of two equal
+    // candidates wins a cell or a line (issue #3705).
     let is_compose = matches!(view_mode, ViewMode::PageView);
     let mut semantic_token_spans = Vec::new();
     let mut viewport_overlays = Vec::new();
@@ -282,7 +289,9 @@ pub(crate) fn decoration_context(
     }
 
     // Sort overlays by priority (ascending) so higher priority overlays are
-    // applied last in the rendering loop.
+    // applied last in the rendering loop. Stable, so equal priorities keep
+    // position order rather than taking whatever order the overlay store
+    // happens to hold them in.
     viewport_overlays.sort_by_key(|(overlay, _)| overlay.priority);
 
     // Build a parallel index sorted by `range.start`. The render loop uses
