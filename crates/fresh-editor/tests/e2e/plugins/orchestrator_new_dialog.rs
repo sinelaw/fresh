@@ -2171,6 +2171,46 @@ fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
     );
 }
 
+/// **A typed workspace name is reduced to what a directory and a branch can
+/// hold, where the form previews it.** The name is both: `runLocalCreate`
+/// joins it under the project's state directory and `git worktree add -b`
+/// cuts a branch called it. So `fix: colon` cannot be either — `:` is
+/// invalid in a Windows path component and in a git ref — and the row has to
+/// say so before the launch, not fail afterwards.
+#[test]
+fn a_typed_workspace_name_is_previewed_as_the_directory_it_will_be() {
+    let (_temp, workspace) = set_up_workspace();
+    let repo = workspace.join("myrepo");
+    fs::create_dir(&repo).unwrap();
+    git_init_repo(&repo);
+
+    let data_home = tempfile::tempdir().unwrap();
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("plain folder"))
+        .expect("the form opens on a non-git workspace, so the plan starts as a plain folder");
+
+    harness.type_text(repo.to_str().unwrap()).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("new worktree"))
+        .expect("a typed repository path turns the plan into a new worktree");
+
+    set_details(&mut harness, true);
+    focus_stop(&mut harness, "Workspace:");
+    harness.type_text("fix: colon").unwrap();
+
+    harness
+        .wait_until(|h| previewed_worktree_path(&h.screen_to_string()).ends_with("/fix-colon"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the previewed worktree directory is the typed name reduced to what a \
+                 directory and a branch can hold. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
 /// **And the same for a `~` path**, which is the shape the disabled toggle
 /// was actually reported on: `git -C ~/repo` with a literal tilde fails, the
 /// form reads that as "not a git path", and a repository that plainly is one
