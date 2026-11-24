@@ -162,6 +162,7 @@ pub mod issue_3426_window_scratch_view_config;
 pub mod issue_3452_empty_pane_ground;
 pub mod issue_3466_wrap_indent_occurrence_highlight;
 pub mod issue_3475_unnamed_buffers_across_workspaces;
+pub mod issue_3478_rainbow_depth_while_scrolling;
 pub mod issue_3486_3495_selection_keys;
 pub mod issue_3626_save_as_resurrects_unnamed_buffer;
 pub mod issue_3633_recovery_gaps;

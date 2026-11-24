@@ -4,8 +4,9 @@
 //! When the cursor is on a bracket, the matching bracket is highlighted.
 //! Optional rainbow colors can be applied based on nesting depth.
 
-use crate::model::buffer::Buffer;
+use crate::model::buffer::{Buffer, ContentStamp};
 use crate::model::marker::MarkerList;
+use crate::primitives::highlight_engine::HighlightEngine;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, OverlayNamespace};
 use crate::view::theme::Theme;
 use ratatui::style::{Color, Modifier, Style};
@@ -65,6 +66,11 @@ pub(crate) const MAX_BRACKET_SEARCH_BYTES: usize = 1_000_000;
 /// Chunk size for bulk reads during bracket scanning.
 const BRACKET_SCAN_CHUNK: usize = 16 * 1024;
 
+/// Bytes between the depth marks a colorization scan leaves behind it (see
+/// [`DepthIndex`]): the most a frame rescans above its viewport once the
+/// marks exist.
+const DEPTH_MARK_INTERVAL: usize = 4 * 1024;
+
 /// Check if a character is an opening bracket
 fn is_opening_bracket(ch: char, angle_brackets: bool) -> bool {
     bracket_pairs(angle_brackets)
@@ -105,6 +111,24 @@ fn pos_in_ranges(ranges: &[Range<usize>], pos: usize) -> bool {
             }
         })
         .is_ok()
+}
+
+/// The union of two sets of sorted, disjoint ranges, sorted and disjoint
+/// again (as [`pos_in_ranges`] needs).
+fn merge_ranges(a: Vec<Range<usize>>, b: &[Range<usize>]) -> Vec<Range<usize>> {
+    if b.is_empty() {
+        return a;
+    }
+    let mut all: Vec<Range<usize>> = a.into_iter().chain(b.iter().cloned()).collect();
+    all.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(all.len());
+    for range in all {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
 }
 
 /// The bracket matching the one at `position` — `opening`/`closing` its
@@ -308,16 +332,78 @@ pub struct BracketHighlightOverlay {
     /// the overlays it would produce are already in place, and re-deriving
     /// them costs the whole overlay set (see `update_colorization`).
     colorization_cache: Option<ColorizationCache>,
+    /// The bracket stack at line starts above the viewport, so a bracket's
+    /// colour is its depth in the whole buffer rather than in a window
+    /// around the viewport (issue #3478).
+    depth_index: Option<DepthIndex>,
+}
+
+/// The bracket stack at known line starts, recorded as colorization scans
+/// pass them, so a frame resumes from the nearest one above its viewport
+/// instead of rescanning from the top of the buffer — or seeding an empty
+/// stack a screenful up, which is what made colours shift by the number of
+/// enclosing scopes that had scrolled out of that window (issue #3478).
+///
+/// Every mark is exact: the first scan starts at byte 0 with an empty stack,
+/// and every later one starts at a mark. They are contiguous from the top —
+/// new marks are only added past the last one — so the gap a frame rescans
+/// is bounded by the mark spacing. A mark is the stack of every opener
+/// before its offset that is still open there, with brackets in comments and
+/// strings skipped by the same classification the viewport is drawn with.
+///
+/// What a mark depends on, and how each is tracked:
+/// - the bytes before it: the buffer reports how much of its prefix is
+///   unchanged since a stamp ([`Buffer::unchanged_prefix_since`]), so an
+///   edit drops only the marks past it;
+/// - how those bytes are classified: unchanged too, because marks sit on
+///   line starts and the highlighter classifies line by line, forward only,
+///   so an edit cannot reclassify a line above the one it lands in. Anything
+///   else that could (new declared regions, a different engine) moves the
+///   engine's [`classification_epoch`](HighlightEngine::classification_epoch),
+///   which drops every mark;
+/// - whether `<`/`>` count as brackets, which drops every mark when it flips.
+struct DepthIndex {
+    stamp: ContentStamp,
+    classification_epoch: u64,
+    angle_brackets: bool,
+    /// Ascending by offset.
+    marks: Vec<DepthMark>,
+}
+
+/// The stack of unclosed openers before `offset`, a line start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DepthMark {
+    offset: usize,
+    stack: Vec<u8>,
+}
+
+/// What one colorization pass reads: where its scan starts and ends, the
+/// stack it starts with, and the comment/string ranges it skips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScanPlan {
+    start: usize,
+    end: usize,
+    seed: Vec<u8>,
+    skip_ranges: Vec<Range<usize>>,
+    /// Seeded from the depth index (so the stack is exact, and the scan may
+    /// add marks) rather than from an empty stack a window above the
+    /// viewport.
+    exact: bool,
+}
+
+/// What a scan produced: each viewport bracket's level, and the marks it
+/// passed beyond the index's last one.
+struct ScanResult {
+    wanted: std::collections::HashMap<usize, usize>,
+    new_marks: Vec<DepthMark>,
 }
 
 /// Inputs a colorization pass depends on, plus the range it wrote.
 struct ColorizationCache {
-    /// Bytes scanned for brackets.
-    scan: Range<usize>,
+    plan: ScanPlan,
     buffer_version: u64,
     viewport: Range<usize>,
     colors: [Color; 6],
-    skip_ranges: Vec<Range<usize>>,
     /// Whether `<`/`>` counted as brackets — a language switch on the same
     /// buffer changes the overlays this pass would produce.
     angle_brackets: bool,
@@ -350,6 +436,7 @@ impl BracketHighlightOverlay {
             last_angle_brackets: None,
             colorization_active: false,
             colorization_cache: None,
+            depth_index: None,
         }
     }
 
@@ -357,7 +444,8 @@ impl BracketHighlightOverlay {
     ///
     /// `skip_ranges` are byte ranges (comments and strings, sorted by start)
     /// whose brackets must be ignored — they are prose/data, not structural
-    /// punctuation (issue #2405).
+    /// punctuation (issue #2405). They cover the frame's highlighted window;
+    /// `highlighter` answers for text above it, which rainbow depth needs.
     ///
     /// Returns true if overlays were updated
     #[allow(clippy::too_many_arguments)]
@@ -366,6 +454,7 @@ impl BracketHighlightOverlay {
         buffer: &Buffer,
         overlays: &mut OverlayManager,
         marker_list: &mut MarkerList,
+        highlighter: &HighlightEngine,
         theme: &Theme,
         settings: BracketHighlightSettings,
         cursor_position: usize,
@@ -400,6 +489,7 @@ impl BracketHighlightOverlay {
                 buffer,
                 overlays,
                 marker_list,
+                highlighter,
                 viewport_start,
                 viewport_end,
                 skip_ranges,
@@ -579,6 +669,7 @@ impl BracketHighlightOverlay {
         buffer: &Buffer,
         overlays: &mut OverlayManager,
         marker_list: &mut MarkerList,
+        highlighter: &HighlightEngine,
         viewport_start: usize,
         viewport_end: usize,
         skip_ranges: &[Range<usize>],
@@ -588,10 +679,31 @@ impl BracketHighlightOverlay {
             return self.clear_colorization(overlays, marker_list);
         }
 
-        let viewport_size = viewport_end.saturating_sub(viewport_start);
-        let scan_start = viewport_start.saturating_sub(viewport_size);
         let scan_end = viewport_end.min(buffer.len());
-        if scan_start >= scan_end {
+        let windowed = || {
+            // Without an exact seed, an empty stack one viewport-height up:
+            // right for every scope that opens within that window, short by
+            // one level per enclosing scope that opens above it.
+            let viewport_size = viewport_end.saturating_sub(viewport_start);
+            ScanPlan {
+                start: viewport_start.saturating_sub(viewport_size),
+                end: scan_end,
+                seed: Vec::new(),
+                skip_ranges: skip_ranges.to_vec(),
+                exact: false,
+            }
+        };
+        let plan = self
+            .exact_plan(
+                buffer,
+                highlighter,
+                viewport_start,
+                scan_end,
+                skip_ranges,
+                angle_brackets,
+            )
+            .unwrap_or_else(windowed);
+        if plan.start >= plan.end {
             return self.clear_colorization(overlays, marker_list);
         }
 
@@ -603,11 +715,10 @@ impl BracketHighlightOverlay {
         // replace below is what makes that expensive on a heavily-decorated
         // buffer (a review diff carries an overlay per line).
         if let Some(cache) = &self.colorization_cache {
-            if cache.scan == (scan_start..scan_end)
+            if cache.plan == plan
                 && cache.buffer_version == buffer.version()
                 && cache.viewport == (viewport_start..viewport_end)
                 && cache.colors == self.rainbow_colors
-                && cache.skip_ranges == skip_ranges
                 && cache.angle_brackets == angle_brackets
                 && cache.removal_epochs == overlays.removal_epochs_for(&ns)
             {
@@ -615,52 +726,24 @@ impl BracketHighlightOverlay {
             }
         }
 
-        let bytes = buffer.slice_bytes(scan_start..scan_end);
-        if bytes.is_empty() {
-            return self.clear_colorization(overlays, marker_list);
+        let levels = self.rainbow_colors.len();
+        let mut result = self.scan(buffer, &plan, viewport_start, angle_brackets, levels);
+        let mut plan = plan;
+        if result.is_none() && plan.exact {
+            // Text between the mark and the viewport isn't loaded (a lazily
+            // loaded buffer): colour from the window, as before the index.
+            plan = windowed();
+            result = self.scan(buffer, &plan, viewport_start, angle_brackets, levels);
         }
-
-        let mut stack: Vec<char> = Vec::new();
-        // What the viewport's brackets should look like: byte -> colour.
-        // Position -> nesting level (an index into `rainbow_colors` and
-        // `RAINBOW_KEYS`).
-        let mut wanted: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-
-        for (idx, byte) in bytes.iter().enumerate() {
-            let pos = scan_start + idx;
-            let c = *byte as char;
-
-            let opening = is_opening_bracket(c, angle_brackets);
-            if !opening && !is_closing_bracket(c, angle_brackets) {
-                continue;
-            }
-
-            // Brackets inside comments/strings are prose, not structure: don't
-            // colorize them and don't let them affect the nesting depth of
-            // real brackets (issue #2405). Checked only for brackets, because
-            // that is the only thing it can veto and this runs per byte.
-            if pos_in_ranges(skip_ranges, pos) {
-                continue;
-            }
-
-            if opening {
-                let depth = stack.len();
-                stack.push(c);
-                if pos >= viewport_start {
-                    wanted.insert(pos, depth % self.rainbow_colors.len());
-                }
-                continue;
-            }
-
-            let depth = stack.len().saturating_sub(1);
-            if let Some(expected_open) = opening_for_closing(c, angle_brackets) {
-                if stack.last() == Some(&expected_open) {
-                    stack.pop();
-                }
-            }
-            if pos >= viewport_start {
-                wanted.insert(pos, depth % self.rainbow_colors.len());
-            }
+        let Some(ScanResult {
+            mut wanted,
+            new_marks,
+        }) = result
+        else {
+            return self.clear_colorization(overlays, marker_list);
+        };
+        if let Some(index) = self.depth_index.as_mut() {
+            index.marks.extend(new_marks);
         }
 
         self.colorization_active = !wanted.is_empty();
@@ -707,15 +790,164 @@ impl BracketHighlightOverlay {
             .with_theme_key(RAINBOW_KEYS[level])
         }));
         self.colorization_cache = Some(ColorizationCache {
-            scan: scan_start..scan_end,
+            plan,
             buffer_version: buffer.version(),
             viewport: viewport_start..viewport_end,
             colors: self.rainbow_colors,
-            skip_ranges: skip_ranges.to_vec(),
             angle_brackets,
             removal_epochs: overlays.removal_epochs_for(&ns),
         });
         true
+    }
+
+    /// A scan seeded from the depth index: from the last mark at or above
+    /// the viewport, with the stack recorded there. `None` when the buffer is
+    /// too large to index (beyond the scan cap, it may also be loaded lazily)
+    /// or the highlighter can't classify the text between the mark and the
+    /// viewport the way it classifies the viewport (see
+    /// [`HighlightEngine::prose_ranges_in`]).
+    fn exact_plan(
+        &mut self,
+        buffer: &Buffer,
+        highlighter: &HighlightEngine,
+        viewport_start: usize,
+        scan_end: usize,
+        frame_skip_ranges: &[Range<usize>],
+        angle_brackets: bool,
+    ) -> Option<ScanPlan> {
+        let buffer_len = buffer.len();
+        if buffer_len > MAX_BRACKET_SEARCH_BYTES {
+            self.depth_index = None;
+            return None;
+        }
+        let epoch = highlighter.classification_epoch();
+        let index = match self.depth_index.take() {
+            Some(mut index)
+                if index.classification_epoch == epoch
+                    && index.angle_brackets == angle_brackets =>
+            {
+                let unchanged = buffer.unchanged_prefix_since(index.stamp);
+                let keep = index.marks.partition_point(|mark| mark.offset <= unchanged);
+                index.marks.truncate(keep);
+                index.stamp = buffer.content_stamp();
+                index
+            }
+            _ => DepthIndex {
+                stamp: buffer.content_stamp(),
+                classification_epoch: epoch,
+                angle_brackets,
+                marks: Vec::new(),
+            },
+        };
+        let index = self.depth_index.insert(index);
+        let from = index
+            .marks
+            .partition_point(|mark| mark.offset <= viewport_start);
+        let (start, seed) = match from.checked_sub(1) {
+            Some(i) => (index.marks[i].offset, index.marks[i].stack.clone()),
+            None => (0, Vec::new()),
+        };
+        let above = highlighter.prose_ranges_in(buffer_len, start..scan_end)?;
+        // The frame's own ranges come from the same parse, so for the window
+        // it highlighted the two agree; taking both keeps the frame's
+        // authoritative wherever it has an answer.
+        let skip_ranges = merge_ranges(above, frame_skip_ranges);
+        Some(ScanPlan {
+            start,
+            end: scan_end,
+            seed,
+            skip_ranges,
+            exact: true,
+        })
+    }
+
+    /// Walk `plan`, colouring the brackets from `viewport_start` on by their
+    /// depth. An exact plan also records a mark at a line start whenever it
+    /// is far enough past the index's last one. `None` when part of the
+    /// range isn't loaded.
+    fn scan(
+        &self,
+        buffer: &Buffer,
+        plan: &ScanPlan,
+        viewport_start: usize,
+        angle_brackets: bool,
+        levels: usize,
+    ) -> Option<ScanResult> {
+        let mut stack = plan.seed.clone();
+        let mut wanted = std::collections::HashMap::new();
+        let mut new_marks = Vec::new();
+        // Marks are only added past the index's last one, which keeps them
+        // contiguous from the top of the buffer.
+        let mut last_mark = plan.exact.then(|| {
+            self.depth_index
+                .as_ref()
+                .and_then(|index| index.marks.last())
+                .map_or(0, |mark| mark.offset)
+                .max(plan.start)
+        });
+        let mut pos = plan.start;
+        while pos < plan.end {
+            let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(plan.end);
+            let chunk = buffer.slice_bytes(pos..chunk_end);
+            if chunk.len() != chunk_end - pos {
+                return None;
+            }
+            for (i, &byte) in chunk.iter().enumerate() {
+                let at = pos + i;
+                if byte == b'\n' {
+                    if let Some(last) = last_mark.as_mut() {
+                        // Spaced by the stack's size as well, so a deep
+                        // stack can't cost more memory than the text it
+                        // came from.
+                        let line_start = at + 1;
+                        if line_start.saturating_sub(*last) >= DEPTH_MARK_INTERVAL.max(stack.len())
+                        {
+                            new_marks.push(DepthMark {
+                                offset: line_start,
+                                stack: stack.clone(),
+                            });
+                            *last = line_start;
+                        }
+                    }
+                    continue;
+                }
+                let c = byte as char;
+                let opening = is_opening_bracket(c, angle_brackets);
+                if !opening && !is_closing_bracket(c, angle_brackets) {
+                    continue;
+                }
+
+                // Brackets inside comments/strings are prose, not structure:
+                // don't colorize them and don't let them affect the nesting
+                // depth of real brackets (issue #2405). Checked only for
+                // brackets, because that is the only thing it can veto and
+                // this runs per byte.
+                if pos_in_ranges(&plan.skip_ranges, at) {
+                    continue;
+                }
+
+                if opening {
+                    let depth = stack.len();
+                    stack.push(byte);
+                    if at >= viewport_start {
+                        wanted.insert(at, depth % levels);
+                    }
+                    continue;
+                }
+
+                let depth = stack.len().saturating_sub(1);
+                if let Some(expected_open) = opening_for_closing(c, angle_brackets) {
+                    if stack.last() == Some(&(expected_open as u8)) {
+                        stack.pop();
+                    }
+                }
+                if at >= viewport_start {
+                    wanted.insert(at, depth % levels);
+                }
+            }
+            pos = chunk_end;
+        }
+        Some(ScanResult { wanted, new_marks })
     }
 }
 
@@ -738,7 +970,16 @@ mod tests {
         overlays: &mut OverlayManager,
         markers: &mut MarkerList,
     ) -> bool {
-        overlay.update_colorization(buffer, overlays, markers, 0, buffer.len(), &[], false)
+        overlay.update_colorization(
+            buffer,
+            overlays,
+            markers,
+            &HighlightEngine::None,
+            0,
+            buffer.len(),
+            &[],
+            false,
+        )
     }
 
     /// The colour painted at `byte`, scanning the whole buffer.
@@ -750,6 +991,7 @@ mod tests {
             buffer,
             &mut overlays,
             &mut markers,
+            &HighlightEngine::None,
             0,
             buffer.len(),
             skip_ranges,
@@ -764,6 +1006,118 @@ mod tests {
             }
         });
         found
+    }
+
+    /// One colorization pass over `viewport` as the renderer makes it,
+    /// returning the colour painted at `byte`.
+    fn colour_in_frame(
+        overlay: &mut BracketHighlightOverlay,
+        buffer: &Buffer,
+        highlighter: &HighlightEngine,
+        viewport: Range<usize>,
+        angle_brackets: bool,
+        byte: usize,
+    ) -> Option<Color> {
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        // A fresh overlay set every frame, so the pass can't short-circuit
+        // on overlays it left behind.
+        overlay.colorization_cache = None;
+        overlay.update_colorization(
+            buffer,
+            &mut overlays,
+            &mut markers,
+            highlighter,
+            viewport.start,
+            viewport.end,
+            &[],
+            angle_brackets,
+        );
+        let ns = bracket_colorization_namespace();
+        let found = overlays.in_namespace(&ns).find_map(|o| match o.face {
+            OverlayFace::Foreground { color } if o.range(&markers).start == byte => Some(color),
+            _ => None,
+        });
+        found
+    }
+
+    /// A bracket's colour is its depth in the whole buffer, however far
+    /// above the viewport its enclosing scopes open (issue #3478).
+    #[test]
+    fn depth_counts_scopes_opened_far_above_the_viewport() {
+        let filler = "x\n".repeat(20_000);
+        let text = format!("{{\n[\n{filler}()\n");
+        let buffer = Buffer::from_str_test(&text);
+        let pair = text.find('(').unwrap();
+        let mut overlay = BracketHighlightOverlay::new();
+        let colour = colour_in_frame(
+            &mut overlay,
+            &buffer,
+            &HighlightEngine::None,
+            pair - 100..buffer.len(),
+            false,
+            pair,
+        );
+        assert_eq!(colour, Some(overlay.rainbow_colors[2]));
+    }
+
+    /// Marks recorded while `<` was not a bracket say nothing about a
+    /// language where it is.
+    #[test]
+    fn depth_marks_are_dropped_when_angle_brackets_start_counting() {
+        let filler = "x\n".repeat(20_000);
+        let text = format!("<\n{filler}()\n");
+        let buffer = Buffer::from_str_test(&text);
+        let pair = text.find('(').unwrap();
+        let viewport = pair - 100..buffer.len();
+        let mut overlay = BracketHighlightOverlay::new();
+        let none = HighlightEngine::None;
+
+        let without = colour_in_frame(&mut overlay, &buffer, &none, viewport.clone(), false, pair);
+        assert_eq!(without, Some(overlay.rainbow_colors[0]));
+        let with = colour_in_frame(&mut overlay, &buffer, &none, viewport, true, pair);
+        assert_eq!(
+            with,
+            Some(overlay.rainbow_colors[1]),
+            "the `<` encloses it now"
+        );
+    }
+
+    /// Marks recorded under one classification of the text above the
+    /// viewport say nothing about another: here a highlighter arrives that
+    /// knows the `{` up top is inside a string.
+    #[test]
+    fn depth_marks_are_dropped_when_the_classification_changes() {
+        let filler = "  \"x\": 1,\n".repeat(2_000);
+        let text = format!("[\"{{\",\n{{\n{filler}  \"y\": [1]\n}}]\n");
+        let buffer = Buffer::from_str_test(&text);
+        let inner = text.rfind('[').unwrap();
+        let viewport = inner - 100..buffer.len();
+        let mut overlay = BracketHighlightOverlay::new();
+
+        // Unclassified, the quoted `{` counts: `[`, `{`, `{` enclose it.
+        let unclassified = colour_in_frame(
+            &mut overlay,
+            &buffer,
+            &HighlightEngine::None,
+            viewport.clone(),
+            false,
+            inner,
+        );
+        assert_eq!(unclassified, Some(overlay.rainbow_colors[3]));
+
+        let registry = crate::primitives::grammar::GrammarRegistry::load(
+            &crate::primitives::grammar::LocalGrammarLoader::embedded_only(),
+        );
+        let mut json = HighlightEngine::for_file(std::path::Path::new("a.json"), None, &registry);
+        let theme = Theme::load_builtin("dark").expect("the built-in dark theme");
+        json.highlight_viewport(&buffer, viewport.start, viewport.end, &theme, 1000);
+        let classified = colour_in_frame(&mut overlay, &buffer, &json, viewport, false, inner);
+        assert_eq!(
+            classified,
+            Some(overlay.rainbow_colors[2]),
+            "the quoted `{{` is text"
+        );
     }
 
     /// The skip check sits behind the test for a bracket, so this pins that a
@@ -803,6 +1157,7 @@ mod tests {
             buffer,
             overlays,
             markers,
+            &HighlightEngine::None,
             &Theme::load_builtin("dark").expect("the built-in dark theme"),
             BracketHighlightSettings {
                 matching: true,

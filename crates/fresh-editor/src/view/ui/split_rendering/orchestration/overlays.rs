@@ -242,6 +242,7 @@ pub(crate) fn decoration_context(
         &state.buffer,
         &mut state.overlays,
         &mut state.marker_list,
+        &state.highlighter,
         theme,
         bracket_highlight,
         primary_cursor_position,
