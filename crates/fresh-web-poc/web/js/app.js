@@ -533,7 +533,8 @@ class App {
   onCopy(e, cut) {
     const v = this.view();
     if (!v) return;
-    const sels = v.selections();
+    // In document order, as paste hands them out.
+    const sels = v.selections().sort((x, y) => x.start - y.start);
     // With nothing selected, copy (or cut) the cursor's line.
     const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end)) : [this.editing.lineAt(v.buf, v.primary.pos).text + "\n"];
     e.preventDefault();
