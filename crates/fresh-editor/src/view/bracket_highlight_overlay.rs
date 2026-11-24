@@ -113,24 +113,6 @@ fn pos_in_ranges(ranges: &[Range<usize>], pos: usize) -> bool {
         .is_ok()
 }
 
-/// The union of two sets of sorted, disjoint ranges, sorted and disjoint
-/// again (as [`pos_in_ranges`] needs).
-fn merge_ranges(a: Vec<Range<usize>>, b: &[Range<usize>]) -> Vec<Range<usize>> {
-    if b.is_empty() {
-        return a;
-    }
-    let mut all: Vec<Range<usize>> = a.into_iter().chain(b.iter().cloned()).collect();
-    all.sort_by_key(|range| range.start);
-    let mut merged: Vec<Range<usize>> = Vec::with_capacity(all.len());
-    for range in all {
-        match merged.last_mut() {
-            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
-            _ => merged.push(range),
-        }
-    }
-    merged
-}
-
 /// The bracket matching the one at `position` — `opening`/`closing` its
 /// pair, searched ahead of it when `forward` and behind it otherwise — no
 /// further than `search_bound` (an absolute byte) nor
@@ -347,7 +329,8 @@ pub struct BracketHighlightOverlay {
 /// Every mark is exact: the first scan starts at byte 0 with an empty stack,
 /// and every later one starts at a mark. They are contiguous from the top —
 /// new marks are only added past the last one — so the gap a frame rescans
-/// is bounded by the mark spacing. A mark is the stack of every opener
+/// is bounded by the mark spacing (4 KB, or one line where a line is
+/// longer, since marks sit on line starts). A mark is the stack of every opener
 /// before its offset that is still open there, with brackets in comments and
 /// strings skipped by the same classification the viewport is drawn with.
 ///
@@ -699,7 +682,6 @@ impl BracketHighlightOverlay {
                 highlighter,
                 viewport_start,
                 scan_end,
-                skip_ranges,
                 angle_brackets,
             )
             .unwrap_or_else(windowed);
@@ -812,7 +794,6 @@ impl BracketHighlightOverlay {
         highlighter: &HighlightEngine,
         viewport_start: usize,
         scan_end: usize,
-        frame_skip_ranges: &[Range<usize>],
         angle_brackets: bool,
     ) -> Option<ScanPlan> {
         let buffer_len = buffer.len();
@@ -847,11 +828,9 @@ impl BracketHighlightOverlay {
             Some(i) => (index.marks[i].offset, index.marks[i].stack.clone()),
             None => (0, Vec::new()),
         };
-        let above = highlighter.prose_ranges_in(buffer_len, start..scan_end)?;
-        // The frame's own ranges come from the same parse, so for the window
-        // it highlighted the two agree; taking both keeps the frame's
-        // authoritative wherever it has an answer.
-        let skip_ranges = merge_ranges(above, frame_skip_ranges);
+        // The frame's own skip ranges are this same parse's answer for its
+        // highlighted window, so these cover them.
+        let skip_ranges = highlighter.prose_ranges_in(buffer_len, start..scan_end)?;
         Some(ScanPlan {
             start,
             end: scan_end,
@@ -984,28 +963,20 @@ mod tests {
 
     /// The colour painted at `byte`, scanning the whole buffer.
     fn colour_at(buffer: &Buffer, byte: usize, skip_ranges: &[Range<usize>]) -> Option<Color> {
-        let mut overlays = OverlayManager::new();
-        let mut markers = MarkerList::new();
-        let mut overlay = BracketHighlightOverlay::new();
-        overlay.update_colorization(
-            buffer,
-            &mut overlays,
-            &mut markers,
-            &HighlightEngine::None,
-            0,
-            buffer.len(),
-            skip_ranges,
-            false,
-        );
-        let ns = bracket_colorization_namespace();
-        let found = overlays.in_namespace(&ns).find_map(|o| {
-            let range = o.range(&markers);
-            match o.face {
-                OverlayFace::Foreground { color } if range.start == byte => Some(color),
-                _ => None,
-            }
-        });
-        found
+        let overlay = BracketHighlightOverlay::new();
+        let plan = ScanPlan {
+            start: 0,
+            end: buffer.len(),
+            seed: Vec::new(),
+            skip_ranges: skip_ranges.to_vec(),
+            exact: false,
+        };
+        let levels = overlay.rainbow_colors.len();
+        let result = overlay.scan(buffer, &plan, 0, false, levels)?;
+        result
+            .wanted
+            .get(&byte)
+            .map(|&level| overlay.rainbow_colors[level])
     }
 
     /// One colorization pass over `viewport` as the renderer makes it,

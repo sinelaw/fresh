@@ -3112,9 +3112,17 @@ impl TextMateEngine {
         if !cache.anchored
             || cache.range.start != 0
             || cache.range.end < range.end
-            || self.last_buffer_len != buffer_len
             || self.dirty_from.is_some_and(|dirty| dirty < range.end)
         {
+            return None;
+        }
+        // A length the cache never saw is an edit it was not told about, so
+        // nothing in it can be trusted. An edit it *was* told about
+        // (`dirty_from` set) shifted the spans already, and those before the
+        // dirty point are current even while the re-parse waits for the
+        // viewport to reach it — which, for an edit below the viewport, can be
+        // any number of frames.
+        if self.dirty_from.is_none() && self.last_buffer_len != buffer_len {
             return None;
         }
         let first = cache
@@ -7134,6 +7142,33 @@ diff --git a/has space.py b/has space.py
         assert!(engine
             .prose_ranges_in(buffer.len(), 0..buffer.len())
             .is_some());
+    }
+
+    /// An edit below the viewport waits to be re-parsed until the viewport
+    /// reaches it; the spans above it are already current, so the answer for
+    /// the text above it must not be withheld meanwhile.
+    #[test]
+    fn prose_ranges_stay_available_above_an_edit_awaiting_reparse() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("a.json"), None, &registry);
+        let content = "[\"{\"],\n".repeat(5_000);
+        let mut buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let viewport = 0..700;
+        engine.highlight_viewport(&buffer, viewport.start, viewport.end, &theme, 1000);
+        let before = engine
+            .prose_ranges_in(buffer.len(), viewport.clone())
+            .unwrap();
+
+        let far_below = buffer.len() - 3;
+        buffer.insert(far_below, "\"x\",");
+        engine.notify_insert(far_below, 4);
+        engine.highlight_viewport(&buffer, viewport.start, viewport.end, &theme, 1000);
+        assert_eq!(
+            engine.prose_ranges_in(buffer.len(), viewport.clone()),
+            Some(before)
+        );
     }
 
     /// Too large to parse from the top: classification exists only around the
