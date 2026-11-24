@@ -276,3 +276,7 @@ behaviour as it is today, and no terminal behaviour changes.
 - [rendering-and-layout.md](rendering-and-layout.md) — the text pipeline whose
   wrap and visual-row caches the views are served from.
 - [plugins.md](plugins.md) — the plugin API whose surfaces the client renders.
+- [fresh-web-poc](../../crates/fresh-web-poc/README.md) — a separate proof of
+  concept of the other split: a data server (workspace, documents over the
+  lazy buffer, edit log, terminals, language servers, behind SSH, container
+  and local authorities) and a thick client that owns editing and layout.

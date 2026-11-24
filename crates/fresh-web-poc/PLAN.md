@@ -47,7 +47,7 @@ days; where they matter the feature is reimplemented rather than run.
 | **Editing** — multi-cursor, selection, undo/redo | Native | Done: cursors, selection, per-client undo grouped by typing run. To add: Ctrl+D next occurrence, Alt+click/Ctrl+Alt+↑↓ add cursor, all edits at every cursor, word/line selection, duplicate/move line, comment toggle, auto-close brackets, smart indent/dedent |
 | Editing — current-line highlight, occurrence highlight, rulers, whitespace indicators, line wrap, read-only, auto-save | Native | Client view options; auto-save is a client timer calling the server's save |
 | Editing — code folding | Native | Folding ranges from the language server (server routes `textDocument/foldingRange`), indentation-based otherwise; folds are view state |
-| Editing — interrupted saves, hot exit | Adapt | The server holds unsaved documents across client reloads already; add a recovery write on the server |
+| Editing — interrupted saves, hot exit | Adapt | The server holds unsaved documents across client reloads already, and a save refuses over another writer's change unless forced; add a recovery write on the server |
 | **Markdown** — compose | Run | `markdown_compose` runs unchanged (done) |
 | Markdown — dual source/compose view | Native | Split showing the same buffer, one view composing |
 | Markdown — mermaid/math previews | Skip | Needs external renderers (`mmdc`, `utftex`) on the host; the plugin path exists but is not wired |
@@ -68,16 +68,16 @@ days; where they matter the feature is reimplemented rather than run.
 | Git — review diff mode (`audit_mode`), live diff (`live_diff`) | Skip | Large terminal-UI plugins (composite buffers); review via the log/diff views instead |
 | **Compare files** | Native | Side-by-side split with diff marks on both sides |
 | **Themes** | Native + server | Server lists and serves the editor's theme JSON files; client maps theme keys to CSS. Theme picker in the palette |
-| **Encoding** | Adapt | Server reports a document's detected encoding; status bar shows it. Reload-with-encoding: skip |
-| **Remote editing (SSH)** | Adapt | An `Authority` for SSH: terminals and processes via `ssh -t`/`ssh`, files via the same commands. Shown working for terminals/processes; file access over SSH is a follow-up |
-| **Devcontainers** | Adapt | An `Authority` running terminals and processes with `docker exec` in a container whose workspace is bind-mounted (files stay local, as in a devcontainer) |
-| **Daemon mode** | Adapt | The server *is* the daemon: clients come and go, documents and terminals stay. Done in substance |
+| **Encoding** | Adapt | Server reports a document's detected encoding (done: `encoding` in `doc.info`); status bar shows it. Reload-with-encoding: skip |
+| **Remote editing (SSH)** | Adapt | Done (`--ssh`): files through the editor's remote agent (ranged reads, line counting, walking and searching on the remote side); processes, terminals and language servers through `ssh` with the connection's port, identity and options. Exercised end to end against a local sshd, with and without `--slow-network` |
+| **Devcontainers** | Adapt | Done (`--container`): files stay local; processes, terminals and language servers run through `docker exec -w <dir>` in a container whose workspace is bind-mounted at the same path (checked at start). Exercised against a `docker` stand-in; not yet against a real daemon |
+| **Daemon mode** | Adapt | The server *is* the daemon: clients come and go, documents and terminals stay; a disconnected client's documents, watches and processes are released. Done in substance |
 | **Orchestrator**, **Workboard**, agent sessions | Skip | Multi-workspace agent management; large, and orthogonal to the split |
 | **Keybinding editor** | Native | A table of the client's keymap with search; edits saved in the browser |
 | **Emacs keymap** | Native | An alternative keymap table for the common movement/editing keys |
 | **Vi mode** | Skip | `vi_mode` depends on key capture and modal editor state across ~4k lines; a native vi layer is its own project |
 | **Dashboard** | Skip | Widgets (git, disk, weather, PRs) are terminal-panel UI |
-| **Workspace trust** | Adapt | Server-side switch: an untrusted workspace refuses processes, terminals and language servers |
+| **Workspace trust** | Adapt | Done (`--restricted`): an untrusted workspace refuses processes, terminals and language servers and runs no probe for them; trusting starts the servers for open documents |
 | **Web UI skins** | Skip | Belongs to the existing web UI; this client is styled with its own CSS |
 
 ## Order
@@ -87,4 +87,4 @@ days; where they matter the feature is reimplemented rather than run.
 3. LSP: references, symbols, rename, code actions, formatting, signature help, folding, diagnostics panel.
 4. Git: gutter, change navigation, blame, log, commit diff; compare files.
 5. Markdown dual view and contents; code tours; themes; keymaps and keybinding editor.
-6. Server: authorities (SSH, devcontainer), workspace trust, encoding report, recovery.
+6. Server: recovery writes for unsaved documents. (Authorities for SSH and containers, workspace trust and the encoding report are done.)
