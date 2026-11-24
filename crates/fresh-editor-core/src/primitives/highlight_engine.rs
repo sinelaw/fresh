@@ -47,8 +47,17 @@ use fresh_core::hooks::{RegionLine, TableLine, TableRole};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use syntect::parsing::SyntaxSet;
+
+/// Source of [`TextMateEngine`] classification epochs. Global, so an engine
+/// that replaces another (a language switch) never reuses its epoch.
+static NEXT_CLASSIFICATION_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+fn next_classification_epoch() -> u64 {
+    NEXT_CLASSIFICATION_EPOCH.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Map TextMate scope to highlight category
 fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
@@ -344,6 +353,9 @@ pub struct TextMateEngine {
     // outside this range re-queries. Dropped whenever the markers move,
     // since it caches their positions.
     active_region: Option<(MarkerId, usize, usize)>,
+    // Changes whenever the classification of unedited text may have changed
+    // — see `classification_epoch`.
+    classification_epoch: u64,
 }
 
 /// A run of rows a plugin declared as code, as the host resolved it. The
@@ -1056,6 +1068,7 @@ impl TextMateEngine {
             region_markers: MarkerList::new(),
             declared: HashMap::new(),
             active_region: None,
+            classification_epoch: next_classification_epoch(),
         }
     }
 
@@ -3060,12 +3073,69 @@ impl TextMateEngine {
     /// Invalidate all cache and checkpoints (file reload, language change, etc.)
     pub fn invalidate_all(&mut self) {
         self.cache = None;
+        // Everything the cache said is withdrawn — new declared regions are
+        // one way the same text comes to be classified differently.
+        self.classification_epoch = next_classification_epoch();
         let ids: Vec<MarkerId> = self.checkpoint_states.keys().copied().collect();
         for id in ids {
             self.checkpoint_markers.delete(id);
         }
         self.checkpoint_states.clear();
         self.dirty_from = None;
+    }
+
+    /// Changes whenever text that was not edited may have come to be
+    /// classified differently (new declared regions, a dropped cache), and
+    /// differs between engines. Something derived from
+    /// [`Self::prose_ranges_in`] stays valid while this stays put, up to the
+    /// edits the buffer itself reports.
+    pub fn classification_epoch(&self) -> u64 {
+        self.classification_epoch
+    }
+
+    /// The comment and string ranges within `range`, as a parse that began at
+    /// the top of the buffer classified them — or `None` when the cache can't
+    /// vouch for all of `range` that way: the buffer is too large to be
+    /// parsed from its start, the cache does not reach `range.end`, or an
+    /// edit before `range.end` has not been re-parsed yet.
+    ///
+    /// These are the same spans the viewport's highlighting comes from, so a
+    /// caller asking about the text above the viewport gets the answer the
+    /// viewport would have given had it been there. Reads the cache only; call
+    /// after this frame's `highlight_viewport`.
+    pub fn prose_ranges_in(
+        &self,
+        buffer_len: usize,
+        range: Range<usize>,
+    ) -> Option<Vec<Range<usize>>> {
+        let cache = self.cache.as_ref()?;
+        if !cache.anchored
+            || cache.range.start != 0
+            || cache.range.end < range.end
+            || self.last_buffer_len != buffer_len
+            || self.dirty_from.is_some_and(|dirty| dirty < range.end)
+        {
+            return None;
+        }
+        let first = cache
+            .spans
+            .partition_point(|span| span.range.end <= range.start);
+        let last = cache
+            .spans
+            .partition_point(|span| span.range.start < range.end)
+            .max(first);
+        Some(
+            cache.spans[first..last]
+                .iter()
+                .filter(|span| {
+                    matches!(
+                        span.category,
+                        HighlightCategory::Comment | HighlightCategory::String
+                    )
+                })
+                .map(|span| span.range.clone())
+                .collect(),
+        )
     }
 
     /// Get the highlight category at a byte position from the cache.
@@ -3088,6 +3158,32 @@ impl TextMateEngine {
 }
 
 impl HighlightEngine {
+    /// The comment and string ranges within `range`, classified from the top
+    /// of the buffer; `None` when that classification isn't available. See
+    /// [`TextMateEngine::prose_ranges_in`]. With no highlighting nothing is
+    /// prose, which is known everywhere; the tree-sitter backend parses a
+    /// window around the viewport only, so it can't answer for text above it.
+    pub fn prose_ranges_in(
+        &self,
+        buffer_len: usize,
+        range: Range<usize>,
+    ) -> Option<Vec<Range<usize>>> {
+        match self {
+            Self::TextMate(h) => h.prose_ranges_in(buffer_len, range),
+            Self::TreeSitter(_) => None,
+            Self::None => Some(Vec::new()),
+        }
+    }
+
+    /// See [`TextMateEngine::classification_epoch`]. Constant for engines
+    /// whose classification never changes under unedited text.
+    pub fn classification_epoch(&self) -> u64 {
+        match self {
+            Self::TextMate(h) => h.classification_epoch(),
+            Self::TreeSitter(_) | Self::None => 0,
+        }
+    }
+
     /// Build a highlighting engine for a catalog entry.
     ///
     /// Single chokepoint for the "prefer syntect, fall back to tree-sitter"
@@ -7001,5 +7097,77 @@ diff --git a/has space.py b/has space.py
             tm.notify_delete(top + 10, 1);
             assert_eq!(view(tm, &buffer, top), 0, "{top}: after undo, highlighted");
         }
+    }
+
+    /// What the rainbow bracket depth index reads for the text above the
+    /// viewport (issue #3478): comment and string ranges, from a parse that
+    /// began at byte 0, and nothing for text an edit has made stale.
+    #[test]
+    fn prose_ranges_come_from_the_parse_anchored_at_the_top() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("a.json"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        let content = "{\n  \"a\": \"{[\",\n  \"b\": [1]\n}\n";
+        let mut buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        assert_eq!(
+            engine.prose_ranges_in(buffer.len(), 0..buffer.len()),
+            None,
+            "nothing parsed yet"
+        );
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let prose = engine
+            .prose_ranges_in(buffer.len(), 0..buffer.len())
+            .unwrap();
+        let in_string = content.find("{[").unwrap();
+        let structural = content.find("[1]").unwrap();
+        assert!(prose.iter().any(|r| r.contains(&in_string)), "{prose:?}");
+        assert!(!prose.iter().any(|r| r.contains(&structural)), "{prose:?}");
+
+        // An edit not yet re-parsed: no answer for the text it reaches.
+        buffer.insert(2, "x");
+        engine.notify_insert(2, 1);
+        assert_eq!(engine.prose_ranges_in(buffer.len(), 0..buffer.len()), None);
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        assert!(engine
+            .prose_ranges_in(buffer.len(), 0..buffer.len())
+            .is_some());
+    }
+
+    /// Too large to parse from the top: classification exists only around the
+    /// viewport, so there is no answer for the text above it.
+    #[test]
+    fn prose_ranges_are_unavailable_past_the_parse_limit() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("a.json"), None, &registry);
+        let content = "[\"x\"],\n".repeat(MAX_PARSE_BYTES / 6);
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let middle = buffer.len() / 2;
+        let middle = middle - middle % 7;
+        engine.highlight_viewport(&buffer, middle, middle + 700, &theme, 1000);
+        assert_eq!(
+            engine.prose_ranges_in(buffer.len(), middle..middle + 700),
+            None
+        );
+    }
+
+    /// Declared regions change how unedited text is classified, so they move
+    /// the epoch; so does replacing the engine.
+    #[test]
+    fn the_classification_epoch_moves_when_unedited_text_may_be_reclassified() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut host = TextMateEngine::declared_region_host(registry.syntax_set_arc(), Vec::new());
+        let before = host.classification_epoch();
+        host.set_declared_regions(Vec::new());
+        assert_ne!(host.classification_epoch(), before);
+
+        let first = HighlightEngine::for_file(Path::new("a.json"), None, &registry);
+        let second = HighlightEngine::for_file(Path::new("a.json"), None, &registry);
+        assert_ne!(first.classification_epoch(), second.classification_epoch());
     }
 }
