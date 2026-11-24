@@ -510,11 +510,14 @@ impl Docs {
     }
 
     /// `client` closes `id`. The document goes when no client has it open
-    /// and it has nothing unsaved; returns it then.
-    pub fn close(&mut self, client: u64, id: u64) -> Option<Doc> {
+    /// and it has nothing unsaved, or nothing unsaved worth keeping:
+    /// `discard` gives up its unsaved changes, so the next to open the file
+    /// reads it from disk. While other clients hold the document its
+    /// changes are theirs too and stay. Returns the document when it went.
+    pub fn close(&mut self, client: u64, id: u64, discard: bool) -> Option<Doc> {
         let d = self.docs.get_mut(&id)?;
         d.clients.remove(&client);
-        if d.clients.is_empty() && !d.buffer.is_modified() {
+        if d.clients.is_empty() && (discard || !d.buffer.is_modified()) {
             let d = self.docs.remove(&id)?;
             self.by_path.remove(&d.path);
             return Some(d);
@@ -587,7 +590,7 @@ impl Docs {
     pub fn drop_client(&mut self, client: u64) -> Vec<Doc> {
         let ids: Vec<u64> = self.docs.keys().copied().collect();
         ids.into_iter()
-            .filter_map(|id| self.close(client, id))
+            .filter_map(|id| self.close(client, id, false))
             .collect()
     }
 }
@@ -670,8 +673,8 @@ mod tests {
         let fs: Fs = std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem);
         let (again, new) = docs.open(2, &p, fs.clone()).unwrap();
         assert_eq!((again, new), (id, false), "the second client joins it");
-        assert!(docs.close(1, id).is_none());
-        assert!(docs.close(2, id).is_some());
+        assert!(docs.close(1, id, false).is_none());
+        assert!(docs.close(2, id, false).is_some());
         assert!(docs.get(id).is_err());
         assert_eq!(docs.by_path(&p), None);
 
@@ -692,6 +695,29 @@ mod tests {
         let (back, new) = docs.open(3, &p, fs).unwrap();
         assert_eq!((back, new), (id, false));
         assert_eq!(docs.get(id).unwrap().text(0, 100).unwrap(), "kept text\n");
+    }
+
+    #[test]
+    fn discarding_drops_unsaved_changes_only_from_the_last_holder() {
+        let (dir, mut docs, id) = doc_with("disk\n");
+        let p = dir.path().join("a.txt");
+        let fs: Fs = std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem);
+        let ins = vec![Prim::Ins {
+            pos: 0,
+            text: "edit ".into(),
+        }];
+        assert_eq!(docs.open(2, &p, fs.clone()).unwrap(), (id, false));
+        docs.get(id).unwrap().edit(0, ins.clone(), false).unwrap();
+        // Another client holds it: its changes are theirs too, and stay.
+        assert!(docs.close(1, id, true).is_none());
+        assert_eq!(docs.get(id).unwrap().text(0, 100).unwrap(), "edit disk\n");
+        // The last holder discards: the document goes, and the file opens
+        // again as it is on disk.
+        assert!(docs.close(2, id, true).is_some());
+        let (again, new) = docs.open(1, &p, fs).unwrap();
+        assert!(new);
+        assert_eq!(docs.get(again).unwrap().text(0, 100).unwrap(), "disk\n");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "disk\n");
     }
 
     #[test]

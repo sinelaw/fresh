@@ -202,11 +202,21 @@ impl App {
                 d.info()
             }
             "doc.close" => {
-                let closed = self.docs.lock().unwrap().close(client, u(m, "doc")?);
-                if let Some(d) = closed {
-                    self.lsp_close(&d);
+                // `discard`: give up unsaved changes, unless other clients
+                // still hold the document (`others` says how many).
+                let id = u(m, "doc")?;
+                let discard = m.get("discard").and_then(Value::as_bool).unwrap_or(false);
+                let mut docs = self.docs.lock().unwrap();
+                match docs.close(client, id, discard) {
+                    Some(d) => {
+                        self.lsp_close(&d);
+                        json!({ "dropped": true, "others": 0 })
+                    }
+                    None => {
+                        let others = docs.get(id).map(|d| d.clients.len()).unwrap_or(0);
+                        json!({ "dropped": false, "others": others })
+                    }
                 }
-                json!({})
             }
             "doc.info" => self.docs.lock().unwrap().get(u(m, "doc")?)?.info(),
             "doc.lines" => {

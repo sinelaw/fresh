@@ -162,8 +162,11 @@ class App {
     this.focusPane(np);
     return np;
   }
-  closePane(p) {
+  // Close a split. Files whose last views are in it and have unsaved
+  // changes are asked about first (see `mayClose`).
+  async closePane(p) {
     if (this.panes().length === 1) return;
+    for (const b of new Set(p.views.map((v) => v.buf))) if (!(await this.mayClose(b, p.views))) return;
     const remove = (n) => {
       if (n.pane) return n;
       if (n.a.pane === p) return n.b;
@@ -176,23 +179,55 @@ class App {
     this.relayout();
     this.focusPane(this.activePane);
   }
-  closeTab(p, v) {
+  // Close a tab; resolves false when the user cancelled.
+  async closeTab(p, v) {
+    if (!(await this.mayClose(v.buf, [v]))) return false;
+    if (!p.views.includes(v)) return true; // closed meanwhile
     p.closeView(v);
     this.dropIfUnshown(v.buf);
-    if (!p.views.length && this.panes().length > 1) this.closePane(p);
+    if (!p.views.length && this.panes().length > 1) await this.closePane(p);
     this.renderAll();
     this.updateStatus();
+    return true;
   }
+  // Whether closing `views` may let go of buffer `b`. When they are the
+  // last views of a file with unsaved changes, the user picks: Save (and
+  // close once saved), Discard (the document is closed with `discard`, see
+  // `dropIfUnshown`), or Cancel.
+  async mayClose(b, views) {
+    if (!b.doc || !b.modified) return true;
+    if (this.panes().some((p) => p.views.some((v) => v.buf === b && !views.includes(v)))) return true;
+    const pick = await this.choose(`${b.name} has unsaved changes`, [
+      { label: "Save", value: "save" },
+      { label: "Discard", value: "discard" },
+      { label: "Cancel", value: null },
+    ]);
+    if (pick === "save") { await this.saveBuffer(b); return !b.modified; }
+    if (pick === "discard") { b.discard = true; return true; }
+    return false;
+  }
+  // Let go of a buffer no view shows. A file's document is closed; with
+  // `discard` its unsaved changes go too, unless another client holds it.
   dropIfUnshown(b) {
     if (this.panes().some((x) => x.views.some((y) => y.buf === b))) return;
     if (b.keep) return;
     this.buffers.delete(b.id);
-    if (b.doc) { this.docs.delete(b.doc); rpc("doc.close", { doc: b.doc }).catch(() => {}); }
+    if (b.doc) {
+      this.docs.delete(b.doc);
+      const discard = !!b.discard;
+      rpc("doc.close", { doc: b.doc, discard }).then((r) => {
+        if (!discard) return;
+        if (r.dropped) this.setStatus(`Discarded the changes to ${b.name}`);
+        else if (r.others) this.setStatus(`${b.name} is open in ${r.others} other window${r.others === 1 ? "" : "s"}; its unsaved changes stay there`);
+      }).catch((e) => this.report(String(e.message || e)));
+    }
     this.host.emit("buffer.closed", { buffer: b });
   }
-  closeBuffer(b) {
-    for (const p of this.panes()) for (const v of [...p.views]) if (v.buf === b) this.closeTab(p, v);
+  async closeBuffer(b) {
+    for (const p of this.panes()) for (const v of [...p.views]) if (v.buf === b && !(await this.closeTab(p, v))) return false;
+    if (!(await this.mayClose(b, []))) return false;
     this.dropIfUnshown(b);
+    return true;
   }
   onViewShown(pane, v) {
     if (pane === this.activePane) this.host?.emit("buffer.activated", { buffer: v.buf, view: v });
@@ -829,14 +864,19 @@ class App {
   }
   hidePopup() { $("#popup").classList.add("hidden"); }
 
-  // Ask a yes/no question: resolves true when `yes` is picked.
-  confirm(title, yes) {
+  // Ask a question with a few answers [{label, value}]: resolves with the
+  // value of the one picked, or null when cancelled.
+  choose(title, answers) {
     return new Promise((resolve) => this.prompt.open({
       title,
-      items: [{ label: yes, value: true }, { label: "Cancel", value: false }],
+      items: answers,
       onAccept: (it) => resolve(it.value),
-      onCancel: () => resolve(false),
+      onCancel: () => resolve(null),
     }));
+  }
+  // Ask a yes/no question: resolves true when `yes` is picked.
+  async confirm(title, yes) {
+    return (await this.choose(title, [{ label: yes, value: true }, { label: "Cancel", value: false }])) === true;
   }
 
   // ------------------------------------------------------------- status

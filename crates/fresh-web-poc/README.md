@@ -50,7 +50,12 @@ optimistically against a log version, the server transforms late edits past
 what was sequenced since (`src/ot.rs`, mirrored by `web/js/ot.js`) and
 broadcasts each batch with the newlines it changed. A document is shared by
 every client that opens it; it is dropped when the last one closes it,
-unless it has unsaved edits, which wait for the next client. Saving refuses
+unless it has unsaved edits, which wait for the next client. Closing with
+`discard` gives them up instead: when no other client holds the document it
+is dropped, and the file opens again as it is on disk; while others hold it,
+the edits are theirs too and stay (the reply says how many others there
+are). The client asks Save / Discard / Cancel when the last tab of a
+modified file (or a split holding it) closes. Saving refuses
 if the file changed on disk since it was loaded or last saved, unless forced.
 
 Documents follow the workspace's own file operations. `fs.rename` of an
@@ -101,7 +106,8 @@ Operations:
 - `fs.list`, `fs.stat`, `fs.read`, `fs.write`, `fs.find`, `fs.create`,
   `fs.rename`, `fs.delete`, `fs.copy`, `fs.watch`, `fs.unwatch`,
   `search.project`
-- `doc.open`, `doc.close`, `doc.info`, `doc.lines`, `doc.lines_before`,
+- `doc.open`, `doc.close` (`discard` to give up unsaved edits; answers
+  `{dropped, others}`), `doc.info`, `doc.lines`, `doc.lines_before`,
   `doc.window`, `doc.text`, `doc.search`, `doc.line_start`, `doc.edit`,
   `doc.save` (`force` to overwrite an external change)
 - `term.open`, `term.input`, `term.resize`, `term.attach`, `term.close`

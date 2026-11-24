@@ -216,6 +216,8 @@ export class Host {
         input: (o) => app.prompt.ask(o),
         // Ask yes or no: (title, yes label) -> Promise<boolean>
         confirm: (title, yes) => app.confirm(title, yes),
+        // Ask with a few answers: (title, [{label, value}]) -> Promise<value|null>
+        choose: (title, answers) => app.choose(title, answers),
         status: (id) => app.statusItem(id),
         message: (text) => app.setStatus(text),
         popup: (text, at) => app.popup(text, at),
