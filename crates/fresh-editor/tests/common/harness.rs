@@ -309,6 +309,10 @@ pub struct HarnessOptions {
     pub force_embedded_plugins: bool,
     /// Build the editor in Orchestrator mode (a bare `fresh`). Defaults to false.
     pub orchestrator_mode: bool,
+    /// The colour depth the editor paints for; `None` is truecolor. A test of
+    /// what a 256-colour terminal is sent sets `Color256`, and the frame's
+    /// cells then hold the palette entries the terminal would draw.
+    pub color_capability: Option<fresh::view::color_support::ColorCapability>,
     /// Keep the dock column the host holds open at startup for the plugin's
     /// `ready` mount (`Editor::dock_reserved`). Off by default: the harness
     /// fires no startup hooks, so the column would otherwise sit empty for
@@ -338,6 +342,7 @@ impl HarnessOptions {
             use_full_grammar_registry: false,
             force_embedded_plugins: false,
             orchestrator_mode: false,
+            color_capability: None,
             startup_chrome: false,
             #[cfg(unix)]
             fake_devcontainer: None,
@@ -356,6 +361,15 @@ impl HarnessOptions {
     /// Build the editor in Orchestrator mode (a bare `fresh`).
     pub fn with_orchestrator_mode(mut self) -> Self {
         self.orchestrator_mode = true;
+        self
+    }
+
+    /// See [`HarnessOptions::color_capability`].
+    pub fn with_color_capability(
+        mut self,
+        capability: fresh::view::color_support::ColorCapability,
+    ) -> Self {
+        self.color_capability = Some(capability);
         self
     }
 
@@ -976,7 +990,9 @@ impl EditorTestHarness {
             height,
             Some(working_dir),
             dir_context.clone(),
-            fresh::view::color_support::ColorCapability::TrueColor,
+            options
+                .color_capability
+                .unwrap_or(fresh::view::color_support::ColorCapability::TrueColor),
             filesystem,
             Some(time_source),
             grammar_registry,
@@ -2863,14 +2879,22 @@ impl EditorTestHarness {
 
     /// Find all visible cursors on screen
     /// Returns a vec of (x, y, character_at_cursor, is_primary)
-    /// Primary cursor is detected at hardware cursor position
-    /// Secondary cursors are detected by REVERSED style modifier or inactive cursor background
+    /// Primary cursor is detected at hardware cursor position, when the frame
+    /// shows one. With several cursors the editor paints every cursor itself
+    /// and hides the hardware cursor, so then none is reported as primary.
+    /// Editor-painted cursors are detected by REVERSED style modifier or
+    /// inactive cursor background
     pub fn find_all_cursors(&mut self) -> Vec<(u16, u16, String, bool)> {
         use ratatui::style::Modifier;
         let mut cursors = Vec::new();
 
-        // Get hardware cursor position (primary cursor)
-        let (hw_x, hw_y) = self.screen_cursor_position();
+        // Get hardware cursor position (primary cursor), if the frame shows
+        // one. `u16::MAX` never matches a cell below.
+        let (hw_x, hw_y) = self
+            .render_observing_cursor()
+            .ok()
+            .flatten()
+            .unwrap_or((u16::MAX, u16::MAX));
 
         // Get the buffer to read cell content
         let theme_inactive_cursor = self.editor.theme().inactive_cursor;
@@ -3403,8 +3427,7 @@ impl EditorTestHarness {
         step_name: &str,
         description: &str,
     ) -> anyhow::Result<()> {
-        self.render()?;
-        let cursor_pos = self.screen_cursor_position();
+        let cursor_pos = self.render_observing_cursor()?;
         flow.step(self.buffer(), cursor_pos, step_name, description)?;
         Ok(())
     }

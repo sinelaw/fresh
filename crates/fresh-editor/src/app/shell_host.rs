@@ -575,7 +575,16 @@ fn settle_views(editor: &mut Editor, window: fresh_core::WindowId, prepared: &mu
         let caret = c
             .caret
             .map(|(x, y)| (x.saturating_sub(rect.x), y.saturating_sub(rect.y)));
-        settle_pane_view(editor, window, *leaf, rect, rows, caret, c.caret_shown);
+        settle_pane_view(
+            editor,
+            window,
+            *leaf,
+            rect,
+            rows,
+            caret,
+            c.caret_shown,
+            c.caret_by_terminal,
+        );
     }
     // **A pane the pass did not settle shows no caret.** Its handle keeps
     // the rows it last drew — a hidden sibling of a maximized pane comes
@@ -637,6 +646,7 @@ pub fn content_body(
 /// The one writer of a pane's view. The frame's content pass calls it per
 /// pane of the window it laid out — the active window's at the frame's
 /// rectangles, an embedded window's at the embed's own (`paint_embed`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn settle_pane_view(
     editor: &mut Editor,
     window: fresh_core::WindowId,
@@ -645,6 +655,7 @@ pub(crate) fn settle_pane_view(
     rows: Vec<crate::app::types::ViewLineMapping>,
     caret: Option<(u16, u16)>,
     caret_shown: bool,
+    caret_by_terminal: bool,
 ) {
     let Some(win) = editor.windows.get_mut(&window) else {
         return;
@@ -680,6 +691,7 @@ pub(crate) fn settle_pane_view(
         top_byte,
         caret,
         caret_shown,
+        caret_by_terminal,
         drawn_from,
     );
 }

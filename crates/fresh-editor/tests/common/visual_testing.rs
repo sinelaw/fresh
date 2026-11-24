@@ -79,7 +79,7 @@ impl VisualFlow {
     pub fn step(
         &mut self,
         buffer: &Buffer,
-        cursor_pos: (u16, u16),
+        cursor_pos: Option<(u16, u16)>,
         step_name: &str,
         description: &str,
     ) -> io::Result<()> {
@@ -204,7 +204,7 @@ fn should_update_image(image_path: &Path) -> io::Result<bool> {
 /// Render a ratatui Buffer to SVG format
 pub fn render_buffer_to_svg(
     buffer: &Buffer,
-    cursor_pos: (u16, u16),
+    cursor_pos: Option<(u16, u16)>,
     path: &Path,
 ) -> io::Result<()> {
     const CHAR_WIDTH: u16 = 9;
@@ -290,15 +290,17 @@ pub fn render_buffer_to_svg(
         }
     }
 
-    // Draw cursor
-    let (cursor_x, cursor_y) = cursor_pos;
-    svg.push_str(&format!(
-        "  <!-- Cursor indicator -->\n  <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"2\" opacity=\"0.8\"/>\n",
-        cursor_x * CHAR_WIDTH,
-        cursor_y * CHAR_HEIGHT,
-        CHAR_WIDTH,
-        CHAR_HEIGHT
-    ));
+    // Draw the terminal's cursor, when the frame shows one. With several
+    // cursors the editor paints them all into the cells and shows none.
+    if let Some((cursor_x, cursor_y)) = cursor_pos {
+        svg.push_str(&format!(
+            "  <!-- Cursor indicator -->\n  <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"2\" opacity=\"0.8\"/>\n",
+            cursor_x * CHAR_WIDTH,
+            cursor_y * CHAR_HEIGHT,
+            CHAR_WIDTH,
+            CHAR_HEIGHT
+        ));
+    }
 
     svg.push_str("</svg>");
 
@@ -395,7 +397,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let svg_path = temp_dir.path().join("test.svg");
 
-        render_buffer_to_svg(buffer, (0, 0), &svg_path).unwrap();
+        render_buffer_to_svg(buffer, Some((0, 0)), &svg_path).unwrap();
         assert!(svg_path.exists());
 
         let svg_content = fs::read_to_string(&svg_path).unwrap();

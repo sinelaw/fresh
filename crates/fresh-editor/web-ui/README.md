@@ -63,8 +63,9 @@ the session daemon, so a browser and `fresh -a` terminals share one editor.
 - Requests `{"id", "op", …}` get a reply `{"re", "ok": true, …}` or
   `{"re", "error"}`; without an `id`, none.
 - A view's event carries its facts (`width`, `count` rows, `gutter`,
-  `caret`, `top` byte and `len`, and `topLine` and `lines` when the buffer
-  knows its lines) and only the rows that changed since the last one, as
+  `caret` and `caretInCells` — true when the cells already draw every cursor
+  as a block, so the client draws no caret of its own — `top` byte and `len`,
+  and `topLine` and `lines` when the buffer knows its lines) and only the rows that changed since the last one, as
   `rows: [[index, runs], …]`; the client keeps the rest. A row is the cells
   a terminal backend draws (`Buffer::diff`), as runs `{x, t, fg, bg, b, i,
   u, r, d, s}` where `t` has one entry per column from `x`: the grapheme

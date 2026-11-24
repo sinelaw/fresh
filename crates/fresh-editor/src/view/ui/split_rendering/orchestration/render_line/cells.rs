@@ -11,7 +11,9 @@
 //! Each per-cell concern (cursor detection, style resolution, display
 //! character, span emission, position bookkeeping) is its own method.
 
-use super::super::super::char_style::{compute_char_style, CharStyleContext, CharStyleOutput};
+use super::super::super::char_style::{
+    compute_char_style, CharStyleContext, CharStyleOutput, CursorPaint,
+};
 use super::super::super::spans::{
     push_debug_tag, push_span_with_map, span_bg_info_at, span_color_at, span_info_at,
     DebugSpanTracker, SpanAccumulator,
@@ -62,9 +64,9 @@ pub(super) struct CellPassInput<'a, 'c> {
     pub max_chars_to_process: usize,
     pub lsp_waiting: bool,
     pub is_active: bool,
-    /// Skip REVERSED style on the primary cursor (session mode or
-    /// non-block cursor style).
-    pub session_mode: bool,
+    /// The terminal's hardware cursor draws the primary cursor; every other
+    /// cursor is painted by the editor (see `char_style::CursorPaint`).
+    pub primary_cursor_by_terminal: bool,
     pub is_on_cursor_line: bool,
     pub highlight_current_line: bool,
     pub indentation_guide: IndentationGuideMode,
@@ -307,18 +309,15 @@ impl CellPass<'_, '_, '_> {
         // Idempotent on the same gutter line (no inner gate).
         self.selection_sweep.enter_line(self.input.gutter_num);
 
-        // For primary cursor in active split, terminal hardware cursor provides
-        // visual indication, so we can still show selection background.
-        // Only exclude secondary cursors from selection (they use REVERSED styling).
-        // Bug #614: Previously excluded all cursor positions, causing first char
-        // of selection to display with wrong background for bar/underline cursors.
-        let is_primary_cursor =
-            is_cursor && byte_pos == Some(self.input.selection.primary_cursor_position);
-        let exclude_from_selection = is_cursor && !(self.input.is_active && is_primary_cursor);
-        let is_selected = !exclude_from_selection
-            && self
-                .selection_sweep
-                .contains(byte_pos, self.block_line_column(byte_pos));
+        // A cursor never takes its cell out of the selection: selected text
+        // under a cursor is still selected, and the cursor is drawn on top of
+        // that (`CursorPaint`). Excluding cursor cells made the first
+        // character of a backward selection look unselected under a bar
+        // cursor (#614), and it is what kept a secondary cursor from showing
+        // the selection it sits in.
+        let is_selected = self
+            .selection_sweep
+            .contains(byte_pos, self.block_line_column(byte_pos));
 
         // A virtual-space cursor "at" the newline byte sits visually past the
         // content end — its indicator is drawn at the virtual column by
@@ -331,6 +330,13 @@ impl CellPass<'_, '_, '_> {
 
         let resolved = self.resolve_cell_style(byte_pos, ansi_style, style_as_cursor, is_selected);
         self.record_cell_theme(&resolved);
+        if style_as_cursor
+            && !resolved.is_secondary_cursor
+            && self.input.is_active
+            && !self.input.primary_cursor_by_terminal
+        {
+            self.cursor.painted = true;
+        }
 
         // `indicator_buf` holds the UTF-8 bytes of a single fallback indicator
         // char on the stack — no heap allocation per cell.
@@ -728,7 +734,7 @@ impl CellPass<'_, '_, '_> {
             active_overlays: cell_overlays,
             primary_cursor_position: input.selection.primary_cursor_position,
             is_active: input.is_active,
-            skip_primary_cursor_reverse: input.session_mode,
+            primary_cursor_by_terminal: input.primary_cursor_by_terminal,
             is_cursor_line_highlighted: input.is_on_cursor_line
                 && input.highlight_current_line
                 && input.is_active,
@@ -940,11 +946,9 @@ impl CellPass<'_, '_, '_> {
         }
 
         if is_cursor && ch == '\n' {
-            let should_add_indicator = if self.input.is_active {
-                is_secondary_cursor
-            } else {
-                true
-            };
+            let should_add_indicator = !self.input.is_active
+                || CursorPaint::of(is_secondary_cursor, self.input.primary_cursor_by_terminal)
+                    == CursorPaint::Block;
             // A virtual-space cursor sits past the content end: pad the
             // indicator out to its on-screen column. Cells already emitted
             // for a line-ending indicator occupy the start of that gap.
@@ -976,6 +980,9 @@ impl CellPass<'_, '_, '_> {
                     cursor_indicator_style(self.input.theme, self.input.is_active),
                     byte_pos,
                 );
+                if !is_secondary_cursor {
+                    self.cursor.painted = true;
+                }
             }
         }
     }

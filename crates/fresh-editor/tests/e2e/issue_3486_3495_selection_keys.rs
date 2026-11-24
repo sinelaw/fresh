@@ -163,12 +163,12 @@ fn up_cancels_every_cursors_selection_not_only_the_ones_that_can_move() {
         whole(LINE1),
         "precondition: the first cursor selected line 1"
     );
-    // All but the first cell: the first cursor's head rests on line 2's first
-    // byte, and a cell under a caret renders as the caret rather than as
-    // selection background.
+    // The whole line, first cell included: the first cursor's head rests on
+    // line 2's first byte, and a cursor is drawn on top of the selection it
+    // sits in rather than taking its cell out of it (#614, #1900).
     assert_eq!(
         selected_offsets(&harness, LINE2),
-        (1..LINE2.chars().count() as u16).collect::<Vec<u16>>(),
+        whole(LINE2),
         "precondition: the second cursor selected line 2:\n{}",
         harness.screen_to_string()
     );

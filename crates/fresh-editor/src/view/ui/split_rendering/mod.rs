@@ -220,7 +220,6 @@ impl SplitRenderer {
             highlight_context_bytes,
             relative_line_numbers,
             use_terminal_bg,
-            software_cursor_only,
             diagnostics_inline_text,
             indentation_guide,
             indentation_guide_glyph,
@@ -245,7 +244,6 @@ impl SplitRenderer {
             relative_line_numbers,
             use_terminal_bg,
             session_mode,
-            software_cursor_only,
             show_line_numbers,
             highlight_current_line,
             true, // preview leaves have no per-split fold pin
@@ -269,7 +267,6 @@ impl SplitRenderer {
             style.theme,
             style.ansi_background,
             background_fade,
-            software_cursor_only,
             rulers,
             compose_column_guides,
             false,
@@ -283,8 +280,9 @@ impl SplitRenderer {
     /// Render one buffer into `area` as a client's view of it: the same
     /// per-leaf pipeline as [`Self::render_phantom_leaf`], but as the pane
     /// the user is editing — active, with its caret drawn and reported.
-    /// Returns the per-row mappings (screen column → buffer byte) and the
-    /// caret's cell, both relative to `buf`.
+    /// Returns the per-row mappings (screen column → buffer byte), the
+    /// caret's cell, both relative to `buf`, and whether the terminal's
+    /// hardware cursor draws the caret (false when the editor painted it).
     #[allow(clippy::too_many_arguments)]
     pub fn render_view(
         buf: &mut ratatui::buffer::Buffer,
@@ -296,7 +294,11 @@ impl SplitRenderer {
         highlight_current_column: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
-    ) -> (Vec<crate::app::types::ViewLineMapping>, Option<(u16, u16)>) {
+    ) -> (
+        Vec<crate::app::types::ViewLineMapping>,
+        Option<(u16, u16)>,
+        bool,
+    ) {
         state
             .margins
             .set_gutter_separator(style.theme.chrome.gutter_separator);
@@ -334,7 +336,6 @@ impl SplitRenderer {
             highlight_context_bytes,
             relative_line_numbers,
             use_terminal_bg,
-            software_cursor_only,
             diagnostics_inline_text,
             indentation_guide,
             indentation_guide_glyph,
@@ -359,7 +360,6 @@ impl SplitRenderer {
             relative_line_numbers,
             use_terminal_bg,
             session_mode,
-            software_cursor_only,
             *show_line_numbers,
             *highlight_current_line,
             true,
@@ -372,6 +372,7 @@ impl SplitRenderer {
             Some((cell_theme_map, screen_width)),
         );
         let caret = orchestration::render_buffer::caret_cell(&layout, state.buffer.len());
+        let caret_by_terminal = layout.primary_cursor_by_terminal;
         let rows = std::mem::take(&mut layout.view_line_mappings);
         let left_column = layout.left_column;
         orchestration::draw_buffer_in_split(
@@ -381,14 +382,13 @@ impl SplitRenderer {
             style.theme,
             style.ansi_background,
             background_fade,
-            software_cursor_only,
             rulers,
             compose_column_guides.clone(),
             highlight_current_column,
             caret,
         );
         orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
-        (rows, caret)
+        (rows, caret, caret_by_terminal)
     }
 
     /// Public wrapper for building base tokens - used by render.rs for the
@@ -612,8 +612,7 @@ mod tests {
             estimated_lines,
             left_column: viewport.left_column,
             relative_line_numbers: false,
-            session_mode: false,
-            software_cursor_only: false,
+            primary_cursor_by_terminal: true,
             show_line_numbers: true, // Tests show line numbers
             byte_offset_mode: false, // Tests use exact line numbers
             show_tilde: true,
@@ -725,8 +724,7 @@ mod tests {
             estimated_lines,
             left_column: viewport.left_column,
             relative_line_numbers: false,
-            session_mode: false,
-            software_cursor_only: false,
+            primary_cursor_by_terminal: true,
             show_line_numbers: true,
             byte_offset_mode: false,
             show_tilde: true,
@@ -3394,8 +3392,7 @@ mod tests {
             estimated_lines,
             left_column: viewport.left_column,
             relative_line_numbers: false,
-            session_mode: false,
-            software_cursor_only: false,
+            primary_cursor_by_terminal: true,
             show_line_numbers: false,
             byte_offset_mode: false,
             show_tilde: true,

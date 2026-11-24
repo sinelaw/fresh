@@ -345,7 +345,6 @@ pub(crate) fn paint_leaf(
         theme,
         style.ansi_background,
         style.cfg.background_fade,
-        style.cfg.software_cursor_only,
         &content.rulers,
         content.guides,
         content.highlight_column,
@@ -371,6 +370,10 @@ pub(crate) struct PaneContent {
     /// keyboard and no modal is up. A caret that is not shown still has a
     /// cell, which the popup anchored to it reads.
     pub caret_shown: bool,
+    /// Whether the terminal's hardware cursor draws the caret. False when the
+    /// editor paints every cursor itself (several cursors, or no hardware
+    /// cursor): the display list then places no cursor of its own.
+    pub caret_by_terminal: bool,
     /// The paint's other inputs, resolved with the layout so the two cannot
     /// read a different setting.
     pub rulers: Vec<usize>,
@@ -540,7 +543,6 @@ fn text_pane_content(
         highlight_context_bytes,
         relative_line_numbers,
         use_terminal_bg,
-        software_cursor_only,
         diagnostics_inline_text,
         indentation_guide,
         indentation_guide_glyph,
@@ -565,7 +567,6 @@ fn text_pane_content(
         relative_line_numbers,
         use_terminal_bg,
         session_mode,
-        software_cursor_only,
         view_prefs.show_line_numbers,
         effective_highlight_current_line,
         fold_indicators_visible,
@@ -577,6 +578,7 @@ fn text_pane_content(
         bracket_highlight,
         Some((cell_theme_map, screen_width)),
     );
+    let caret_by_terminal = layout.primary_cursor_by_terminal;
     let has_caret = is_active && state.show_cursors;
     let shows_caret = has_caret && !hide_cursor;
     let caret = has_caret
@@ -607,6 +609,7 @@ fn text_pane_content(
         layout,
         caret,
         caret_shown: shows_caret,
+        caret_by_terminal,
         rulers: effective_rulers,
         guides: view_prefs.compose_column_guides,
         highlight_column: highlight_current_column && shows_caret,
