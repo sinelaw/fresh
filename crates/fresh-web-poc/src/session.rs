@@ -18,6 +18,7 @@
 use crate::docs::{self, Docs};
 use crate::error::{err, Code};
 use crate::hub::{Hub, Room};
+use crate::orchestrator::{now_ms, Meta, Record};
 use crate::workspace::{self, Workspace};
 use crate::{lsp, ot, process, terminal};
 use anyhow::Result;
@@ -74,10 +75,19 @@ pub struct Session {
     /// Why the workspace needs the user, until a viewer has seen it.
     attention: Mutex<Option<String>>,
     seen: Mutex<Seen>,
+    /// What the user gave it (name, folder, pin), its host, when it was
+    /// made and last worked in, its worktree.
+    meta: Mutex<Meta>,
 }
 
 impl Session {
-    pub fn new(id: u64, ws: Arc<Workspace>, trusted: bool, hub: Arc<Hub>) -> Arc<Session> {
+    pub fn new(
+        id: u64,
+        ws: Arc<Workspace>,
+        trusted: bool,
+        meta: Meta,
+        hub: Arc<Hub>,
+    ) -> Arc<Session> {
         let room = Room::new(hub.clone(), id);
         let docs: Arc<Mutex<Docs>> = Arc::default();
         let diags: DiagCounts = Arc::default();
@@ -105,6 +115,7 @@ impl Session {
             diags,
             attention: Mutex::new(None),
             seen: Mutex::default(),
+            meta: Mutex::new(meta),
         });
         session.watches.start(room, ws);
         Session::follow_disk(&session);
@@ -125,11 +136,32 @@ impl Session {
             .unwrap_or_else(|| self.ws.root.to_string_lossy().into_owned())
     }
 
-    /// The workspace as the orchestrator lists it.
+    pub fn meta(&self) -> Meta {
+        self.meta.lock().unwrap().clone()
+    }
+
+    pub fn edit_meta(&self, f: impl FnOnce(&mut Meta)) {
+        f(&mut self.meta.lock().unwrap());
+    }
+
+    /// The workspace as the registry keeps it.
+    pub fn record(&self) -> Record {
+        Record {
+            id: self.id,
+            root: self.ws.root.to_string_lossy().into_owned(),
+            trusted: self.trusted(),
+            meta: self.meta(),
+        }
+    }
+
+    /// The workspace as the orchestrator lists it: `name` is its folder's,
+    /// `label` the user's name for it.
     pub fn entry(&self) -> Value {
+        let m = self.meta();
         json!({
-            "id": self.id, "name": self.name(), "root": self.ws.root.to_string_lossy(),
-            "host": self.ws.authority.name(), "status": self.status(),
+            "id": self.id, "name": self.name(), "label": m.name, "root": self.ws.root.to_string_lossy(),
+            "host": self.ws.authority.name(), "folder": m.folder, "pinned": m.pinned,
+            "created": m.created, "worktree": m.worktree, "status": self.status(), "error": null,
         })
     }
 
@@ -185,6 +217,7 @@ impl Session {
             "errors": errors, "warnings": warnings,
             "branch": git_branch(&self.ws),
             "viewers": self.room.viewers(),
+            "worked": self.meta.lock().unwrap().worked,
             "attention": *self.attention.lock().unwrap(),
         })
     }
@@ -203,13 +236,14 @@ impl Session {
             let before = seen.terms.get(&id).cloned();
             let reason = match before {
                 Some((_, b)) if bells > b => Some(format!("{name} rang the bell")),
-                Some((s, _)) if t["agent"] == true && s == "working" && state != "working" => {
-                    Some(match state.as_str() {
-                        "waiting" => format!("{name} is waiting for you"),
-                        "exited" => format!("{name} exited"),
-                        _ => format!("{name} finished"),
-                    })
-                }
+                // An agent stopped working: it asks, it finished work, or
+                // it ended.
+                Some((s, _)) if t["agent"] == true && s != state => match state.as_str() {
+                    "waiting" => Some(format!("{name} is waiting for you")),
+                    "done" => Some(format!("{name} finished")),
+                    "exited" => Some(format!("{name} exited")),
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(r) = reason {
@@ -231,6 +265,7 @@ impl Session {
     /// A viewer has seen what needed attention.
     pub fn seen(&self) {
         *self.attention.lock().unwrap() = None;
+        self.terms.seen();
         self.publish_status();
     }
 
@@ -461,7 +496,10 @@ impl Session {
                 // Reads the one chunk holding the line when it is not loaded.
                 json!({ "pos": d.buffer.resolve_line_byte_offset(u(m, "line")? as usize) })
             }
-            "doc.edit" => self.edit(client, m)?,
+            "doc.edit" => {
+                self.worked();
+                self.edit(client, m)?
+            }
             "doc.save" => {
                 let mut docs = self.docs.lock().unwrap();
                 let d = docs.get(u(m, "doc")?)?;
@@ -492,6 +530,7 @@ impl Session {
                 json!({ "term": self.open_terminal((cols, rows), name, command)? })
             }
             "term.input" => {
+                self.worked();
                 self.terms.input(u(m, "term")?, s(m, "data")?)?;
                 json!({})
             }
@@ -528,6 +567,11 @@ impl Session {
 
             _ => fail!(UnknownOp, "unknown op {op}"),
         })
+    }
+
+    /// The user typed into one of its files or terminals.
+    fn worked(&self) {
+        self.meta.lock().unwrap().worked = now_ms();
     }
 
     /// A terminal in the workspace: the user's shell, or `command` in it
@@ -1198,14 +1242,13 @@ mod tests {
     /// A server with one local workspace in a new folder.
     fn app(trusted: bool) -> (tempfile::TempDir, Orchestrator, Arc<Session>) {
         let dir = tempfile::tempdir().unwrap();
-        let orch = Orchestrator::new(false);
+        let orch = Orchestrator::new(false, None);
         let (s, _) = orch
-            .open(&Open {
-                host: HostSpec::Local,
-                root: dir.path().to_str().unwrap(),
+            .open(&Open::new(
+                HostSpec::Local,
+                dir.path().to_str().unwrap(),
                 trusted,
-                agent: None,
-            })
+            ))
             .unwrap();
         (dir, orch, s)
     }

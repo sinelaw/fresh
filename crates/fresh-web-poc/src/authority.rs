@@ -323,7 +323,7 @@ impl Authority for Agent {
 
 /// Which host a workspace is on, as the command line and `workspace.open`
 /// name it.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum HostSpec {
     /// This machine.
@@ -335,6 +335,18 @@ pub enum HostSpec {
     Container { id: String },
     /// The remote agent on this machine, without `ssh`.
     Agent,
+}
+
+impl HostSpec {
+    /// The host as the user names it.
+    pub fn label(&self) -> String {
+        match self {
+            HostSpec::Local => "local".into(),
+            HostSpec::Ssh { target } => format!("ssh {target}"),
+            HostSpec::Container { id } => format!("container {id}"),
+            HostSpec::Agent => "agent".into(),
+        }
+    }
 }
 
 /// Reach the host `spec` names; `slow` adds network-like delays to every

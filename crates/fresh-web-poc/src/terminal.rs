@@ -30,18 +30,48 @@ use std::time::{Duration, Instant};
 /// How much recent output is kept for replay.
 const REPLAY_BYTES: usize = 1 << 20;
 
-/// A terminal with no output for this long is quiet (idle or waiting).
-pub const QUIET: Duration = Duration::from_secs(2);
+/// Output within this long means a terminal is working (the editor's
+/// orchestrator's idle window).
+pub const IDLE_AFTER: Duration = Duration::from_secs(5);
 
-/// What a terminal is doing, as read from its stream.
+/// A run of output at least this long is work: once the terminal goes
+/// quiet, it is finished work nobody has looked at yet.
+pub const WORK_MIN: Duration = Duration::from_millis(1500);
+
+/// How many of the screen's last lines are read for a question.
+const RECENT_LINES: usize = 3;
+
+/// The lines that read as the program waiting on the user: the editor's
+/// orchestrator's built-in detection rules (case-insensitive).
+const QUESTION_RULES: &[&str] = &[
+    r"\(y/n\)|\[y/n\]|\(yes/no\)",
+    r"\bdo you want to\b",
+    r"\b(proceed|continue|allow|approve|confirm|accept)\?",
+    r"\bpress (enter|return)\b",
+    r"[❯>]\s*1[.)]\s*yes",
+    r"\bdon'?t ask again\b",
+    r"\bwaiting for (your )?(input|approval|confirmation)\b",
+    r"\besc(ape)? to cancel\b",
+    r"\benter to (confirm|select|continue)\b",
+    r"\bsyntax theme: .*\(ctrl\+t to (disable|enable)\)",
+    r"\bselect login method\b",
+];
+
+/// What a terminal is doing, as read from its stream (the editor's
+/// orchestrator's states).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
-    /// Output within [`QUIET`].
+    /// Output within [`IDLE_AFTER`], or shell integration (OSC 133, OSC
+    /// 9;4) says a command runs.
     Working,
-    /// Quiet, and its last line asks the user something.
+    /// Quiet, and one of its last lines asks the user something.
     Waiting,
+    /// Quiet after work nobody has seen yet (`workspace.seen` sees it).
+    Done,
     /// Quiet.
     Idle,
+    /// No output yet.
+    Unknown,
     /// Its program ended.
     Exited,
 }
@@ -51,7 +81,9 @@ impl State {
         match self {
             State::Working => "working",
             State::Waiting => "waiting",
+            State::Done => "done",
             State::Idle => "idle",
+            State::Unknown => "unknown",
             State::Exited => "exited",
         }
     }
@@ -75,10 +107,38 @@ struct Activity {
     title: String,
     bells: u64,
     last_output: Option<Instant>,
+    /// When the current run of output began.
+    burst: Instant,
+    /// A run of output since the user last looked was work ([`WORK_MIN`]).
+    worked: bool,
+    /// Shell integration's word: a command runs (`Some(true)`), or the last
+    /// one finished.
+    running: Option<bool>,
 }
 
 impl Activity {
+    fn new(now: Instant) -> Self {
+        Activity {
+            esc: Lexer::Text,
+            title: String::new(),
+            bells: 0,
+            last_output: None,
+            burst: now,
+            worked: false,
+            running: None,
+        }
+    }
+
     fn scan(&mut self, bytes: &[u8], now: Instant) {
+        if self
+            .last_output
+            .is_none_or(|t| now.duration_since(t) >= IDLE_AFTER)
+        {
+            self.burst = now;
+        }
+        if now.duration_since(self.burst) >= WORK_MIN {
+            self.worked = true;
+        }
         self.last_output = Some(now);
         for &b in bytes {
             self.esc = match std::mem::take(&mut self.esc) {
@@ -119,10 +179,43 @@ impl Activity {
         }
     }
 
+    /// A title (OSC 0/2), or shell integration's command marks (OSC 133:
+    /// `C` a command starts, `D` it ended, `A` a prompt) and progress (OSC
+    /// 9;4: state 0 ends it).
     fn osc(&mut self, s: &[u8]) {
         let s = String::from_utf8_lossy(s);
         if let Some(t) = s.strip_prefix("0;").or_else(|| s.strip_prefix("2;")) {
             self.title = t.chars().take(200).collect();
+        } else if let Some(mark) = s.strip_prefix("133;") {
+            match mark.chars().next() {
+                Some('C') => self.running = Some(true),
+                Some('D' | 'A') => self.running = Some(false),
+                _ => {}
+            }
+        } else if let Some(progress) = s.strip_prefix("9;4;") {
+            self.running = Some(!progress.starts_with('0'));
+        }
+    }
+
+    fn state(&self, exited: bool, replay: &VecDeque<u8>, now: Instant) -> State {
+        if exited {
+            return State::Exited;
+        }
+        if self.running == Some(true) {
+            return State::Working;
+        }
+        let Some(last) = self.last_output else {
+            return State::Unknown;
+        };
+        if self.running != Some(false) && now.duration_since(last) < IDLE_AFTER {
+            return State::Working;
+        }
+        if recent_lines(replay).iter().any(|l| asks(l)) {
+            State::Waiting
+        } else if self.worked {
+            State::Done
+        } else {
+            State::Idle
         }
     }
 }
@@ -135,19 +228,24 @@ struct Output {
     activity: Activity,
 }
 
-/// The last line of text on the screen, roughly: the tail of the stream
-/// without escape sequences, its last line holding anything.
-fn last_line(replay: &VecDeque<u8>) -> String {
+/// The last lines of text on the screen, roughly: the tail of the stream
+/// without escape sequences, its last [`RECENT_LINES`] lines holding
+/// anything.
+fn recent_lines(replay: &VecDeque<u8>) -> Vec<String> {
     let n = replay.len();
-    let tail: Vec<u8> = replay.range(n.saturating_sub(2048)..).copied().collect();
+    let tail: Vec<u8> = replay.range(n.saturating_sub(4096)..).copied().collect();
     let text = String::from_utf8_lossy(&tail);
     let plain = strip_escapes(&text);
-    plain
+    let mut lines: Vec<String> = plain
         .split(['\n', '\r'])
         .map(str::trim)
-        .rfind(|l| !l.is_empty())
-        .unwrap_or("")
-        .to_string()
+        .filter(|l| !l.is_empty())
+        .rev()
+        .take(RECENT_LINES)
+        .map(str::to_string)
+        .collect();
+    lines.reverse();
+    lines
 }
 
 fn strip_escapes(s: &str) -> String {
@@ -159,11 +257,14 @@ fn strip_escapes(s: &str) -> String {
     re.replace_all(s, "").into_owned()
 }
 
-/// Whether a line asks the user something: a question, or a yes/no prompt.
+/// Whether a line asks the user something, by [`QUESTION_RULES`].
 fn asks(line: &str) -> bool {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static RE: std::sync::OnceLock<regex::RegexSet> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(?i)(\?\s*$|[(\[]\s*y(es)?\s*/\s*n(o)?\s*[)\]]|press enter)").unwrap()
+        regex::RegexSetBuilder::new(QUESTION_RULES)
+            .case_insensitive(true)
+            .build()
+            .unwrap()
     });
     re.is_match(line)
 }
@@ -186,19 +287,7 @@ struct Term {
 impl Term {
     fn describe(&self, id: u64, now: Instant) -> Value {
         let o = self.out.lock().unwrap();
-        let state = if o.exited {
-            State::Exited
-        } else if o
-            .activity
-            .last_output
-            .is_some_and(|t| now.duration_since(t) < QUIET)
-        {
-            State::Working
-        } else if asks(&last_line(&o.replay)) {
-            State::Waiting
-        } else {
-            State::Idle
-        };
+        let state = o.activity.state(o.exited, &o.replay, now);
         json!({
             "id": id, "name": self.name, "command": self.command, "agent": self.command.is_some(),
             "title": o.activity.title, "state": state.as_str(), "bells": o.activity.bells,
@@ -264,12 +353,7 @@ impl Terms {
             replay: VecDeque::new(),
             end: 0,
             exited: false,
-            activity: Activity {
-                esc: Lexer::Text,
-                title: String::new(),
-                bells: 0,
-                last_output: None,
-            },
+            activity: Activity::new(Instant::now()),
         }));
         {
             let out = out.clone();
@@ -393,6 +477,13 @@ impl Terms {
         }
     }
 
+    /// The user has seen what every terminal did: finished work is idle.
+    pub fn seen(&self) {
+        for t in self.map.lock().unwrap().values() {
+            t.out.lock().unwrap().activity.worked = false;
+        }
+    }
+
     pub fn ids(&self) -> Vec<u64> {
         let mut v: Vec<u64> = self.map.lock().unwrap().keys().copied().collect();
         v.sort();
@@ -415,12 +506,7 @@ mod tests {
     use super::*;
 
     fn activity() -> Activity {
-        Activity {
-            esc: Lexer::Text,
-            title: String::new(),
-            bells: 0,
-            last_output: None,
-        }
+        Activity::new(Instant::now())
     }
 
     #[test]
@@ -439,18 +525,52 @@ mod tests {
     }
 
     #[test]
-    fn the_last_line_is_read_without_escapes() {
+    fn the_last_lines_are_read_without_escapes() {
         let replay: VecDeque<u8> =
-            b"working...\r\n\x1b[1mProceed with the change? \x1b[0m\r\n\x1b[K  \r\n"
+            b"one\r\ntwo\r\nworking...\r\n\x1b[1mDo you want to proceed? \x1b[0m\r\n\x1b[K  \r\n"
                 .iter()
                 .copied()
                 .collect();
-        let line = last_line(&replay);
-        assert_eq!(line, "Proceed with the change?");
-        assert!(asks(&line));
+        let lines = recent_lines(&replay);
+        assert_eq!(lines, ["two", "working...", "Do you want to proceed?"]);
+        assert!(asks(&lines[2]));
         assert!(asks("Overwrite file [y/N]"));
         assert!(asks("Continue (yes/no)"));
+        assert!(asks("❯ 1. Yes"));
+        assert!(asks("Enter to confirm · Esc to cancel"));
         assert!(!asks("user@host:~/src$"));
         assert!(!asks("done: 3 files"));
+    }
+
+    #[test]
+    fn states_follow_output_work_and_shell_integration() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let empty = VecDeque::new();
+        let mut a = activity();
+        assert_eq!(a.state(false, &empty, at(0)), State::Unknown);
+        // A prompt: output, but no run of work.
+        a.scan(b"$ ", at(0));
+        assert_eq!(a.state(false, &empty, at(100)), State::Working);
+        assert_eq!(a.state(false, &empty, at(6000)), State::Idle);
+        // Output for two seconds: work; quiet after it, done until seen.
+        for ms in (7000..=9000).step_by(500) {
+            a.scan(b"x", at(ms));
+        }
+        assert_eq!(a.state(false, &empty, at(9500)), State::Working);
+        assert_eq!(a.state(false, &empty, at(15000)), State::Done);
+        a.worked = false;
+        assert_eq!(a.state(false, &empty, at(15000)), State::Idle);
+        // Shell integration: a running command works while silent; a
+        // finished one is quiet at once.
+        a.scan(b"\x1b]133;C\x07", at(20000));
+        assert_eq!(a.state(false, &empty, at(60000)), State::Working);
+        a.scan(b"\x1b]133;D;0\x07", at(60000));
+        assert_eq!(a.state(false, &empty, at(60001)), State::Idle);
+        a.scan(b"\x1b]9;4;1;50\x07", at(61000));
+        assert_eq!(a.state(false, &empty, at(90000)), State::Working);
+        a.scan(b"\x1b]9;4;0;0\x07", at(90000));
+        assert_eq!(a.state(false, &empty, at(90001)), State::Idle);
+        assert_eq!(a.state(true, &empty, at(90001)), State::Exited);
     }
 }

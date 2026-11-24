@@ -159,14 +159,12 @@ fn main() -> Result<()> {
     }
     // The first workspace opens as every other does.
     let given = root.unwrap_or_else(|| ".".into());
-    let orch = Arc::new(Orchestrator::new(slow));
+    // The registry kept last time first, then the command line's folder
+    // (which is one of them when it was open then).
+    let orch = Arc::new(Orchestrator::new(slow, Some(orchestrator::Store::local()?)));
+    orch.restore();
     let (first, _) = orch
-        .open(&Open {
-            host,
-            root: &given,
-            trusted,
-            agent: None,
-        })
+        .open(&Open::new(host, &given, trusted))
         .map_err(|e| anyhow!("{given}: {e}"))?;
     println!(
         "fresh-poc serving {} ({}) on http://127.0.0.1:{port}/",
