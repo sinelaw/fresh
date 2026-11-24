@@ -156,8 +156,10 @@ impl Terms {
     }
 
     pub fn close(&self, id: u64) {
-        if let Some(mut t) = self.map.lock().unwrap().remove(&id) {
+        let term = self.map.lock().unwrap().remove(&id);
+        if let Some(mut t) = term {
             let _ = t.child.kill();
+            let _ = t.child.wait();
         }
     }
 

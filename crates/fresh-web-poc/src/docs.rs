@@ -12,7 +12,7 @@
 //! in text it never fetched.
 
 use crate::ot::{transform_seqs, Prim};
-use crate::workspace::{host, Fs};
+use crate::workspace::{host, signature, Fs};
 use anyhow::{anyhow, bail, Result};
 use fresh_editor_core::model::buffer::Buffer;
 
@@ -49,7 +49,15 @@ pub struct Doc {
     pub language: Option<String>,
     pub clients: HashSet<u64>,
     pub readonly: bool,
+    /// The file's (size, mtime) when it was loaded or last saved; `None`
+    /// while it does not exist. A save finding anything else refuses unless
+    /// forced, so another writer's change is never overwritten unseen.
+    pub disk: Option<(u64, u64)>,
 }
+
+/// A change as `didChange` states it: start and end (line, UTF-16 column),
+/// and the new text.
+pub type LspChange = ((usize, usize), (usize, usize), String);
 
 /// One primitive as applied, for the broadcast and for the language server.
 pub struct Applied {
@@ -58,7 +66,7 @@ pub struct Applied {
     pub newlines: usize,
     /// The primitive's range in LSP coordinates in the document *before* it,
     /// and the inserted text: what `didChange` sends.
-    pub lsp: Option<((usize, usize), (usize, usize), String)>,
+    pub lsp: Option<LspChange>,
 }
 
 #[derive(Default)]
@@ -285,7 +293,7 @@ impl Doc {
             }
             let mut it = (0..=hay.len() - q.len()).filter(|&i| &hay[i..i + q.len()] == q);
             if last {
-                it.last()
+                it.next_back()
             } else {
                 it.next()
             }
@@ -404,9 +412,19 @@ impl Doc {
     }
 
     /// Save through the document's filesystem; `recovery` is the host's
-    /// recovery folder.
-    pub fn save(&mut self, recovery: &Path) -> Result<()> {
-        self.buffer.save(recovery)
+    /// recovery folder. Refused when the file changed on disk since it was
+    /// loaded or last saved, unless `force`.
+    pub fn save(&mut self, recovery: &Path, force: bool) -> Result<()> {
+        let fs = self.buffer.filesystem().clone();
+        if !force && signature(&fs, &self.path) != self.disk {
+            bail!(
+                "{} changed on disk since it was opened; save with force to overwrite it",
+                self.path.display()
+            );
+        }
+        self.buffer.save(recovery)?;
+        self.disk = signature(&fs, &self.path);
+        Ok(())
     }
 
     /// The whole text, for a language server's `didOpen`. Only for an
@@ -433,6 +451,7 @@ impl Docs {
         }
         let meta = fs.metadata(host(&path).as_host_path()).ok();
         let readonly = meta.as_ref().is_some_and(|m| m.is_readonly);
+        let disk = signature(&fs, &path);
         let buffer = if meta.is_some() {
             Buffer::load_from_file(&path, LARGE_FILE_THRESHOLD, fs)?
         } else {
@@ -458,6 +477,7 @@ impl Docs {
                 log: VecDeque::new(),
                 clients,
                 readonly,
+                disk,
             },
         );
         self.by_path.insert(path, id);
@@ -551,6 +571,71 @@ mod tests {
         assert_eq!(b["text"], "line 8\nline 9\n");
         let b = d.lines_backward(d.len(), 1).unwrap();
         assert_eq!(b["text"], "line 99\n");
+    }
+
+    #[test]
+    fn save_refuses_over_an_external_change_unless_forced() {
+        let (dir, mut docs, id) = doc_with("one\n");
+        let p = dir.path().join("a.txt");
+        let recovery = dir.path().join("recovery");
+        let d = docs.get(id).unwrap();
+        let ins = |pos, text: &str| {
+            vec![Prim::Ins {
+                pos,
+                text: text.into(),
+            }]
+        };
+        d.edit(0, ins(0, "zero\n"), false).unwrap();
+        d.save(&recovery, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "zero\none\n");
+        assert!(!d.buffer.is_modified());
+        // Its own save is not an external change.
+        d.edit(1, ins(0, "a\n"), false).unwrap();
+        d.save(&recovery, false).unwrap();
+
+        std::fs::write(&p, "another writer\n").unwrap();
+        d.edit(2, ins(0, "b\n"), false).unwrap();
+        let err = d.save(&recovery, false).unwrap_err().to_string();
+        assert!(err.contains("changed on disk"), "{err}");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "another writer\n");
+        d.save(&recovery, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "b\na\nzero\none\n");
+
+        // Deleted under it: also a change.
+        std::fs::remove_file(&p).unwrap();
+        d.edit(3, ins(0, "c\n"), false).unwrap();
+        assert!(d.save(&recovery, false).is_err());
+    }
+
+    #[test]
+    fn a_document_goes_when_its_last_client_closes_it_unmodified() {
+        let (_d, mut docs, id) = doc_with("text\n");
+        let p = docs.get(id).unwrap().path.clone();
+        let fs: Fs = std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem);
+        let (again, new) = docs.open(2, &p, fs.clone()).unwrap();
+        assert_eq!((again, new), (id, false), "the second client joins it");
+        assert!(docs.close(1, id).is_none());
+        assert!(docs.close(2, id).is_some());
+        assert!(docs.get(id).is_err());
+        assert_eq!(docs.by_path(&p), None);
+
+        // A modified one stays for the next client, with its edits.
+        let (id, _) = docs.open(1, &p, fs.clone()).unwrap();
+        docs.get(id)
+            .unwrap()
+            .edit(
+                0,
+                vec![Prim::Ins {
+                    pos: 0,
+                    text: "kept ".into(),
+                }],
+                false,
+            )
+            .unwrap();
+        assert!(docs.drop_client(1).is_empty());
+        let (back, new) = docs.open(3, &p, fs).unwrap();
+        assert_eq!((back, new), (id, false));
+        assert_eq!(docs.get(id).unwrap().text(0, 100).unwrap(), "kept text\n");
     }
 
     #[test]

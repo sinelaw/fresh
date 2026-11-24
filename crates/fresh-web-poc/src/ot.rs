@@ -218,14 +218,14 @@ mod tests {
         // Pairs of single primitives, and a two-step sequence against one.
         for a in &prims {
             for b in &prims {
-                converge(doc, &[a.clone()], &[b.clone()]);
+                converge(doc, std::slice::from_ref(a), std::slice::from_ref(b));
             }
         }
         for a in prims.iter().step_by(3) {
             for a2 in [ins(0, "Q"), del(0, 1), ins(5, "R")] {
                 for b in prims.iter().step_by(2) {
-                    converge(doc, &[a.clone(), a2.clone()], &[b.clone()]);
-                    converge(doc, &[b.clone()], &[a.clone(), a2.clone()]);
+                    converge(doc, &[a.clone(), a2.clone()], std::slice::from_ref(b));
+                    converge(doc, std::slice::from_ref(b), &[a.clone(), a2.clone()]);
                 }
             }
         }

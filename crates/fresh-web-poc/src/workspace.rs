@@ -8,8 +8,14 @@
 //! a range at a time, so a 100 MB file over a slow link costs the windows
 //! actually viewed. Listing, finding and searching run through it too (on the
 //! host's side for a remote one), so there is one code path for every host.
+//!
+//! Every process — a client's `proc.run`, a terminal's shell, a language
+//! server and its availability probe — is built by the authority too
+//! ([`Authority::command`], [`Authority::shell_command`]): directly here, `ssh`
+//! to a remote host, `docker exec` into a container.
 
 use anyhow::{anyhow, Result};
+use fresh::services::remote::ConnectionParams;
 use fresh_editor_core::model::filesystem::{
     EntryType, FileSearchOptions, FileSystem, StdFileSystem, WalkOptions,
 };
@@ -89,51 +95,113 @@ fn sh_quote(s: &str) -> String {
 
 /// Another machine over SSH: files through the editor's remote agent (one
 /// persistent connection, ranged reads, newline counting and searching on
-/// the remote side); processes and terminals through `ssh`.
+/// the remote side); processes and terminals through `ssh`, with the port,
+/// identity and options of the agent's connection.
 pub struct Ssh {
-    pub target: String,
-    pub extra: Vec<String>,
+    pub params: ConnectionParams,
     pub fs: Fs,
     /// Keeps the connection's async tasks alive.
     pub _runtime: tokio::runtime::Runtime,
     pub _conn: fresh::services::remote::SshConnection,
 }
 
+/// `ssh … <target> 'cd <cwd> && exec <program> <args…>'`: a non-interactive
+/// command on the host of `params`.
+fn ssh_command(params: &ConnectionParams, program: &str, args: &[String], cwd: &Path) -> Command {
+    let mut c = Command::new("ssh");
+    c.args([
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]);
+    if let Some(port) = params.port {
+        c.arg("-p").arg(port.to_string());
+    }
+    if let Some(id) = &params.identity_file {
+        c.arg("-i").arg(id);
+    }
+    c.args(&params.extra_args).arg(params.ssh_target());
+    let mut line = format!(
+        "cd {} && exec {}",
+        sh_quote(&cwd.to_string_lossy()),
+        sh_quote(program)
+    );
+    for a in args {
+        line.push(' ');
+        line.push_str(&sh_quote(a));
+    }
+    c.arg(line);
+    c
+}
+
+/// The editor's own SSH terminal command: a login shell in `cwd`, with auth
+/// prompts allowed to surface in the terminal.
+fn ssh_shell_command(params: &ConnectionParams, cwd: &Path) -> portable_pty::CommandBuilder {
+    let mut c = portable_pty::CommandBuilder::new("ssh");
+    c.args(fresh::services::remote::build_ssh_terminal_args(
+        params,
+        Some(&cwd.to_string_lossy()),
+    ));
+    c.env("TERM", "xterm-256color");
+    c
+}
+
 impl Authority for Ssh {
     fn name(&self) -> String {
-        format!("ssh {}", self.target)
+        format!("ssh {}", self.params)
     }
     fn fs(&self) -> Fs {
         self.fs.clone()
     }
     fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command {
-        let mut line = format!(
-            "cd {} && exec {}",
-            sh_quote(&cwd.to_string_lossy()),
-            sh_quote(program)
-        );
-        for a in args {
-            line.push(' ');
-            line.push_str(&sh_quote(a));
-        }
-        let mut c = Command::new("ssh");
-        c.args(&self.extra)
-            .arg("-o")
-            .arg("BatchMode=yes")
-            .arg(&self.target)
-            .arg(line);
+        ssh_command(&self.params, program, args, cwd)
+    }
+    fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder {
+        ssh_shell_command(&self.params, cwd)
+    }
+}
+
+/// A container whose workspace is bind-mounted at the same path, as in a
+/// devcontainer: files stay on this machine; processes, terminals and
+/// language servers run in the container through `docker exec`.
+pub struct Container {
+    /// The container's name or id.
+    pub id: String,
+    pub fs: Fs,
+}
+
+impl Authority for Container {
+    fn name(&self) -> String {
+        format!("container {}", self.id)
+    }
+    fn fs(&self) -> Fs {
+        self.fs.clone()
+    }
+    fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command {
+        // `-i` keeps stdin open: a language server is spoken to on it.
+        let mut c = Command::new("docker");
+        c.args(["exec", "-i", "-w"])
+            .arg(cwd)
+            .arg(&self.id)
+            .arg(program)
+            .args(args);
         c
     }
     fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder {
-        let mut c = portable_pty::CommandBuilder::new("ssh");
-        c.args(&self.extra);
-        c.arg("-t");
-        c.arg(&self.target);
-        c.arg(format!(
-            "cd {} && exec ${{SHELL:-/bin/sh}} -l",
-            sh_quote(&cwd.to_string_lossy())
-        ));
-        c.env("TERM", "xterm-256color");
+        let mut c = portable_pty::CommandBuilder::new("docker");
+        c.args(["exec", "-it", "-w"]);
+        c.arg(cwd);
+        c.args([
+            "-e",
+            "TERM=xterm-256color",
+            "-e",
+            "COLORTERM=truecolor",
+            &self.id,
+            "sh",
+            "-c",
+            "exec \"${SHELL:-/bin/sh}\" -l",
+        ]);
         c
     }
 }
@@ -175,6 +243,13 @@ fn millis(t: Option<std::time::SystemTime>) -> u64 {
     t.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// A path's modification signature (size, mtime in ms) through `fs`, or
+/// `None` when it does not exist.
+pub fn signature(fs: &Fs, p: &Path) -> Option<(u64, u64)> {
+    let m = fs.metadata(host(p).as_host_path()).ok()?;
+    Some((m.size, millis(m.modified)))
 }
 
 impl Workspace {
@@ -343,10 +418,9 @@ impl Workspace {
         d
     }
 
-    /// The modification signature (size, mtime) of a path, for watching it.
+    /// The modification signature of a path, for watching it.
     pub fn signature(&self, p: &Path) -> Option<(u64, u64)> {
-        let m = self.fs().metadata(host(p).as_host_path()).ok()?;
-        Some((m.size, millis(m.modified)))
+        signature(&self.fs(), p)
     }
 
     /// The root's ignore rules (`.gitignore`, `.git/info/exclude`), read
@@ -465,5 +539,221 @@ impl Workspace {
             }
         }
         Ok(json!({ "matches": out, "files": files, "truncated": truncated }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(c: &Command) -> Vec<String> {
+        std::iter::once(c.get_program())
+            .chain(c.get_args())
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn pty_argv(c: &portable_pty::CommandBuilder) -> Vec<String> {
+        c.get_argv()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn local_ws() -> (tempfile::TempDir, Workspace) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let ws = Workspace {
+            root,
+            authority: Arc::new(Local::new()),
+        };
+        (dir, ws)
+    }
+
+    #[test]
+    fn container_runs_processes_with_docker_exec() {
+        let c = Container {
+            id: "dev-1".into(),
+            fs: Arc::new(StdFileSystem),
+        };
+        let cmd = c.command("rust-analyzer", &["--stdio".into()], Path::new("/w s/p"));
+        assert_eq!(
+            argv(&cmd),
+            [
+                "docker",
+                "exec",
+                "-i",
+                "-w",
+                "/w s/p",
+                "dev-1",
+                "rust-analyzer",
+                "--stdio"
+            ]
+        );
+        // No local working directory: the path is the container's.
+        assert_eq!(cmd.get_current_dir(), None);
+        let sh = c.shell_command(Path::new("/w"));
+        assert_eq!(
+            pty_argv(&sh),
+            [
+                "docker",
+                "exec",
+                "-it",
+                "-w",
+                "/w",
+                "-e",
+                "TERM=xterm-256color",
+                "-e",
+                "COLORTERM=truecolor",
+                "dev-1",
+                "sh",
+                "-c",
+                "exec \"${SHELL:-/bin/sh}\" -l",
+            ]
+        );
+    }
+
+    #[test]
+    fn ssh_commands_carry_port_identity_and_options() {
+        let mut p = ConnectionParams::parse("me@box:2222").unwrap();
+        p.identity_file = Some("/k/id".into());
+        p.extra_args = vec!["-J".into(), "jump".into()];
+        let cmd = ssh_command(&p, "git", &["log".into(), "a b".into()], Path::new("/p q"));
+        assert_eq!(
+            argv(&cmd),
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-p",
+                "2222",
+                "-i",
+                "/k/id",
+                "-J",
+                "jump",
+                "me@box",
+                "cd '/p q' && exec git log 'a b'",
+            ]
+        );
+        let sh = pty_argv(&ssh_shell_command(&p, Path::new("/p")));
+        assert_eq!(sh[0], "ssh");
+        assert!(sh.windows(2).any(|w| w == ["-p", "2222"]), "{sh:?}");
+        assert!(sh.windows(2).any(|w| w == ["-i", "/k/id"]), "{sh:?}");
+        assert!(sh.iter().any(|a| a == "-t"), "{sh:?}");
+        assert!(sh.iter().any(|a| a == "me@box"), "{sh:?}");
+    }
+
+    #[test]
+    fn shell_quoting() {
+        assert_eq!(sh_quote("plain/path-1.rs"), "plain/path-1.rs");
+        assert_eq!(sh_quote(""), "''");
+        assert_eq!(sh_quote("it's"), "'it'\\''s'");
+        assert_eq!(sh_quote("$HOME"), "'$HOME'");
+    }
+
+    #[test]
+    fn file_operations() {
+        let (_d, ws) = local_ws();
+        let r = &ws.root;
+        ws.create(&r.join("a/b"), true).unwrap();
+        ws.create(&r.join("a/b/f.txt"), false).unwrap();
+        assert!(
+            ws.create(&r.join("a/b/f.txt"), false).is_err(),
+            "never over a file"
+        );
+        ws.write_file(&r.join("a/b/f.txt"), "text").unwrap();
+        ws.rename(&r.join("a/b/f.txt"), &r.join("a/g.txt")).unwrap();
+        assert!(!ws.exists(&r.join("a/b/f.txt")));
+        assert_eq!(ws.read_file(&r.join("a/g.txt"), 100).unwrap(), "text");
+        assert!(ws.read_file(&r.join("a/g.txt"), 2).is_err(), "over the cap");
+        ws.create(&r.join("a/h.txt"), false).unwrap();
+        assert!(ws.rename(&r.join("a/g.txt"), &r.join("a/h.txt")).is_err());
+
+        // Copy into a folder, then again: never over an existing name.
+        let c1 = ws.copy(&r.join("a/g.txt"), &r.join("a/b")).unwrap();
+        assert_eq!(c1, r.join("a/b/g.txt"));
+        let c2 = ws.copy(&r.join("a/g.txt"), &r.join("a/b")).unwrap();
+        assert_eq!(c2, r.join("a/b/g copy.txt"));
+        let c3 = ws.copy(&r.join("a/b"), r).unwrap();
+        assert_eq!(c3, r.join("b"));
+        assert_eq!(ws.read_file(&r.join("b/g copy.txt"), 100).unwrap(), "text");
+
+        let names: Vec<String> = ws
+            .list_dir(&r.join("a"))
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            ["b", "g.txt", "h.txt"],
+            "folders first, then by name"
+        );
+
+        ws.remove(&r.join("a")).unwrap();
+        assert!(!ws.exists(&r.join("a")));
+        assert_eq!(ws.stat(&r.join("b"))["dir"], true);
+        assert_eq!(ws.stat(&r.join("a"))["exists"], false);
+    }
+
+    #[test]
+    fn find_and_search_follow_ignore_rules() {
+        let (_d, ws) = local_ws();
+        let r = &ws.root;
+        for (p, t) in [
+            (".gitignore", "build/\n*.log\n!keep.log\n"),
+            (".git/info/exclude", "secret.txt\n"),
+            ("src/main.rs", "fn main() { needle(); }\n"),
+            ("src/lib.rs", "pub fn needle() {}\nconst NEEDLES: u8 = 0;\n"),
+            ("build/out.rs", "needle\n"),
+            ("debug.log", "needle\n"),
+            ("keep.log", "needle\n"),
+            ("secret.txt", "needle\n"),
+            (".hidden/x.rs", "needle\n"),
+            ("target/y.rs", "needle\n"),
+        ] {
+            ws.write_file(&r.join(p), t).unwrap();
+        }
+        assert_eq!(
+            ws.find_files("rs", 10).unwrap(),
+            ["src/lib.rs", "src/main.rs"]
+        );
+        assert_eq!(ws.find_files("smn", 10).unwrap(), ["src/main.rs"]);
+
+        let res = ws.search("needle", false, false, false, 100).unwrap();
+        let mut hits: Vec<(String, u64)> = res["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                (
+                    m["path"].as_str().unwrap().to_string(),
+                    m["line"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        hits.sort();
+        assert_eq!(
+            hits,
+            [
+                ("keep.log".to_string(), 0),
+                ("src/lib.rs".to_string(), 0),
+                ("src/lib.rs".to_string(), 1),
+                ("src/main.rs".to_string(), 0),
+            ]
+        );
+        assert_eq!(res["files"], 3);
+        let whole = ws.search("needle", false, false, true, 100).unwrap();
+        assert_eq!(whole["matches"].as_array().unwrap().len(), 3);
+        let case = ws.search("NEEDLE", false, true, false, 100).unwrap();
+        assert_eq!(case["matches"].as_array().unwrap().len(), 1);
+        let re = ws.search(r"fn \w+\(", true, false, false, 100).unwrap();
+        assert_eq!(re["matches"].as_array().unwrap().len(), 2);
+        assert!(ws.search("(", true, false, false, 100).is_err());
+        let capped = ws.search("needle", false, false, false, 2).unwrap();
+        assert_eq!(capped["matches"].as_array().unwrap().len(), 2);
+        assert_eq!(capped["truncated"], true);
     }
 }

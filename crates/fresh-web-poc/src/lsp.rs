@@ -12,13 +12,13 @@
 use crate::workspace::Workspace;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// Called with every notification a server sends (`method`, `params`).
@@ -174,7 +174,10 @@ impl Server {
             let init = json!({
                 "jsonrpc": "2.0", "id": 0, "method": "initialize",
                 "params": {
-                    "processId": std::process::id(),
+                    // The server runs on the workspace's host, where this
+                    // process's id means nothing; it exits when its stdin
+                    // closes.
+                    "processId": null,
                     "rootUri": root_uri,
                     "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
                     "capabilities": {
@@ -244,8 +247,34 @@ impl Drop for Server {
 pub struct Lsp {
     ws: Arc<Workspace>,
     servers: Mutex<HashMap<String, Option<Arc<Server>>>>,
-    installed: Mutex<HashMap<String, bool>>,
+    /// The programs of [`LANGUAGES`]' servers found on the host: probed once,
+    /// with one command, the first time it is asked.
+    installed: OnceLock<HashSet<String>>,
     on_notify: OnNotify,
+}
+
+/// The languages a server is configured for, in the order reported.
+pub const LANGUAGES: &[&str] = &[
+    "python",
+    "rust",
+    "javascript",
+    "typescript",
+    "c",
+    "cpp",
+    "go",
+];
+
+/// A shell script printing, one per line, each of `programs` found on the
+/// `PATH`.
+fn probe_script(programs: &[String]) -> String {
+    let words: Vec<String> = programs
+        .iter()
+        .map(|p| format!("'{}'", p.replace('\'', "'\\''")))
+        .collect();
+    format!(
+        "for p in {}; do command -v \"$p\" >/dev/null 2>&1 && echo \"$p\"; done; true",
+        words.join(" ")
+    )
 }
 
 impl Lsp {
@@ -253,33 +282,53 @@ impl Lsp {
         Lsp {
             ws,
             servers: Mutex::default(),
-            installed: Mutex::default(),
+            installed: OnceLock::new(),
             on_notify,
         }
     }
 
-    /// Whether `language`'s server is installed on the host (asked once).
+    fn installed(&self) -> &HashSet<String> {
+        self.installed.get_or_init(|| {
+            let mut programs: Vec<String> = LANGUAGES
+                .iter()
+                .filter_map(|l| command_for(l).map(|c| c[0].clone()))
+                .collect();
+            programs.sort();
+            programs.dedup();
+            self.ws
+                .authority
+                .command("sh", &["-c".into(), probe_script(&programs)], &self.ws.root)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    }
+
+    /// Whether the host was probed for servers yet.
+    #[cfg(test)]
+    pub fn probed(&self) -> bool {
+        self.installed.get().is_some()
+    }
+
+    /// The languages whose server is installed on the host.
+    pub fn languages(&self) -> Vec<&'static str> {
+        LANGUAGES
+            .iter()
+            .copied()
+            .filter(|l| self.available(l))
+            .collect()
+    }
+
+    /// Whether `language`'s server is installed on the host.
     pub fn available(&self, language: &str) -> bool {
-        let Some(cmd) = command_for(language) else {
-            return false;
-        };
-        if let Some(&v) = self.installed.lock().unwrap().get(language) {
-            return v;
-        }
-        let probe = format!("command -v {}", cmd[0]);
-        let ok = self
-            .ws
-            .authority
-            .command("sh", &["-c".into(), probe], &self.ws.root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        self.installed
-            .lock()
-            .unwrap()
-            .insert(language.to_string(), ok);
-        ok
+        command_for(language).is_some_and(|cmd| self.installed().contains(&cmd[0]))
     }
 
     /// The server for `language`, starting it if it is installed.

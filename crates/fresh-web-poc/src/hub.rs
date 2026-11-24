@@ -40,6 +40,11 @@ impl Hub {
         self.clients.lock().unwrap().get_mut(&client)?.rx.take()
     }
 
+    /// Whether `client` is registered and not yet forgotten.
+    pub fn has(&self, client: u64) -> bool {
+        self.clients.lock().unwrap().contains_key(&client)
+    }
+
     pub fn forget(&self, client: u64) {
         self.clients.lock().unwrap().remove(&client);
     }

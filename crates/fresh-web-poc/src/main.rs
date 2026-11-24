@@ -19,12 +19,13 @@ mod workspace;
 
 use anyhow::{anyhow, Result};
 use docs::Docs;
+use fresh_editor_core::model::filesystem::StdFileSystem;
 use hub::Hub;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use workspace::{Agent, Authority, Local, Ssh, Workspace};
+use workspace::{Agent, Authority, Container, Local, Ssh, Workspace};
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -92,36 +93,42 @@ impl App {
         if !trusted && (op.starts_with("proc.") || op == "term.open" || op.starts_with("lsp.")) {
             return Err(anyhow!("workspace is restricted: trust it to run processes, terminals and language servers"));
         }
+        // What a client opens is released when its event stream ends, so
+        // only a client with a live stream can open anything.
+        if matches!(op, "doc.open" | "fs.watch" | "proc.run") && !self.hub.has(client) {
+            return Err(anyhow!("unknown client {client}: say hello first"));
+        }
         Ok(match op {
             "hello" => {
                 let id = self.hub.register();
-                let langs: Vec<&str> = [
-                    "python",
-                    "rust",
-                    "javascript",
-                    "typescript",
-                    "c",
-                    "cpp",
-                    "go",
-                ]
-                .into_iter()
-                .filter(|l| self.lsp.available(l))
-                .collect();
                 json!({
                     "client": id,
                     "root": ws.root.to_string_lossy(),
                     "name": ws.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                     "host": ws.authority.name(),
                     "terminals": self.terms.list(),
-                    "trusted": self.trusted.load(std::sync::atomic::Ordering::SeqCst),
-                    "lsp": langs,
+                    "trusted": trusted,
+                    // Finding the servers runs a probe on the host: only
+                    // once trusted (then sent with `workspace.trusted`).
+                    "lsp": if trusted { self.lsp.languages() } else { vec![] },
                 })
             }
             "workspace.trust" => {
-                self.trusted
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                self.hub
-                    .broadcast(&json!({"ev": "workspace.trusted"}), None);
+                if !self.trusted.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    // Documents opened while restricted get their language
+                    // servers now.
+                    let mut docs = self.docs.lock().unwrap();
+                    let ids: Vec<u64> = docs.docs.keys().copied().collect();
+                    for id in ids {
+                        if let Ok(d) = docs.get(id) {
+                            self.lsp_open(d)?;
+                        }
+                    }
+                }
+                self.hub.broadcast(
+                    &json!({"ev": "workspace.trusted", "lsp": self.lsp.languages()}),
+                    None,
+                );
                 json!({})
             }
             "fs.list" => {
@@ -183,19 +190,8 @@ impl App {
                 if new && d.buffer.line_count().is_none() {
                     index_lines(self.docs.clone(), self.hub.clone(), id);
                 }
-                if new && !d.buffer.is_large_file() && trusted {
-                    if let Some(lang) = d.language.clone() {
-                        if let Some(server) = self.lsp.server(&lang) {
-                            let text = d.full_text()?;
-                            server.notify(
-                                "textDocument/didOpen",
-                                json!({"textDocument": {
-                                    "uri": lsp::uri_of(&d.path), "languageId": lang,
-                                    "version": d.version, "text": text,
-                                }}),
-                            );
-                        }
-                    }
+                if new && trusted {
+                    self.lsp_open(d)?;
                 }
                 d.info()
             }
@@ -274,7 +270,8 @@ impl App {
             "doc.save" => {
                 let mut docs = self.docs.lock().unwrap();
                 let d = docs.get(u(m, "doc")?)?;
-                d.save(&ws.recovery_dir())?;
+                let force = m.get("force").and_then(Value::as_bool).unwrap_or(false);
+                d.save(&ws.recovery_dir(), force)?;
                 let info = d.info();
                 if let Some(server) = d.language.as_deref().and_then(|l| self.lsp.running(l)) {
                     server.notify(
@@ -375,6 +372,28 @@ impl App {
             self.hub.send(*c, &ev);
         }
         Ok(json!({ "version": d.version }))
+    }
+
+    /// Hand a newly opened document of an ordinary size to its language's
+    /// server, starting the server if it is installed.
+    fn lsp_open(&self, d: &mut docs::Doc) -> Result<()> {
+        if d.buffer.is_large_file() {
+            return Ok(());
+        }
+        let Some(lang) = d.language.clone() else {
+            return Ok(());
+        };
+        if let Some(server) = self.lsp.server(&lang) {
+            let text = d.full_text()?;
+            server.notify(
+                "textDocument/didOpen",
+                json!({"textDocument": {
+                    "uri": lsp::uri_of(&d.path), "languageId": lang,
+                    "version": d.version, "text": text,
+                }}),
+            );
+        }
+        Ok(())
     }
 
     fn lsp_close(&self, d: &docs::Doc) {
@@ -493,6 +512,7 @@ impl App {
     fn drop_client(&self, client: u64) {
         self.hub.forget(client);
         self.watches.drop_client(client);
+        self.procs.drop_client(client);
         let closed = self.docs.lock().unwrap().drop_client(client);
         for d in closed {
             self.lsp_close(&d);
@@ -547,61 +567,62 @@ fn publish_diagnostics(hub: &Hub, docs: &Mutex<Docs>, params: &Value) {
 /// cross the link). Counts are kept by file range, which edits made meanwhile
 /// cannot change; regions edited meanwhile are in memory and counted there.
 fn index_lines(docs: Arc<Mutex<Docs>>, hub: Arc<Hub>, id: u64) {
-    std::thread::spawn(move || {
-        let (fs, work, total) = {
-            let mut g = docs.lock().unwrap();
-            let Ok(d) = g.get(id) else { return };
-            let (chunks, total) = d.buffer.prepare_line_scan();
-            let leaves = d.buffer.piece_tree_leaves();
-            let work: Vec<(PathBuf, u64, usize)> = chunks
-                .iter()
-                .filter(|c| !c.already_known)
-                .filter_map(|c| d.buffer.leaf_io_params(&leaves[c.leaf_index]))
-                .collect();
-            (d.buffer.filesystem().clone(), work, total)
-        };
-        let mut counts = std::collections::HashMap::new();
-        let mut done = 0usize;
-        let mut last = std::time::Instant::now();
-        for (path, off, len) in work {
-            let Ok(n) =
-                fs.count_line_feeds_in_range(workspace::host(&path).as_host_path(), off, len)
-            else {
-                return;
-            };
-            counts.insert((path, off, len), n);
-            done += len;
-            if last.elapsed() > Duration::from_millis(250) {
-                last = std::time::Instant::now();
-                hub.broadcast(
-                    &json!({"ev": "doc.indexing", "doc": id, "done": done, "total": total}),
-                    None,
-                );
-            }
-        }
+    std::thread::spawn(move || build_line_index(&docs, &hub, id));
+}
+
+fn build_line_index(docs: &Mutex<Docs>, hub: &Hub, id: u64) {
+    let (fs, work, total) = {
         let mut g = docs.lock().unwrap();
         let Ok(d) = g.get(id) else { return };
-        let (chunks, _) = d.buffer.prepare_line_scan();
+        let (chunks, total) = d.buffer.prepare_line_scan();
         let leaves = d.buffer.piece_tree_leaves();
-        let mut updates = Vec::new();
-        for c in chunks.iter().filter(|c| !c.already_known) {
-            let leaf = &leaves[c.leaf_index];
-            let n = match d.buffer.leaf_io_params(leaf) {
-                Some(k) => counts.get(&k).copied().or_else(|| {
-                    fs.count_line_feeds_in_range(workspace::host(&k.0).as_host_path(), k.1, k.2)
-                        .ok()
-                }),
-                None => d.buffer.scan_leaf(leaf).ok(),
-            };
-            let Some(n) = n else { return };
-            updates.push((c.leaf_index, n));
+        let work: Vec<(PathBuf, u64, usize)> = chunks
+            .iter()
+            .filter(|c| !c.already_known)
+            .filter_map(|c| d.buffer.leaf_io_params(&leaves[c.leaf_index]))
+            .collect();
+        (d.buffer.filesystem().clone(), work, total)
+    };
+    let mut counts = std::collections::HashMap::new();
+    let mut done = 0usize;
+    let mut last = std::time::Instant::now();
+    for (path, off, len) in work {
+        let Ok(n) = fs.count_line_feeds_in_range(workspace::host(&path).as_host_path(), off, len)
+        else {
+            return;
+        };
+        counts.insert((path, off, len), n);
+        done += len;
+        if last.elapsed() > Duration::from_millis(250) {
+            last = std::time::Instant::now();
+            hub.broadcast(
+                &json!({"ev": "doc.indexing", "doc": id, "done": done, "total": total}),
+                None,
+            );
         }
-        d.buffer.apply_scan_updates(&updates);
-        let ev = json!({"ev": "doc.indexed", "doc": id, "lines": d.buffer.line_count(), "version": d.version});
-        for c in &d.clients {
-            hub.send(*c, &ev);
-        }
-    });
+    }
+    let mut g = docs.lock().unwrap();
+    let Ok(d) = g.get(id) else { return };
+    let (chunks, _) = d.buffer.prepare_line_scan();
+    let leaves = d.buffer.piece_tree_leaves();
+    let mut updates = Vec::new();
+    for c in chunks.iter().filter(|c| !c.already_known) {
+        let leaf = &leaves[c.leaf_index];
+        let n = match d.buffer.leaf_io_params(leaf) {
+            Some(k) => counts.get(&k).copied().or_else(|| {
+                fs.count_line_feeds_in_range(workspace::host(&k.0).as_host_path(), k.1, k.2)
+                    .ok()
+            }),
+            None => d.buffer.scan_leaf(leaf).ok(),
+        };
+        let Some(n) = n else { return };
+        updates.push((c.leaf_index, n));
+    }
+    d.buffer.apply_scan_updates(&updates);
+    let ev = json!({"ev": "doc.indexed", "doc": id, "lines": d.buffer.line_count(), "version": d.version});
+    for c in &d.clients {
+        hub.send(*c, &ev);
+    }
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -615,6 +636,10 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
+/// One of the web client's own files: embedded in the binary, or read from
+/// `FRESH_POC_WEB` while developing the client. These are this program's
+/// files, on this machine, not the workspace's, so they are the one read that
+/// does not go through the authority.
 fn asset(path: &str) -> Option<Vec<u8>> {
     if let Some(dir) = std::env::var_os("FRESH_POC_WEB") {
         let p = PathBuf::from(dir).join(path);
@@ -632,6 +657,7 @@ fn main() -> Result<()> {
     let mut port = 8090u16;
     let mut trusted = true;
     let mut ssh: Option<String> = None;
+    let mut container: Option<String> = None;
     let mut agent = false;
     let mut slow = false;
     let mut root: Option<String> = None;
@@ -651,12 +677,20 @@ fn main() -> Result<()> {
                         .ok_or_else(|| anyhow!("--ssh [user@]host[:port]"))?,
                 )
             }
+            "--container" => {
+                container = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--container NAME_OR_ID"))?,
+                )
+            }
             "--agent" => agent = true,
             "--slow-network" => slow = true,
             "-h" | "--help" => {
                 println!(
-                    "usage: fresh-poc [--port N] [--restricted] [--ssh [user@]host[:port] | --agent] [--slow-network] [DIR]\n\n\
+                    "usage: fresh-poc [--port N] [--restricted] [--ssh [user@]host[:port] | --container NAME | --agent] [--slow-network] [DIR]\n\n\
                      --ssh            the workspace is on another machine (files through the editor's remote agent)\n\
+                     --container      processes, terminals and language servers run in a running container\n\
+                     \x20                (docker exec); DIR must be bind-mounted at the same path in it\n\
                      --agent          the remote agent on this machine, without ssh (the remote code path, locally)\n\
                      --slow-network   add network-like delays to every filesystem call\n\
                      --restricted     start untrusted: no processes, terminals or language servers until trusted"
@@ -666,6 +700,15 @@ fn main() -> Result<()> {
             _ => root = Some(a),
         }
     }
+    if [ssh.is_some(), container.is_some(), agent]
+        .iter()
+        .filter(|&&b| b)
+        .count()
+        > 1
+    {
+        return Err(anyhow!("--ssh, --container and --agent exclude each other"));
+    }
+    let in_container = container.is_some();
     let authority: Arc<dyn Authority> = if let Some(target) = ssh {
         let params = fresh::services::remote::ConnectionParams::parse(&target)
             .ok_or_else(|| anyhow!("bad --ssh target"))?;
@@ -679,11 +722,15 @@ fn main() -> Result<()> {
         );
         runtime.block_on(rfs.prime_sys_info())?;
         Arc::new(Ssh {
-            target: params.ssh_target(),
-            extra: params.extra_args.clone(),
+            params,
             fs: maybe_slow(Arc::new(rfs), slow),
             _runtime: runtime,
             _conn: conn,
+        })
+    } else if let Some(id) = container {
+        Arc::new(Container {
+            id,
+            fs: maybe_slow(Arc::new(StdFileSystem), slow),
         })
     } else if agent {
         let runtime = tokio::runtime::Runtime::new()?;
@@ -706,6 +753,30 @@ fn main() -> Result<()> {
         .canonicalize(workspace::host(&given).as_host_path())
         .map(PathBuf::from)
         .map_err(|e| anyhow!("{}: {e}", given.display()))?;
+    if in_container {
+        // Files are read here and processes run in the container, against
+        // the same paths: the root must be bind-mounted at its own path.
+        let seen = authority
+            .command(
+                "test",
+                &["-d".into(), root.to_string_lossy().into()],
+                Path::new("/"),
+            )
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| anyhow!("{}: cannot run docker: {e}", authority.name()))?;
+        let err = String::from_utf8_lossy(&seen.stderr);
+        if !err.trim().is_empty() {
+            return Err(anyhow!("{}: {}", authority.name(), err.trim()));
+        }
+        if !seen.status.success() {
+            return Err(anyhow!(
+                "{}: {} is not a folder in the container; bind-mount it at the same path",
+                authority.name(),
+                root.display(),
+            ));
+        }
+    }
     let ws = Arc::new(Workspace {
         root: root.clone(),
         authority,
@@ -823,5 +894,186 @@ fn maybe_slow(fs: workspace::Fs, slow: bool) -> workspace::Fs {
         ))
     } else {
         fs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    fn app(trusted: bool) -> (tempfile::TempDir, Arc<App>) {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Arc::new(Workspace {
+            root: dir.path().canonicalize().unwrap(),
+            authority: Arc::new(Local::new()),
+        });
+        (dir, App::new(ws, trusted))
+    }
+
+    /// A client with its event stream open, as after `GET /events`.
+    fn client(app: &App) -> (u64, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let id = app.dispatch(0, "hello", &json!({})).unwrap()["client"]
+            .as_u64()
+            .unwrap();
+        (id, app.hub.take_stream(id).unwrap())
+    }
+
+    fn event(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>,
+        ev: &str,
+        within: Duration,
+    ) -> Option<Value> {
+        let end = Instant::now() + within;
+        while Instant::now() < end {
+            match rx.try_recv() {
+                Ok(m) => {
+                    let v: Value = serde_json::from_str(&m).unwrap();
+                    if v["ev"] == ev {
+                        return Some(v);
+                    }
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn a_restricted_workspace_runs_nothing_until_trusted() {
+        let (dir, app) = app(false);
+        std::fs::write(dir.path().join("a.py"), "x = 1\n").unwrap();
+        let (c, mut rx) = client(&app);
+        let hello = app.dispatch(0, "hello", &json!({})).unwrap();
+        assert_eq!(hello["trusted"], false);
+        assert_eq!(hello["lsp"], json!([]), "no probe while restricted");
+        assert!(!app.lsp.probed(), "nothing was run");
+
+        let run = json!({"program": "sh", "args": ["-c", "echo ran"]});
+        for (op, m) in [
+            ("proc.run", run.clone()),
+            ("proc.kill", json!({"proc": 1})),
+            ("term.open", json!({})),
+            ("lsp.status", json!({})),
+            (
+                "lsp.call",
+                json!({"doc": 1, "method": "textDocument/hover"}),
+            ),
+            ("lsp.hover", json!({"doc": 1, "pos": 0})),
+        ] {
+            let e = app.dispatch(c, op, &m).unwrap_err().to_string();
+            assert!(e.contains("restricted"), "{op}: {e}");
+        }
+        // Files and documents work as ever, without a language server.
+        app.dispatch(c, "doc.open", &json!({"path": "a.py"}))
+            .unwrap();
+        assert!(!app.lsp.probed());
+        assert!(app.terms.list().is_empty());
+
+        app.dispatch(c, "workspace.trust", &json!({})).unwrap();
+        let ev = event(&mut rx, "workspace.trusted", Duration::from_secs(5)).unwrap();
+        assert!(ev["lsp"].is_array());
+        let p = app.dispatch(c, "proc.run", &run).unwrap()["proc"].clone();
+        let exit = event(&mut rx, "proc.exit", Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            (exit["proc"].clone(), exit["stdout"].clone()),
+            (p, json!("ran\n"))
+        );
+    }
+
+    #[test]
+    fn a_disconnected_client_releases_what_it_opened() {
+        let (dir, app) = app(true);
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+        let (c, _rx) = client(&app);
+        let (other, _orx) = client(&app);
+        let open = |client, p: &str| {
+            app.dispatch(client, "doc.open", &json!({ "path": p }))
+                .unwrap()["doc"]
+                .as_u64()
+                .unwrap()
+        };
+        let a = open(c, "a.txt");
+        let b = open(c, "b.txt");
+        let shared = open(other, "a.txt");
+        assert_eq!(shared, a);
+        app.dispatch(
+            c,
+            "doc.edit",
+            &json!({"doc": b, "base": 0, "ops": [{"t": "ins", "pos": 0, "text": "x"}]}),
+        )
+        .unwrap();
+        app.dispatch(c, "fs.watch", &json!({"path": "a.txt"}))
+            .unwrap();
+        app.dispatch(c, "proc.run", &json!({"program": "sleep", "args": ["30"]}))
+            .unwrap();
+        assert_eq!((app.watches.count(), app.procs.count()), (1, 1));
+
+        app.drop_client(c);
+        assert_eq!(app.watches.count(), 0);
+        let end = Instant::now() + Duration::from_secs(5);
+        while app.procs.count() > 0 && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(app.procs.count(), 0, "its process was killed");
+        {
+            let mut docs = app.docs.lock().unwrap();
+            // Still open by the other client; unsaved edits are kept.
+            assert_eq!(docs.get(a).unwrap().clients, [other].into());
+            assert!(docs.get(b).unwrap().clients.is_empty());
+        }
+        let e = app
+            .dispatch(c, "doc.open", &json!({"path": "a.txt"}))
+            .unwrap_err();
+        assert!(e.to_string().contains("unknown client"), "{e}");
+
+        app.drop_client(other);
+        let mut docs = app.docs.lock().unwrap();
+        assert!(docs.get(a).is_err(), "closed by every client: dropped");
+        assert!(docs.get(b).is_ok());
+    }
+
+    #[test]
+    fn a_large_file_is_indexed_in_the_background() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("big.txt");
+        // Fixed-width lines: line i starts at byte 14 * i.
+        let n = docs::LARGE_FILE_THRESHOLD / 14 + 50_000;
+        let text: String = (0..n).map(|i| format!("line {i:08}\n")).collect();
+        std::fs::write(&p, &text).unwrap();
+        let docs = Mutex::new(Docs::default());
+        let fs: workspace::Fs = Arc::new(StdFileSystem);
+        let (id, _) = docs.lock().unwrap().open(1, &p, fs).unwrap();
+        {
+            let mut g = docs.lock().unwrap();
+            let d = g.get(id).unwrap();
+            assert_eq!(d.buffer.line_count(), None);
+            // An edit before the index is built: two more lines, mid-file.
+            d.edit(
+                0,
+                vec![ot::Prim::Ins {
+                    pos: 14 * 500_000,
+                    text: "x\ny\n".into(),
+                }],
+                false,
+            )
+            .unwrap();
+        }
+        build_line_index(&docs, &Hub::default(), id);
+        let mut g = docs.lock().unwrap();
+        let d = g.get(id).unwrap();
+        assert_eq!(d.buffer.line_count(), Some(n + 3));
+        let w = d.lines_forward(14 * 100 + 3, 1).unwrap();
+        assert_eq!(
+            (w["first_line"].clone(), w["text"].clone()),
+            (json!(100), json!("line 00000100\n"))
+        );
+        let w = d.lines_forward(14 * 700_000 + 4, 1).unwrap();
+        assert_eq!(
+            (w["first_line"].clone(), w["text"].clone()),
+            (json!(700_002), json!("line 00700000\n"))
+        );
+        assert_eq!(d.info()["lines"], json!(n + 3));
     }
 }

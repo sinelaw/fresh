@@ -15,7 +15,8 @@ use std::time::Duration;
 
 #[derive(Default)]
 pub struct Procs {
-    running: Arc<Mutex<HashMap<u64, Child>>>,
+    /// Each running process, with the client it reports to.
+    running: Arc<Mutex<HashMap<u64, (u64, Child)>>>,
     next: AtomicU64,
 }
 
@@ -64,14 +65,14 @@ impl Procs {
             }
             String::from_utf8_lossy(&s).into_owned()
         });
-        self.running.lock().unwrap().insert(id, child);
+        self.running.lock().unwrap().insert(id, (client, child));
         let running = self.running.clone();
         std::thread::spawn(move || {
             let code = loop {
                 let status = {
                     let mut m = running.lock().unwrap();
                     match m.get_mut(&id) {
-                        Some(c) => c.try_wait().ok().flatten(),
+                        Some((_, c)) => c.try_wait().ok().flatten(),
                         None => break -1,
                     }
                 };
@@ -93,9 +94,25 @@ impl Procs {
 
     pub fn kill(&self, id: u64) -> bool {
         match self.running.lock().unwrap().get_mut(&id) {
-            Some(c) => c.kill().is_ok(),
+            Some((_, c)) => c.kill().is_ok(),
             None => false,
         }
+    }
+
+    /// A client disconnected: nobody is left to report its processes to,
+    /// so they are killed (and reaped by their waiting threads).
+    pub fn drop_client(&self, client: u64) {
+        for (owner, c) in self.running.lock().unwrap().values_mut() {
+            if *owner == client {
+                let _ = c.kill();
+            }
+        }
+    }
+
+    /// How many processes are running.
+    #[cfg(test)]
+    pub fn count(&self) -> usize {
+        self.running.lock().unwrap().len()
     }
 }
 
@@ -157,5 +174,11 @@ impl Watches {
 
     pub fn drop_client(&self, client: u64) {
         self.map.lock().unwrap().retain(|_, w| w.client != client);
+    }
+
+    /// How many paths are watched.
+    #[cfg(test)]
+    pub fn count(&self) -> usize {
+        self.map.lock().unwrap().len()
     }
 }
