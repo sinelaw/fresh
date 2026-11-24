@@ -198,29 +198,20 @@ const STORAGE_KEY_TAIL_LEN: usize = 48;
 /// two paths apart, so the tail is free to be lossy.
 ///
 /// **Why not [`encode_path_for_filename`].** That encoding spells the whole
-/// path out, which makes it reversible — the workspace store and the daemon
-/// sockets rely on that — but it grows with the path's depth and has to escape
-/// the `_` it uses for `/` as `%5F`. The orchestrator keeps each workspace's
-/// worktree *inside* the data dir, under a slug of the repository's path, so
-/// encoding a workspace root spelled out the home directory, the data dir and
-/// the repository path again, the latter with every `_` escaped: names like
-/// `home_u_.local_share_fresh_orchestrator_home%5Fu%5Fcode_my%5Frepo_gamm~…`,
-/// two encodings in one component, the workspace's own name cut to four
-/// characters, and 255 bytes — at which point anything that appends to the
-/// name fails with `File name too long` (deleting the workspace could not move
-/// its scrollback to the trash) (sinelaw/fresh#1971). Nothing ever decoded
-/// these directory names, so none of that bought anything here.
+/// path out so it can be decoded, which makes it grow with the path's depth
+/// and escape the `_` it uses for `/` as `%5F`. A workspace the orchestrator
+/// keeps inside the data dir therefore got a 255-byte name that repeated the
+/// home and data dirs, mixed both encodings, and left no room for anything
+/// appended to it (sinelaw/fresh#1971). Nothing decodes these names.
 ///
-/// **One encoding, bounded, and the same on every platform.** The result has
-/// no escapes, no separator, no leading or trailing `.` or `-` (Windows drops
-/// a trailing dot; a leading one hides the directory on Unix), no character
-/// Windows reserves, and a fixed suffix that also keeps it off Windows'
-/// reserved device names. Paths are normalised before hashing the way
-/// [`encode_path_for_filename`] already treated them as equal: `/` and `\`
-/// are both separators, runs of them and `.` components collapse, and a
-/// leading or trailing one does not count. The hash is spelled out rather than
-/// taken from `DefaultHasher` because it names directories that outlive the
-/// process (see [`fold_hash`]).
+/// **What the result is.** No escapes, no separator, no leading or trailing
+/// `.` or `-`, nothing Windows reserves, and at most 65 bytes. Before hashing
+/// the path is normalised: `/` and `\` are both separators, and empty and `.`
+/// components are dropped, so `/a/b`, `/a//b`, `/a/b/`, `a/b` and `/a/./b`
+/// share a key. That is a little more than the spelled-out encoding merges (it
+/// kept a trailing separator and `.` apart), and nothing more is resolved:
+/// `..`, letter case and `\\?\` prefixes are taken as written. The hash is
+/// [`fold_hash`], spelled out because the name outlives the process.
 pub fn storage_key_for_path(path: &Path) -> String {
     let lossy = path.to_string_lossy();
     let normalised = lossy
@@ -246,7 +237,13 @@ pub fn storage_key_for_path(path: &Path) -> String {
         }
     }
     let tail = tail.trim_matches(|c| c == '.' || c == '-');
-    let tail = if tail.is_empty() { "root" } else { tail };
+    // Nothing readable survives of a name in another script; say so rather
+    // than calling it the root.
+    let tail = match (tail.is_empty(), normalised.is_empty()) {
+        (false, _) => tail,
+        (true, true) => "root",
+        (true, false) => "dir",
+    };
 
     format!("{tail}-{:016x}", fold_hash(normalised.as_bytes()))
 }
@@ -261,9 +258,8 @@ mod tests {
     fn storage_key_is_stable() {
         assert_eq!(
             storage_key_for_path(Path::new("/home/user/project")),
-            format!("project-{:016x}", fold_hash(b"home/user/project"))
+            "project-4cbcabc04ebf2296"
         );
-        assert_eq!(fold_hash(b""), 0xcbf2_9ce4_8422_2325);
     }
 
     #[test]
@@ -296,6 +292,7 @@ mod tests {
         }
         assert!(storage_key_for_path(Path::new("C:\\code\\my_repo")).starts_with("my_repo-"));
         assert!(storage_key_for_path(Path::new("/")).starts_with("root-"));
+        assert!(storage_key_for_path(Path::new("/home/u/日本語")).starts_with("dir-"));
     }
 
     /// The spelled-out encoding maps `/a_b/c` and `/a/b_c` apart only by

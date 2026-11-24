@@ -1557,32 +1557,58 @@ impl DirectoryContext {
     /// The directory under `base` that holds what the editor keeps about
     /// `path`.
     ///
-    /// New directories are named by
-    /// [`storage_key_for_path`](crate::path_encode::storage_key_for_path) —
-    /// short, one encoding, the same on every platform. A directory an earlier
-    /// release made under the spelled-out
+    /// A directory an earlier release made under the spelled-out
     /// [`encode_path_for_filename`](crate::path_encode::encode_path_for_filename)
-    /// name keeps being used while it exists, rather than being moved: the
-    /// workspace snapshot records its terminals' scrollback files by absolute
-    /// path, so a renamed directory would orphan every one of them, and a
-    /// plugin's saved per-worktree state would vanish the same way. Nothing is
-    /// lost by leaving those where they are; only paths that have no directory
-    /// yet get the new name (sinelaw/fresh#1971).
-    ///
-    /// Both names are derived from `path` as given, without canonicalising
-    /// it, exactly as the spelled-out name always was — callers pass a
-    /// shell's or a workspace's cwd, and resolving symlinks here would move
-    /// one workspace's data out from under it.
+    /// name is used while it exists, and is checked first, so anything already
+    /// on disk resolves exactly as it did before. It is not renamed: the
+    /// workspace snapshot records scrollback files by absolute path and plugins
+    /// find their per-worktree state through this lookup. Paths with no
+    /// directory yet get the short
+    /// [`storage_key_for_path`](crate::path_encode::storage_key_for_path) name
+    /// (sinelaw/fresh#1971). `path` is used as given, not canonicalised, as
+    /// it always was.
     fn keyed_dir_for(base: &std::path::Path, path: &std::path::Path) -> std::path::PathBuf {
-        let keyed = base.join(crate::path_encode::storage_key_for_path(path));
-        if keyed.is_dir() {
-            return keyed;
-        }
         let legacy = base.join(crate::path_encode::encode_path_for_filename(path));
         if legacy.is_dir() {
             return legacy;
         }
-        keyed
+        base.join(crate::path_encode::storage_key_for_path(path))
+    }
+
+    /// Every terminal directory kept for `working_dir`, ready to be removed
+    /// as a unit (trashed or deleted) once the workspace is gone.
+    ///
+    /// Both names are returned when both exist, so a workspace whose data
+    /// ended up under each is not half-removed. A legacy directory is first
+    /// renamed to a short sibling: its spelled-out name can be up to
+    /// `NAME_MAX` bytes, and the trash names its record `<name>.trashinfo`,
+    /// which then does not fit (`File name too long`) and the directory stays
+    /// behind. Renaming is safe at this point because the workspace and its
+    /// snapshot are being dropped too. If the rename fails, the directory is
+    /// returned under its old name, so the caller still tries to remove it.
+    pub fn terminal_dirs_for_removal(
+        &self,
+        working_dir: &std::path::Path,
+    ) -> Vec<std::path::PathBuf> {
+        let base = self.terminals_dir();
+        let key = crate::path_encode::storage_key_for_path(working_dir);
+        let keyed = base.join(&key);
+        let legacy = base.join(crate::path_encode::encode_path_for_filename(working_dir));
+        let mut dirs = Vec::new();
+        if keyed.is_dir() {
+            dirs.push(keyed);
+        }
+        if legacy.is_dir() {
+            let short = base.join(format!("{key}.legacy"));
+            dirs.push(
+                if !short.exists() && std::fs::rename(&legacy, &short).is_ok() {
+                    short
+                } else {
+                    legacy
+                },
+            );
+        }
+        dirs
     }
 
     /// Per-working-directory data root (`<data_dir>/workdirs/<key>/`; see
@@ -1671,23 +1697,32 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// A workspace the orchestrator creates lives *inside* the data dir, under
-    /// a slug of the repository's path, so the spelled-out encoding named its
-    /// terminal directory after the home directory, the data dir and the
-    /// repository path a second time (`…_orchestrator_home%5Fu%5F…`) and
-    /// folded it to exactly `NAME_MAX`. Anything that appended to that name
-    /// failed — deleting the workspace could not move its scrollback to the
-    /// trash, whose `<name>.trashinfo` no longer fit (sinelaw/fresh#1971).
+    /// The orchestrator keeps a workspace inside the data dir, under a slug of
+    /// the repository path, so the spelled-out encoding of that root repeated
+    /// the data dir and the repo path, escaped every `_` as `%5F`, and for a
+    /// realistic root folded to `NAME_MAX`. The trash then could not write
+    /// `<name>.trashinfo`, so deleting the workspace left its scrollback
+    /// behind (sinelaw/fresh#1971).
+    fn nested_workspace_root(ctx: &DirectoryContext) -> std::path::PathBuf {
+        let root = ctx
+            .data_dir
+            .join("orchestrator")
+            .join("home_some_user_with_a_long_name_code_my_repo_checkout".repeat(4))
+            .join("gamma-very-long-session-name-for-truncation-test");
+        let legacy = crate::path_encode::encode_path_for_filename(&root);
+        assert!(
+            legacy.len() + ".trashinfo".len() > 255,
+            "precondition: the old name is too long for the trash ({} bytes)",
+            legacy.len()
+        );
+        root
+    }
+
     #[test]
     fn a_nested_workspace_gets_a_short_single_encoding_storage_dir() {
         let tmp = TempDir::new().unwrap();
         let ctx = DirectoryContext::for_testing(tmp.path());
-        let repo_slug = "home_some_user_with_a_long_name_code_my_repo_checkout";
-        let root = ctx
-            .data_dir
-            .join("orchestrator")
-            .join(repo_slug)
-            .join("gamma-very-long-session-name-for-truncation-test");
+        let root = nested_workspace_root(&ctx);
 
         for dir in [ctx.terminal_dir_for(&root), ctx.working_data_dir_for(&root)] {
             let name = dir.file_name().unwrap().to_str().unwrap().to_string();
@@ -1697,11 +1732,6 @@ mod tests {
                 name.len()
             );
             assert!(!name.contains('%'), "one encoding, no escapes: {name}");
-            let data_dir = ctx.data_dir.to_string_lossy().replace('/', "_");
-            assert!(
-                !name.contains(data_dir.trim_start_matches('_')),
-                "the data dir's own path is not spelled into the name: {name}"
-            );
             assert!(
                 name.starts_with("gamma-very-long-session-name-for-truncation-test-"),
                 "the workspace's own name stays readable: {name}"
@@ -1710,9 +1740,10 @@ mod tests {
     }
 
     /// Directories an earlier release created under the spelled-out name keep
-    /// being used: a workspace snapshot records its terminals' scrollback by
-    /// absolute path, and a plugin's per-worktree state is found by this
-    /// lookup, so moving either to the new name would orphan it.
+    /// being used, and win over the new name, so anything already on disk
+    /// resolves as before: a workspace snapshot records its terminals'
+    /// scrollback by absolute path, and plugins find their per-worktree state
+    /// through this lookup.
     #[test]
     fn an_existing_legacy_storage_dir_is_still_found() {
         let tmp = TempDir::new().unwrap();
@@ -1734,14 +1765,48 @@ mod tests {
             .data_dir
             .join("workdirs")
             .join(crate::path_encode::encode_path_for_filename(&project));
+        std::fs::create_dir_all(&fresh_terminal).unwrap();
         std::fs::create_dir_all(&legacy_terminal).unwrap();
         std::fs::create_dir_all(&legacy_workdir).unwrap();
         assert_eq!(ctx.terminal_dir_for(&project), legacy_terminal);
         assert_eq!(ctx.working_data_dir_for(&project), legacy_workdir);
+    }
 
-        // Once a directory exists under the new name it is the one used.
-        std::fs::create_dir_all(&fresh_terminal).unwrap();
-        assert_eq!(ctx.terminal_dir_for(&project), fresh_terminal);
+    /// Removing a workspace's terminal state has to reach every directory it
+    /// has, under names the trash can record: an existing legacy directory
+    /// from before the short key is too long for `<name>.trashinfo`, which
+    /// is the case the short key alone cannot fix (sinelaw/fresh#1971).
+    #[test]
+    fn terminal_dirs_for_removal_covers_both_names_and_shortens_legacy() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = DirectoryContext::for_testing(tmp.path());
+        let root = nested_workspace_root(&ctx);
+        assert!(ctx.terminal_dirs_for_removal(&root).is_empty());
+
+        let legacy = ctx
+            .terminals_dir()
+            .join(crate::path_encode::encode_path_for_filename(&root));
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("fresh-terminal-1.txt"), "scrollback").unwrap();
+        let keyed = ctx
+            .terminals_dir()
+            .join(crate::path_encode::storage_key_for_path(&root));
+        std::fs::create_dir_all(&keyed).unwrap();
+
+        let dirs = ctx.terminal_dirs_for_removal(&root);
+        assert_eq!(dirs.len(), 2, "{dirs:?}");
+        assert!(dirs.contains(&keyed));
+        for dir in &dirs {
+            let name = dir.file_name().unwrap().to_str().unwrap();
+            assert!(dir.is_dir(), "{dir:?}");
+            assert!(name.len() + ".trashinfo".len() <= 255, "{name}");
+        }
+        assert!(!legacy.exists());
+        let moved = dirs.iter().find(|d| **d != keyed).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(moved.join("fresh-terminal-1.txt")).unwrap(),
+            "scrollback"
+        );
     }
 
     // These resolve against paths the function under test *probes*, so each
