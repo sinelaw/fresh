@@ -641,7 +641,7 @@ class App {
     const ro = () => { const v = V(); return !v || v.buf.readOnly; };
     const cmd = (id, title, run, hidden = false) => this.commands.set(id, { title, run, source: "core", hidden });
     const toggle = (k) => () => { this.settings[k] = !this.settings[k]; this.saveSettings(); this.setStatus(`${k.replace(/_/g, " ")}: ${this.settings[k] ? "on" : "off"}`); };
-    const page = (dir, extend) => () => { const n = P().metrics().rows; P().scrollLines(dir * n); P().moveRows(dir * n, extend); };
+    const page = (dir, extend) => () => P().page(dir, extend);
     const mutate = (f) => () => { if (!ro()) f(); };
 
     cmd("file.save", "File: Save", () => V()?.buf.doc && this.saveBuffer(V().buf));
@@ -799,9 +799,9 @@ class App {
     h.textContent = text;
     if (!at) {
       const pane = this.activePane;
-      const c = pane.caretXY(pane.view.primary.pos);
-      const r = pane.textEl.getBoundingClientRect();
-      at = c ? { x: r.left + c.x * this.metrics.cw, y: r.top + (c.r + 1) * this.metrics.lh } : { x: r.left, y: r.top };
+      const c = pane.caretBox(pane.view.primary.pos);
+      const r = pane.surfaceEl.getBoundingClientRect();
+      at = c ? { x: c.x, y: c.y + c.h } : { x: r.left, y: r.top };
     }
     h.style.left = `${Math.min(at.x, innerWidth - 420)}px`;
     h.style.top = `${at.y}px`;

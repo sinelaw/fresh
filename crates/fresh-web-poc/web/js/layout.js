@@ -1,19 +1,18 @@
-// Visual layout of a buffer for one view: source lines and decorations to
-// rows of cells, at the view's own width.
+// Visual layout of a buffer for a source view: source lines and decorations
+// to rows of monospace cells, at the view's own width. (A compose view is
+// drawn as a document instead: doc.js.)
 //
 //  * A conceal draws its text instead of [start, end); one that covers a
-//    newline joins the next source line onto the same row (how compose mode
-//    joins a paragraph's lines). With `reveal`, it is inactive while a cursor
-//    is inside that range, so the source shows where the user is editing.
+//    newline joins the next source line onto the same row. With `reveal`, it
+//    is inactive while a cursor is inside that range, so the source shows
+//    where the user is editing.
 //  * Inline text is drawn before or after the character at its position, or
 //    with `edge` at the right edge of the row it falls in.
-//  * Lines are whole rows above or below their position's line; a `rule`
-//    {left, fill, right} spans the view's width.
+//  * Lines are whole rows above or below their position's line.
 //  * With wrapping on, a row breaks at the last space that fits (else at the
-//    width); continuation rows take the hanging indent and prefix of the
-//    block decoration covering the line.
+//    width).
 //  * A view's folds hide whole lines after a fold's first line.
-// Decorations with `when: "compose"` apply only to a view in compose mode.
+// A decoration with `when` applies only to a view in that mode.
 
 import { byteLen } from "./ot.js";
 
@@ -35,8 +34,8 @@ export function stringWidth(s) {
   return w;
 }
 
-const applies = (d, compose) => !d.when || (d.when === "compose" && compose);
-const cursorIn = (cursors, r) => cursors.some((c) => c >= r.start && c < Math.max(r.end, r.start + 1));
+export const applies = (d, mode) => !d.when || d.when === mode;
+export const cursorIn = (cursors, r) => cursors.some((c) => c >= r.start && c < Math.max(r.end, r.start + 1));
 
 function idxOf(s, b) {
   let n = 0, i = 0;
@@ -51,7 +50,7 @@ function idxOf(s, b) {
   return i;
 }
 
-// o: {compose, wrap, width, tab, cursors, folds:[{start,end}] (line indices),
+// o: {mode, wrap, width, tab, cursors, folds:[{start,end}] (line indices),
 //     styleAt(b, li, idx), whitespace}
 export function layout(buf, top, maxRows, o) {
   const L = buf.text;
@@ -64,31 +63,26 @@ export function layout(buf, top, maxRows, o) {
   // Index the active decorations by position.
   const conceals = new Map();
   for (const c of d.conceals) {
-    if (c.end <= c.start || !applies(c, o.compose)) continue;
+    if (c.end <= c.start || !applies(c, o.mode)) continue;
     if (c.reveal && cursorIn(o.cursors, c.reveal)) continue;
     const prev = conceals.get(c.start);
     if (!prev || prev.end < c.end) conceals.set(c.start, c);
   }
   const inlines = new Map();
   for (const v of d.inlines) {
-    if (!applies(v, o.compose)) continue;
+    if (!applies(v, o.mode)) continue;
     if (!inlines.has(v.pos)) inlines.set(v.pos, []);
     inlines.get(v.pos).push(v);
   }
   const vlines = new Map();
   for (const v of d.lines) {
-    if (!applies(v, o.compose)) continue;
+    if (!applies(v, o.mode)) continue;
     const i = L.indexOf(v.pos);
     if (i < 0) continue;
     if (!vlines.has(i)) vlines.set(i, []);
     vlines.get(i).push(v);
   }
   for (const list of vlines.values()) list.sort((a, b) => a.order - b.order);
-  const blockAt = (b) => {
-    let best = null;
-    for (const k of d.blocks) if (applies(k, o.compose) && b >= k.start && b < k.end) best = k;
-    return best;
-  };
   const foldAt = new Map((o.folds || []).map((f) => [f.start, f]));
 
   const newRow = (lineIdx, cont) => ({ kind: "text", cells: [], col: 0, lineIdx, cont, eol: null, fill: null, edge: [] });
@@ -124,25 +118,17 @@ export function layout(buf, top, maxRows, o) {
     const r = { kind: "virtual", cells: [], col: 0, lineIdx: null, eol: null, fill: null, edge: [] };
     const prev = row;
     row = r;
-    if (v.rule) {
-      const l = v.rule.left || "", rt = v.rule.right || "", f = v.rule.fill || " ";
-      putText(l + f.repeat(Math.max(0, width - stringWidth(l) - stringWidth(rt))) + rt, null, v.style);
-    } else putText(v.text || "", null, v.style, v.spans);
+    putText(v.text || "", null, v.style, v.spans);
     rows.push(r);
     row = prev;
   };
-  // Continue on a new row: the hanging indent and prefix of the block.
-  const wrapRow = (cur, b) => {
-    const blk = blockAt(b);
+  // Continue on a new row.
+  const wrapRow = (cur) => {
     const carry = row.edge;
     row.edge = [];
     rows.push(row);
     row = newRow(cur, true);
     row.edge = carry;
-    if (blk) {
-      if (blk.prefix) putText(blk.prefix.text, null, blk.prefix.style);
-      while (row.col < blk.indent) put(" ", null, {}, 1);
-    }
   };
 
   let li = top;
@@ -200,9 +186,9 @@ export function layout(buf, top, maxRows, o) {
           // Move the word that does not fit onto the next row.
           const tail = row.cells.splice(breakAt);
           row.col = row.cells.reduce((n, x) => n + x.w, 0);
-          wrapRow(cur, b);
+          wrapRow(cur);
           for (const x of tail) put(x.ch, x.src, x.style, x.w);
-        } else wrapRow(cur, b);
+        } else wrapRow(cur);
         breakAt = -1;
       }
       const st = o.styleAt(b, cur, i);

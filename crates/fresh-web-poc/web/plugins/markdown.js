@@ -1,14 +1,14 @@
 // Markdown compose: a Markdown buffer drawn as a document in a view in
 // compose mode, while the text stays Markdown.
 //
-// Everything here is width-free structure, declared as decorations; the
-// layout lays it out at each view's own width. So a paragraph's lines are
-// *joined* (the line breaks concealed as spaces) and the layout wraps the
-// result; a list item says its hanging indent; a quote its `▌` prefix; a
-// code block its rails and rules, drawn edge to edge. Markup is concealed
-// except on the line the cursor is on, where the source shows for editing.
-// All of it applies only in compose views (`when: "compose"`): a source
-// view of the same buffer shows the text as it is.
+// The plugin declares structure; the view draws it. Each block is a node
+// (heading, paragraph, list item, quote, code, table with rows and cells,
+// rule) and inline spans are overlays (bold, italic, strike, links, `mono`
+// for code). Markup (`# `, list markers, `> `, fences, `**`, backticks, link
+// targets, table pipes) is concealed with `reveal` on its line, so the
+// source shows, dimmed inside the typography, where the cursor is. All of
+// it applies only in compose views (`when: "compose"`): a source view of the
+// same buffer shows the text as it is.
 
 import { classify } from "../js/mdstruct.js";
 
@@ -16,19 +16,10 @@ const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path || b.name || "");
 
 export function activate(fresh) {
   const { h } = fresh;
-  const W = fresh.text.width;
   const B = fresh.text.byteLen;
+  const W = fresh.text.width;
   const C = { when: "compose" };
-  const style = {
-    h1: { fg: "syntax.function", bold: true },
-    h: { fg: "syntax.keyword", bold: true },
-    marker: { fg: "syntax.constant" },
-    code: { fg: "syntax.string", bg: "#2b2b2b" },
-    link: { fg: "syntax.link", underline: true },
-    quote: { fg: "syntax.comment" },
-    frame: { fg: "ui.split_separator_fg" },
-    dim: { fg: "editor.line_number_fg" },
-  };
+  const link = { fg: "syntax.link", underline: true };
 
   // ---------------------------------------------------------------- inline markup
 
@@ -42,7 +33,7 @@ export function activate(fresh) {
       const hide = (a, b, repl = "") => b > a && d.conceal(at(a), at(b), { text: repl, reveal, ...C });
       if (m[1]) { // code
         hide(s, s + m[1].length); hide(e - m[1].length, e);
-        d.overlay(at(s), at(e), style.code, C);
+        d.overlay(at(s + m[1].length), at(e - m[1].length), { mono: true }, C);
       } else if (m[3] || m[4]) { // bold
         hide(s, s + 2); hide(e - 2, e);
         d.overlay(at(s), at(e), { bold: true }, C);
@@ -57,7 +48,7 @@ export function activate(fresh) {
       } else if (m[10]) { // link: the text, underlined
         hide(s, s + 1);
         hide(s + 1 + m[10].length, e);
-        d.overlay(at(s), at(e), style.link, C);
+        d.overlay(at(s + 1), at(s + 1 + m[10].length), link, C);
       }
     }
   };
@@ -68,6 +59,9 @@ export function activate(fresh) {
   const QUOTE = /^(\s*>\s?)+/;
   const HEADING = /^(#{1,6})(\s+)/;
   const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+  const HARD = /( {2,}|\\)$/;
+  const quoteDepth = (t) => { const m = QUOTE.exec(t); return m ? (m[0].match(/>/g) || []).length : 0; };
+  const alignOf = (c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : null);
 
   const decorate = (b) => {
     const d = b.decorations("compose");
@@ -82,148 +76,116 @@ export function activate(fresh) {
       const t = lines[i];
       return (k) => starts[i] + B(t.slice(0, k));
     };
+    const hide = (s, e, rv) => e > s && d.conceal(s, e, { text: "", reveal: rv, ...C });
+    const node = (i, j, type, attrs = {}) => d.node(starts[i], lineEnd(j), { type, ...attrs, ...C });
     const blank = (i) => lines[i].trim() === "";
+    // Indentations of the open list items, outermost first.
+    let listStack = [];
 
     for (let i = 0; i < lines.length; i++) {
       const t = lines[i];
       const at = atOf(i);
+      if (!LIST.test(t) && !blank(i)) listStack = [];
 
-      // Fenced code: framed, the fences hidden.
+      // Fenced code: the fence lines hidden, the body kept line by line.
       if (region[i] === "open") {
         let j = i + 1;
         while (j < lines.length && region[j] === "body") j++;
-        const close = j < lines.length && region[j] === "close" ? j : null;
-        const first = i + 1, last = (close ?? j) - 1;
-        // The opening fence goes, line break and all; the frame's top edge
-        // sits above the first body line (or above the fence, if empty).
-        const topAt = first <= last ? starts[first] : starts[i];
-        if (first <= last) d.conceal(starts[i], starts[first], { text: "", reveal: reveal(i), ...C });
-        d.line(topAt, { above: true, rule: { left: "┌", fill: "─", right: "┐" }, style: style.frame, ...C });
-        for (let k = first; k <= last; k++) {
-          d.inline(starts[k], "│ ", { style: style.frame, ...C });
-          d.inline(lineEnd(k), "│", { edge: true, style: style.frame, ...C });
-          d.block(starts[k], lineEnd(k) + 1, { indent: 0, prefix: { text: "│ ", style: style.frame }, ...C });
-        }
-        if (close != null && first <= last) {
-          // The closing fence goes with the line break before it.
-          d.conceal(lineEnd(last), lineEnd(close), { text: "", reveal: { start: starts[close], end: lineEnd(close) + 1 }, ...C });
-        }
-        d.line(first <= last ? starts[last] : starts[i], { above: false, rule: { left: "└", fill: "─", right: "┘" }, style: style.frame, ...C });
-        i = close ?? j - 1;
+        const last = j < lines.length && region[j] === "close" ? j : j - 1;
+        const info = (/^\s*(?:`{3,}|~{3,})\s*([^\s`{]*)/.exec(t) || [])[1] || "";
+        node(i, last, "code", { lang: info.toLowerCase() });
+        hide(starts[i], lineEnd(i), reveal(i));
+        if (region[last] === "close") hide(starts[last], lineEnd(last), reveal(last));
+        i = last;
         continue;
       }
 
-      // Tables: borders, pipes as box lines, cells padded to their column.
+      // Tables: a row per line, cells split at the pipes.
       if (table[i]?.role === "header") {
         let j = i;
-        const rows = [];
-        while (j < lines.length && table[j]) rows.push(j++);
-        const cells = (k) => {
+        while (j < lines.length && table[j]) j++;
+        node(i, j - 1, "table", { align: lines[i + 1].split("|").map((c) => c.trim()).filter(Boolean).map(alignOf) });
+        for (let k = i; k < j; k++) {
           const s = lines[k];
+          const rv = reveal(k);
+          const role = table[k].role;
+          node(k, k, "row", { header: role === "header", delimiter: role === "delimiter" });
+          if (role === "delimiter") { hide(starts[k], lineEnd(k), rv); continue; }
+          const at2 = atOf(k);
           const pipes = [];
           for (let x = 0; x < s.length; x++) if (s[x] === "|" && s[x - 1] !== "\\") pipes.push(x);
-          if (!pipes.length || s.slice(0, pipes[0]).trim()) pipes.unshift(-1);
-          if (s.slice(pipes[pipes.length - 1] + 1).trim()) pipes.push(s.length);
-          const out = [];
-          for (let p = 0; p + 1 < pipes.length; p++) {
-            const a = pipes[p] + 1, z = pipes[p + 1];
+          // A cell starts at the line start (when no pipe leads) and at
+          // every pipe with text after it; a closing pipe is markup.
+          const bounds = !pipes.length || s.slice(0, pipes[0]).trim() ? [0, ...pipes] : pipes;
+          const close = bounds.length > 1 && !s.slice(bounds[bounds.length - 1] + 1).trim() ? bounds.pop() : s.length;
+          hide(at2(close), lineEnd(k), rv);
+          bounds.forEach((a, p) => {
+            const last = p + 1 === bounds.length;
+            const z = last ? close : bounds[p + 1];
             const raw = s.slice(a, z);
-            const lead = raw.length - raw.trimStart().length;
-            const text = raw.trim();
-            out.push({ pipe: pipes[p], a: a + lead, z: a + lead + text.length, end: z, text });
-          }
-          return { pipes, out };
-        };
-        const parsed = rows.map(cells);
-        const ncol = Math.max(...parsed.map((p) => p.out.length));
-        const widths = new Array(ncol).fill(1);
-        parsed.forEach((p, r) => { if (table[rows[r]].role !== "delimiter") p.out.forEach((c, k) => { widths[k] = Math.max(widths[k], W(c.text)); }); });
-        const rule = (l, m, r) => l + widths.map((w) => "─".repeat(w + 2)).join(m) + r;
-        d.line(starts[rows[0]], { above: true, text: rule("┌", "┬", "┐"), style: style.frame, ...C });
-        parsed.forEach((p, r) => {
-          const k = rows[r];
-          const at2 = atOf(k);
-          const rv = reveal(k);
-          if (table[k].role === "delimiter") {
-            d.conceal(starts[k], lineEnd(k), { text: rule("├", "┼", "┤"), style: style.frame, reveal: rv, ...C });
-            return;
-          }
-          p.out.forEach((c, n) => {
-            // From this cell's pipe to its text: "│ ".
-            d.conceal(c.pipe < 0 ? at2(0) : at2(c.pipe), at2(c.a), { text: "│ ", style: style.frame, reveal: rv, ...C });
-            if (c.pipe < 0 && c.a === 0) d.inline(at2(0), "│ ", { style: style.frame, ...C });
-            // From the end of its text to the next pipe: padding.
-            const pad = " ".repeat(widths[n] - W(c.text) + 1);
-            if (c.end > c.z) d.conceal(at2(c.z), at2(c.end), { text: pad, reveal: rv, ...C });
-            else d.inline(at2(c.z), pad, { side: "before", ...C });
-            if (table[k].role === "header") d.overlay(at2(c.a), at2(c.z), { bold: true }, C);
-            inline(d, lines[k], at2, rv);
+            const lead = /^\|?\s*/.exec(raw)[0].length;
+            const trail = raw.length - raw.trimEnd().length;
+            d.node(at2(a), last ? lineEnd(k) : at2(z), { type: "cell", ...C });
+            hide(at2(a), at2(a + lead), rv);
+            if (z - trail > a + lead) hide(at2(z - trail), at2(z), rv);
           });
-          // The last pipe.
-          const lastPipe = p.pipes[p.pipes.length - 1];
-          if (lastPipe < lines[k].length) d.conceal(at2(lastPipe), lineEnd(k), { text: "│", style: style.frame, reveal: rv, ...C });
-          else d.inline(lineEnd(k), "│", { style: style.frame, ...C });
-        });
-        d.line(starts[rows[rows.length - 1]], { above: false, text: rule("└", "┴", "┘"), style: style.frame, ...C });
+          inline(d, s, at2, rv);
+        }
         i = j - 1;
         continue;
       }
 
       if (blank(i)) continue;
 
-      // A horizontal rule.
       if (RULE.test(t)) {
-        d.conceal(starts[i], lineEnd(i), { text: "", reveal: reveal(i), ...C });
-        d.line(starts[i], { above: true, rule: { fill: "─" }, style: style.dim, ...C });
+        node(i, i, "rule");
+        hide(starts[i], lineEnd(i), reveal(i));
         continue;
       }
 
-      // Headings.
       const hm = HEADING.exec(t);
       if (hm) {
-        d.conceal(starts[i], at(hm[0].length), { text: "", reveal: reveal(i), ...C });
-        d.overlay(starts[i], lineEnd(i), hm[1].length === 1 ? style.h1 : style.h, C);
-        if (hm[1].length <= 2) d.line(starts[i], { above: false, rule: { fill: hm[1].length === 1 ? "═" : "─" }, style: style.dim, ...C });
+        node(i, i, "heading", { level: hm[1].length });
+        hide(starts[i], at(hm[0].length), reveal(i));
         inline(d, t, at, reveal(i));
         continue;
       }
 
-      // A paragraph, list item or quote: its block (a run of lines up to a
-      // blank line, a new item or a different kind of line) is joined into
-      // one, the layout wraps it, and continuation rows hang under the text.
+      // A paragraph, list item or quote: its lines, up to a blank line, a
+      // new item or a different kind of line, are joined.
       const li = LIST.exec(t);
-      const qm = !li && QUOTE.exec(t);
-      let indent = 0, prefix = null;
+      const qd = li ? 0 : quoteDepth(t);
+      let attrs;
       if (li) {
-        const bullet = li[4] ? (/x/i.test(li[4]) ? "☑ " : "☐ ") : /\d/.test(li[2]) ? li[2] + " " : "• ";
-        const lead = li[1].replace(/\t/g, "    ");
-        d.conceal(at(li[1].length), at(li[0].length), { text: bullet, style: style.marker, reveal: reveal(i), ...C });
-        indent = W(lead) + W(bullet);
-      } else if (qm) {
-        const depth = (qm[0].match(/>/g) || []).length;
-        prefix = { text: "▌ ".repeat(depth), style: style.quote };
-        d.conceal(starts[i], at(qm[0].length), { text: prefix.text, style: style.quote, reveal: reveal(i), ...C });
-        d.overlay(at(qm[0].length), lineEnd(i), style.quote, C);
-        indent = W(prefix.text);
-      } else if (/^\s+/.test(t)) {
-        indent = W(/^\s+/.exec(t)[0].replace(/\t/g, "    "));
-      }
+        const lead = W(li[1].replace(/\t/g, "    "));
+        while (listStack.length && listStack[listStack.length - 1] > lead) listStack.pop();
+        if (!listStack.length || listStack[listStack.length - 1] < lead) listStack.push(lead);
+        const done = li[4] && /x/i.test(li[4]);
+        attrs = { type: "item", depth: listStack.length - 1, marker: li[4] ? (done ? "☑" : "☐") : /\d/.test(li[2]) ? li[2] : "•" };
+        hide(starts[i], at(li[0].length), reveal(i));
+      } else if (qd) {
+        attrs = { type: "quote", depth: qd };
+        hide(starts[i], at(QUOTE.exec(t)[0].length), reveal(i));
+      } else attrs = { type: "paragraph" };
       inline(d, t, at, reveal(i));
-      // Join the lines that continue this block.
       let j = i;
       while (j + 1 < lines.length) {
         const n = lines[j + 1];
-        if (blank(j + 1) || region[j + 1] || table[j + 1] || LIST.test(n) || HEADING.test(n) || RULE.test(n) || (qm ? !QUOTE.test(n) : QUOTE.test(n))) break;
-        if (/(  |\\)$/.test(lines[j])) break; // a hard line break
+        if (blank(j + 1) || region[j + 1] || table[j + 1] || LIST.test(n) || HEADING.test(n) || RULE.test(n) || quoteDepth(n) !== qd) break;
+        // A line ending in two spaces or a backslash breaks there; other
+        // trailing blanks go, and the line break draws as a space.
+        const prev = lines[j], pe = lineEnd(j);
+        const hard = HARD.exec(prev);
+        const trail = hard ? hard[0].length : prev.length - prev.trimEnd().length;
+        if (trail) hide(pe - B(prev.slice(prev.length - trail)), pe, reveal(j));
+        if (hard) d.conceal(pe, pe + 1, { text: "\n", ...C });
         j++;
-        const lead = qm ? QUOTE.exec(n)[0].length : n.length - n.trimStart().length;
-        // The break and the next line's indent (or quote marker) become a space.
-        const trail = lines[j - 1].length - lines[j - 1].trimEnd().length;
-        d.conceal(lineEnd(j - 1) - trail, atOf(j)(lead), { text: " ", ...C });
-        if (qm) d.overlay(atOf(j)(lead), lineEnd(j), style.quote, C);
+        // The next line's indent (or quote marker) is markup too.
+        const lead = qd ? QUOTE.exec(n)[0].length : n.length - n.trimStart().length;
+        hide(starts[j], atOf(j)(lead), reveal(j));
         inline(d, n, atOf(j), reveal(j));
       }
-      if (indent || prefix) d.block(starts[i], lineEnd(j) + 1, { indent, prefix, ...C });
+      d.node(starts[i], lineEnd(j), { ...attrs, ...C });
       i = j;
     }
     b.render();

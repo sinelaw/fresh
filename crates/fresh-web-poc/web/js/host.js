@@ -29,11 +29,13 @@ class DecorationSet {
   get d() { return this.buffer.decor; }
   clear() { this.d.clearNamespace(this.ns); }
   clearRange(start, end) { this.d.clearNamespaceRange(this.ns, start, end); }
-  // Style [start, end): {fg, bg, bold, italic, underline, strike, extendToLineEnd}.
+  // Style [start, end): {fg, bg, bold, italic, underline, strike, mono,
+  // extendToLineEnd}; `mono` sets inline code in a compose view.
   overlay(start, end, style, opts = {}) { this.d.add("overlays", { ns: this.ns, start, end, style, when: opts.when || null }); }
   // Draw `text` instead of [start, end). `reveal` {start, end}: shown as
-  // source while a cursor is inside it. A conceal over a newline joins the
-  // next line onto this row.
+  // source while a cursor is inside it (a compose view draws it dimmed). A
+  // conceal over a newline joins the next line onto this row; in a compose
+  // view, text "\n" is a line break.
   conceal(start, end, opts = {}) {
     this.d.add("conceals", { ns: this.ns, start, end, text: opts.text ?? "", style: opts.style || null, spans: opts.spans || null, reveal: opts.reveal || null, when: opts.when || null });
   }
@@ -42,14 +44,21 @@ class DecorationSet {
   inline(pos, text, opts = {}) {
     this.d.add("inlines", { ns: this.ns, pos, text, style: opts.style || null, side: opts.side || "before", edge: !!opts.edge, when: opts.when || null });
   }
-  // A whole row above or below the line holding `pos`: `text`, or a rule
-  // `{left, fill, right}` drawn across the row's width.
+  // A whole row of `text` above or below the line holding `pos`.
   line(pos, opts) {
-    this.d.add("lines", { ns: this.ns, pos, above: !!opts.above, text: opts.text ?? null, rule: opts.rule || null, style: opts.style || null, spans: opts.spans || null, when: opts.when || null, order: opts.order || 0 });
+    this.d.add("lines", { ns: this.ns, pos, above: !!opts.above, text: opts.text ?? "", style: opts.style || null, spans: opts.spans || null, when: opts.when || null, order: opts.order || 0 });
   }
-  // Lines [start, end) wrap with this hanging indent and continuation prefix.
-  block(start, end, opts) {
-    this.d.add("blocks", { ns: this.ns, start, end, indent: opts.indent || 0, prefix: opts.prefix || null, when: opts.when || null });
+  // Document structure over the lines of [start, end), drawn by a compose
+  // view as typography: {type, ...attrs}. Block types: "heading" {level},
+  // "paragraph", "item" {depth, marker}, "quote" {depth}, "code" {lang},
+  // "table" {align: ["left"|"center"|"right"|null]}, "rule"; inside a table,
+  // "row" {header, delimiter} per line and "cell" nodes, which split their
+  // row at their starts. Paragraph, item and quote lines are joined (each
+  // line break drawn as a space) and wrapped; code keeps its lines. A line
+  // in no node is a paragraph of its own.
+  node(start, end, opts) {
+    const { when, ...attrs } = opts;
+    this.d.add("nodes", { ns: this.ns, start, end, ...attrs, when: when || null });
   }
   // A mark in the gutter on the line holding `pos`.
   gutter(pos, opts) { this.d.add("gutters", { ns: this.ns, start: pos, end: pos, glyph: opts.glyph || "▎", color: opts.color, title: opts.title || "" }); }

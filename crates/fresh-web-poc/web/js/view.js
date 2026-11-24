@@ -1,36 +1,17 @@
 // A pane and the views in it: one view per buffer tab, each with its own
 // scroll, cursors, options and folds — all of it this client's.
 
-import { layout } from "./layout.js";
+import { layout, applies, cursorIn } from "./layout.js";
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
-import { color, highlightLine, THEME } from "./highlight.js";
+import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
+import { EMPTY, NO_SPANS, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey } from "./paint.js";
+import { DocView } from "./doc.js";
+
+export { resetStyleCaches } from "./paint.js";
 
 let nextPaneId = 1;
-
-const EMPTY = Object.freeze({});
-const NO_SPANS = [];
-// Syntax spans by language and line text: a line's colours depend only on
-// its text (the highlighter is line-local), so scrolling and editing reuse
-// them. Each span carries its finished style.
-const spanCache = new Map();
-// After a theme change: styles are rebuilt from the new colours.
-export function resetStyleCaches() {
-  spanCache.clear();
-  cssCache.clear();
-}
-function spansFor(lang, text) {
-  if (!lang) return NO_SPANS;
-  const key = lang + "\u0000" + text;
-  let v = spanCache.get(key);
-  if (!v) {
-    v = highlightLine(lang, text).map((x) => ({ s: x.s, e: x.e, style: Object.freeze({ fg: THEME[x.k], bold: x.bold, italic: x.italic }) }));
-    if (spanCache.size > 50000) spanCache.clear();
-    spanCache.set(key, v);
-  }
-  return v;
-}
 
 export const sel = (c) => (c.anchor == null || c.anchor === c.pos ? null : { start: Math.min(c.anchor, c.pos), end: Math.max(c.anchor, c.pos) });
 
@@ -39,7 +20,10 @@ export class View {
   constructor(pane, buf) {
     this.pane = pane;
     this.buf = buf;
-    this.top = 0; // byte: start of the first visible source line
+    // The scroll position: the first visible source line's start, and (in a
+    // compose view) how many pixels of that line are scrolled past.
+    this._top = 0;
+    this.topPx = 0;
     // Every cursor: position, selection anchor (or null) and the column
     // vertical motion aims for. The first is the primary.
     this.cursors = [{ pos: 0, anchor: null, goalX: null }];
@@ -49,6 +33,10 @@ export class View {
     buf.views.add(this);
   }
   get primary() { return this.cursors[0]; }
+  get top() { return this._top; }
+  // Show the line starting at `b` at the top.
+  set top(b) { this.setTop(b, 0); }
+  setTop(b, px) { this._top = b; this.topPx = px; }
   shift(op) {
     const sp = (p, r) => {
       if (op.t === "ins") return p > op.pos || (p === op.pos && r) ? p + byteLen(op.text) : p;
@@ -59,7 +47,7 @@ export class View {
       c.pos = sp(c.pos, true);
       if (c.anchor != null) c.anchor = sp(c.anchor, false);
     }
-    this.top = sp(this.top, false);
+    this._top = sp(this._top, false);
   }
   selection() { return sel(this.cursors[0]); }
   selections() { return this.cursors.map(sel).filter(Boolean); }
@@ -90,6 +78,9 @@ export class Pane {
     this.el.className = "pane";
     this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="rulers"></div><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="thumb"></div></div></div>`;
     for (const k of ["tabs", "surface", "rulers", "gutter", "text", "carets", "scrollbar", "thumb"]) this[k + "El"] = this.el.querySelector("." + k);
+    // A view in compose mode is drawn as a document instead of rows.
+    this.doc = new DocView(this);
+    this.surfaceEl.insertBefore(this.doc.el, this.scrollbarEl);
     this.rows = [];
     this.lastWidth = new Map();
     // Sizes come from a ResizeObserver, never read while drawing: reading
@@ -192,19 +183,16 @@ export class Pane {
       if (buf.structGen !== buf.textGen) { buf.struct = classify(L.lines); buf.structGen = buf.textGen; }
       struct = buf.struct;
     }
-    const FENCE = { bash: "shell", sh: "shell", shell: "shell", console: "shell", rust: "rust", rs: "rust", js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", python: "python", py: "python", json: "json", toml: "toml", go: "go", c: "c", cpp: "cpp" };
     const fenceLang = (li) => {
       let k = li;
       while (k > 0 && struct.region[k] !== "open") k--;
-      const info = (/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]) || [])[1] || "";
-      return FENCE[info.toLowerCase()] || null;
+      return fenceLanguage((/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]) || [])[1]);
     };
     const synFor = (li) => {
       const region = struct && struct.region[li];
       const l = region === "body" ? fenceLang(li) : lang;
       return region === "body" && !l ? NO_SPANS : spansFor(l, L.lines[li]);
     };
-    const compose = v.mode === "compose";
     // Each line's decorations, gathered when the layout first reaches the
     // line (the interval index makes that cost what the line has), in order
     // of precedence: overlays, occurrences, diagnostics, selection.
@@ -222,7 +210,7 @@ export class Pane {
       const fg = y.fg != null ? color(y.fg) : null, bg = y.bg != null ? color(y.bg) : null;
       return (st) => ({
         ...st, ...(fg ? { fg } : {}), ...(bg ? { bg } : {}),
-        ...(y.bold ? { bold: true } : {}), ...(y.italic ? { italic: true } : {}), ...(y.underline ? { underline: true } : {}), ...(y.strike ? { strike: true } : {}),
+        ...(y.bold ? { bold: true } : {}), ...(y.italic ? { italic: true } : {}), ...(y.underline ? { underline: true } : {}), ...(y.strike ? { strike: true } : {}), ...(y.mono ? { mono: true } : {}),
       });
     };
     const lineCache = new Map();
@@ -231,7 +219,7 @@ export class Pane {
       if (out) return out;
       out = [];
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
-      for (const o of buf.decor.query("overlays", ls, le)) if (!o.when || (o.when === "compose" && compose)) out.push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
+      for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) out.push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
       if (occ) {
         const line = L.lines[li];
         for (let k = line.indexOf(occ); k >= 0; k = line.indexOf(occ, k + occ.length)) {
@@ -246,9 +234,14 @@ export class Pane {
       lineCache.set(li, out);
       return out;
     };
+    // Decorations over style `st` (the syntax style) at byte b of line li.
+    const decoStyle = (b, li, st) => {
+      for (const x of lineDecos(li)) if (b >= x.s && x.e > b) st = x.f(st);
+      return st;
+    };
     return {
-      compose,
-      wrap: v.opts.wrap || compose,
+      mode: v.mode,
+      wrap: v.opts.wrap,
       width,
       tab: 4,
       cursors: v.cursors.map((c) => c.pos),
@@ -258,12 +251,10 @@ export class Pane {
         for (const o of buf.decor.query("overlays", b, b + 1)) if (o.style?.extendToLineEnd && o.style.bg) return color(o.style.bg);
         return null;
       },
+      decoStyle,
       styleAt: (b, li, idx) => {
         if (li == null) { li = L.indexOf(b); idx = li >= 0 ? byteToIdx(L.lines[li], b - L.starts[li]) : 0; }
-        let st = EMPTY;
-        if (li >= 0) for (const x of synFor(li)) if (idx >= x.s && idx < x.e) { st = x.style; break; }
-        if (li >= 0) for (const x of lineDecos(li)) if (b >= x.s && b < x.e) st = x.f(st);
-        return st;
+        return li >= 0 ? decoStyle(b, li, synAt(synFor(li), idx)) : EMPTY;
       },
     };
   }
@@ -278,6 +269,7 @@ export class Pane {
   // Window line indices [first, last] on screen.
   visibleLineRange(v) {
     if (!v.buf.text || this.view !== v) return null;
+    if (v.mode === "compose") return this.doc.visibleLines();
     const { consumed } = this.computeRows(v, 0);
     return consumed.length ? { first: consumed[0], last: consumed[consumed.length - 1] } : null;
   }
@@ -294,6 +286,14 @@ export class Pane {
     this.caretsEl.textContent = "";
     this.rowEls = [];
     this.gutEls = [];
+    this.rows = [];
+    this.doc.clear();
+  }
+
+  // Draw now, not at the next frame (motion that measures what is drawn).
+  renderNow() {
+    if (this.pending) { cancelAnimationFrame(this.pending); this.pending = null; }
+    this.render();
   }
 
   render() {
@@ -309,7 +309,10 @@ export class Pane {
       if (!buf.text || buf.text.indexOf(v.top) < 0) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
     }
     const L = buf.text;
-    v.top = L.starts[L.indexOf(v.top)];
+    v.setTop(L.starts[L.indexOf(v.top)], v.topPx);
+    const compose = v.mode === "compose";
+    if (this.surfaceEl.classList.contains("compose") !== compose) { this.clearRows(); this.surfaceEl.classList.toggle("compose", compose); }
+    if (compose) { this.renderDoc(v); return; }
     const { rows, g } = this.computeRows(v, 0);
     this.rows = rows;
     this.geom = g;
@@ -383,13 +386,11 @@ export class Pane {
     this.rowEls = textEls;
     this.gutEls = gutEls;
     this.rulersEl.textContent = "";
-    if (v.mode !== "compose") {
-      for (const col of s.rulers) {
-        const r = document.createElement("div");
-        r.className = "ruler";
-        r.style.left = `${(col - 1) * cw}px`;
-        this.rulersEl.appendChild(r);
-      }
+    for (const col of s.rulers) {
+      const r = document.createElement("div");
+      r.className = "ruler";
+      r.style.left = `${(col - 1) * cw}px`;
+      this.rulersEl.appendChild(r);
     }
     // Carets: absolutely placed, so moving one never touches the rows.
     let html = "";
@@ -400,6 +401,18 @@ export class Pane {
       }
     }
     if (this.caretsEl._html !== html) { this.caretsEl.innerHTML = html; this.caretsEl._html = html; }
+    this.finishRender(v, g);
+  }
+
+  // A view in compose mode: a document (doc.js).
+  renderDoc(v) {
+    const g = this.geometry(v);
+    this.geom = g;
+    this.doc.render(v);
+    this.finishRender(v, g);
+  }
+
+  finishRender(v, g) {
     this.renderScrollbar(v, g);
     if (this.lastWidth.get(v) !== g.width) {
       this.lastWidth.set(v, g.width);
@@ -422,6 +435,39 @@ export class Pane {
     const h = this.size.sb;
     this.thumbEl.style.top = `${frac * h}px`;
     this.thumbEl.style.height = `${Math.max(16, size * h)}px`;
+  }
+
+  // Where a caret at byte `p` is drawn, in client pixels: {x, y, h}, or
+  // null when it is not on screen.
+  caretBox(p) {
+    if (this.view?.mode === "compose") {
+      const r = this.doc.caretRect(p);
+      return r ? { x: r.left, y: r.top, h: r.height || this.metrics().lh } : null;
+    }
+    const at = this.caretXY(p);
+    if (!at) return null;
+    const { cw, lh } = this.metrics();
+    const rect = this.textEl.getBoundingClientRect();
+    return { x: rect.left + at.x * cw, y: rect.top + at.r * lh, h: lh };
+  }
+
+  // The byte drawn at client point (x, y).
+  posFromPoint(x, y) {
+    if (this.view?.mode === "compose") return this.doc.posFromPoint(x, y);
+    const { cw, lh } = this.metrics();
+    const rect = this.textEl.getBoundingClientRect();
+    return this.posAt(Math.floor((y - rect.top) / lh), Math.max(0, (x - rect.left) / cw));
+  }
+
+  // Where a caret can stand at or beyond `p` (in direction `dir`): not
+  // inside text a conceal hides (one revealed by a caret at `p` shows).
+  settle(v, p, dir) {
+    for (let guard = 0; guard < 64; guard++) {
+      const c = v.buf.decor.query("conceals", p, p + 1).find((c) => c.start < p && p < c.end && applies(c, v.mode) && !(c.reveal && cursorIn([p], c.reveal)));
+      if (!c) return p;
+      p = dir < 0 ? c.start : c.end;
+    }
+    return p;
   }
 
   // Where byte `p` is drawn: {r, x} in rows and columns.
@@ -467,6 +513,7 @@ export class Pane {
   scrollLines(n) {
     const v = this.view;
     if (!v || !v.buf.text) return;
+    if (v.mode === "compose") { v.setTop(v.top, v.topPx + n * this.metrics().lh); this.scheduleRender(); return; }
     const L = v.buf.text;
     const i = L.indexOf(v.top);
     if (i < 0) return;
@@ -485,6 +532,8 @@ export class Pane {
   reveal(center = false) {
     const v = this.view;
     if (!v || !v.buf.text) return;
+    // A document keeps the cursor in view as it draws (it measures there).
+    if (v.mode === "compose") { this.doc.want = center ? "center" : this.doc.want || "keep"; this.scheduleRender(); return; }
     const L = v.buf.text;
     const ci = L.indexOf(v.primary.pos);
     if (ci < 0) return;
@@ -505,6 +554,21 @@ export class Pane {
   moveRows(n, extend) {
     const v = this.view;
     if (!v) return;
+    if (v.mode === "compose") {
+      const c = v.primary;
+      this.renderNow();
+      const goal = c.goalX ?? this.doc.caretX(c.pos);
+      if (goal == null) return;
+      let p = c.pos;
+      for (let k = 0; k < Math.abs(n); k++) {
+        const q = this.doc.lineFrom(v, p, Math.sign(n), goal);
+        if (q == null) break;
+        p = q;
+      }
+      this.app.editing.place(this, p, extend);
+      c.goalX = goal;
+      return;
+    }
     const L = v.buf.text;
     const c = v.primary;
     this.reveal();
@@ -535,6 +599,31 @@ export class Pane {
     if (p != null) { this.app.editing.place(this, p, extend); c.goalX = goal; }
   }
 
+  // A page up or down: the view scrolls a screen and the cursor keeps its
+  // place on it.
+  page(dir, extend) {
+    const v = this.view;
+    if (!v) return;
+    if (v.mode !== "compose") {
+      const n = this.metrics().rows;
+      this.scrollLines(dir * n);
+      this.moveRows(dir * n, extend);
+      return;
+    }
+    const c = v.primary;
+    this.renderNow();
+    const at = this.caretBox(c.pos);
+    const sr = this.surfaceEl.getBoundingClientRect();
+    const dist = dir * Math.max(this.metrics().lh, sr.height - 2 * this.metrics().lh);
+    const goal = c.goalX ?? this.doc.caretX(c.pos) ?? 0;
+    // The caret moves a page through the document; the view moved `shift`.
+    const shift = this.doc.scrollBy(v, dist);
+    this.finishRender(v, this.geometry(v));
+    const y = (at ? at.y + at.h / 2 : sr.top + sr.height / 2) + dist - shift;
+    const p = this.posFromPoint(this.doc.content.getBoundingClientRect().left + goal, y);
+    if (p != null) { this.app.editing.place(this, p, extend); c.goalX = goal; }
+  }
+
   // ---------------------------------------------------------------- mouse
 
   onMouseDown(e) {
@@ -543,9 +632,7 @@ export class Pane {
     this.app.focusPane(this);
     const v = this.view;
     if (!v) return;
-    const { cw, lh } = this.metrics();
-    const rect = this.textEl.getBoundingClientRect();
-    const toPos = (ev) => this.posAt(Math.floor((ev.clientY - rect.top) / lh), Math.max(0, (ev.clientX - rect.left) / cw));
+    const toPos = (ev) => this.posFromPoint(ev.clientX, ev.clientY);
     const p = toPos(e);
     if (p == null) return;
     if (e.altKey && e.button === 0) { v.cursors.push({ pos: p, anchor: null, goalX: null }); v.normalize(); this.scheduleRender(); return; }
@@ -568,11 +655,8 @@ export class Pane {
 
   onHover(e) {
     const v = this.view;
-    if (!v || !this.rows.length) return;
-    const { cw, lh } = this.metrics();
-    const rect = this.textEl.getBoundingClientRect();
-    const p = this.posAt(Math.floor((e.clientY - rect.top) / lh), Math.max(0, (e.clientX - rect.left) / cw));
-    this.app.onHover(this, p, e.clientX, e.clientY);
+    if (!v || !v.buf.text) return;
+    this.app.onHover(this, this.posFromPoint(e.clientX, e.clientY), e.clientX, e.clientY);
   }
 
   onScrollbar(e) {
@@ -587,27 +671,3 @@ export class Pane {
     window.addEventListener("mouseup", up);
   }
 }
-
-const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
-const esc = (t) => t.replace(/[&<>"]/g, (c) => ESC[c]);
-// The inline CSS for a style, cached by its key.
-const cssCache = new Map();
-function cssFor(st, key) {
-  let c = cssCache.get(key);
-  if (c == null) {
-    c = "";
-    if (st.fg) c += `color:${css(st.fg)};`;
-    if (st.bg) c += `background:${css(st.bg)};`;
-    if (st.bold) c += "font-weight:bold;";
-    if (st.italic) c += "font-style:italic;";
-    if (st.wavy) c += `text-decoration:underline wavy ${st.wavy};`;
-    else if (st.underline || st.strike) c += `text-decoration:${[st.underline && "underline", st.strike && "line-through"].filter(Boolean).join(" ")};`;
-    cssCache.set(key, c);
-  }
-  return c;
-}
-
-function styleKey(s) {
-  return `${s.fg || ""}|${s.bg || ""}|${s.bold ? 1 : 0}${s.italic ? 1 : 0}${s.underline ? 1 : 0}${s.strike ? 1 : 0}|${s.wavy || ""}`;
-}
-const css = (x) => (typeof x === "string" && (x.startsWith("#") || x.startsWith("rgb")) ? x : color(x));

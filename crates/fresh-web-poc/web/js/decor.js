@@ -2,8 +2,10 @@
 //   overlays  {start, end, style}                 styling over source text
 //   conceals  {start, end, text, reveal}          source drawn as other text
 //   inlines   {pos, text, side, edge}             text spliced into a row
-//   lines     {pos, above, text | rule}           whole rows between lines
-//   blocks    {start, end, indent, prefix}        hanging indent for wraps
+//   lines     {pos, above, text}                  whole rows between lines
+//   nodes     {start, end, type, ...attrs}        document structure: what a
+//                                                 compose view draws as
+//                                                 headings, lists, tables...
 //   gutters   {start, glyph, color}               marks in the gutter
 // plus the language server's diagnostics. Each item belongs to a namespace
 // (plugin and set). Every position moves through every edit the buffer
@@ -12,7 +14,7 @@
 
 import { shiftPos } from "./ot.js";
 
-const KINDS = ["overlays", "conceals", "inlines", "lines", "blocks", "gutters"];
+const KINDS = ["overlays", "conceals", "inlines", "lines", "nodes", "gutters"];
 
 export class Decor {
   constructor() {
@@ -77,7 +79,7 @@ export class Decor {
     for (const o of this.conceals) { range(o); if (o.reveal) range(o.reveal); }
     for (const o of this.inlines) o.pos = o.side === "before" ? r(o.pos) : l(o.pos);
     for (const o of this.lines) o.pos = l(o.pos);
-    for (const o of this.blocks) range(o);
+    for (const o of this.nodes) range(o);
     for (const o of this.gutters) { o.start = l(o.start); o.end = o.start; }
     for (const o of this.diags) range(o);
     this.gen++;

@@ -107,7 +107,8 @@ export class Editing {
     const v = pane.view;
     const old = v.primary.pos;
     for (const c of v.cursors) {
-      const p = Math.max(0, Math.min(v.buf.len, fn(c)));
+      const to = Math.max(0, Math.min(v.buf.len, fn(c)));
+      const p = pane.settle(v, to, Math.sign(to - c.pos));
       if (extend) { if (c.anchor == null) c.anchor = c.pos; }
       else c.anchor = null;
       c.pos = p;
