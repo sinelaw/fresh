@@ -2028,7 +2028,7 @@
   "settings.field.sidebar.accordion": "Fisarmonica",
   "settings.field.sidebar.accordion_desc": "Apre le sezioni liberamente (`free`, predefinito) o una alla volta (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Vai in fondo con nuovo output",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Torna al terminale live quando arriva nuovo output mentre sei nello scrollback (predefinito: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Torna al terminale live quando arriva nuovo output mentre la vista dello scrollback è alla fine (predefinito: true). Una vista scorsa verso l'alto nella cronologia mantiene la posizione; scorrendo di nuovo fino alla fine si riprende.",
   "settings.field.terminal.mouse_drag_selects": "Trascina per selezionare",
   "settings.field.terminal.mouse_drag_selects_desc": "Trascinare in un terminale seleziona il testo per Ctrl+C, passando allo scrollback (Ctrl+Space per tornare). Un clic dà solo il focus. Predefinito: true",
   "settings.field.terminal.mouse_forwarding": "Inoltro del mouse",

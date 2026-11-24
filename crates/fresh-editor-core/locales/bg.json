@@ -1984,7 +1984,7 @@
   "settings.field.sidebar.accordion": "Акордеон",
   "settings.field.sidebar.accordion_desc": "Отваряне на секциите свободно (`free`, по подразбиране) или само по една наведнъж (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Към края при нов изход",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Връщане към живия терминал при пристигане на нов изход, докато сте в режим на превъртане назад (scrollback) (по подразбиране: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Връщане към живия терминал при нов изход, докато изгледът на историята (scrollback) е в края си (по подразбиране: true). Изглед, превъртян нагоре в историята, остава на мястото си; превъртането обратно до края го възобновява.",
   "settings.field.terminal.mouse_drag_selects": "Избиране с плъзгане",
   "settings.field.terminal.mouse_drag_selects_desc": "Плъзгането в терминал избира текст за Ctrl+C и превключва към превъртане назад (Ctrl+Space връща обратно). Щракването само фокусира. По подразбиране: true",
   "settings.field.terminal.mouse_forwarding": "Препращане на мишката",

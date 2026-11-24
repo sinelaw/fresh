@@ -2028,7 +2028,7 @@
   "settings.field.sidebar.accordion": "Accordéon",
   "settings.field.sidebar.accordion_desc": "Ouvrir les sections librement (`free`, par défaut) ou une seule à la fois (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Suivre la nouvelle sortie",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Revenir au terminal en direct lorsqu'une nouvelle sortie arrive pendant que vous êtes dans l'historique de défilement (par défaut : true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Revenir au terminal en direct lorsqu'une nouvelle sortie arrive alors que la vue de l'historique de défilement est à sa fin (par défaut : true). Une vue remontée dans l'historique garde sa position ; redescendre jusqu'à la fin reprend le suivi.",
   "settings.field.terminal.mouse_drag_selects": "Glisser pour sélectionner",
   "settings.field.terminal.mouse_drag_selects_desc": "Glisser dans un terminal sélectionne du texte pour Ctrl+C et passe dans l'historique de défilement (Ctrl+Space pour revenir). Un clic donne seulement le focus. Par défaut : true",
   "settings.field.terminal.mouse_forwarding": "Transfert de la souris",

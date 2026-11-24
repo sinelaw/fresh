@@ -2028,7 +2028,7 @@
   "settings.field.sidebar.accordion": "Acordeón",
   "settings.field.sidebar.accordion_desc": "Abrir las secciones libremente (`free`, predeterminado) o de una en una (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "Ir al final con nueva salida",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Volver al terminal en vivo cuando llega nueva salida mientras estás en el historial de desplazamiento (predeterminado: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Volver al terminal en vivo cuando llega nueva salida mientras la vista del historial de desplazamiento está al final (predeterminado: true). Una vista desplazada hacia arriba en el historial conserva su posición; al desplazarse de nuevo hasta el final, se reanuda.",
   "settings.field.terminal.mouse_drag_selects": "Arrastrar para seleccionar",
   "settings.field.terminal.mouse_drag_selects_desc": "Arrastrar en un terminal selecciona texto para Ctrl+C y cambia al historial de desplazamiento (Ctrl+Space vuelve). Un clic solo da el foco. Predeterminado: true",
   "settings.field.terminal.mouse_forwarding": "Reenvío del ratón",

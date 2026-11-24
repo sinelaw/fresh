@@ -3065,10 +3065,17 @@ impl Editor {
                         return;
                     }
                     self.enter_terminal_scrollback();
+                } else {
+                    // Scrolling a drag-parked scrollback view is reading it:
+                    // the visit is explicit now (no-op otherwise).
+                    self.active_window_mut()
+                        .set_split_terminal_drag_scrollback(pane, buffer_id, false);
                 }
                 self.active_window_mut()
                     .scroll_split_surface(pane, buffer_id, delta);
-                self.after_terminal_scrollback_wheel(pane, buffer_id, delta);
+                if delta > 0 {
+                    self.resume_terminal_at_scrollback_end(pane, buffer_id);
+                }
             }
             UiFact::PanePan { pane, delta } => {
                 let (x, y) = ev.at;

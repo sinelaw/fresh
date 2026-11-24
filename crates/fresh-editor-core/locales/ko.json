@@ -2021,7 +2021,7 @@
   "settings.field.sidebar.accordion": "아코디언",
   "settings.field.sidebar.accordion_desc": "섹션을 자유롭게 열거나(`free`, 기본값) 한 번에 하나만 엽니다(`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "출력 시 끝으로 이동",
-  "settings.field.terminal.jump_to_end_on_output_desc": "스크롤백을 보는 중에 새 출력이 들어오면 실시간 터미널 화면으로 돌아갑니다(기본값: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "스크롤백 화면이 끝에 있을 때 새 출력이 들어오면 실시간 터미널 화면으로 돌아갑니다(기본값: true). 기록을 위로 스크롤한 화면은 위치를 유지하며, 끝까지 다시 스크롤하면 다시 따라갑니다.",
   "settings.field.terminal.mouse_drag_selects": "드래그로 선택",
   "settings.field.terminal.mouse_drag_selects_desc": "터미널에서 드래그하면 Ctrl+C로 복사할 텍스트를 선택하며 스크롤백으로 전환됩니다(Ctrl+Space로 돌아옴). 클릭은 포커스만 이동합니다. 기본값: true",
   "settings.field.terminal.mouse_forwarding": "마우스 전달",

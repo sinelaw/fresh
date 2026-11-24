@@ -544,11 +544,7 @@ impl super::Editor {
         self.active_window_mut()
             .set_split_terminal_scrollback(split_id, buffer_id, true);
         self.active_window_mut()
-            .mark_split_terminal_scrollback_visit(
-                split_id,
-                buffer_id,
-                crate::app::window::ScrollbackVisit::Drag,
-            );
+            .set_split_terminal_drag_scrollback(split_id, buffer_id, true);
         self.active_window_mut().sync_terminal_mode_flags();
         self.set_status_message(
             "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),

@@ -2042,7 +2042,7 @@
   "settings.field.sidebar.accordion": "Аккордеон",
   "settings.field.sidebar.accordion_desc": "Открывать разделы свободно (`free`, по умолчанию) или только по одному (`exclusive`).",
   "settings.field.terminal.jump_to_end_on_output": "В конец при новом выводе",
-  "settings.field.terminal.jump_to_end_on_output_desc": "Возвращаться к актуальному выводу терминала, когда поступает новый вывод, пока вы просматриваете историю прокрутки (по умолчанию: true).",
+  "settings.field.terminal.jump_to_end_on_output_desc": "Возвращаться к актуальному выводу терминала, когда поступает новый вывод, пока просмотр истории прокрутки находится в конце (по умолчанию: true). Просмотр, прокрученный вверх по истории, остаётся на месте; прокрутка обратно до конца возобновляет слежение.",
   "settings.field.terminal.mouse_drag_selects": "Выделение перетаскиванием",
   "settings.field.terminal.mouse_drag_selects_desc": "Перетаскивание в терминале выделяет текст для Ctrl+C с переходом в историю прокрутки (Ctrl+Space — возврат). Щелчок только переводит фокус. По умолчанию: true",
   "settings.field.terminal.mouse_forwarding": "Передача событий мыши",

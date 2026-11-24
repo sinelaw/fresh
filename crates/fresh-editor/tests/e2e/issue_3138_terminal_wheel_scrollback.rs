@@ -12,9 +12,12 @@
 //!   scrolling down stopped at the snapshot's end while the program's output
 //!   went on underneath, until Ctrl+Space.
 //!
-//! Now a view the user scrolled up holds its place against output, and
-//! scrolling back down to its end resumes following the live grid. A
-//! wheel-down on a live terminal leaves it live.
+//! Now whether output pulls a scrollback view back depends on where the view
+//! is, not on how it got there: a view scrolled up into history (wheel,
+//! scrollbar, PageUp) holds its place, while one at its end (just entered
+//! with Ctrl+Space, or a wheel-up that had nothing to scroll to) still
+//! follows output under `jump_to_end_on_output`. Scrolling back down to the
+//! end resumes the live grid. A wheel-down on a live terminal leaves it live.
 //!
 //! Output lines are produced by shell arithmetic (`echo NEW_$((1+1))` prints
 //! `NEW_2`) so the echoed command line never matches what the test looks
@@ -24,6 +27,7 @@
 
 use crate::common::global_state::pin_posix_shell;
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
 use portable_pty::{native_pty_system, PtySize};
 
 const W: u16 = 80;
@@ -171,5 +175,145 @@ fn wheel_down_on_live_terminal_keeps_following_output() {
     h.mouse_scroll_down(x, y).unwrap();
     type_into_shell(&mut h, "echo AFTER_$((3+4))\n");
     h.wait_until(|h| h.screen_to_string().contains("AFTER_7"))
+        .unwrap();
+}
+
+/// Run `echo <cmd>` in the shell and wait (through the grid, since the pane
+/// may legitimately not show it) until its output `out` has arrived and been
+/// handled.
+fn print_and_settle(h: &mut EditorTestHarness, cmd: &str, out: &str) {
+    type_into_shell(h, &format!("echo {cmd}\n"));
+    h.wait_until(|h| grid_contains(h, out)).unwrap();
+    h.wait_for_async_quiescence(3).unwrap();
+}
+
+/// Paging up with the keyboard is reading history just as the wheel is: the
+/// view holds its place against output (the jump used to fire for every
+/// scrollback view, whatever its position).
+#[test]
+fn keyboard_paged_view_holds_against_output() {
+    let _sh = pin_posix_shell();
+    let Some(mut h) = terminal_with_history(true) else {
+        return;
+    };
+    // Shift+PageUp drops into scrollback and pages up.
+    h.send_key(KeyCode::PageUp, KeyModifiers::SHIFT).unwrap();
+    h.assert_screen_not_contains("TAIL_42");
+    let held = visible_history(&h);
+    assert!(!held.is_empty(), "{}", h.screen_to_string());
+
+    print_and_settle(&mut h, "NEW_$((1+1))", "NEW_2");
+    assert_eq!(
+        visible_history(&h),
+        held,
+        "new output must not move a view paged up into history.\n{}",
+        h.screen_to_string()
+    );
+    h.assert_screen_not_contains("NEW_2");
+}
+
+/// A scrollback view at its end still follows output under
+/// `jump_to_end_on_output`: Ctrl+Space opens the view at the end, and the
+/// next output returns it to the live grid, as it always has.
+#[test]
+fn scrollback_at_its_end_still_jumps_on_output() {
+    let _sh = pin_posix_shell();
+    let Some(mut h) = terminal_with_history(true) else {
+        return;
+    };
+    h.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    h.assert_screen_contains("TAIL_42");
+    type_into_shell(&mut h, "echo NEW_$((1+1))\n");
+    h.wait_until(|h| h.screen_to_string().contains("NEW_2"))
+        .unwrap();
+}
+
+/// A wheel-up on a terminal with no history above its screen has nothing to
+/// scroll to: the view stays at its end and keeps following output.
+#[test]
+fn wheel_up_without_history_keeps_following_output() {
+    let _sh = pin_posix_shell();
+    let Some(mut h) = harness_or_skip() else {
+        return;
+    };
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+    let (x, y) = WHEEL_AT;
+    h.mouse_scroll_up(x, y).unwrap();
+    type_into_shell(&mut h, "echo NEW_$((1+1))\n");
+    h.wait_until(|h| h.screen_to_string().contains("NEW_2"))
+        .unwrap();
+}
+
+/// Scrolling a terminal's scrollback back to its end while another surface
+/// (here the file explorer) has the keyboard must not take the keyboard
+/// back: the terminal stays in scrollback and typing keeps going to the
+/// explorer.
+#[test]
+fn wheel_down_to_end_does_not_steal_focus_from_explorer() {
+    let _sh = pin_posix_shell();
+    let Some(mut h) = terminal_with_history(false) else {
+        return;
+    };
+    let (x, y) = WHEEL_AT;
+    for _ in 0..3 {
+        h.mouse_scroll_up(x, y).unwrap();
+    }
+    h.assert_screen_not_contains("TAIL_42");
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+    // The explorer opens beside the terminal: wheel over the terminal pane,
+    // well right of the explorer.
+    for _ in 0..10 {
+        h.mouse_scroll_down(W - 10, y).unwrap();
+    }
+    // Had the terminal taken the keyboard, this would reach the shell.
+    h.type_text("echo STOLEN_$((4+4))").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    print_and_settle(&mut h, "SETTLED_$((5+5))", "SETTLED_10");
+    h.assert_screen_not_contains("STOLEN_8");
+}
+
+/// A wheel over another pane scrolls that pane and leaves the focused live
+/// terminal alone (it used to drop the terminal into scrollback).
+#[test]
+fn wheel_over_other_pane_leaves_live_terminal_streaming() {
+    let _sh = pin_posix_shell();
+    if harness_or_skip().is_none() {
+        return;
+    }
+    let mut h = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file = h.project_dir().unwrap().join("long.txt");
+    let text: String = (1..=200).map(|i| format!("file row {i:03}\n")).collect();
+    std::fs::write(&file, text).unwrap();
+    h.open_file(&file).unwrap();
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains(">command"))
+        .unwrap();
+    h.type_text("split vert").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Split pane vertically"))
+        .unwrap();
+    h.editor_mut().open_terminal();
+    h.editor_mut().set_terminal_jump_to_end_on_output(false);
+    h.render().unwrap();
+    h.assert_screen_contains("file row 001");
+
+    // The file is in the left pane, the live terminal (focused) in the right.
+    for _ in 0..3 {
+        h.mouse_scroll_down(10, 12).unwrap();
+    }
+    h.assert_screen_not_contains("file row 001");
+    for _ in 0..3 {
+        h.mouse_scroll_up(10, 12).unwrap();
+    }
+    h.assert_screen_contains("file row 001");
+
+    type_into_shell(&mut h, "echo LIVE_$((6+6))\n");
+    h.wait_until(|h| h.screen_to_string().contains("LIVE_12"))
         .unwrap();
 }

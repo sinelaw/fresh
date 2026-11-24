@@ -2021,7 +2021,7 @@
   "settings.field.sidebar.accordion": "แบบแอคคอร์เดียน",
   "settings.field.sidebar.accordion_desc": "เปิดส่วนต่าง ๆ ได้อิสระ (`free`, ค่าเริ่มต้น) หรือทีละส่วน (`exclusive`)",
   "settings.field.terminal.jump_to_end_on_output": "ไปท้ายสุดเมื่อมีเอาต์พุต",
-  "settings.field.terminal.jump_to_end_on_output_desc": "กลับไปที่เอาต์พุตล่าสุดของเทอร์มินัลเมื่อมีเอาต์พุตใหม่เข้ามาขณะที่คุณดู scrollback อยู่ (ค่าเริ่มต้น: true)",
+  "settings.field.terminal.jump_to_end_on_output_desc": "กลับไปที่เอาต์พุตล่าสุดของเทอร์มินัลเมื่อมีเอาต์พุตใหม่เข้ามาขณะที่มุมมอง scrollback อยู่ที่ท้ายสุด (ค่าเริ่มต้น: true) มุมมองที่เลื่อนขึ้นไปดูประวัติจะคงตำแหน่งไว้ และการเลื่อนกลับลงไปจนสุดจะกลับมาติดตามอีกครั้ง",
   "settings.field.terminal.mouse_drag_selects": "ลากเมาส์เพื่อเลือก",
   "settings.field.terminal.mouse_drag_selects_desc": "การลากในเทอร์มินัลจะเลือกข้อความสำหรับ Ctrl+C โดยสลับไปยัง scrollback (กด Ctrl+Space เพื่อกลับ) การคลิกจะแค่โฟกัส ค่าเริ่มต้น: true",
   "settings.field.terminal.mouse_forwarding": "ส่งต่อเมาส์",
