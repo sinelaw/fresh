@@ -32,8 +32,10 @@ class DecorationSet {
   // Style [start, end): {fg, bg, bold, italic, underline, strike, mono,
   // extendToLineEnd}; `mono` sets inline code in a compose view. With
   // `opts.mark`, the line is also marked on the scrollbar in the style's
-  // background (search matches).
-  overlay(start, end, style, opts = {}) { this.d.add("overlays", { ns: this.ns, start, end, style, when: opts.when || null, mark: !!opts.mark }); }
+  // background (search matches); with `opts.above`, it is drawn over the
+  // selection and the occurrence highlight (a search's matches, which are
+  // selected as they are found).
+  overlay(start, end, style, opts = {}) { this.d.add("overlays", { ns: this.ns, start, end, style, when: opts.when || null, mark: !!opts.mark, above: !!opts.above }); }
   // Draw `text` instead of [start, end). `reveal` {start, end}: shown as
   // source while a cursor is inside it (a compose view draws it dimmed). A
   // conceal over a newline joins the next line onto this row; in a compose
@@ -66,6 +68,8 @@ class DecorationSet {
   gutter(pos, opts) { this.d.add("gutters", { ns: this.ns, start: pos, end: pos, glyph: opts.glyph || "▎", color: opts.color, title: opts.title || "" }); }
   // This set's gutter marks where they are now (edits move them): [{pos, glyph}].
   gutters() { return this.d.gutters.filter((g) => g.ns === this.ns).map((g) => ({ pos: g.start, glyph: g.glyph })); }
+  // This set's overlays where they are now: [{start, end}].
+  overlays() { return this.d.overlays.filter((o) => o.ns === this.ns).map((o) => ({ start: o.start, end: o.end })); }
 }
 
 class BufferHandle {

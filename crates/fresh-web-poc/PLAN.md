@@ -199,7 +199,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Editing | Uppercase / lowercase (Alt+U / Alt+L), sort lines, trim trailing whitespace (Edit ▸ Transform) | fixed |
 | Editing | Transpose, block selection, expand selection, macros | missing (editing commands, not chrome) |
 | Search | Find / replace bar with toggles, project search panel | present |
-| Search | Find in selection, query replace, find selection next | missing |
+| Search | Find in Selection (and Find / Replace opened over a selection of several lines; the bar's ⊂ toggle), the range shaded (`--search-scope-bg`) and moved by edits; Find Selection Next / Previous (Ctrl+F3 / Ctrl+Shift+F3, Alt+N / Alt+P); Query Replace (Ctrl+Alt+R, or the replace row's ? toggle): at each match y, n, a or !, q or c, wrapping once; the current match drawn over the selection (decorations: `above`) | fixed |
 | LSP | Hover, completion, definition, references, rename, code actions, format, symbols, signature help, diagnostics panel | present |
 | LSP | Server status (status bar, `LSP: Show Status`) | fixed |
 | LSP | Restart / stop a server, inlay hints | missing (the server starts one per language and keeps it) |

@@ -62,6 +62,7 @@ const VARS = {
   "--match-fg": (k) => k("search.match_fg", "fg"),
   "--match-current-bg": (k) => k("search.current_match_bg", "bg"),
   "--match-current-fg": (k) => k("search.current_match_fg", "fg"),
+  "--search-scope-bg": (k, c) => mix(k("editor.selection_bg", "bg"), c.bg, 0.55),
   "--code-bg": (k) => k("ui.inline_code_bg", "bg"),
   "--tour-step-bg": (k) => k("ui.tour_step_bg", "bg"),
   "--diff-add-bg": (k) => k("editor.diff_add_bg", "bg"),

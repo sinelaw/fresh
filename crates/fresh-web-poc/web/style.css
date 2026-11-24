@@ -13,7 +13,7 @@
   /* The text */
   --bracket-match: #d4d4d4;
   --caret: #ffffff; --selection: #32323c; --current-line: #282828; --occurrence: #4b4b4b; --whitespace: #464646; --ruler: #323232;
-  --match-bg: #646414; --match-fg: #ffffff; --match-current-bg: #40aae6; --match-current-fg: #000000;
+  --match-bg: #646414; --match-fg: #ffffff; --match-current-bg: #40aae6; --match-current-fg: #000000; --search-scope-bg: #28282d;
   --code-bg: #3c3c3c; --tour-step-bg: #3c3c50; --diff-add-bg: #1e3c1e; --diff-remove-bg: #461e1e;
   --git-added: #81b88b; --git-modified: #e5e510; --git-deleted: #cd3131;
   /* Syntax */

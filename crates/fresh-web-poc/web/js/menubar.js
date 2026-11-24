@@ -52,6 +52,8 @@ export const MENUS = [
     null,
     { command: "search.find", label: "Find…" },
     { command: "search.replace", label: "Replace…" },
+    { command: "search.findInSelection", label: "Find in Selection…" },
+    { command: "search.queryReplace", label: "Query Replace…" },
     { command: "search.findNext", label: "Find Next" },
     { command: "search.findPrevious", label: "Find Previous" },
     { command: "search.project", label: "Search in Workspace…" },
@@ -132,6 +134,8 @@ export const MENUS = [
     { command: "cursor.addBelow", label: "Add Cursor Below" },
     { command: "select.nextOccurrence", label: "Add Next Occurrence" },
     { command: "select.allOccurrences", label: "Select All Occurrences" },
+    { command: "search.findSelectionNext", label: "Find Selection Next" },
+    { command: "search.findSelectionPrevious", label: "Find Selection Previous" },
     { command: "edit.escape", label: "Single Cursor" },
   ] },
   { label: "Go", key: "g", items: [

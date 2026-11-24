@@ -48,6 +48,7 @@ const THEME_KEYS = {
   "search.match_fg": v("match-fg"),
   "search.current_bg": v("match-current-bg"),
   "search.current_fg": v("match-current-fg"),
+  "search.scope_bg": v("search-scope-bg"),
   "git.added": v("git-added"),
   "git.modified": v("git-modified"),
   "git.deleted": v("git-deleted"),

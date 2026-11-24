@@ -241,7 +241,8 @@ export class Pane {
     };
     // Each line's decorations, gathered when the layout first reaches the
     // line (the interval index makes that cost what the line has), in order
-    // of precedence: overlays, occurrences, diagnostics, selection.
+    // of precedence: overlays, occurrences, diagnostics, selection, then
+    // the overlays drawn above the selection.
     let occ = null;
     if (s.highlight_occurrences) {
       const w = v.selection() || this.app.editing.wordAt(buf, v.primary.pos);
@@ -274,7 +275,8 @@ export class Pane {
       if (out) return out;
       out = [];
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
-      for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) out.push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
+      const above = [];
+      for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
       if (occ) {
         const line = L.lines[li];
         for (let k = line.indexOf(occ); k >= 0; k = line.indexOf(occ, k + occ.length)) {
@@ -287,6 +289,7 @@ export class Pane {
       if (brackets) for (const x of [brackets.at, brackets.match]) if (x >= ls && x < le) out.push({ s: x, e: x + 1, f: (st) => ({ ...st, ...bracketSt }) });
       for (const g of buf.decor.query("diags", ls, le)) { const wavy = DIAG[g.severity] || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => ({ ...st, wavy }) }); }
       for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: (st) => ({ ...st, bg: selBg }) });
+      out.push(...above);
       lineCache.set(li, out);
       return out;
     };
