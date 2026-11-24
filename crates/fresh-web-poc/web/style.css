@@ -136,7 +136,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .doc { display: none; }
 .surface.compose .doc { display: block; position: absolute; top: 0; bottom: 0; left: 0; right: 12px; overflow: hidden; contain: strict; }
 .surface.compose .gutter, .surface.compose .text, .surface.compose .carets, .surface.compose .rulers { display: none; }
-.doc-content { position: relative; margin: 0 auto; padding: 10px 0 40px; font: var(--doc-size)/1.6 var(--doc-font); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; user-select: none; will-change: transform; }
+.doc-content { position: relative; margin: 0 auto; padding: 10px 0 40px; font: var(--doc-size)/1.6 var(--doc-font); color: var(--fg); white-space: pre-wrap; overflow-wrap: break-word; user-select: none; will-change: transform; }
 .doc-carets { position: absolute; inset: 0; pointer-events: none; }
 .doc-body > * { margin: 0; }
 .doc-body p.blank { font-size: .6em; }
