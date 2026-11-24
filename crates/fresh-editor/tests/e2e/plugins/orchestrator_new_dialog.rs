@@ -2094,8 +2094,28 @@ fn screen_without_frame(screen: &str) -> String {
         .collect()
 }
 
-/// The worktree path the form previews for `name`, as the plugin builds it:
-/// `pathJoin` always renders forward slashes, whatever the host separator is.
+/// The directory every project's state hangs under, as the plugin renders it:
+/// `pathJoin` always uses forward slashes, whatever the host separator is.
+fn previewed_state_root(data_home: &tempfile::TempDir) -> String {
+    format!(
+        "{}/orchestrator/",
+        data_home
+            .path()
+            .join("data")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    )
+}
+
+/// The worktree path the form previews for `name` under `repo`'s own key.
+///
+/// Only sound where the path reaches the form as it is on disk, which it does
+/// not on Windows: `set_up_workspace` canonicalises, and there that yields the
+/// extended-length `\\?\C:\…` spelling — the same form `getCwd()` hands
+/// plugins, and the one `oneProjectSpelling` strips before keying. A key
+/// computed from the un-normalised path names a different directory.
+#[cfg(unix)]
 fn expected_worktree_path(
     data_home: &tempfile::TempDir,
     repo: &std::path::Path,
@@ -2223,13 +2243,23 @@ fn a_typed_workspace_name_is_previewed_as_the_directory_it_will_be() {
     focus_stop(&mut harness, "Workspace:");
     harness.type_text("fix: colon").unwrap();
 
-    let expected = expected_worktree_path(&data_home, &repo, "fix-colon");
+    // The *name* is what this pins, so it asserts the leaf and that the row is
+    // still a path under the project-state level — not the project's key. That
+    // is covered by `the_previewed_worktree_path_stays_under_the_projects_state_dir`
+    // and by `path_encode`'s own tests, and it is not derivable here on every
+    // host (see `expected_worktree_path`). The preview is the only row naming
+    // that directory, so finding both in the flattened screen is finding them
+    // in it.
+    let state_root = previewed_state_root(&data_home);
     harness
-        .wait_until(|h| screen_without_frame(&h.screen_to_string()).contains(&expected))
+        .wait_until(|h| {
+            let flat = screen_without_frame(&h.screen_to_string());
+            flat.contains(&state_root) && flat.contains("/fix-colon")
+        })
         .unwrap_or_else(|_| {
             panic!(
                 "the previewed worktree directory is the typed name reduced to what a \
-                 directory and a branch can hold.\n  expected: {expected}\nScreen:\n{}",
+                 directory and a branch can hold, under {state_root}.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
