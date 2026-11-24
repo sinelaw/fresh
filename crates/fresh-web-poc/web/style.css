@@ -101,7 +101,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .ui-spacer { flex: 1; }
 .ui-list { position: relative; flex: 1; min-height: 60px; overflow: auto; outline: none; }
 .ui-list-inner { position: relative; }
-.ui-list-row { position: absolute; left: 0; right: 0; height: 22px; line-height: 22px; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; }
+.ui-list-row { position: absolute; left: 0; right: 0; height: 22px; line-height: 22px; padding: 0 6px; white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; }
 .ui-list-row:hover { background: #2a2d2e; }
 .ui-list-row.sel { background: #37373d; }
 .ui-list:focus .ui-list-row.sel { background: #04395e; }

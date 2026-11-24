@@ -108,8 +108,14 @@ class Panel {
       this.el.appendChild(head);
     }
     this.el.appendChild(this.body);
+    // Escape closes a dialog or a bar; from a docked panel it goes back to
+    // the editor, leaving the panel where it is.
     this.el.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.close(); }
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (place === "dialog" || place === "bar") this.close();
+      else kit.app.focusPane(kit.app.activePane);
     });
     if (place === "dialog") {
       this.backdrop = document.createElement("div");
@@ -260,6 +266,9 @@ class Panel {
     const st = this.state.get(key) || { sel: 0, scroll: 0 };
     this.state.set(key, st);
     const items = p.items || [];
+    // A selection the plugin moves (the explorer following the active file)
+    // is scrolled into view.
+    const moved = p.selected != null && p.selected !== st.sel;
     if (p.selected != null) st.sel = p.selected;
     st.sel = Math.max(0, Math.min(items.length - 1, st.sel));
     const el = div("ui-list");
@@ -307,14 +316,17 @@ class Panel {
       // Skip header rows.
       while (items[i] && items[i].header && i > 0 && i < items.length - 1) i += Math.sign(d);
       st.sel = Math.max(0, Math.min(items.length - 1, i));
-      const top = st.sel * ROW_H;
-      if (top < el.scrollTop) el.scrollTop = top;
-      else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+      show();
       draw();
       p.onSelect?.(items[st.sel], st.sel);
     };
     el._draw = draw;
-    requestAnimationFrame(() => { el.scrollTop = st.scroll; draw(); });
+    const show = () => {
+      const top = st.sel * ROW_H;
+      if (top < el.scrollTop) el.scrollTop = top;
+      else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+    };
+    requestAnimationFrame(() => { el.scrollTop = st.scroll; if (moved) show(); draw(); });
     draw();
     return el;
   }
