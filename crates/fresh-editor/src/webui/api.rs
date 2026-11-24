@@ -1831,6 +1831,17 @@ mod tests {
                 .map(|m| m["mnemonic"].clone())
                 .unwrap()
         };
+        let keymap = |ed: &mut crate::app::Editor, name: &str| {
+            ed.handle_action(crate::input::keybindings::Action::SwitchKeybindingMap(
+                name.into(),
+            ))
+            .unwrap();
+        };
+        // The default keymap opens File on Alt+F; the macOS one binds no
+        // Alt+letter to a menu (Option types characters there).
+        keymap(&mut ed, "macos");
+        assert_eq!(file(&ed), Value::Null);
+        keymap(&mut ed, "default");
         assert_eq!(file(&ed), json!("F"));
         // Off, the Alt+letters are free: the page must not take them.
         let mut c = ApiClient::default();
