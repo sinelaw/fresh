@@ -88,3 +88,68 @@ days; where they matter the feature is reimplemented rather than run.
 4. Git: gutter, change navigation, blame, log, commit diff; compare files.
 5. Markdown dual view and contents; code tours; themes; keymaps and keybinding editor.
 6. Server: recovery writes for unsaved documents. (Authorities for SSH and containers, workspace trust and the encoding report are done.)
+
+## UI audit against the editor
+
+What a user of the editor finds on screen, checked against this client: the
+editor's menus (`crates/fresh-editor-core/src/config.rs`, the menu bar's
+File / Edit / View / Selection / Go / LSP / Explorer / Help), its default
+keymap (`keymaps/default.json`), its status bar and its web UI
+(`crates/fresh-editor/web-ui`: menu bar, context menus, sashes, skin picker),
+and the user documentation (`docs/features/*.md`, `docs/getting-started`).
+Status: **present** (was there), **fixed** (added by this audit), **missing**
+(not yet, with why), **skipped** (by design, with why).
+
+| Area | Feature | Status |
+|---|---|---|
+| Chrome | Menu bar: File, Edit, View, Selection, Go, LSP, Explorer, Help; keyboard (Alt, arrows, letters), checks, keys shown | missing |
+| Chrome | Status bar items open their action: position → Go to Line, language → Set Language, encoding, line ending, diagnostics → panel, LSP → status, git branch → log, host, skin | missing (diagnostics, branch present) |
+| Chrome | Skin picker button and Ctrl+Alt+T | present |
+| Chrome | Theme picker | present |
+| Chrome | Zoom: editor font size larger / smaller / reset | missing |
+| Layout | Drag to resize: editor splits | missing |
+| Layout | Drag to resize: sidebar width, bottom dock and terminal height, right dock width | missing |
+| Layout | Split right / down, close, next / previous split | present |
+| Layout | Maximize split (toggle) | missing |
+| Layout | Scroll sync of same-buffer splits | missing (rarely used; after the rest) |
+| Layout | Session restore per workspace: open tabs, splits, sizes, sidebar and dock state (in the browser) | missing |
+| Tabs | Close with ×, middle-click | present |
+| Tabs | Context menu: Close, Close Others, Close to the Right, Close All, Split Right / Down, Copy Path, Reveal in Explorer | missing |
+| Tabs | Drag to reorder; drag onto another split to move | missing |
+| Tabs | Wheel over the tab bar scrolls it | missing |
+| Tabs | Same-name tabs show their folder | present |
+| Tabs | Preview (ephemeral) tab from a single click in the explorer | missing (needs a tab state model; after the rest) |
+| Editor | Right-click context menu (Cut / Copy / Paste, Go to Definition, References, Rename, Code Actions, Format) | missing |
+| Editor | Scrollbar: drag, click to jump | present |
+| Editor | Scrollbar markers: diagnostics, search matches, git changes, cursor | missing |
+| Editor | Horizontal scrolling of long lines (wrap off) | missing |
+| Editor | Line wrap toggle (Alt+Z), line numbers, current line, occurrences, whitespace, rulers | present |
+| Editor | Indentation guides, matching-bracket highlight, rainbow brackets | missing (drawing extras; after the chrome) |
+| Editor | Minimap, breadcrumbs | skipped (the editor has neither) |
+| Explorer | Sticky ancestors: the folders of the top visible row stay pinned | missing |
+| Explorer | Drag and drop to move files and folders (confirmed) | missing |
+| Explorer | Refresh / collapse-all buttons in the header | missing |
+| Explorer | Toggle hidden / gitignored files | missing |
+| Explorer | Multi-selection (Shift+Up/Down) for cut / copy / delete | missing (after the rest) |
+| Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
+| Files | Recent files (File menu, palette) | missing |
+| Files | Save As, Revert, Close Buffer, Close All | missing (Revert is the server's `doc.reload`) |
+| Files | Set line ending (LF / CRLF), save with encoding | missing (server: the buffer's format) |
+| Files | New untitled buffer (Ctrl+N) | missing (documents are files on the server; New File asks for a name) |
+| Palette | Commands, files, buffers, go to line; `path:line:col` | present |
+| Palette | Go to symbol in the file (`@`), in the workspace | missing (`LSP: Document Symbols` is a panel) |
+| Navigation | Back / forward, go to definition / references, matching bracket, paragraphs | present |
+| Navigation | Next / previous error (F8 / Shift+F8) | missing |
+| Navigation | Bookmarks (Ctrl+Shift+N set, Alt+N jump) | missing |
+| Editing | Multi-cursor, selection, undo / redo, comment, duplicate / move line, fold, auto-close, smart home, kill ring | present |
+| Editing | Case conversion, sort lines, trim trailing whitespace, transpose, block selection, expand selection, macros | missing (editing commands, not chrome; after the UI) |
+| Search | Find / replace bar with toggles, project search panel | present |
+| Search | Find in selection, query replace, find selection next | missing |
+| LSP | Hover, completion, definition, references, rename, code actions, format, symbols, signature help, diagnostics panel | present |
+| LSP | Status / restart / stop server, inlay hints | missing (server has `lsp.status`) |
+| Git | Gutter, blame, log, diff, change navigation, branch in status | present |
+| Terminal | Multiple, tabs, toggle, keyboard capture (xterm) | present |
+| Terminal | Restart an exited terminal, send selection to terminal | missing |
+| Help | Welcome, keyboard shortcuts (keybinding editor), show log | present |
+| Help | Settings screen | skipped (settings are palette toggles in the browser; a settings UI needs the editor's schema) |
+| Workspaces | Orchestrator / multi-session management | in progress (another agent) |
