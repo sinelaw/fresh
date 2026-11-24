@@ -4,7 +4,7 @@
 
 export function activate(fresh) {
   const { h } = fresh;
-  let panel = null, query = "", recording = null;
+  let panel = null, query = "", recording = null, selected = 0;
   const rows = () => {
     const km = fresh.keys.all();
     const user = fresh.keys.user();
@@ -29,6 +29,7 @@ export function activate(fresh) {
     render();
   };
   const remove = (row) => {
+    if (!row) return;
     const user = fresh.keys.user();
     for (const k of row.keys) if (user[k] === row.id) fresh.keys.setUser(k, null);
     render();
@@ -37,11 +38,15 @@ export function activate(fresh) {
     if (!panel || !panel.open) return;
     panel.render(h("col", {},
       h("row", {},
-        h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; render(); } }),
-        h("text", { dim: true }, recording ? "Press the new key (Esc cancels)…" : "Enter: change · Delete: remove yours")),
+        h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; selected = 0; render(); }, onEnter: () => record(rows()[selected]) }),
+        h("text", { dim: true }, recording ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"),
+        h("button", { onClick: () => record(rows()[selected]) }, "Add Key"),
+        h("button", { onClick: () => remove(rows()[selected]) }, "Remove Mine")),
       h("list", {
         key: "keys",
         items: rows(),
+        selected,
+        onSelect: (_r, i) => { selected = i; },
         render: (r) => h("row", {},
           h("text", { bold: r.custom }, r.title),
           h("spacer", {}),
