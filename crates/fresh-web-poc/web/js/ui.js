@@ -14,6 +14,7 @@
 // virtualised (any number of items) and keyboard-navigable.
 
 import { color } from "./highlight.js";
+import { Menu } from "./menu.js";
 
 export function h(type, props, ...children) {
   return { type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null && c !== false) };
@@ -32,6 +33,7 @@ export class UIKit {
     this.right = document.querySelector("#right-dock");
     this.bar = document.querySelector("#bar");
     this.activeDock = null;
+    this.context = null; // the open context menu
   }
 
   // place: "bottom" | "sidebar" | "right" | "bar" | "dialog"
@@ -45,21 +47,13 @@ export class UIKit {
   }
 
   // A context menu: items [{label, run}] (null for a separator) at {x, y}.
+  // Items are the menu component's (js/menu.js): {label, run, keys?,
+  // checked?, disabled?, items?}. The menu has the keyboard until it closes.
   menu(items, at) {
-    document.querySelector(".ctxmenu")?.remove();
-    const m = div("ctxmenu");
-    for (const it of items) {
-      if (!it) { m.appendChild(document.createElement("hr")); continue; }
-      const d = div("");
-      d.textContent = it.label;
-      d.onmousedown = (e) => { e.preventDefault(); m.remove(); it.run(); };
-      m.appendChild(d);
-    }
-    m.style.left = `${at.x}px`;
-    m.style.top = `${at.y}px`;
-    document.body.appendChild(m);
-    const off = (e) => { if (!m.contains(e.target)) { m.remove(); window.removeEventListener("mousedown", off, true); } };
-    window.addEventListener("mousedown", off, true);
+    if (this.context) this.context.close();
+    const m = new Menu(items, { app: this.app, onClose: () => { if (this.context === m) this.context = null; } }).build();
+    this.context = m;
+    m.openAt(at.x, at.y);
   }
 
   dockShow(p) {

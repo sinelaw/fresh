@@ -102,7 +102,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 
 | Area | Feature | Status |
 |---|---|---|
-| Chrome | Menu bar: File, Edit, View, Selection, Go, LSP, Explorer, Help; keyboard (Alt, arrows, letters), checks, keys shown | missing |
+| Chrome | Menu bar: File, Edit, View, Selection, Go, LSP, Explorer, Help, from the command registry (keys shown, toggles checked, submenus); F10 and Alt+F / E / V / S / G / L / X / H, arrows, letters, Escape; plugins add rows (`fresh.menus.add`); one menu component for the menu bar and every context menu; styled by Winamp (engraved rail, olive plate) and Bridge (coloured segments in the top bar) | fixed |
 | Chrome | Status bar items open their action: position → Go to Line, line ending → Set Line Ending, encoding → reopen / save with, language → Set Language (the language server follows), diagnostics → panel, LSP → server status, git branch → log, theme → Select Theme, read-only, cursors, compose; tooltips name the action and its key | fixed |
 | Chrome | Skin picker button and Ctrl+Alt+T | present |
 | Chrome | Theme picker | present |

@@ -63,8 +63,8 @@
 .skin-compact #prompt .item { height: 24px; align-items: center; margin: 0 4px; padding: 0 8px; border-radius: 3px; }
 .skin-compact #prompt .item.sel { background: var(--tint); }
 .skin-compact .ctxmenu { padding: 3px; }
-.skin-compact .ctxmenu div { border-radius: 3px; padding: 2px 10px; }
-.skin-compact .ctxmenu div:hover { background: var(--tint); }
+.skin-compact .ctxmenu .menu-item { border-radius: 3px; padding-top: 2px; padding-bottom: 2px; }
+.skin-compact .ctxmenu .menu-item.hi { background: var(--tint); color: inherit; }
 .skin-compact .ui-button { border-radius: 3px; padding: 2px 12px; background: var(--well); border: 1px solid var(--hairline-strong); }
 .skin-compact .ui-button.primary { background: var(--accent); border-color: var(--accent); }
 .skin-compact :is(.ui-input, .ui-select) { background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: 3px; }

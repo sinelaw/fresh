@@ -167,6 +167,17 @@ export function activate(fresh) {
   fresh.commands.register("explorer.toggle", { title: "View: Toggle File Explorer", run: () => document.querySelector("#sidebar").classList.toggle("hidden") });
   fresh.commands.register("explorer.newFile", { title: "File: New File…", run: () => ops.newFile(null) });
   fresh.commands.register("explorer.refresh", { title: "Explorer: Refresh", run: refresh });
+  // The same on the explorer's selected row (the menu bar's Explorer menu).
+  const current = () => rows.find((r) => r.path === selected) || null;
+  fresh.commands.register("explorer.newFolder", { title: "Explorer: New Folder…", run: () => ops.newFolder(current()) });
+  fresh.commands.register("explorer.rename", { title: "Explorer: Rename…", run: () => ops.rename(current()) });
+  fresh.commands.register("explorer.delete", { title: "Explorer: Delete", run: () => ops.remove(current()) });
+  fresh.commands.register("explorer.reveal", { title: "Explorer: Reveal Active File", run: async () => {
+    document.querySelector("#sidebar").classList.remove("hidden");
+    await reveal(fresh.buffers.active()?.path);
+    panel.focus("tree");
+  } });
+  fresh.commands.register("explorer.collapseAll", { title: "Explorer: Collapse All", run: () => { for (const d of [...open]) if (d !== root) collapse(d); render(); } });
   fresh.keys.bind("C-e", "explorer.focus");
   fresh.keys.bind("C-b", "explorer.toggle");
   expand(root).then(render);

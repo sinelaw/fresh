@@ -122,6 +122,17 @@
   justify-content: flex-end; padding: 0 14px 0 10px; border: 0; border-radius: 0 999px 999px 0; background: var(--br-blue); color: #000;
   font: 600 14px/1 var(--ui-font); letter-spacing: .08em; text-transform: uppercase; }
 .skin-bridge #skin-btn:hover { background: #cfe6ff; }
+/* The menu bar: a run of coloured segments in the top bar, before the
+   title; the open one lights up white. */
+.skin-bridge #menubar { gap: 4px; margin: 0; }
+.skin-bridge.frame-bezel #menubar { pointer-events: auto; align-self: flex-start; height: var(--br-bar); background: #000; padding: 0 4px; }
+.skin-bridge .mtop { height: var(--br-bar); display: flex; align-items: flex-end; padding: 0 10px 3px 18px; border-radius: 0;
+  background: var(--br-lilac); color: #000; font: 600 13px/1 var(--ui-font); letter-spacing: .08em; text-transform: uppercase; }
+.skin-bridge .mtop:nth-child(4n+2) { background: var(--br-peach); }
+.skin-bridge .mtop:nth-child(4n+3) { background: var(--br-tan); }
+.skin-bridge .mtop:nth-child(4n) { background: var(--br-lav); }
+.skin-bridge .mtop:hover { background: var(--br-blue); }
+.skin-bridge .mtop.open { background: #fff4e2; }
 
 /* ---- the status bar is the bottom bar ----------------------------------- */
 .skin-bridge #status { font: 600 14px/1 var(--ui-font); text-transform: uppercase; letter-spacing: .06em; padding: 0;
@@ -171,8 +182,11 @@
 /* ---- floating panels: black, framed by an elbow -------------------------- */
 .skin-bridge :is(#popup, .ctxmenu) { background: #000; color: var(--br-text); border: 0; border-left: 10px solid var(--br-orange);
   border-radius: 18px 0 0 18px; box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, .8); }
-.skin-bridge .ctxmenu div { border-radius: 0 999px 999px 0; padding: 4px 14px 4px 10px; }
-.skin-bridge .ctxmenu div:hover { background: var(--br-orange); color: #000; }
+.skin-bridge .ctxmenu .menu-item { border-radius: 0 999px 999px 0; padding: 4px 14px 4px 10px; text-transform: uppercase; letter-spacing: .05em; }
+.skin-bridge .ctxmenu .menu-item.hi { background: var(--br-orange); color: #000; }
+.skin-bridge .ctxmenu .menu-item.hi * { color: #000; }
+.skin-bridge .ctxmenu .menu-item .keys { color: var(--br-dim); }
+.skin-bridge .ctxmenu hr { border-top-color: var(--br-line); }
 /* The palette and dialogs: the full elbow — a bar along the top sweeping
    down the left. */
 .skin-bridge :is(#prompt, .panel-dialog) { background: #000; color: var(--br-text); border: 0; border-radius: 0;

@@ -17,6 +17,7 @@ import { Skins } from "./skins.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 import { Session } from "./session.js";
+import { MenuBar } from "./menubar.js";
 import { PLUGINS } from "../plugins/index.js";
 
 const $ = (s) => document.querySelector(s);
@@ -100,6 +101,8 @@ class App {
     this.layoutTree = { pane: first };
     this.activePane = this.layoutTree.pane;
     this.registerCoreCommands();
+    this.menubar = new MenuBar(this);
+    this.menubar.listen();
     this.relayout();
     new ResizeObserver(() => this.renderAll()).observe($("#editor-area"));
     setInterval(() => this.autoSave(), 1000);
@@ -775,6 +778,7 @@ class App {
       "C-a": "select.all", "C-l": "select.line", "C-S-k": "edit.deleteLine", "C-S-d": "edit.duplicateLine", "M-Up": "edit.moveLineUp", "M-Down": "edit.moveLineDown",
       "C-/": "edit.toggleComment", "C-d": "select.nextOccurrence", "C-S-l": "select.allOccurrences", "C-M-Up": "cursor.addAbove", "C-M-Down": "cursor.addBelow",
       "C-]": "cursor.matchingBracket", "C-{": "fold.toggle", "C-}": "fold.toggle",
+      F10: "menu.open", "M-f": "menu.file", "M-e": "menu.edit", "M-v": "menu.view", "M-s": "menu.selection", "M-g": "menu.go", "M-l": "menu.lsp", "M-x": "menu.explorer", "M-h": "menu.help",
     };
     const emacs = this.settings.keymap === "emacs" ? {
       "C-f": "cursor.right", "C-b": "cursor.left", "C-n": "cursor.down", "C-p": "cursor.up", "C-a": "cursor.home", "C-e": "cursor.end",
@@ -840,6 +844,13 @@ class App {
       if (!b?.doc) return;
       if (b.modified && !(await this.confirm(`Revert ${b.name}? Its unsaved changes are lost`, "Revert"))) return;
       try { await rpc("doc.reload", { doc: b.doc }); this.setStatus(`Reverted ${b.name}`); } catch (e) { this.setStatus(`Not reverted: ${e.detail || e.message || e}`); }
+    });
+    // The clipboard, from a menu: copy and cut go through the browser's own
+    // copy (onCopy); paste reads the clipboard where the browser allows it.
+    cmd("edit.copy", "Edit: Copy", () => { this.input.focus({ preventScroll: true }); document.execCommand("copy"); });
+    cmd("edit.cut", "Edit: Cut", () => { this.input.focus({ preventScroll: true }); document.execCommand("cut"); });
+    cmd("edit.paste", "Edit: Paste", async () => {
+      try { this.paste(await navigator.clipboard.readText()); } catch { this.setStatus("The browser did not allow reading the clipboard here: paste with Ctrl+V"); }
     });
     cmd("edit.undo", "Edit: Undo", () => { const v = V(); if (v) this.afterUndo(v, v.buf.doUndo()); });
     cmd("edit.redo", "Edit: Redo", () => { const v = V(); if (v) this.afterUndo(v, v.buf.doRedo()); });

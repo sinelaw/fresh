@@ -296,7 +296,7 @@ A skin is CSS against the client's stable structure. `<html>` carries
 |---|---|
 | `#device` | the frame a bezel skin's furniture is built in; `#app` is inset in it by `--shell-pad` and `--bezel-top`/`-side`/`-bot` (set them on `:root.skin-<id>`); `.dv-screen` is a dark well around the client |
 | `#app` | the window: `#topbar`, `#main`, `#status`, top to bottom |
-| `#topbar` | `.brand`, `#ws-name` (the workspace), `.hint`, `#skin-btn` |
+| `#topbar` | `.brand`, `#menubar` (the menu bar: `.mtop` titles, `.mtop.open`; a column when a skin lays it out as one, and its menus open beside it), `#ws-name` (the workspace), `.hint`, `#skin-btn` |
 | `#main` | `#sidebar` (`#side-panels`: plugin panels, the explorer first), its `.sash`, and `#work` |
 | `#work` | `#bar` (a plugin bar), `#center` (`#editor-area`, `.sash`, `#right-dock`), `.sash`, `#dock` (`.dock-tabs`, `.dock-body`), `.sash`, `#terminal` (`.term-tabs`, `.term-screens`) |
 | `.sash` | a drag handle between two parts (`.sash.x` moves sideways, `.sash.y` up and down; `.dragging` while dragged): no size in the layout, its grip reaches 3px either side; a split's sash is its dividing line (its border) |
@@ -304,7 +304,7 @@ A skin is CSS against the client's stable structure. `<html>` carries
 | `.surface` | a buffer: `.gutter`, `.text` (`.row`, `.row.current`), `.carets`, `.scrollbar` / `.thumb`; in compose mode `.surface.compose` holds `.doc` / `.doc-content` / `.doc-body` (headings, `.doc-li`, `.doc-code`, `.doc-table`) |
 | `#status` | `#status-left` (the message), `#status-right > span` (the facts; `.click` when clickable) |
 | `#prompt` | the palette and prompts: `.bar` (`.label`, `input`), `.list` (`.item`, `.item.sel`, `.d` its detail), `.hint` |
-| `#popup`, `.ctxmenu` | hover and other pop-ups; context menus (`div` rows, `hr`) |
+| `#popup`, `.ctxmenu` | hover and other pop-ups; every menu — the menu bar's, their submenus and the context menus: `.menu-item` rows (`.check`, `.label`, `.keys`; `.hi` highlighted, `.sub`, `.disabled`), `hr` separators, `.checks` on a menu with a check column |
 | `.panel` | a plugin panel: `.panel-head`, `.panel-body`; placed as `.panel-sidebar`, `.panel-right`, `.panel-bar`, `.panel-dialog` (over a `.backdrop`) |
 | `.ui-*` | the panel kit: `.ui-list` / `.ui-list-row` (`.sel`, `.header`; a tree's pinned ancestor rows `.sticky`, the innermost `.last`), `.ui-tree-row`, `.ui-input`, `.ui-button` (`.primary`), `.ui-toggle` (`.on`), `.ui-select`, `.ui-badge`, `.ui-table`, `.ui-markdown` |
 

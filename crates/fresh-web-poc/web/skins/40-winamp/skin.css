@@ -174,8 +174,16 @@
 /* Menus: each row its own plate, parted by an engraved groove; the one
    under the pointer is the lit olive plate. */
 .skin-winamp .ctxmenu { padding: 3px; }
-.skin-winamp .ctxmenu div + div { box-shadow: inset 0 1px 0 rgba(0, 0, 0, .5), inset 0 2px 0 rgba(255, 214, 158, .09); }
-.skin-winamp .ctxmenu div:hover { background: var(--wa-olive); color: #f6f2df; box-shadow: var(--wa-vbevel); }
+.skin-winamp .ctxmenu .menu-item + .menu-item { box-shadow: inset 0 1px 0 rgba(0, 0, 0, .5), inset 0 2px 0 rgba(255, 214, 158, .09); }
+.skin-winamp .ctxmenu .menu-item.hi { background: var(--wa-olive); color: #f6f2df; box-shadow: var(--wa-vbevel); }
+.skin-winamp .ctxmenu .menu-item .keys { color: var(--wa-amber); }
+.skin-winamp .ctxmenu .menu-item.hi .keys { color: inherit; }
+.skin-winamp .ctxmenu hr { border-top: 1px solid rgba(0, 0, 0, .6); border-bottom: 1px solid rgba(255, 214, 158, .1); margin: 3px 0; }
+/* The menu bar: engraved lettering on the top rail; the open title is the
+   lit olive plate. */
+.skin-winamp .mtop { color: #e7d6bd; text-shadow: 0 1px 0 rgba(0, 0, 0, .7); border-radius: 0; padding: 2px 9px; }
+.skin-winamp .mtop:hover { background: rgba(255, 208, 150, .12); }
+.skin-winamp .mtop.open { background: var(--wa-olive); color: #f6f2df; box-shadow: var(--wa-vbevel); }
 
 /* Buttons: bevelled hardware switches that press in; the primary one is
    the lit olive plate. */

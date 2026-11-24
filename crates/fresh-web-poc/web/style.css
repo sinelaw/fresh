@@ -39,6 +39,7 @@ body {
 #app { display: flex; flex-direction: column; height: 100vh; }
 #topbar { display: flex; gap: 12px; align-items: center; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 #topbar .brand { font-weight: 600; color: var(--emphasis); }
+#ws-name { margin-left: 6px; }
 #topbar .hint { margin-left: auto; color: var(--muted); }
 #main { flex: 1; display: flex; min-height: 0; }
 #sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -178,9 +179,19 @@ body {
 #status-right { display: flex; gap: 6px; }
 #status-right > span { padding: 0 4px; border-radius: 3px; }
 #status-left { overflow: hidden; text-overflow: ellipsis; }
-.ctxmenu { position: fixed; z-index: 30; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 4px 0; min-width: 180px; font-size: var(--ui-font-sm); }
-.ctxmenu div { padding: 3px 14px; cursor: pointer; }
-.ctxmenu div:hover { background: var(--sel-bg); color: var(--sel-fg); }
+/* Menus (js/menu.js): the menu bar's and every context menu. A row has a
+   check column only in a menu with checks, and a key column. */
+#menubar { display: flex; align-items: center; gap: 1px; margin: -4px 0; user-select: none; }
+.mtop { background: none; border: 0; color: inherit; font: inherit; padding: 3px 8px; border-radius: 3px; cursor: default; }
+.mtop:hover, .mtop.open { background: var(--hover-bg); }
+.ctxmenu { position: fixed; z-index: 30; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 4px 0; min-width: 180px; font-size: var(--ui-font-sm); outline: none; user-select: none; }
+.ctxmenu .menu-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 3px 14px; cursor: default; white-space: nowrap; }
+.ctxmenu.checks .menu-item { grid-template-columns: 14px 1fr auto; padding-left: 8px; }
+.ctxmenu:not(.checks) .menu-item .check { display: none; }
+.ctxmenu .menu-item .keys { color: var(--muted); font-size: var(--ui-font-xs); padding-left: 16px; }
+.ctxmenu .menu-item.hi { background: var(--sel-bg); color: var(--sel-fg); }
+.ctxmenu .menu-item.hi .keys { color: inherit; opacity: .8; }
+.ctxmenu .menu-item.disabled { opacity: .45; }
 .ctxmenu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 /* Containment: a row's change does not relayout the page around it. */
 .surface { contain: strict; }
