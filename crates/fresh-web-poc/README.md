@@ -136,7 +136,10 @@ Operations:
 - `proc.run`, `proc.kill`
 - `lsp.call` (any request about a document), `lsp.hover`,
   `lsp.definition`, `lsp.completion`, `lsp.status`
-- `theme.list`, `theme.get` (the editor's built-in themes, resolved)
+- `theme.list`, `theme.get` (the editor's built-in themes and the skins'
+  themes, resolved)
+- `skin.list` (every skin's header), `host.stats` (the host's load, for skin
+  readouts); `GET /skins/<id>/<path>` serves a skin's files
 
 Error codes (`src/error.rs`):
 
@@ -179,7 +182,8 @@ in the binary by the core crate): `theme.list` names them and `theme.get`
 returns one fully resolved by the editor's loader. `web/plugins/themes.js`
 maps a theme's keys onto every variable (`themeVars`), so each theme styles
 the whole UI; `Select Theme…` previews live and the choice is remembered in
-the browser. A skin or plugin sets them with `fresh.ui.theme({"--bg": ...})`.
+the browser. A plugin sets them with `fresh.ui.theme({"--bg": ...})`; a
+skin overrides them in its stylesheet (see Skins).
 
 | Variable | What it colours |
 |---|---|
@@ -203,6 +207,136 @@ the browser. A skin or plugin sets them with `fresh.ui.theme({"--bg": ...})`.
 | `--git-added`, `--git-modified`, `--git-deleted` | git marks |
 | `--syntax-keyword`, `-string`, `-comment`, `-function`, `-type`, `-variable`, `-constant`, `-number`, `-operator`, `-punctuation` | syntax |
 | `--error`, `--warning`, `--info`, `--hint` | diagnostics |
+
+## Skins
+
+A theme colours the page; a **skin** dresses it: the frame around the
+editor, where the chrome goes and how it looks, its type and density, and the
+editor theme that paints the buffers. Built in: **Default** (the page's own
+look), **Compact** (a dense frame mixed from any editor theme),
+**Winamp Classic** (a brushed-metal player window with LCD content) and
+**Bridge** (a starship console, with its own editor theme and font). Pick one
+with **Select Skin…** in the palette or the skin button at the end of the top
+bar (moving through the list tries each on; Escape puts the last one back),
+or cycle with **Ctrl+Alt+T**. The choice is per browser; `?skin=default` in
+the URL overrides it, to get back from a skin that hides the way.
+
+A skin is a folder of plain web files and runs no code:
+
+```
+my-skin/
+  skin.css         the skin (required), starting with its header
+  furniture.html   decorative markup for a bezel frame (optional)
+  theme.json       an editor theme that comes with the skin (optional)
+  img/, fonts/     anything the CSS refers to (optional)
+```
+
+Built-in skins are `web/skins/NN-<id>/` (embedded with the client; the number
+orders the list). Your own go in `~/.config/fresh/web-skins/<id>/` on the
+workspace's host — read through the workspace's authority, like any other
+file, so over SSH that is the remote home — and appear in the picker on its
+next opening. A user skin cannot reuse a built-in id. The server serves a
+skin's files at `skins/<id>/`, so the stylesheet's relative `url()`s work.
+
+### The header
+
+```css
+/* ==FreshSkin==
+@id           neon-night
+@name         Neon Night
+@description  Dark glass with a magenta accent
+@extends      compact
+@frame        bezel
+@scale        1
+@furniture    furniture.html
+@editor-theme theme.json
+==/FreshSkin== */
+```
+
+| Key | Meaning |
+|---|---|
+| `@name` | Shown in the picker (default: the id) |
+| `@id` | `a-z`, `0-9`, `-`, up to 48 characters; default: the folder's name without its `NN-` |
+| `@description`, `@author` | Shown in the picker |
+| `@extends` | Another skin's id: its stylesheet, frame, scale, furniture and theme come first, and this one layers on top |
+| `@frame` | `full` (the client fills the window, the default) or `bezel` (the client sits inset in `#device`, with the page's background around it) |
+| `@scale` | Density, `0.5`–`1.5`: the chrome's text and the editor's font (the editor's cell is measured again, terminals refit) |
+| `@furniture` | An HTML file built inside `#device` |
+| `@editor-theme` | A `.json` theme file in the folder (a `theme.json` is found without this line), or an editor theme's key (`nord`, `builtin://nord`) |
+
+Picking a skin with an editor theme switches the editor theme too (it is an
+ordinary choice after that: Select Theme… changes it). A skin's own theme is
+a theme like the editor's: `skin/<id>` in `theme.list`, resolved by the
+editor's loader (so `"extends": "builtin://dark"` works), and listed in
+Select Theme… as "<name> (skin)".
+
+### The skinning surface
+
+A skin is CSS against the client's stable structure. `<html>` carries
+`skin-<id>` for the skin and every skin it extends, and `frame-full` or
+`frame-bezel`. The parts:
+
+| Selector | What it is |
+|---|---|
+| `#device` | the frame a bezel skin's furniture is built in; `#app` is inset in it by `--shell-pad` and `--bezel-top`/`-side`/`-bot` (set them on `:root.skin-<id>`); `.dv-screen` is a dark well around the client |
+| `#app` | the window: `#topbar`, `#main`, `#status`, top to bottom |
+| `#topbar` | `.brand`, `#ws-name` (the workspace), `.hint`, `#skin-btn` |
+| `#main` | `#sidebar` (`#side-panels`: plugin panels, the explorer first) and `#work` |
+| `#work` | `#bar` (a plugin bar), `#center` (`#editor-area`, `#right-dock`), `#dock` (`.dock-tabs`, `.dock-body`), `#terminal` (`.term-tabs`, `.term-screens`) |
+| `#editor-area` | `.split.h` / `.split.v` of `.pane`s; a pane is `.tabs` (`.tab`, `.tab.active`, `.x`) over `.surface`; the focused pane is `.pane.active` |
+| `.surface` | a buffer: `.gutter`, `.text` (`.row`, `.row.current`), `.carets`, `.scrollbar` / `.thumb`; in compose mode `.surface.compose` holds `.doc` / `.doc-content` / `.doc-body` (headings, `.doc-li`, `.doc-code`, `.doc-table`) |
+| `#status` | `#status-left` (the message), `#status-right > span` (the facts; `.click` when clickable) |
+| `#prompt` | the palette and prompts: `.bar` (`.label`, `input`), `.list` (`.item`, `.item.sel`, `.d` its detail), `.hint` |
+| `#popup`, `.ctxmenu` | hover and other pop-ups; context menus (`div` rows, `hr`) |
+| `.panel` | a plugin panel: `.panel-head`, `.panel-body`; placed as `.panel-sidebar`, `.panel-right`, `.panel-bar`, `.panel-dialog` (over a `.backdrop`) |
+| `.ui-*` | the panel kit: `.ui-list` / `.ui-list-row` (`.sel`, `.header`), `.ui-tree-row`, `.ui-input`, `.ui-button` (`.primary`), `.ui-toggle` (`.on`), `.ui-select`, `.ui-badge`, `.ui-table`, `.ui-markdown` |
+
+**Colours.** The theme sets its variables (the table above) on `<html>`. A
+skin overrides any of them on `body` or on a part — the parts below inherit
+from there — and leaves the buffers' ink to the theme by scoping the chrome's:
+
+```css
+.skin-neon-night :is(#topbar, #sidebar, #status, .tabs, #prompt, #popup, .ctxmenu) {
+  --fg: #e6e1f0; --muted: #9a93ad; --panel: #16131f; --accent: #ff2fa0;
+}
+```
+
+To follow any editor theme, mix from its ground and ink, as Compact does:
+`--shell: color-mix(in srgb, var(--bg), var(--fg) 4%)`.
+
+**Type.** On `body`: `--ui-font` (the chrome's face), `--ui-font-size` (and
+`--ui-font-sm`, `--ui-font-xs`, derived from it), `--editor-font-size` (the
+buffers and terminals; keep `--mono` monospace). All follow `@scale` unless
+the skin sets them. A font can come with the skin: an `@font-face` whose
+`src` is a file in its folder, as Bridge bundles Antonio.
+
+**Layout** is plain CSS too: Bridge takes the top bar and the status bar out
+of the window's flow (`position: fixed`) into its frame's bars, and Winamp
+draws its title bar and foot around the client.
+
+### Furniture and live values
+
+`furniture.html` is decoration built inside `#device`: the client rebuilds it
+from `div`, `span`, `i`, `b`, `em`, `strong`, `small` and `p` elements,
+keeping only their `class`, `data-bind` / `data-bind-var` and text; anything
+else is dropped, and it takes no pointer events. Furniture can show live
+values: `<b data-bind="cpu">–</b>` shows one as text,
+`<p data-bind-var="--v:mem">` sets it as a custom property for CSS
+(`width: calc(var(--v) * 1%)`). The values: `cpu`, `mem` (percent), `memText`,
+`load`, `uptime` — the workspace host's, read from its `/proc` through the
+authority (`host.stats`; absent on a host without one) — and `buffers`,
+`errors`, `warnings`, `time` from the client. They refresh every few
+seconds while some furniture shows them.
+
+### Writing one
+
+Copy a built-in skin into `~/.config/fresh/web-skins/`, change `@id` and
+`@name`, and pick it. While developing the built-in ones,
+`FRESH_POC_WEB=crates/fresh-web-poc/web` serves them from the source tree:
+re-picking the skin (or reloading) shows a change. Check it with the
+explorer, a source file with a selection, a split, the terminal, the
+palette, a context menu, a plugin dialog (Keyboard Shortcuts), and a Markdown
+file in compose mode, under a dark and a light editor theme.
 
 ## Limits
 

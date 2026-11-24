@@ -63,7 +63,14 @@ export class Skins {
     return r;
   }
 
-  async apply(id) {
+  // Put a skin on screen. One at a time, in order: a quick run through the
+  // picker never ends with an earlier skin's furniture over a later one.
+  apply(id) {
+    this.applying = (this.applying || Promise.resolve()).then(() => this.put(id));
+    return this.applying;
+  }
+
+  async put(id) {
     const sk = this.resolve(id);
     const html = document.documentElement;
     for (const c of [...html.classList]) if (c.startsWith("skin-") || c.startsWith("frame-")) html.classList.remove(c);
@@ -167,8 +174,10 @@ export class Skins {
   }
 
   // The picker: moving through the list tries each skin on; Escape puts
-  // the one before back.
-  pick() {
+  // the one before back. The list is read again, so a skin just added to
+  // the skins folder is there.
+  async pick() {
+    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app.report(`Skins: ${e.message}`); }
     const before = this.current?.id || "default";
     this.app.prompt.open({
       title: "Skin",

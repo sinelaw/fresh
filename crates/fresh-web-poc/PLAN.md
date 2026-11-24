@@ -78,7 +78,7 @@ days; where they matter the feature is reimplemented rather than run.
 | **Vi mode** | Skip | `vi_mode` depends on key capture and modal editor state across ~4k lines; a native vi layer is its own project |
 | **Dashboard** | Skip | Widgets (git, disk, weather, PRs) are terminal-panel UI |
 | **Workspace trust** | Adapt | Done (`--restricted`): an untrusted workspace refuses processes, terminals and language servers and runs no probe for them; trusting starts the servers for open documents |
-| **Web UI skins** | Skip | Belongs to the existing web UI; this client is styled with its own CSS |
+| **Web UI skins** | Native + server | Done: a skin is a folder (`skin.css` with a header, optional `furniture.html` and `theme.json`, images, fonts) against the client's documented DOM and theme variables; frames (full / bezel with furniture), density (`@scale`, the editor cell re-measured), `@extends`, and an editor theme that is an ordinary theme (`skin/<id>`). Built-in skins embedded (Default, Compact, Winamp Classic, Bridge), user skins from `~/.config/fresh/web-skins` through the authority; live readouts from the host's `/proc`. Picker with live preview, Ctrl+Alt+T, `?skin=`. Not ported: installing from a URL or files in the browser, `@keys symbols`, `@explorer-side`, live re-apply on save |
 
 ## Order
 
