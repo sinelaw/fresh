@@ -7,7 +7,7 @@
 import { rpc, session, connectEvents } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { FileBuffer, VirtualBuffer, byteToIdx } from "./buffer.js";
-import { Pane } from "./view.js";
+import { Pane, View } from "./view.js";
 import { Editing } from "./editing.js";
 import { TerminalPanel } from "./terminal.js";
 import { UIKit } from "./ui.js";
@@ -22,6 +22,10 @@ import { PLUGINS } from "../plugins/index.js";
 
 const $ = (s) => document.querySelector(s);
 
+
+// The clipboard's keys are the browser's own (not in the keymap); menus
+// show them.
+const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.paste": "Ctrl+V" };
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
@@ -316,6 +320,126 @@ class App {
     const v = this.activePane.show(b);
     this.focusPane(this.activePane);
     return v;
+  }
+
+  // ------------------------------------------------------------- tabs
+
+  // A press on a tab shows it. Dragged a few pixels, the tab moves: along
+  // its strip to where it is dropped, or to another split — onto its tabs
+  // (at that place) or its text (at the end). The drop place is marked on
+  // the tab it lands beside (`.drop-before` / `.drop-after`) or the split
+  // (`.drop-into`).
+  tabPress(e, pane, v) {
+    pane.show(v.buf);
+    this.focusPane(pane);
+    const x0 = e.clientX, y0 = e.clientY;
+    let dragging = false, target = null, marked = null;
+    const unmark = () => { if (marked) marked.classList.remove("drop-before", "drop-after", "drop-into"); marked = null; };
+    const move = (ev) => {
+      if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+      if (!dragging) { dragging = true; document.documentElement.classList.add("tab-dragging"); }
+      target = this.tabDropAt(ev.clientX, ev.clientY);
+      unmark();
+      if (target) { marked = target.el; marked.classList.add(`drop-${target.side}`); }
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.documentElement.classList.remove("tab-dragging");
+      unmark();
+      if (dragging && target) this.moveView(v, target.pane, target.index);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+  // Where a tab dropped at (x, y) goes: {pane, index, el, side}, or null.
+  tabDropAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const paneEl = el && el.closest(".pane");
+    const pane = paneEl && this.panes().find((p) => p.el === paneEl);
+    if (!pane) return null;
+    const tab = el.closest(".tab");
+    if (tab && pane.tabsEl.contains(tab)) {
+      const r = tab.getBoundingClientRect();
+      const after = x > r.left + r.width / 2;
+      return { pane, index: +tab.dataset.i + (after ? 1 : 0), el: tab, side: after ? "after" : "before" };
+    }
+    return { pane, index: pane.views.length, el: pane.el, side: "into" };
+  }
+  // Move view `v` to place `index` among the tabs of `to`. In another split
+  // it is a new view of the buffer there, keeping its cursors, scroll,
+  // mode and folds (or that split's own view of it, when it has one); a
+  // split left with no tabs closes.
+  moveView(v, to, index) {
+    const from = v.pane;
+    if (from === to) {
+      const i = from.views.indexOf(v);
+      if (i < 0) return;
+      from.views.splice(i, 1);
+      from.views.splice(index > i ? index - 1 : index, 0, v);
+      from.renderTabs();
+      return;
+    }
+    let nv = to.views.find((x) => x.buf === v.buf);
+    if (!nv) {
+      nv = new View(to, v.buf);
+      v.buf.views.add(nv);
+      nv.cursors = v.cursors.map((c) => ({ ...c }));
+      nv.setTop(v.top, v.topPx);
+      nv.mode = v.mode;
+      nv.opts = { ...v.opts };
+      nv.folds = v.folds.map((f) => ({ ...f }));
+      to.views.splice(Math.min(index, to.views.length), 0, nv);
+    }
+    to.show(v.buf);
+    from.closeView(v);
+    if (!from.views.length && this.panes().length > 1) this.closePane(from);
+    this.focusPane(to);
+    this.renderAll();
+  }
+  // Close the tabs of `pane` that `which(view, index)` picks, one at a
+  // time (each may ask about unsaved changes; a cancel stops there).
+  async closeTabs(pane, which) {
+    const list = pane.views.filter((x, i) => which(x, i));
+    for (const x of list) if (pane.views.includes(x) && !(await this.closeTab(pane, x))) return;
+  }
+  // A tab's menu: closing it and its neighbours, splitting it, its path.
+  tabMenu(pane, v, at) {
+    const b = v.buf;
+    const rel = b.path && b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
+    const copy = (t) => navigator.clipboard?.writeText(t).then(() => this.setStatus(`Copied ${t}`), () => this.setStatus("The browser did not allow writing the clipboard"));
+    this.ui.menu([
+      { label: "Close", keys: this.keyLabel("view.closeTab"), run: () => this.closeTab(pane, v) },
+      { label: "Close Others", run: () => this.closeTabs(pane, (x) => x !== v) },
+      { label: "Close to the Right", disabled: pane.views.indexOf(v) === pane.views.length - 1, run: () => this.closeTabs(pane, (x, i) => i > pane.views.indexOf(v)) },
+      { label: "Close Saved", run: () => this.closeTabs(pane, (x) => !x.buf.modified) },
+      { label: "Close All", run: () => this.closeTabs(pane, () => true) },
+      null,
+      { label: "Split Right", keys: this.keyLabel("view.splitRight"), run: () => { this.focusPane(pane); this.split("h"); } },
+      { label: "Split Down", run: () => { this.focusPane(pane); this.split("v"); } },
+      ...(b.path ? [
+        null,
+        { label: "Copy Path", run: () => copy(b.path) },
+        { label: "Copy Relative Path", run: () => copy(rel) },
+        { label: "Reveal in Explorer", run: () => this.run("explorer.reveal") },
+      ] : []),
+    ], at);
+  }
+  // The editor's menu: the clipboard, the language server's actions on
+  // what is under the caret, and editing the selection.
+  editorMenu(pane, at) {
+    this.focusPane(pane);
+    const b = pane.view.buf;
+    const lsp = this.lspAvailable(b);
+    this.ui.menu(this.menubar.resolve([
+      "edit.cut", "edit.copy", "edit.paste",
+      null,
+      ...(lsp ? ["lsp.definition", "lsp.references", "lsp.rename", "lsp.codeActions", "lsp.hover", null, "lsp.format"] : []),
+      "edit.toggleComment", "edit.duplicateLine", "edit.deleteLine",
+      null,
+      "select.all", "select.allOccurrences",
+      ...(b.doc ? [null, "file.revert"] : []),
+    ].map((id) => (id ? { command: id, label: this.commands.get(id)?.title.replace(/^(Edit|LSP|File|View): /, ""), keys: CLIPBOARD_KEYS[id] } : null))), at);
   }
 
   // ------------------------------------------------------------- buffers
@@ -868,6 +992,8 @@ class App {
     cmd("view.nextSplit", "View: Next Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
     cmd("view.prevSplit", "View: Previous Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
     cmd("view.closeTab", "View: Close Tab", () => { const p = P(); if (p.view) this.closeTab(p, p.view); });
+    cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); if (p.view) this.closeTabs(p, (x) => x !== p.view); });
+    cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of this.panes()) await this.closeTabs(p, () => true); });
     cmd("view.nextTab", "View: Next Tab", () => this.cycleTab(1));
     cmd("view.prevTab", "View: Previous Tab", () => this.cycleTab(-1));
     cmd("view.toggleWrap", "View: Toggle Line Wrap (Current Buffer)", () => { const v = V(); if (v) { v.opts.wrap = !v.opts.wrap; P().scheduleRender(); } });

@@ -72,6 +72,12 @@ body {
 .tab.active { background: var(--bg); color: var(--fg); }
 .pane.active .tab.active { border-top: 1px solid var(--accent); }
 .tab .x { margin-left: 8px; opacity: .5; }
+/* A dragged tab's landing place (app.tabPress). */
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+.pane.drop-into > .surface { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab-dragging, .tab-dragging * { cursor: grabbing; }
+.pane .tabs { scrollbar-width: none; }
 .tab .x:hover { opacity: 1; }
 .surface { position: relative; flex: 1; overflow: hidden; background: var(--bg); font-family: var(--mono); font-size: var(--editor-font-size); line-height: var(--lh); cursor: text; }
 .gutter { position: absolute; left: 0; top: 0; color: var(--faint); white-space: pre; user-select: none; text-align: right; }

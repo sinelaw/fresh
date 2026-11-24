@@ -105,6 +105,9 @@ export class Pane {
     this.surfaceEl.addEventListener("mousemove", (e) => this.onHover(e));
     this.scrollbarEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
     this.gutterEl.addEventListener("mousedown", (e) => this.onGutter(e));
+    this.surfaceEl.addEventListener("contextmenu", (e) => { e.preventDefault(); if (this.view) this.app.editorMenu(this, { x: e.clientX, y: e.clientY }); });
+    // The wheel over the tabs scrolls them sideways.
+    this.tabsEl.addEventListener("wheel", (e) => { if (!e.deltaX) this.tabsEl.scrollLeft += e.deltaY; }, { passive: true });
   }
 
   // ---------------------------------------------------------------- tabs
@@ -135,15 +138,19 @@ export class Pane {
   renderTabs() {
     this.tabsEl.innerHTML = "";
     const names = this.views.map((v) => v.buf.name);
-    for (const v of this.views) {
+    for (const [i, v] of this.views.entries()) {
       const t = document.createElement("div");
       t.className = "tab" + (v === this.view ? " active" : "");
+      t.dataset.i = String(i);
       // Tabs of files with one name show their parent folder.
       const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path;
       const label = dup ? v.buf.path.split("/").slice(-2).join("/") : v.buf.name;
       t.textContent = (v.buf.modified ? "● " : "") + label + (v.buf.readOnly && !v.buf.isVirtual ? " [RO]" : "");
       t.title = v.buf.path || v.buf.name;
-      t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.app.closeTab(this, v); else { this.show(v.buf); this.app.focusPane(this); } };
+      // A press shows it (and may drag it: app.tabPress); the middle button
+      // closes it; the right one opens its menu.
+      t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.app.closeTab(this, v); else if (e.button === 0) this.app.tabPress(e, this, v); };
+      t.oncontextmenu = (e) => { e.preventDefault(); this.show(v.buf); this.app.focusPane(this); this.app.tabMenu(this, v, { x: e.clientX, y: e.clientY }); };
       const x = document.createElement("span");
       x.className = "x";
       x.textContent = "×";
@@ -661,6 +668,13 @@ export class Pane {
     const toPos = (ev) => this.posFromPoint(ev.clientX, ev.clientY);
     const p = toPos(e);
     if (p == null) return;
+    // A right press moves the caret there unless it is in the selection
+    // (the context menu acts on it); the menu opens on `contextmenu`.
+    if (e.button === 2) {
+      if (!v.selections().some((s) => p >= s.start && p <= s.end)) this.app.editing.place(this, p, false);
+      return;
+    }
+    if (e.button !== 0) return;
     if (e.altKey && e.button === 0) { v.cursors.push({ pos: p, anchor: null, goalX: null }); v.normalize(); this.scheduleRender(); return; }
     this.app.editing.place(this, p, e.shiftKey);
     if (e.ctrlKey && e.button === 0) { this.app.run("lsp.definition"); return; }

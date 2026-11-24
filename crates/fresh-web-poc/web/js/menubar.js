@@ -13,7 +13,7 @@ import { Menu } from "./menu.js";
 
 const $ = (s) => document.querySelector(s);
 
-// A row: a command id; {command, label?, checked?}; {label, items} (a
+// A row: a command id; {command, label?, keys?, checked?}; {label, items} (a
 // submenu); null (a separator). `checked(app)` makes the row a toggle.
 const view = (app) => app.view();
 const setting = (k) => (app) => !!app.settings[k];
@@ -41,9 +41,9 @@ export const MENUS = [
     { command: "edit.undo", label: "Undo" },
     { command: "edit.redo", label: "Redo" },
     null,
-    { command: "edit.cut", label: "Cut" },
-    { command: "edit.copy", label: "Copy" },
-    { command: "edit.paste", label: "Paste" },
+    { command: "edit.cut", label: "Cut", keys: "Ctrl+X" },
+    { command: "edit.copy", label: "Copy", keys: "Ctrl+C" },
+    { command: "edit.paste", label: "Paste", keys: "Ctrl+V" },
     null,
     { command: "search.find", label: "Find…" },
     { command: "search.replace", label: "Replace…" },
@@ -247,7 +247,7 @@ export class MenuBar {
       if (!c) continue;
       out.push({
         label: row.label || c.title,
-        keys: app.keyLabel(row.command),
+        keys: row.keys || app.keyLabel(row.command),
         checked: row.checked ? row.checked(app) : undefined,
         run: () => app.run(row.command),
       });

@@ -114,12 +114,12 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Layout | Scroll sync of same-buffer splits | missing (rarely used; after the rest) |
 | Layout | Session restore per workspace: open tabs, splits, sizes, sidebar and dock state (in the browser) | missing |
 | Tabs | Close with ×, middle-click | present |
-| Tabs | Context menu: Close, Close Others, Close to the Right, Close All, Split Right / Down, Copy Path, Reveal in Explorer | missing |
-| Tabs | Drag to reorder; drag onto another split to move | missing |
-| Tabs | Wheel over the tab bar scrolls it | missing |
+| Tabs | Context menu: Close, Close Others, Close to the Right, Close Saved, Close All, Split Right / Down, Copy Path / Relative Path, Reveal in Explorer | fixed |
+| Tabs | Drag to reorder; drag onto another split's tabs or text to move it there (cursors, scroll, mode and folds kept; an emptied split closes) | fixed |
+| Tabs | Wheel over the tab bar scrolls it | fixed |
 | Tabs | Same-name tabs show their folder | present |
 | Tabs | Preview (ephemeral) tab from a single click in the explorer | missing (needs a tab state model; after the rest) |
-| Editor | Right-click context menu (Cut / Copy / Paste, Go to Definition, References, Rename, Code Actions, Format) | missing |
+| Editor | Right-click context menu (Cut / Copy / Paste, Go to Definition, References, Rename, Code Actions, Hover, Format, comment / duplicate / delete line, select all / occurrences, Revert); a right press outside the selection moves the caret | fixed |
 | Editor | Scrollbar: drag, click to jump | present |
 | Editor | Scrollbar markers: diagnostics, search matches, git changes, cursor | missing |
 | Editor | Horizontal scrolling of long lines (wrap off) | missing |
@@ -133,7 +133,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Explorer | Multi-selection (Shift+Up/Down) for cut / copy / delete | missing (after the rest) |
 | Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
 | Files | Recent files (File menu, palette) | missing |
-| Files | Save As, Close Buffer, Close All | missing |
+| Files | Close All, Close Others | fixed |
+| Files | Save As | missing (a copy of a document to a new path: needs a server op) |
 | Files | Set line ending (LF / CRLF / CR), reopen or save with an encoding, set language, revert | fixed (server `doc.set`, `doc.reload` with `encoding`) |
 | Files | New untitled buffer (Ctrl+N) | missing (documents are files on the server; New File asks for a name) |
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |
