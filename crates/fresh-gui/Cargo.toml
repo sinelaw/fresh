@@ -16,7 +16,7 @@ winit = { workspace = true }
 # ratatui backend for wgpu
 ratatui-wgpu = "0.5.0"
 # TUI framework (core types: Terminal, Frame, Backend)
-ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["std", "underline-color"] }
 # Event types (KeyEvent, MouseEvent, KeyModifiers, etc.)
 crossterm = { version = "0.29.0", features = ["osc52"] }
 # Error handling

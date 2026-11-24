@@ -231,7 +231,7 @@ which = "8"
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
 # ratatui with default-features=false is WASM-compatible (no crossterm backend)
 # Runtime feature adds the crossterm backend for native terminal rendering
-ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"], optional = true }
+ratatui = { version = "0.30.2", default-features = false, features = ["std", "underline-color"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
 # tracing is always needed for logging throughout the codebase

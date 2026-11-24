@@ -80,7 +80,7 @@ sha2 = "0.10"
 
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
 # Not optional: `widgets` is always compiled and renders through ratatui.
-ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["std", "underline-color"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
 libc = { version = "0.2", optional = true }
