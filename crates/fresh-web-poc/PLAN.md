@@ -155,7 +155,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | LSP | Restart / stop a server, inlay hints | missing (the server starts one per language and keeps it) |
 | Git | Gutter, blame, log, diff, change navigation, branch in status | present |
 | Terminal | Multiple, tabs, toggle, keyboard capture (xterm) | present |
-| Terminal | Restart an exited terminal, send selection to terminal | missing |
+| Terminal | Restart the terminal, send the selection (or line) to it | fixed |
 | Help | Welcome, keyboard shortcuts (keybinding editor), show log | present |
 | Help | Settings screen | skipped (settings are palette toggles in the browser; a settings UI needs the editor's schema) |
 | Workspaces | Orchestrator / multi-session management | present (overview Alt+O, switcher Ctrl+Alt+O, New Workspace, agent sessions, attention beacon) |

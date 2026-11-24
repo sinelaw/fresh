@@ -117,6 +117,7 @@ export class TerminalPanel {
     this.terms = new Map();
     this.current = null;
     this.visible = false;
+    this.closed = new Set(); // ids closed here: their last output is not a new terminal
   }
 
   // Refit the terminals as the panel resizes (once, after `new`).
@@ -196,6 +197,7 @@ export class TerminalPanel {
   close(id) {
     const t = this.terms.get(id);
     if (!t) return;
+    this.closed.add(id);
     rpc("term.close", { term: id }).catch(() => {});
     t.xt.dispose();
     t.el.remove();
@@ -239,7 +241,7 @@ export class TerminalPanel {
     if (ev.ev === "term.data") {
       const t = this.terms.get(ev.term);
       if (t) t.data(ev);
-      else this.add(ev.term); // another client opened it: show it here too
+      else if (!this.closed.has(ev.term)) this.add(ev.term); // another client opened it: show it here too
     } else if (ev.ev === "term.exit") {
       this.terms.get(ev.term)?.exited();
     }

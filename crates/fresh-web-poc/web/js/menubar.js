@@ -110,7 +110,10 @@ export const MENUS = [
     { command: "view.nextSplit", label: "Next Split" },
     { command: "view.prevSplit", label: "Previous Split" },
     null,
-    { label: "Terminal", items: [{ command: "terminal.toggle", label: "Toggle Terminal" }, { command: "terminal.new", label: "New Terminal" }] },
+    { label: "Terminal", items: [
+      { command: "terminal.toggle", label: "Toggle Terminal" }, { command: "terminal.new", label: "New Terminal" },
+      { command: "terminal.restart", label: "Restart Terminal" }, { command: "terminal.sendSelection", label: "Send Selection to Terminal" },
+    ] },
     { label: "Git", items: [
       { command: "git.log", label: "Log" }, { command: "git.logFile", label: "Log of Current File" },
       { command: "git.blame", label: "Toggle Blame" }, { command: "git.diffFile", label: "Diff Current File" },
