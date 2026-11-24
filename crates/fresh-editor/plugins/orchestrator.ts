@@ -47,6 +47,7 @@ import {
 } from "./lib/widgets.ts";
 import { WindowMachines } from "./lib/window_machines.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
+import { slugify } from "./lib/path_slug.ts";
 import {
   AGENT_REGISTRY,
   agentEntryForBase,
@@ -9020,12 +9021,6 @@ registerHandler("orchestrator_toggle_trivial", toggleHideTrivial);
 // =============================================================================
 // New-session floating form
 // =============================================================================
-
-function slugify(p: string): string {
-  // Drop any leading separator so the slug isn't anchored to the
-  // filesystem root; replace remaining separators with underscores.
-  return p.replace(/^[\\\/]+/, "").replace(/[\\\/]+/g, "_");
-}
 
 // =============================================================================
 // Input history (Up / Down) for the new-session form
