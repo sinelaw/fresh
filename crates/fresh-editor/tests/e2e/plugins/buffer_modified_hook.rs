@@ -238,13 +238,7 @@ fn lsp_code_action_fires_buffer_modified() {
 fn a_plugin_api_edit_fires_buffer_modified() {
     let (mut harness, _dir) = harness_with_probe("alpha\nbeta\n");
 
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_palette_command("Probe Insert").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    harness.run_palette_command("Probe Insert").unwrap();
 
     harness
         .wait_until(|h| h.screen_to_string().contains("ZZalpha"))
