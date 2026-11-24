@@ -22,7 +22,8 @@ export function activate(fresh) {
     try {
       return await fresh.lsp.request(v.buffer, method, params, v.cursor);
     } catch (e) {
-      fresh.ui.message(String(e.message || e).replace(/^lsp\.call: /, ""));
+      // A refused request carries the server's message as `detail`.
+      fresh.ui.message(e.detail ?? String(e.message || e));
       return null;
     }
   };
