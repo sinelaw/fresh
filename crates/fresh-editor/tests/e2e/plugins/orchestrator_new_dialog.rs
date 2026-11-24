@@ -2032,19 +2032,7 @@ fn a_saved_machine_is_offered_with_what_it_resolves_to() {
 fn typing_a_repository_path_arms_the_worktree_toggle() {
     let (_temp, workspace) = set_up_workspace();
     let repo = workspace.join("alpha_dir");
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "t@example.com"],
-        vec!["config", "user.name", "t"],
-        vec!["commit", "-q", "--allow-empty", "-m", "seed"],
-    ] {
-        let out = std::process::Command::new("git")
-            .args(&args)
-            .current_dir(&repo)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed: {:?}", args, out);
-    }
+    git_init_repo(&repo);
 
     let mut harness = open_form_on(&workspace);
     harness
@@ -2119,9 +2107,10 @@ fn previewed_worktree_path(screen: &str) -> String {
 /// `my:repo`, and the row it draws says whether the slug still carries a
 /// character `pathJoin` would read as a prefix.
 ///
-/// `plugins/tests/path_slug.test.ts` covers the rest of the matrix (the
-/// Windows spellings, `\\?\`, and the roots that slug to nothing); that
-/// suite is not wired into CI, so this is the assertion that runs there.
+/// The key's own matrix — the charset, the bounds, that one path gives one
+/// key and two give two — is pinned by `path_encode`'s Rust tests. What this
+/// adds is that the *plugin* names the directory with that key, so it asserts
+/// the row equals the key exactly rather than re-proving its properties.
 #[test]
 fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
     let (_temp, workspace) = set_up_workspace();
@@ -2167,34 +2156,18 @@ fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
         });
 
     let screen = harness.screen_to_string();
-    let path = previewed_worktree_path(&screen);
-    let under = format!(
-        "{}/",
-        data_home.path().join("data").join("orchestrator").display()
+    let expected = format!(
+        "{}/orchestrator/{}/wtname",
+        data_home.path().join("data").display(),
+        fresh_core::path_encode::storage_key_for_path(&repo),
     );
-    assert!(
-        path.starts_with(&under),
-        "the worktree belongs under {under:?}; the slug took the data dir off the front of \
-         {path:?}. Screen:\n{screen}",
-    );
-    let tail: Vec<&str> = path[under.len()..].split('/').collect();
     assert_eq!(
-        tail.len(),
-        2,
-        "the project's state directory is one component, then the workspace: {path:?}. \
-         Screen:\n{screen}",
-    );
-    let slug = tail[0];
-    assert!(
-        !slug.is_empty() && slug != "." && slug != "..",
-        "a slug `pathJoin` drops or walks up through puts the workspace on top of the \
-         per-project level: {path:?}. Screen:\n{screen}",
-    );
-    assert!(
-        !slug.contains(':'),
-        "a colon left in the slug is what #3811 reported: `pathJoin` reads `C:…` as \
-         drive-absolute and discards the data dir joined before it. Slug {slug:?} in \
-         {path:?}. Screen:\n{screen}",
+        previewed_worktree_path(&screen),
+        expected,
+        "the worktree goes under the project's own state directory, named by \
+         the key the editor names its own per-path directories with. A slug \
+         that kept the drive colon took the data dir off the front of this \
+         row (#3811). Screen:\n{screen}",
     );
 }
 
@@ -2214,19 +2187,7 @@ fn a_tilde_repository_path_arms_the_worktree_toggle() {
     let data_home = tempfile::tempdir().unwrap();
     let repo = data_home.path().join("home").join("tildedir");
     fs::create_dir_all(&repo).unwrap();
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "t@example.com"],
-        vec!["config", "user.name", "t"],
-        vec!["commit", "-q", "--allow-empty", "-m", "seed"],
-    ] {
-        let out = std::process::Command::new("git")
-            .args(&args)
-            .current_dir(&repo)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed: {:?}", args, out);
-    }
+    git_init_repo(&repo);
 
     let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
     harness
