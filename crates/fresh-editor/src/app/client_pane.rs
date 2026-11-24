@@ -234,7 +234,7 @@ impl Editor {
     /// view already swapped in.
     fn render_leaf_at(&mut self, leaf: LeafId, area: Rect) -> Option<PaneRender> {
         let theme = self.theme.read().unwrap().clone();
-        let session_mode = self.session_mode || !self.software_cursor_only;
+        let hardware_cursor = self.session_mode || !self.software_cursor_only;
         let highlight_current_column = self.config.editor.highlight_current_column;
         let style = crate::view::ui::RenderStyle {
             theme: &theme,
@@ -260,7 +260,7 @@ impl Editor {
                         view,
                         area,
                         style,
-                        session_mode,
+                        hardware_cursor,
                         highlight_current_column,
                         &mut cell_theme_map,
                         area.width,

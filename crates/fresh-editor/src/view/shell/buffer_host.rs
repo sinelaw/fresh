@@ -70,9 +70,11 @@ pub struct PaneView {
     pub caret_shown: bool,
     /// Whether the editor painted the caret itself, as a block in the rows —
     /// several cursors, or a frontend with no hardware cursor (see
-    /// `char_style::CursorPaint`). The leaf then places no display-list
-    /// cursor: a terminal cursor on top would draw the primary unlike the
-    /// others, or cancel the block out. Default (false): the terminal draws it.
+    /// `char_style::CursorPaint`). The leaf then places the display list's
+    /// cursor *hidden*: a terminal cursor drawn on top would make the primary
+    /// unlike the others, or cancel the block out, but input methods and
+    /// screen readers still find it at the caret. Default (false): the
+    /// terminal draws it.
     pub caret_painted_by_editor: bool,
     /// The buffer the rows show, and its version when they were drawn. An
     /// edit since then moved the bytes under the rows, and keyboard motion
@@ -329,13 +331,14 @@ impl RenderObject for BufferHost {
     fn paint(&self, g: Geom, out: &mut DrawList) {
         out.push(Draw::Host(super::frame::pane_host_id(self.leaf)), g);
         let view = self.view.borrow();
-        if let Some((x, y)) = view
-            .caret
-            .filter(|_| view.caret_shown && !view.caret_painted_by_editor)
-        {
+        if let Some((x, y)) = view.caret.filter(|_| view.caret_shown) {
             let at = Point::new(g.rect.x + i32::from(x), g.rect.y + i32::from(y));
             if g.clip.contains(at) {
-                out.set_cursor(at);
+                if view.caret_painted_by_editor {
+                    out.set_hidden_cursor(at);
+                } else {
+                    out.set_cursor(at);
+                }
             }
         }
     }
@@ -882,6 +885,17 @@ mod tests {
             );
             ui.spec().cursor.map(|c| (c.pos.x, c.pos.y))
         };
+        let visible_of = |h: &PaneHandle| {
+            let mut ui: Ui<()> = Ui::new();
+            ui.frame(
+                col().children([
+                    fresh_ui::text("strip").h(fresh_ui::Sizing::Cells(1)),
+                    h.node(),
+                ]),
+                fresh_ui::Size::new(40, 10),
+            );
+            ui.spec().cursor.map(|c| c.visible)
+        };
         assert_eq!(cursor_of(&h), None, "nothing settled, nothing placed");
 
         h.settle(
@@ -934,8 +948,13 @@ mod tests {
         );
         assert_eq!(
             cursor_of(&h),
-            None,
-            "a caret the editor painted itself places no terminal cursor"
+            Some((3, 3)),
+            "a caret the editor painted itself is still where the cursor is parked"
+        );
+        assert_eq!(
+            visible_of(&h),
+            Some(false),
+            "but the terminal draws none on top of it"
         );
         assert_eq!(h.view().caret, Some((3, 2)), "popups still anchor to it");
     }

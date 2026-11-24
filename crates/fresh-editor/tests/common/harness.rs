@@ -1899,6 +1899,11 @@ impl EditorTestHarness {
         self.terminal.draw(|frame| {
             self.editor.render(frame);
         })?;
+        // As the terminal frontends do: a frame that drew its carets into the
+        // cells hides the hardware cursor, which is then parked at the caret.
+        if let Some(caret) = self.editor.hidden_caret() {
+            self.terminal.set_cursor_position(caret)?;
+        }
         // A visible text pane is placed once, formatted once, and has its
         // rows built once per frame — the invariant the retained-mode
         // migration rests on (`split_rendering::instrument`). Asserted on
@@ -2869,6 +2874,10 @@ impl EditorTestHarness {
         self.terminal
             .set_cursor_position(ratatui::layout::Position::new(0, 0))?;
         self.render()?;
+        if self.editor.hidden_caret().is_some() {
+            // Parked at the caret by `render`, but hidden.
+            return Ok(None);
+        }
         let pos = self.terminal.get_cursor_position().unwrap_or_default();
         if pos.x == 0 && pos.y == 0 {
             Ok(None)

@@ -109,7 +109,9 @@ pub(crate) struct FrameFacts<'a> {
     pub described_panes: &'a std::collections::HashSet<LeafId>,
     pub lsp_waiting: bool,
     pub hide_cursor: bool,
-    pub session_mode: bool,
+    /// The frontend has a hardware cursor that can draw the primary cursor
+    /// (a terminal, or a daemon client's terminal) — false in the GUI.
+    pub hardware_cursor: bool,
     pub screen_width: u16,
 }
 
@@ -427,7 +429,7 @@ fn text_pane_content(
         buffer_metadata,
         lsp_waiting,
         hide_cursor,
-        session_mode,
+        hardware_cursor,
         screen_width,
         ..
     } = *f;
@@ -566,7 +568,7 @@ fn text_pane_content(
         highlight_context_bytes,
         relative_line_numbers,
         use_terminal_bg,
-        session_mode,
+        hardware_cursor,
         view_prefs.show_line_numbers,
         effective_highlight_current_line,
         fold_indicators_visible,

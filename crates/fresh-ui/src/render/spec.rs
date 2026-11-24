@@ -373,6 +373,17 @@ impl DrawList {
         });
     }
 
+    /// Put the text cursor here but keep it hidden: the surface draws the
+    /// caret into its own cells, and the terminal should draw none on top. The
+    /// position still stands, so a frontend can park the hidden hardware
+    /// cursor there — where input methods and screen readers look for it.
+    pub fn set_hidden_cursor(&mut self, at: super::geom::Point) {
+        self.cursor = Some(CursorSpec {
+            pos: at,
+            visible: false,
+        });
+    }
+
     /// Draw over this node's own rectangle.
     pub fn push(&mut self, draw: Draw, g: super::object::Geom) {
         self.push_at(draw, g.rect, g.clip);

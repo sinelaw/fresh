@@ -309,15 +309,22 @@ impl CellPass<'_, '_, '_> {
         // Idempotent on the same gutter line (no inner gate).
         self.selection_sweep.enter_line(self.input.gutter_num);
 
-        // A cursor never takes its cell out of the selection: selected text
-        // under a cursor is still selected, and the cursor is drawn on top of
-        // that (`CursorPaint`). Excluding cursor cells made the first
-        // character of a backward selection look unselected under a bar
-        // cursor (#614), and it is what kept a secondary cursor from showing
-        // the selection it sits in.
-        let is_selected = self
-            .selection_sweep
-            .contains(byte_pos, self.block_line_column(byte_pos));
+        // In the focused pane a cursor never takes its cell out of the
+        // selection: selected text under a cursor is still selected, and the
+        // cursor is drawn on top of that (`CursorPaint`). Excluding cursor
+        // cells made the first character of a backward selection look
+        // unselected under a bar cursor (#614), and it is what kept a
+        // secondary cursor from showing the selection it sits in.
+        //
+        // An unfocused pane's cursor is different: it is a cell painted in
+        // `editor.inactive_cursor`, not an inversion, so it replaces the
+        // selection there. Keeping the selection's attributes on it would
+        // leave a reverse-video selection's REVERSED on the cell and bury the
+        // cursor in the band.
+        let is_selected = !(is_cursor && !self.input.is_active)
+            && self
+                .selection_sweep
+                .contains(byte_pos, self.block_line_column(byte_pos));
 
         // A virtual-space cursor "at" the newline byte sits visually past the
         // content end — its indicator is drawn at the virtual column by
@@ -973,12 +980,16 @@ impl CellPass<'_, '_, '_> {
                         None,
                     );
                 }
+                // The primary's block maps no byte: the row's text end is
+                // read off the view map, and the caret on a line break is
+                // placed from that end (see `render_view_lines`) — counting
+                // its own block would put the caret one column past it.
                 push_span_with_map(
                     self.line_spans,
                     self.line_view_map,
                     " ".to_string(),
                     cursor_indicator_style(self.input.theme, self.input.is_active),
-                    byte_pos,
+                    if is_secondary_cursor { byte_pos } else { None },
                 );
                 if !is_secondary_cursor {
                     self.cursor.painted = true;

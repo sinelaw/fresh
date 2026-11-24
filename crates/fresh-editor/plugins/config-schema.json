@@ -660,7 +660,7 @@
           "x-section": "Display"
         },
         "cursor_style": {
-          "description": "Cursor shape: block, bar or underline, blinking or steady.\nDefault: the terminal's own style.",
+          "description": "Cursor shape: block, bar or underline, blinking or steady.\nDefault: the terminal's own style. With several cursors (Ctrl+D), all\nof them, the primary included, are drawn as steady blocks so they look\nalike: a terminal can draw only one cursor in this shape.",
           "$ref": "#/$defs/CursorStyle",
           "default": "default",
           "x-section": "Display"

@@ -1601,6 +1601,14 @@ impl EditorServer {
         terminal
             .draw(|frame| editor.render(frame))
             .map_err(|e| io::Error::other(e.to_string()))?;
+        // Several cursors: the frame drew them into its cells and hid the
+        // hardware cursor — park it at the caret for the client's input
+        // method and screen reader.
+        if let Some(caret) = editor.hidden_caret() {
+            terminal
+                .set_cursor_position(caret)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
 
         // A client owed a full render (just attached, or resumed) missed the
         // change that set the current title.

@@ -7426,6 +7426,9 @@ where
                 use crossterm::ExecutableCommand;
                 stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
                 terminal.draw(|frame| editor.render(frame))?;
+                if let Some(caret) = editor.hidden_caret() {
+                    terminal.set_cursor_position(caret)?;
+                }
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
             }
             tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);

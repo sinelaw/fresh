@@ -180,7 +180,7 @@ impl SplitRenderer {
         compose_width: Option<u16>,
         compose_column_guides: Option<Vec<u16>>,
         buffer_id: BufferId,
-        session_mode: bool,
+        hardware_cursor: bool,
         rulers: &[usize],
         show_line_numbers: bool,
         highlight_current_line: bool,
@@ -243,7 +243,7 @@ impl SplitRenderer {
             highlight_context_bytes,
             relative_line_numbers,
             use_terminal_bg,
-            session_mode,
+            hardware_cursor,
             show_line_numbers,
             highlight_current_line,
             true, // preview leaves have no per-split fold pin
@@ -290,7 +290,7 @@ impl SplitRenderer {
         view: &mut crate::view::split::BufferViewState,
         area: Rect,
         style: RenderStyle<'_>,
-        session_mode: bool,
+        hardware_cursor: bool,
         highlight_current_column: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
@@ -359,7 +359,7 @@ impl SplitRenderer {
             highlight_context_bytes,
             relative_line_numbers,
             use_terminal_bg,
-            session_mode,
+            hardware_cursor,
             *show_line_numbers,
             *highlight_current_line,
             true,
@@ -385,7 +385,9 @@ impl SplitRenderer {
             rulers,
             compose_column_guides.clone(),
             highlight_current_column,
-            caret,
+            // A buffer that hides its cursors gets no caret mark either, as
+            // the frame's own pane pass gates it (`has_caret`).
+            caret.filter(|_| state.show_cursors),
         );
         orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
         (rows, caret, caret_by_terminal)

@@ -1411,8 +1411,14 @@ fn place_line_end_cursor(
 
     // Every cursor here the terminal does not draw gets the indicator: the
     // secondaries always, the primary unless the hardware cursor draws it.
-    let should_add_indicator =
-        !input.is_active || !input.primary_cursor_by_terminal || !is_primary_at_end;
+    //
+    // A primary on a virtual line below the buffer's end has this byte but is
+    // drawn rows further down (`caret_cell` floats it there), so its block is
+    // not drawn here: the paint marks the caret's own cell instead.
+    let primary_floats_below =
+        is_primary_at_end && input.selection.primary_virtual_lines > 0 && input.is_active;
+    let should_add_indicator = !primary_floats_below
+        && (!input.is_active || !input.primary_cursor_by_terminal || !is_primary_at_end);
     if should_add_indicator && is_primary_at_end && input.is_active {
         cursor.painted = true;
     }

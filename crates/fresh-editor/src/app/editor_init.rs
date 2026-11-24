@@ -902,6 +902,7 @@ impl Editor {
             stdin_stream: stdin_stream::StdinStream::default(),
             global_popups: crate::view::popup::PopupManager::new(),
             previous_cursor_screen_pos: None,
+            hidden_caret: None,
             cursor_jump_animation: None,
             pending_wheel_scroll: None,
             drag_autoscroll: None,

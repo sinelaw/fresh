@@ -750,8 +750,9 @@ pub(crate) fn draw_buffer_in_split(
             let area = buf.area;
             if screen_x < area.x + area.width && screen_y < area.y + area.height {
                 let cell = &mut buf[(screen_x, screen_y)];
+                // The glyph stays: this cell can hold text (a caret snapped
+                // next to concealed bytes), and the block is drawn around it.
                 if !cell.modifier.contains(Modifier::REVERSED) {
-                    cell.set_char(' ');
                     cell.fg = theme.editor_fg;
                     cell.bg = theme.editor_bg;
                     cell.modifier.insert(Modifier::REVERSED);

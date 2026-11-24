@@ -98,6 +98,9 @@ fn every_cursor_looks_the_same_when_there_are_several() {
     );
 
     let (x, y) = h.find_text_on_screen("ab ab ab").unwrap();
+    // Hidden, but parked on the primary (the last match), where input
+    // methods and screen readers look for the caret.
+    assert_eq!(h.screen_cursor_position(), (x + 6, y));
     let cursor_cells: Vec<Style> = [0, 3, 6]
         .iter()
         .map(|dx| style_at(&h, (x + dx, y)))
@@ -287,4 +290,104 @@ fn selection_is_visible_on_a_256_color_terminal() {
         delta >= 20.0,
         "selection {selected:?} is only {delta:.1} apart from the line it is on ({before:?})"
     );
+}
+
+/// Run a command palette entry by name.
+fn run_command(h: &mut EditorTestHarness, query: &str) {
+    key(h, KeyCode::Char('p'), KeyModifiers::CONTROL);
+    h.render().unwrap();
+    h.type_text(query).unwrap();
+    key(h, KeyCode::Enter, KeyModifiers::NONE);
+    h.render().unwrap();
+}
+
+/// An unfocused pane's cursor is a cell painted in `editor.inactive_cursor`,
+/// not an inversion, so it replaces the selection on its cell. On a theme
+/// whose selection is reverse video, letting the selection keep its cell left
+/// REVERSED on the inactive cursor and buried it in the band.
+#[test]
+fn an_inactive_panes_cursor_stands_out_of_a_reverse_video_selection() {
+    let mut h = harness_with(themed("terminal"));
+    h.load_buffer_from_text("one wxyz\n").unwrap();
+    key(&mut h, KeyCode::End, KeyModifiers::NONE);
+    key(
+        &mut h,
+        KeyCode::Left,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+    // The new split takes the focus; the first keeps its selection, unfocused.
+    run_command(&mut h, "split vert");
+
+    let inactive_cursor = h.editor().theme().inactive_cursor;
+    let word = cells_of(&h, "wxyz");
+    let cursor = style_at(&h, word[0]);
+    assert_eq!(
+        cursor.bg,
+        Some(inactive_cursor),
+        "inactive cursor: {cursor:?}"
+    );
+    assert!(
+        !reversed(cursor),
+        "the inactive cursor kept the reverse-video selection: {cursor:?}"
+    );
+    for &cell in &word[1..] {
+        assert!(reversed(style_at(&h, cell)), "selected cell {cell:?}");
+    }
+}
+
+/// With several cursors the hidden hardware cursor is parked on the primary's
+/// own block, also when the primary sits on a line break and its block is a
+/// cell past the text — not one column further right.
+#[test]
+fn the_hidden_cursor_is_parked_on_the_primarys_block_at_a_line_end() {
+    let mut h = harness_with(Config::default());
+    h.load_buffer_from_text("ab ab\nzz\n").unwrap();
+    // Two cursors, each selecting an `ab`; Right collapses each selection to
+    // its end, so the second (primary) sits on the line break.
+    for _ in 0..2 {
+        key(&mut h, KeyCode::Char('d'), KeyModifiers::CONTROL);
+    }
+    key(&mut h, KeyCode::Right, KeyModifiers::NONE);
+    h.render().unwrap();
+
+    let (x, y) = h.find_text_on_screen("ab ab").unwrap();
+    let block = (x + 5, y);
+    assert!(
+        reversed(style_at(&h, block)),
+        "the primary's block past the text"
+    );
+    assert_eq!(
+        h.screen_cursor_position(),
+        block,
+        "the hidden cursor sits on the primary's block"
+    );
+}
+
+/// Virtual space: a primary cursor on a virtual line below the buffer's end
+/// is drawn on that line, with several cursors — not at the end of the last
+/// real line, where its byte is.
+#[test]
+fn a_cursor_on_a_virtual_line_below_eof_is_drawn_there() {
+    let mut config = Config::default();
+    config.editor.virtual_space = fresh::config::VirtualSpaceMode::On;
+    let mut h = harness_with(config);
+    h.load_buffer_from_text("ab\ncd").unwrap();
+    key(&mut h, KeyCode::End, KeyModifiers::NONE);
+    key(
+        &mut h,
+        KeyCode::Down,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    // The lower cursor walks off the buffer's end onto a virtual line.
+    key(&mut h, KeyCode::Down, KeyModifiers::NONE);
+    h.render().unwrap();
+
+    let (x, y) = h.find_text_on_screen("cd").unwrap();
+    let virtual_cell = (x + 2, y + 1);
+    assert!(
+        reversed(style_at(&h, virtual_cell)),
+        "no cursor drawn on the virtual line:\n{}",
+        h.screen_to_string()
+    );
+    assert_eq!(h.screen_cursor_position(), virtual_cell);
 }

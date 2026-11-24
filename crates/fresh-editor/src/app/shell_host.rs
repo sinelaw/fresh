@@ -834,7 +834,7 @@ fn with_grid<R>(
         editor.software_cursor_only,
         editor.linux_console,
     );
-    let session_mode = editor.session_mode || !editor.software_cursor_only;
+    let hardware_cursor = editor.session_mode || !editor.software_cursor_only;
 
     let win = editor.windows.get_mut(&window)?;
 
@@ -860,7 +860,7 @@ fn with_grid<R>(
             described_panes,
             lsp_waiting: state.lsp_waiting,
             hide_cursor: state.hide_cursor,
-            session_mode,
+            hardware_cursor,
             screen_width,
         };
         let mut stores = Stores {

@@ -284,6 +284,18 @@ impl crate::view::shell::fold::ProvenanceSink for FoldProvenance {
 }
 
 impl Editor {
+    /// The caret's cell when the last frame painted it into its cells and
+    /// showed no hardware cursor (several cursors). A frontend drawing to a
+    /// real terminal moves the hidden cursor here after `draw`: ratatui hides
+    /// a cursor it was not given and leaves it wherever the last cell write
+    /// ended, which is not where an input method or screen reader should
+    /// look.
+    pub fn hidden_caret(&self) -> Option<(u16, u16)> {
+        self.hidden_caret
+    }
+}
+
+impl Editor {
     /// Ask for another frame because plugin work was deferred out of this one.
     /// The drawing itself never blocks on the plugin lock — every hook site
     /// inside the draw uses `try_read` and skips on contention — so anything
@@ -1275,13 +1287,15 @@ impl Editor {
         // wins, and a layer painted over a cursor ends it. Nothing here asks
         // whether something covered the cell; that was answered when the
         // list was painted.
-        if let Some(c) = self
-            .shell_ui
-            .as_ref()
-            .and_then(|ui| ui.spec().cursor)
-            .filter(|c| c.visible)
-        {
-            frame.set_cursor_position((c.pos.x.max(0) as u16, c.pos.y.max(0) as u16));
+        //
+        // A cursor placed hidden — a pane that painted its carets into its
+        // cells — is not shown, but its cell is remembered so the frontend can
+        // park the hidden hardware cursor there after the draw.
+        let cursor = self.shell_ui.as_ref().and_then(|ui| ui.spec().cursor);
+        let cell = |c: fresh_ui::CursorSpec| (c.pos.x.max(0) as u16, c.pos.y.max(0) as u16);
+        self.hidden_caret = cursor.filter(|c| !c.visible).map(cell);
+        if let Some(c) = cursor.filter(|c| c.visible) {
+            frame.set_cursor_position(cell(c));
         }
 
         // Frame-buffer animations run after the main draw so they mutate the
@@ -5314,7 +5328,7 @@ impl Editor {
         // below — they touch only `self.config`/`self.theme`/
         // `self.ansi_background`, which Rust splits from `self.windows` as
         // distinct fields.
-        let session_mode = self.session_mode || !self.software_cursor_only;
+        let hardware_cursor = self.session_mode || !self.software_cursor_only;
         let show_tilde = false; // preview hides tilde markers
         let highlight_current_column = self.config.editor.highlight_current_column;
         let screen_width = buf.area.width;
@@ -5379,7 +5393,7 @@ impl Editor {
             compose_width,
             compose_column_guides,
             buffer_id,
-            session_mode,
+            hardware_cursor,
             &rulers,
             show_line_numbers,
             highlight_current_line,
