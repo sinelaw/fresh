@@ -164,7 +164,7 @@ export function activate(fresh) {
   fresh.events.on("buffer.activated", ({ buffer }) => reveal(buffer.path));
   fresh.events.on("buffer.saved", refresh);
   fresh.commands.register("explorer.focus", { title: "Explorer: Focus", run: () => panel.focus("tree") });
-  fresh.commands.register("explorer.toggle", { title: "View: Toggle File Explorer", run: () => document.querySelector("#sidebar").classList.toggle("hidden") });
+  fresh.commands.register("explorer.toggle", { title: "View: Toggle File Explorer", run: () => fresh.commands.run("view.toggleSidebar") });
   fresh.commands.register("explorer.newFile", { title: "File: New File…", run: () => ops.newFile(null) });
   fresh.commands.register("explorer.refresh", { title: "Explorer: Refresh", run: refresh });
   // The same on the explorer's selected row (the menu bar's Explorer menu).

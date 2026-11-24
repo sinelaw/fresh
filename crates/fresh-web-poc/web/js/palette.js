@@ -77,7 +77,12 @@ export class Palette {
       return [{ label: n > 0 ? `Go to line ${n}` : "Type a line number", run: () => n > 0 && app.gotoLine(n - 1, 0, { history: false }) }];
     }
     const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
-    const files = q.trim() ? (await rpc("fs.find", { query: m[1] })).files : [];
+    // Nothing typed: the files opened lately.
+    if (!q.trim()) {
+      const rel = (p) => (p.startsWith(app.root + "/") ? p.slice(app.root.length + 1) : p);
+      return app.recentFiles().map((p) => ({ label: rel(p), detail: "recent", run: () => app.openFile(p) }));
+    }
+    const files = (await rpc("fs.find", { query: m[1] })).files;
     return files.map((f) => ({
       label: f,
       run: () => app.openFile(f, m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {}),

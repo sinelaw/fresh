@@ -112,7 +112,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Layout | Split right / down, close, next / previous split | present |
 | Layout | Maximize split (toggle) | missing |
 | Layout | Scroll sync of same-buffer splits | missing (rarely used; after the rest) |
-| Layout | Session restore per workspace: open tabs, splits, sizes, sidebar and dock state (in the browser) | missing |
+| Layout | Session restore per workspace (in the browser): the splits and ratios, each split's file tabs with cursor and scroll, the active tab, sizes, sidebar and terminal | fixed |
 | Tabs | Close with ×, middle-click | present |
 | Tabs | Context menu: Close, Close Others, Close to the Right, Close Saved, Close All, Split Right / Down, Copy Path / Relative Path, Reveal in Explorer | fixed |
 | Tabs | Drag to reorder; drag onto another split's tabs or text to move it there (cursors, scroll, mode and folds kept; an emptied split closes) | fixed |
@@ -132,7 +132,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Explorer | Toggle hidden / gitignored files | missing |
 | Explorer | Multi-selection (Shift+Up/Down) for cut / copy / delete | missing (after the rest) |
 | Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
-| Files | Recent files (File menu, palette) | missing |
+| Files | Recent files (File ▸ Open Recent, and the file palette with nothing typed) | fixed |
 | Files | Close All, Close Others | fixed |
 | Files | Save As | missing (a copy of a document to a new path: needs a server op) |
 | Files | Set line ending (LF / CRLF / CR), reopen or save with an encoding, set language, revert | fixed (server `doc.set`, `doc.reload` with `encoding`) |

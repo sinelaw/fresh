@@ -50,6 +50,7 @@ class App {
     this.statusSig = ""; // what the status bar shows, to write it only when it changes
     this.statusRuns = []; // its items' actions
     this.formats = null; // the server's languages, encodings and line endings
+    this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
     this.log = [];
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem("fresh-poc:settings") || "{}"); } catch {}
@@ -112,11 +113,75 @@ class App {
     setInterval(() => this.autoSave(), 1000);
     await this.host.load(PLUGINS);
     await this.term.adopt(hello.terminals);
-    this.host.emit("app.ready", {});
+    // What was open in this workspace last time, unless a file is named.
     const open = new URLSearchParams(location.search).get("open");
+    if (!open) await this.restoreLayout();
+    this.restoring = false;
+    this.rememberLayout();
+    window.addEventListener("pagehide", () => { this.rememberLayout(); this.session.flush(); });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) { this.rememberLayout(); this.session.flush(); } });
+    this.host.emit("app.ready", {});
     if (open) await this.openFile(open);
     this.focusPane(this.activePane);
   }
+
+  // ------------------------------------------------------------- the workspace's layout, remembered
+
+  // What is open, for the next visit (session.js): the splits and their
+  // ratios, each split's file tabs with their cursor and scroll, the
+  // active split and tab, and whether the sidebar and the terminal show.
+  layoutSnapshot() {
+    const tab = (v) => (v.buf.path ? { path: v.buf.path, pos: v.primary.pos, top: v.top } : null);
+    const node = (n) => (n.pane
+      ? { tabs: n.pane.views.map(tab).filter(Boolean), active: n.pane.view?.buf.path || null }
+      : { dir: n.dir, ratio: n.ratio, a: node(n.a), b: node(n.b) });
+    return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden"), terminal: !!this.term?.visible };
+  }
+  rememberLayout() {
+    if (this.restoring || !this.layoutTree) return;
+    this.session.set("layout", this.layoutSnapshot());
+  }
+  // Put the remembered layout back: the splits, then each split's files
+  // (one that cannot be opened any more is left out, and a split left
+  // with none closes). Resolves false when there was nothing to restore.
+  async restoreLayout() {
+    const s = this.session.get("layout");
+    if (!s || !s.tree) return false;
+    $("#sidebar").classList.toggle("hidden", s.sidebar === false);
+    const specs = [];
+    const build = (n) => {
+      if (n.tabs) { const pane = new Pane(this); pane.listen(); specs.push({ pane, n }); return { pane }; }
+      return { dir: n.dir === "v" ? "v" : "h", ratio: clamp(+n.ratio || 0.5, 0.05, 0.95), a: build(n.a), b: build(n.b) };
+    };
+    this.layoutTree = build(s.tree);
+    this.activePane = specs[Math.max(0, Math.min(specs.length - 1, s.active | 0))].pane;
+    this.relayout();
+    for (const { pane, n } of specs) {
+      for (const t of n.tabs) {
+        let b;
+        try { b = await this.loadFile(t.path); } catch { continue; }
+        const v = pane.show(b);
+        const pos = Math.max(0, Math.min(t.pos | 0, b.len));
+        v.cursors = [{ pos, anchor: null, goalX: null }];
+        v.setTop(Math.max(0, Math.min(t.top | 0, pos)));
+      }
+      const active = pane.views.find((v) => v.buf.path === n.active);
+      if (active) pane.show(active.buf);
+    }
+    for (const { pane } of specs) if (!pane.views.length && this.panes().length > 1) await this.closePane(pane);
+    if (s.terminal && !this.term.visible) await this.term.toggle();
+    this.focusPane(this.activePane);
+    this.renderAll();
+    return true;
+  }
+
+  // Files opened lately in this workspace, the latest first.
+  noteRecent(path) {
+    const list = (this.session.get("recent") || []).filter((p) => p !== path);
+    list.unshift(path);
+    this.session.set("recent", list.slice(0, 30));
+  }
+  recentFiles() { return this.session.get("recent") || []; }
 
   measure() {
     const s = document.createElement("span");
@@ -174,7 +239,8 @@ class App {
           n.ratio = clamp(c.at + delta / Math.max(1, c.size), min, 1 - min);
           flex();
         },
-        reset: () => { n.ratio = 0.5; flex(); },
+        end: () => this.rememberLayout(),
+        reset: () => { n.ratio = 0.5; flex(); this.rememberLayout(); },
       });
       d.append(a, s, b);
       return d;
@@ -184,6 +250,7 @@ class App {
     area.appendChild(el);
     for (const p of this.panes()) p.el.classList.toggle("active", p === this.activePane);
     this.renderAll();
+    this.rememberLayout();
   }
   // The sashes of the sidebar, the right dock, the bottom dock and the
   // terminal; their sizes are remembered for the workspace.
@@ -264,6 +331,7 @@ class App {
     if (!p.views.length && this.panes().length > 1) await this.closePane(p);
     this.renderAll();
     this.updateStatus();
+    this.rememberLayout();
     return true;
   }
   // Whether closing `views` may let go of buffer `b`. When they are the
@@ -306,6 +374,7 @@ class App {
     return true;
   }
   onViewShown(pane, v) {
+    this.rememberLayout();
     if (pane === this.activePane) this.host?.emit("buffer.activated", { buffer: v.buf, view: v });
     this.updateStatus();
   }
@@ -378,6 +447,7 @@ class App {
       from.views.splice(i, 1);
       from.views.splice(index > i ? index - 1 : index, 0, v);
       from.renderTabs();
+      this.rememberLayout();
       return;
     }
     let nv = to.views.find((x) => x.buf === v.buf);
@@ -396,6 +466,7 @@ class App {
     if (!from.views.length && this.panes().length > 1) this.closePane(from);
     this.focusPane(to);
     this.renderAll();
+    this.rememberLayout();
   }
   // Close the tabs of `pane` that `which(view, index)` picks, one at a
   // time (each may ask about unsaved changes; a cancel stops there).
@@ -477,6 +548,7 @@ class App {
       const b = await this.loadFile(path);
       if (from) this.pushHistory(from);
       const v = this.showBuffer(b, place);
+      this.noteRecent(b.path);
       if (line != null) await this.gotoLine(line - 1, column != null ? column - 1 : 0, { history: false });
       this.updateStatus();
       return v;
@@ -992,6 +1064,16 @@ class App {
     cmd("view.nextSplit", "View: Next Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
     cmd("view.prevSplit", "View: Previous Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
     cmd("view.closeTab", "View: Close Tab", () => { const p = P(); if (p.view) this.closeTab(p, p.view); });
+    cmd("view.toggleSidebar", "View: Toggle Sidebar", () => { $("#sidebar").classList.toggle("hidden"); this.renderAll(); this.rememberLayout(); });
+    cmd("file.recent", "File: Open Recent…", () => {
+      const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
+      const list = this.recentFiles();
+      this.prompt.open({
+        title: "Open Recent",
+        items: list.length ? list.map((p) => ({ label: rel(p), detail: p.split("/").pop(), value: p })) : [{ label: "No recent files", value: null }],
+        onAccept: (it) => it.value && this.openFile(it.value),
+      });
+    });
     cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); if (p.view) this.closeTabs(p, (x) => x !== p.view); });
     cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of this.panes()) await this.closeTabs(p, () => true); });
     cmd("view.nextTab", "View: Next Tab", () => this.cycleTab(1));
