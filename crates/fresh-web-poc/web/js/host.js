@@ -104,8 +104,13 @@ class ViewHandle {
   get options() { return { ...this.v.opts }; }
   // {mode: "source"|"compose", composeWidth, wrap, lineNumbers}
   setOptions(o) { Object.assign(this.v.opts, o); if (o.mode) this.v.mode = o.mode; this.app.renderBuffer(this.v.buf.id); }
-  setCursor(pos, { reveal = true, center = false } = {}) { this.app.moveTo(this.v, pos, { reveal, center }); }
-  select(start, end) { this.v.cursors = [{ pos: end, anchor: start, goalX: null }]; this.v.pane.scheduleRender(); }
+  // Both resolve once the text there is loaded and the view shows it.
+  setCursor(pos, { reveal = true, center = false } = {}) { return this.app.moveTo(this.v, pos, { reveal, center }); }
+  // Select [start, end), the caret at `end`.
+  async select(start, end, { center = false } = {}) {
+    await this.app.moveTo(this.v, start);
+    await this.app.moveTo(this.v, end, { extend: true, center });
+  }
   // Columns of text the view shows across (its own width).
   get width() { return this.v.pane.geometry(this.v).width; }
   get visibleLines() { return this.v.pane.visibleLineRange(this.v); }

@@ -98,20 +98,21 @@ export function activate(fresh) {
       }
     }
     const m = matches[current];
-    v.setCursor(m.pos + m.len, { center: true });
-    v.select(m.pos, m.pos + m.len);
+    await v.select(m.pos, m.pos + m.len, { center: true });
+    if (m.text == null) m.text = b.text(m.pos, m.pos + m.len); // found by the server
     mark();
     renderBar();
   };
 
-  const replaceOne = () => {
+  // Replace the current match (marked in the buffer) and go to the next.
+  const replaceOne = async () => {
     const b = buffer();
     const v = fresh.views.active();
     const m = matches[current];
-    const sel = v?.selection;
-    if (!b || !m || !sel || sel.start !== m.pos) return go(1);
+    if (!b || !v || !m) return go(1);
     const text = opts.regex ? m.text.replace(toRegex(query, false), replacement) : replacement;
     b.replace(m.pos, m.pos + m.len, text);
+    await v.setCursor(m.pos + fresh.text.byteLen(text));
     update();
     go(1);
   };
@@ -135,9 +136,9 @@ export function activate(fresh) {
 
   // The match case / whole word / regex toggles; `after` runs on a change.
   const toggles = (after) => [
-    h("toggle", { on: opts.case, title: "Match case", onChange: (on) => { opts.case = on; after(); } }, "Aa"),
-    h("toggle", { on: opts.word, title: "Whole word", onChange: (on) => { opts.word = on; after(); } }, "ab"),
-    h("toggle", { on: opts.regex, title: "Regular expression", onChange: (on) => { opts.regex = on; after(); } }, ".*"),
+    h("toggle", { key: "case", on: opts.case, title: "Match case", onChange: (on) => { opts.case = on; after(); } }, "Aa"),
+    h("toggle", { key: "word", on: opts.word, title: "Whole word", onChange: (on) => { opts.word = on; after(); } }, "ab"),
+    h("toggle", { key: "regex", on: opts.regex, title: "Regular expression", onChange: (on) => { opts.regex = on; after(); } }, ".*"),
   ];
 
   const renderBar = () => {
@@ -235,8 +236,7 @@ export function activate(fresh) {
     if (!L) return;
     const i = m.line - (L.firstLine ?? 0);
     const start = L.starts[i] + m.col;
-    v.setCursor(start + m.len, { center: true });
-    v.select(start, start + m.len);
+    await v.select(start, start + m.len, { center: true });
   };
   const replaceEverywhere = async () => {
     const byFile = new Map();

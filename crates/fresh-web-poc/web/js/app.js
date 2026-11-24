@@ -65,6 +65,13 @@ class App {
     this.host = new Host(this);
     this.input = $("#input");
     this.input.addEventListener("keydown", (e) => this.onKey(e));
+    // A key pressed with nothing focused (after a click on the status bar,
+    // say) goes to the editor.
+    window.addEventListener("keydown", (e) => {
+      if (e.target !== document.body) return;
+      this.focusPane(this.activePane);
+      this.onKey(e);
+    });
     this.input.addEventListener("compositionstart", () => { this.composing = true; });
     this.input.addEventListener("compositionend", () => { this.composing = false; this.onInput(); });
     this.input.addEventListener("input", () => { if (!this.composing) this.onInput(); });
@@ -302,7 +309,6 @@ class App {
     const pane = v.pane;
     await v.buf.ensure(pos, pane.metrics().rows + 10);
     if (pane.view !== v) pane.show(v.buf);
-    if (center) { v.primary.pos = pos; pane.reveal(true); }
     this.editing.place(pane, pos, extend);
     if (center) pane.reveal(true);
     pane.scheduleRender();
