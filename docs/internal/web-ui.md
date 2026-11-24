@@ -178,6 +178,82 @@ writes carry over from today's bridge unchanged.
   at the editor's size: plugin render hooks and the mounting of plugin panels
   run there, and the terminals attached to a daemon are drawn from it.
 
+## Views — the design
+
+Views are explicit per-client data in the core, and the terminal is one
+client among the browsers. Every command, hook, plugin call and per-frame pass
+names the view it is for, or covers all views in `ViewId` order. The renderer
+lays out each view at its own width from structure that has no width in it.
+Nothing is inferred: there is no fallback view, no "current" view, and no
+heuristic that depends on which other views exist.
+
+### The model
+
+- **A view** is one client's window onto one buffer in one pane, named by a
+  `ViewId`. It holds its size, scroll, cursors, selections, wrap width,
+  compose width and the visual rows it was last drawn with. It is plain data
+  in the core, keyed by its id, and is never swapped in or out.
+- **A client** owns a set of views. The terminal is one client, shared by every
+  terminal attached to the session daemon, with one view per pane. Each browser
+  is another client.
+- **The buffer is shared by every view:** its content, undo, syntax,
+  diagnostics, LSP state and plugin decorations.
+- **Every view's positions follow edits.** Cursors and scroll are carried
+  through each edit by the buffer's coordinate map, whichever view made it.
+
+### Operations name their view
+
+- **Every input arrives tagged with its view.** A key in the terminal names the
+  terminal's view of the active pane; a browser message names its view, or its
+  client's active view when the message does not name one. Editing, motion and
+  actions take a `ViewId` and act on that view's cursors.
+- **Plugin code runs in a view's context.** A hook or action handler runs with
+  the `ViewId` of the input or frame that triggered it, and every API call it
+  makes takes that view explicitly, including calls made after an `await`.
+  Cursor-, selection- and viewport-dependent calls (`getPrimaryCursor`,
+  `getSelectedText`, `insertAtCursor`, `getViewport` and the rest) take a view
+  or fail. None of them falls back to another view.
+- **Plugin code with no triggering view has no default view.** Timers and
+  background events get no view; a cursor- or viewport-dependent call made
+  there without naming a view is an error.
+
+### Per-frame passes cover every view
+
+- **`visible_views()`** lists every visible view of every client, in `ViewId`
+  order. Each per-view pass iterates it:
+  - offering lines to plugins (`lines_changed`);
+  - `viewport_changed`;
+  - keeping a view's cursor in sight when asked;
+  - loading a large file's data under each view.
+- **Buffer-wide requests** cover exactly the union of the visible views'
+  ranges: LSP semantic-token ranges and search-as-you-type highlights.
+- **Scroll-locked panes** sync among one client's own views.
+
+### Plugin API
+
+- **Hooks carry the view.** Every view-scoped hook carries a `view_id` and the
+  view's geometry; `split_id` stays for compatibility.
+- **`getViews()`** lists every view, for plugins that care about all of them.
+- **Decorations are per buffer and have no width in them.** Overlays, conceals,
+  virtual text and structure (fenced regions, code frames, tables) are stated in
+  byte ranges and roles, never in columns.
+
+### Layout is per view
+
+- **The renderer does everything that depends on width,** per view, at that
+  view's width: wrapping, compose's reflow, code-frame borders and rails, and
+  table column widths. Structure comes from the core's grammar classification
+  (`structure_lines_in`) and from what plugins add to it. Two views of one
+  buffer at different widths are therefore both laid out correctly.
+- **Compose width is a setting of the view,** applied to that view's own
+  width. No other view affects it.
+
+### The terminal
+
+The terminal is one client with one view per pane, and its input always names
+the active pane's view. Every rule above therefore reduces to the terminal's
+behaviour as it is today, and no terminal behaviour changes.
+
 ## Decisions — settled, not re-argued
 
 - **The web client is free to diverge from the terminal.** One behaviour
