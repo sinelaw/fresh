@@ -18,6 +18,7 @@ const THEME_KEYS = {
   "editor.selection_bg": v("selection"),
   "editor.current_line_bg": v("current-line"),
   "editor.occurrence_bg": v("occurrence"),
+  "editor.bracket_match_fg": v("bracket-match"),
   "editor.whitespace_indicator_fg": v("whitespace"),
   "editor.diff_add_bg": v("diff-add-bg"),
   "editor.diff_remove_bg": v("diff-remove-bg"),

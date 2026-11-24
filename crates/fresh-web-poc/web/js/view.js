@@ -96,6 +96,8 @@ export class Pane {
     // layout after writing rows would force a synchronous reflow.
     this.size = { w: 0, h: 0, sb: 0 };
     this.wantX = false; // keep the cursor in view sideways at the next draw
+    this.bracketKey = ""; // the cursor position and text the bracket pair was found for
+    this.bracketPair = null;
     this.maxCols = 0; // the widest row drawn, in columns
   }
 
@@ -233,6 +235,15 @@ export class Pane {
       if (t && t.length >= 2 && !t.includes("\n")) occ = t;
     }
     const occBg = { bg: THEME["editor.occurrence_bg"] };
+    // The bracket at the cursor and its match, drawn bold in the theme's
+    // colour for them (found once per cursor position and text).
+    let brackets = null;
+    if (s.highlight_brackets) {
+      const key = `${buf.id}:${buf.textGen}:${v.primary.pos}`;
+      if (this.bracketKey !== key) { this.bracketKey = key; this.bracketPair = this.app.editing.bracketPair(buf, v.primary.pos); }
+      brackets = this.bracketPair;
+    }
+    const bracketSt = { fg: THEME["editor.bracket_match_fg"], bold: true, underline: true };
     const selBg = THEME["editor.selection_bg"];
     const DIAG = ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]];
     const overlayFn = (o) => {
@@ -259,6 +270,7 @@ export class Pane {
           }
         }
       }
+      if (brackets) for (const x of [brackets.at, brackets.match]) if (x >= ls && x < le) out.push({ s: x, e: x + 1, f: (st) => ({ ...st, ...bracketSt }) });
       for (const g of buf.decor.query("diags", ls, le)) { const wavy = DIAG[g.severity] || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => ({ ...st, wavy }) }); }
       for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: (st) => ({ ...st, bg: selBg }) });
       lineCache.set(li, out);
@@ -428,13 +440,32 @@ export class Pane {
     if (!same(gutEls, this.gutEls)) this.gutterEl.replaceChildren(...gutEls);
     this.rowEls = textEls;
     this.gutEls = gutEls;
-    this.rulersEl.textContent = "";
-    for (const col of s.rulers) {
-      const r = document.createElement("div");
-      r.className = "ruler";
-      r.style.left = `${(col - 1) * cw}px`;
-      this.rulersEl.appendChild(r);
+    // Rulers, and indentation guides: a line at each indent level inside a
+    // line's leading whitespace (a blank line takes the next line's).
+    let guides = "";
+    for (const col of s.rulers) guides += `<div class="ruler" style="left:${(col - 1) * cw}px"></div>`;
+    if (s.show_indent_guides) {
+      const indentOf = (li) => {
+        const m = /^[ \t]*/.exec(L.lines[li])[0];
+        if (m.length === L.lines[li].length) return -1;
+        let w = 0;
+        for (const ch of m) w = ch === "\t" ? w + 4 - (w % 4) : w + 1;
+        return w;
+      };
+      let next = -1;
+      const ind = rows.map(() => 0);
+      for (let r = rows.length - 1; r >= 0; r--) {
+        const row = rows[r];
+        if (row.kind !== "text") { ind[r] = next < 0 ? 0 : next; continue; }
+        const w = indentOf(row.lineIdx);
+        ind[r] = w < 0 ? Math.max(0, next) : w;
+        if (w >= 0) next = w;
+      }
+      rows.forEach((row, r) => {
+        for (let c = 0; c < ind[r]; c += 4) guides += `<div class="guide" style="left:${c * cw}px;top:${r * lh}px;height:${lh}px"></div>`;
+      });
     }
+    if (this.rulersEl._html !== guides) { this.rulersEl.innerHTML = guides; this.rulersEl._html = guides; }
     // Carets: absolutely placed, so moving one never touches the rows.
     let html = "";
     if (this.app.activePane === this) {

@@ -11,6 +11,7 @@
   --popup-bg: #1e1e1e; --popup-fg: #e5e5e5; --popup-border: #808080; --shadow: rgba(0,0,0,.5);
   --terminal-bg: #1e1e1e; --terminal-fg: #d4d4d4;
   /* The text */
+  --bracket-match: #d4d4d4;
   --caret: #ffffff; --selection: #32323c; --current-line: #282828; --occurrence: #4b4b4b; --whitespace: #464646; --ruler: #323232;
   --match-bg: #646414; --match-fg: #ffffff; --match-current-bg: #40aae6; --match-current-fg: #000000;
   --code-bg: #3c3c3c; --tour-step-bg: #3c3c50; --diff-add-bg: #1e3c1e; --diff-remove-bg: #461e1e;
@@ -57,6 +58,7 @@ body {
 .dock-body > .panel { flex: 1; }
 .rulers { position: absolute; top: 0; bottom: 0; pointer-events: none; }
 .ruler { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ruler); }
+.guide { position: absolute; width: 1px; background: color-mix(in srgb, var(--fg) 13%, transparent); }
 .row.current { background: var(--current-line); }
 .gutter .mark { display: inline-block; width: 1ch; }
 .gutter .row { padding-right: 0; }

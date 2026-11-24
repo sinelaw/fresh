@@ -30,7 +30,7 @@ const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.past
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
-  show_whitespace: false, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
+  show_whitespace: false, show_indent_guides: true, highlight_brackets: true, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
 };
 
 class App {
@@ -1137,6 +1137,8 @@ class App {
     cmd("view.toggleCurrentLine", "View: Toggle Current Line Highlight", toggle("highlight_current_line"));
     cmd("view.toggleOccurrences", "View: Toggle Occurrence Highlight", toggle("highlight_occurrences"));
     cmd("view.toggleWhitespace", "View: Toggle Whitespace Indicators", toggle("show_whitespace"));
+    cmd("view.toggleIndentGuides", "View: Toggle Indentation Guides", toggle("show_indent_guides"));
+    cmd("view.toggleBrackets", "View: Toggle Matching Bracket Highlight", toggle("highlight_brackets"));
     cmd("view.scrollUp", "View: Scroll Up", () => P().scrollLines(-1), true);
     cmd("view.scrollDown", "View: Scroll Down", () => P().scrollLines(1), true);
     cmd("view.addRuler", "View: Add Ruler", async () => {

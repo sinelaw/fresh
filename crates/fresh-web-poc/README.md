@@ -289,7 +289,8 @@ skin overrides them in its stylesheet (see Skins).
 | `--shadow` | shadows and the dialog backdrop |
 | `--terminal-bg`, `--terminal-fg` | the terminal |
 | `--caret`, `--selection`, `--current-line`, `--occurrence` | the editor's cursor, selection, current line, occurrences |
-| `--whitespace`, `--ruler` | whitespace indicators; rulers |
+| `--whitespace`, `--ruler` | whitespace indicators; rulers (indentation guides are `--fg`, faint) |
+| `--bracket-match` | the bracket at the cursor and its match |
 | `--match-bg`, `--match-fg`, `--match-current-bg`, `--match-current-fg` | search matches |
 | `--code-bg` | code in documents and Markdown text |
 | `--tour-step-bg`, `--diff-add-bg`, `--diff-remove-bg` | a tour's step line; added and removed lines |

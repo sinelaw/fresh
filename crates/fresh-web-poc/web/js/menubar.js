@@ -86,6 +86,8 @@ export const MENUS = [
     { command: "view.toggleWhitespace", label: "Whitespace", checked: setting("show_whitespace") },
     { command: "view.toggleCurrentLine", label: "Current Line", checked: setting("highlight_current_line") },
     { command: "view.toggleOccurrences", label: "Occurrences", checked: setting("highlight_occurrences") },
+    { command: "view.toggleIndentGuides", label: "Indentation Guides", checked: setting("show_indent_guides") },
+    { command: "view.toggleBrackets", label: "Matching Brackets", checked: setting("highlight_brackets") },
     { command: "markdown.toggleCompose", label: "Markdown Compose", checked: (app) => view(app)?.mode === "compose" },
     { label: "Rulers", items: ["view.addRuler", "view.removeRulers"] },
     { label: "Folding", items: [{ command: "fold.toggle", label: "Toggle Fold" }, { command: "fold.all", label: "Fold All" }, { command: "fold.none", label: "Unfold All" }] },

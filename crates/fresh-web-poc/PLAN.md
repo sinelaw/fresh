@@ -125,7 +125,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Editor | Scrollbar markers: git changes, search matches, diagnostics (in lanes), the cursor's line; for buffers held whole | fixed |
 | Editor | Horizontal scrolling of long lines (wrap off): the cursor kept in view, Shift+wheel and sideways wheels | fixed |
 | Editor | Line wrap toggle (Alt+Z), line numbers, current line, occurrences, whitespace, rulers | present |
-| Editor | Indentation guides, matching-bracket highlight, rainbow brackets | missing (drawing extras; after the chrome) |
+| Editor | Indentation guides, matching-bracket highlight (theme's `bracket_match_fg`, bold), View toggles | fixed |
+| Editor | Rainbow brackets | missing (needs bracket depth over the whole file, skipping strings and comments, kept through edits) |
 | Editor | Minimap, breadcrumbs | skipped (the editor has neither) |
 | Explorer | Sticky ancestors: the folders of the top visible row stay pinned (any UI-kit tree); a click scrolls back to the folder | fixed |
 | Explorer | Drag and drop to move files and folders onto a folder (or the root), confirmed; open files follow | fixed |

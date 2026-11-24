@@ -16,6 +16,10 @@ const COMMENT = {
 };
 const INDENT = "    ";
 
+const OPEN = { "(": ")", "[": "]", "{": "}" }, CLOSE = { ")": "(", "]": "[", "}": "{" };
+// How many lines a bracket's match is looked for in.
+const BRACKET_SCAN = 5000;
+
 export class Editing {
   constructor(app) { this.app = app; }
 
@@ -264,24 +268,35 @@ export class Editing {
       return L.starts[i];
     }, extend);
   }
+  // The bracket at `p` (or just before it) and its match: {at, match}
+  // byte offsets, or null. Scans the held lines out from it, at most
+  // `BRACKET_SCAN` lines, a line at a time.
+  bracketPair(b, p) {
+    const L = b.text;
+    if (!L) return null;
+    let at = p, ch = this.charAt(b, p);
+    if (!(ch in OPEN) && !(ch in CLOSE)) { ch = this.charBefore(b, p); at = p - 1; }
+    if (!ch || (!(ch in OPEN) && !(ch in CLOSE))) return null;
+    const fwd = ch in OPEN, want = fwd ? OPEN[ch] : CLOSE[ch];
+    let li = L.indexOf(at);
+    if (li < 0) return null;
+    let k = byteToIdx(L.lines[li], at - L.starts[li]);
+    let depth = 0;
+    for (let n = 0; n < BRACKET_SCAN && li >= 0 && li < L.count; n++) {
+      const line = L.lines[li];
+      for (; k >= 0 && k < line.length; k += fwd ? 1 : -1) {
+        if (line[k] === ch) depth++;
+        else if (line[k] === want && --depth === 0) return { at, match: L.starts[li] + byteLen(line.slice(0, k)) };
+      }
+      li += fwd ? 1 : -1;
+      if (li >= 0 && li < L.count) k = fwd ? 0 : L.lines[li].length - 1;
+    }
+    return null;
+  }
+
   matchingBracket(pane) {
     const b = pane.view.buf;
-    const L = b.text;
-    const OPEN = { "(": ")", "[": "]", "{": "}" }, CLOSE = { ")": "(", "]": "[", "}": "{" };
-    this.move(pane, (c) => {
-      let p = c.pos, ch = this.charAt(b, p);
-      if (!(ch in OPEN) && !(ch in CLOSE)) { ch = this.charBefore(b, p); p -= 1; }
-      if (!ch || (!(ch in OPEN) && !(ch in CLOSE))) return c.pos;
-      const all = L.lines.join("\n");
-      let i = byteToIdx(all, p - L.start);
-      const fwd = ch in OPEN, want = fwd ? OPEN[ch] : CLOSE[ch];
-      let depth = 0;
-      for (; i >= 0 && i < all.length; i += fwd ? 1 : -1) {
-        if (all[i] === ch) depth++;
-        else if (all[i] === want && --depth === 0) return L.start + byteLen(all.slice(0, i));
-      }
-      return c.pos;
-    }, false);
+    this.move(pane, (c) => this.bracketPair(b, c.pos)?.match ?? c.pos, false);
   }
 
   // ---------------------------------------------------------------- typing

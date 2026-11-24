@@ -55,6 +55,7 @@ const VARS = {
   "--selection": (k) => k("editor.selection_bg", "bg"),
   "--current-line": (k) => k("editor.current_line_bg", "bg"),
   "--occurrence": (k) => k("ui.semantic_highlight_bg", "bg"),
+  "--bracket-match": (k) => k("editor.bracket_match_fg", "fg"),
   "--whitespace": (k) => k("editor.whitespace_indicator_fg", "fg"),
   "--ruler": (k) => k("editor.ruler_bg", "bg"),
   "--match-bg": (k) => k("search.match_bg", "bg"),
