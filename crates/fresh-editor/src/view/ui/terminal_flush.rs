@@ -8,13 +8,14 @@
 //! *terminal* thinks that cluster ended, not where ratatui thinks it did.
 //!
 //! The two disagree for multi-codepoint clusters. An emoji presentation
-//! sequence such as `❤️` (U+2764 U+FE0F), a keycap (`1️⃣`) or a flag is two
-//! columns wide by Unicode's reckoning and to tmux, kitty, WezTerm and iTerm2,
-//! but one column to terminals that size it by its base codepoint (xterm,
-//! older VTE, the `vt100` crate). ratatui's diff makes this worse for VS16
-//! clusters: to clear stale content it emits the cluster's trailing column as
-//! a separate cell *right after* the cluster. That trailing cell is the
-//! cluster's right-hand neighbour, so no cursor move is written; on a terminal
+//! sequence such as `❤️` (U+2764 U+FE0F) or a keycap (`1️⃣`) is two columns
+//! wide by Unicode's reckoning and to tmux, kitty, WezTerm and iTerm2, but one
+//! column to terminals that add up the widths of its codepoints (xterm, older
+//! VTE, the `vt100` crate), to which VS16 is zero-width. ratatui's diff makes
+//! this worse for VS16 clusters: to clear stale content it emits the
+//! cluster's trailing column as a separate cell *right after* the cluster.
+//! That trailing cell is the cluster's right-hand neighbour, so no cursor
+//! move is written; on a terminal
 //! that advanced two columns it lands one column too far right, and every
 //! following cell on the row drifts with it. Cells the diff considers
 //! unchanged are never rewritten, so the stale characters stay on screen
@@ -24,10 +25,14 @@
 //! diff so that no write ever depends on how far the terminal advanced over a
 //! cluster whose width it may size differently:
 //!
-//! * A wide cell's trailing columns are written **before** the cell itself.
-//!   The cluster is then drawn last, at an explicitly positioned cursor, and
-//!   covers those columns on a terminal that draws it wide, or leaves them
-//!   correctly cleared on one that draws it narrow.
+//! * A wide cell's trailing columns, when the diff sends them (it does for a
+//!   VS16 cluster whose trailing column changed), are written **before** the
+//!   cell itself. The cluster is then drawn last, at an explicitly positioned
+//!   cursor, and covers those columns on a terminal that draws it wide, or
+//!   leaves them cleared on one that draws it narrow. The diff never sends a
+//!   trailing column for other wide clusters (flags, ZWJ sequences), so a
+//!   terminal that draws one narrower than Unicode says can still show a
+//!   stale character beside it; that is outside what a backend can fix.
 //! * After any multi-codepoint cluster the next write is explicitly
 //!   positioned, even when it is the cluster's neighbour.
 //!

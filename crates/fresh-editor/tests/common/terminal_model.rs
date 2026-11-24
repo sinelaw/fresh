@@ -34,18 +34,17 @@ pub enum WidthPolicy {
     /// The cluster's Unicode width: `❤️`, keycaps and flags are two columns.
     /// tmux, kitty, WezTerm, iTerm2, foot.
     ClusterWidth,
-    /// The width of the cluster's first codepoint: `❤️` is one column.
-    /// xterm, older VTE, the `vt100` crate.
-    BaseCodepoint,
+    /// The sum of its codepoints' widths, the way terminals without grapheme
+    /// clustering advance: `❤️` (U+2764 U+FE0F) is one column, a flag two, a
+    /// ZWJ family of four eight. xterm, older VTE, the `vt100` crate.
+    CodepointSum,
 }
 
 impl WidthPolicy {
     fn width(self, cluster: &str) -> usize {
         match self {
             WidthPolicy::ClusterWidth => cluster.width(),
-            WidthPolicy::BaseCodepoint => {
-                cluster.chars().next().and_then(|c| c.width()).unwrap_or(0)
-            }
+            WidthPolicy::CodepointSum => cluster.chars().filter_map(|c| c.width()).sum(),
         }
     }
 }

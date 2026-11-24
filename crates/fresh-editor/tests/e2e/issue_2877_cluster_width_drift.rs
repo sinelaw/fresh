@@ -19,8 +19,13 @@ use crate::common::terminal_model::WidthPolicy;
 const WIDTH: u16 = 46;
 const HEIGHT: u16 = 24;
 
-/// The recipe from the issue: emoji rows alternating with ASCII rows long
-/// enough to wrap, so scrolling slides one over the other.
+/// The issue's recipe: emoji rows alternating with ASCII rows, so scrolling
+/// slides one over the other. The ASCII line is kept short enough not to
+/// wrap: with the issue's longer one, which wraps to two rows, the text
+/// repeats every three rows, a three-row scroll redraws every row with what
+/// it already showed, and ratatui (0.30.2) writes no emoji trailing column at
+/// all — the drift then only shows on terminals that keep the character a
+/// widened emoji covers, as tmux does, which this model does not imitate.
 fn alternating(emoji: &str, pairs: usize) -> String {
     let mut text = String::new();
     for _ in 0..pairs {
@@ -29,7 +34,7 @@ fn alternating(emoji: &str, pairs: usize) -> String {
             text.push(' ');
         }
         text.push('\n');
-        text.push_str("a=1; b=2; c=3; d=4; e=5; f=6; g=7; h=8;\n");
+        text.push_str("a=1; b=2; c=3; d=4;\n");
     }
     text
 }
@@ -66,7 +71,7 @@ fn vs16_heart_scroll_leaves_no_strays_on_wide_terminal() {
 fn vs16_heart_scroll_leaves_no_strays_on_narrow_terminal() {
     scroll_and_check(
         &alternating("\u{2764}\u{FE0F}", 60),
-        WidthPolicy::BaseCodepoint,
+        WidthPolicy::CodepointSum,
     );
 }
 
