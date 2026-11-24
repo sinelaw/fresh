@@ -167,6 +167,10 @@ body {
 .ui-list-row:hover { background: var(--hover-bg); }
 .ui-list-row.sel { background: var(--sel-inactive-bg); }
 .ui-list:focus .ui-list-row.sel { background: var(--sel-bg); color: var(--sel-fg); }
+.ui-list-row.marked { background: var(--sel-inactive-bg); }
+.ui-list:focus .ui-list-row.marked { background: var(--sel-bg); color: var(--sel-fg); }
+/* The cursor row of a multiple selection. */
+.ui-list:focus .ui-list-row.sel.marked { box-shadow: inset 2px 0 0 var(--accent); }
 .ui-list-row.header { color: var(--fg); font-weight: 600; }
 /* Dragging a row: where it would land. */
 .ui-list.dragging, .ui-list.dragging * { cursor: grabbing; }

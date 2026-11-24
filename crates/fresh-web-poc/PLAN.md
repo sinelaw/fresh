@@ -182,7 +182,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Explorer | Drag and drop to move files and folders onto a folder (or the root), confirmed; open files follow | fixed |
 | Explorer | New file / new folder / refresh / collapse-all buttons in the header (UI kit: `panel.actions`) | fixed |
 | Explorer | Show hidden / gitignored files (hidden by default, as the editor; Explorer menu, checked), remembered | fixed |
-| Explorer | Multi-selection (Shift+Up/Down) for cut / copy / delete | missing (after the rest) |
+| Explorer | Multi-selection: Ctrl+click toggles, Shift+click and Shift+Up/Down extend from the anchor, Ctrl+A all, Escape clears (and a pending cut, drawn dimmed); delete, copy, cut, paste, drag and the right-click menu act on the selection (UI kit: a list's `marked` rows) | fixed |
 | Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
 | Files | Recent files (File ▸ Open Recent, and the file palette with nothing typed) | fixed |
 | Files | Close All, Close Others | fixed |

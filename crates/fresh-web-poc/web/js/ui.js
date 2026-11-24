@@ -329,7 +329,9 @@ class Panel {
     };
     const row = (i, at, cls) => {
       const it = items[i];
-      const r = div("ui-list-row" + (i === st.sel ? " sel" : "") + (it && it.header ? " header" : "") + cls);
+      // `marked(item)`: the row is in a multiple selection the plugin
+      // keeps (drawn as selected).
+      const r = div("ui-list-row" + (i === st.sel ? " sel" : "") + (it && p.marked && p.marked(it) ? " marked" : "") + (it && it.header ? " header" : "") + cls);
       r.style.top = `${at}px`;
       const content = p.render ? p.render(it, i) : String(it);
       r.appendChild(typeof content === "string" ? document.createTextNode(content) : this.build(content));
@@ -341,17 +343,17 @@ class Panel {
         st.sel = i;
         for (const x of inner.children) x.classList.toggle("sel", +x.dataset.i === i);
         el.focus({ preventScroll: true });
-        // `onSelect(item, index, how)`: how is "mouse" (a press, with its
-        // event) or "key" (the arrows).
+        // `onSelect(item, index, how, event)`: how is "mouse" (a press) or
+        // "key" (the arrows); the event says which modifiers were held.
         p.onSelect?.(it, i, "mouse", e);
         if (e.button === 0 && p.onDrop) dragFrom(e, it);
       };
-      // `onActivate(item, index, how)`: how is "click" (with
+      // `onActivate(item, index, how, event)`: how is "click" (with
       // `activateOnClick`, the first click of one or more), "double" or
       // "key" (Enter).
-      r.ondblclick = () => p.onActivate?.(it, i, "double");
+      r.ondblclick = (e) => p.onActivate?.(it, i, "double", e);
       r.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); p.onContext?.(it, i, { x: e.clientX, y: e.clientY }); };
-      if (p.activateOnClick) r.onclick = (e) => { if (e.detail <= 1) p.onActivate?.(it, i, "click"); };
+      if (p.activateOnClick) r.onclick = (e) => { if (e.detail <= 1) p.onActivate?.(it, i, "click", e); };
       return r;
     };
     // Dragging a row (`onDrop(item, onto)` given): past a few pixels it
@@ -402,19 +404,19 @@ class Panel {
     };
     el.onscroll = () => { st.scroll = el.scrollTop; draw(); };
     el.onkeydown = (e) => {
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); this.listMove(key, e.key === "ArrowDown" ? 1 : -1); }
-      else if (e.key === "PageDown" || e.key === "PageUp") { e.preventDefault(); this.listMove(key, (e.key === "PageDown" ? 1 : -1) * Math.floor(el.clientHeight / ROW_H)); }
-      else if (e.key === "Enter") { e.preventDefault(); p.onActivate?.(items[st.sel], st.sel, "key"); }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); this.listMove(key, e.key === "ArrowDown" ? 1 : -1, e); }
+      else if (e.key === "PageDown" || e.key === "PageUp") { e.preventDefault(); this.listMove(key, (e.key === "PageDown" ? 1 : -1) * Math.floor(el.clientHeight / ROW_H), e); }
+      else if (e.key === "Enter") { e.preventDefault(); p.onActivate?.(items[st.sel], st.sel, "key", e); }
       else p.onKey?.(e, items[st.sel], st.sel);
     };
-    el._move = (d) => {
+    el._move = (d, e) => {
       let i = st.sel + d;
       // Skip header rows.
       while (items[i] && items[i].header && i > 0 && i < items.length - 1) i += Math.sign(d);
       st.sel = Math.max(0, Math.min(items.length - 1, i));
       show();
       draw();
-      p.onSelect?.(items[st.sel], st.sel, "key");
+      p.onSelect?.(items[st.sel], st.sel, "key", e);
     };
     el._draw = draw;
     const show = () => {
@@ -430,9 +432,10 @@ class Panel {
     return el;
   }
 
-  listMove(key, d) {
+  // Move a list's selection `d` rows (the key `e` that moved it, if any).
+  listMove(key, d, e) {
     const el = this.body.querySelector(`.ui-list[data-key="${CSS.escape(key)}"]`);
-    el?._move(d);
+    el?._move(d, e || null);
   }
 
   // A tree: nodes {label, children?, data, open?}; expansion is kept by path.

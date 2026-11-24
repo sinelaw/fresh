@@ -46,7 +46,7 @@
 .skin-compact .panel-head { font-size: .8em; letter-spacing: .04em; padding: 4px 10px; }
 .skin-compact .ui-list-row { height: 22px; margin: 0 4px; padding: 0 6px; border-radius: 3px; }
 .skin-compact .ui-list-row.sel { background: var(--sel-inactive-bg); }
-.skin-compact .ui-list:focus .ui-list-row.sel { background: var(--tint); }
+.skin-compact .ui-list:focus :is(.ui-list-row.sel, .ui-list-row.marked) { background: var(--tint); }
 .skin-compact .split > .sash { border-color: var(--hairline); }
 .skin-compact #terminal { border-top-color: var(--hairline); }
 
