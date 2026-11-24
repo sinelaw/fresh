@@ -1848,7 +1848,7 @@ interface EditorConfig {
     terminal_auto_title?: boolean;
     /**
     * Cursor shape: block, bar or underline, blinking or steady.
-    * Default: the terminal's own style. With several cursors (Ctrl+D), all
+    * Default: the terminal's own style. With several cursors, all
     * of them, the primary included, are drawn as steady blocks so they look
     * alike: a terminal can draw only one cursor in this shape.
     *
