@@ -282,9 +282,19 @@ class App {
     for (const p of this.panes()) if (p.views.some((v) => v.buf === b)) p.renderTabs();
   }
 
-  async saveBuffer(b) {
+  // Save a file. The server refuses when the file changed on disk since it
+  // was opened or last saved; an explicit save (`ask`) then offers to
+  // overwrite it, auto-save leaves it and says so.
+  async saveBuffer(b, { ask = true } = {}) {
     if (!b.doc) return;
-    await b.save();
+    try {
+      await b.save();
+    } catch (e) {
+      const msg = String(e.message || e).replace(/^doc\.save: /, "");
+      if (!ask || !/changed on disk/.test(msg)) { this.setStatus(`Not saved: ${msg}`); return; }
+      if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
+      await b.save({ force: true });
+    }
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
     this.host.emit("buffer.saved", { buffer: b });
@@ -296,7 +306,7 @@ class App {
     for (const b of this.buffers.values()) {
       if (b.doc && b.modified && !b.inflight && !b.pending.length && now - (b.lastEdit || 0) > this.settings.auto_save_seconds * 1000) {
         b.lastEdit = now;
-        this.saveBuffer(b);
+        this.saveBuffer(b, { ask: false });
       }
     }
   }
@@ -450,7 +460,9 @@ class App {
         break;
       }
       case "workspace.trusted":
+        // The language servers start now: the event names them.
         this.trusted = true;
+        this.lspLanguages = new Set(ev.lsp);
         document.querySelector("#ws-name").textContent = document.querySelector("#ws-name").textContent.replace(" · restricted", "");
         this.host.emit("workspace.trusted", {});
         break;
@@ -675,6 +687,10 @@ class App {
     cmd("go.back", "Go Back", () => this.historyStep(-1));
     cmd("go.forward", "Go Forward", () => this.historyStep(1));
     cmd("view.focusEditor", "View: Focus Editor", () => this.focusPane(P()), true);
+    cmd("workspace.trust", "Workspace: Trust (allow processes, terminals and language servers)", async () => {
+      if (this.trusted) { this.setStatus("The workspace is trusted"); return; }
+      await rpc("workspace.trust");
+    });
     cmd("help.log", "Show Log", () => this.createVirtual({ name: "*Log*", entries: this.log.map((l) => ({ text: l + "\n" })), place: "tab" }));
 
     // Motion.
@@ -792,6 +808,16 @@ class App {
     h.classList.remove("hidden");
   }
   hidePopup() { $("#popup").classList.add("hidden"); }
+
+  // Ask a yes/no question: resolves true when `yes` is picked.
+  confirm(title, yes) {
+    return new Promise((resolve) => this.prompt.open({
+      title,
+      items: [{ label: yes, value: true }, { label: "Cancel", value: false }],
+      onAccept: (it) => resolve(it.value),
+      onCancel: () => resolve(false),
+    }));
+  }
 
   // ------------------------------------------------------------- status
 

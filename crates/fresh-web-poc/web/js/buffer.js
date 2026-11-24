@@ -328,9 +328,10 @@ export class FileBuffer extends Buffer {
   }
   doRedo() { return this.doUndo(this.redo, this.undo); }
 
-  async save() {
+  // `force`: overwrite a file that changed on disk since it was loaded.
+  async save({ force = false } = {}) {
     while (this.inflight || this.pending.length) await new Promise((r) => setTimeout(r, 20));
-    const info = await rpc("doc.save", { doc: this.doc });
+    const info = await rpc("doc.save", { doc: this.doc, force });
     this.modified = info.modified;
     return info;
   }

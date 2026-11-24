@@ -4,17 +4,21 @@
 //   * a gutter of added / modified / deleted lines, from a diff of the
 //     buffer against HEAD done here (so it follows unsaved edits);
 //   * next / previous change;
-//   * blame, as text at the end of each line;
+//   * blame, as text at the end of each line (lines edited since the file
+//     was saved show as not committed);
 //   * the log in a panel; a commit's diff in a buffer of its own;
-//   * the diff of the current file.
+//   * the diff of the current file, unsaved edits included.
 
-import { diffLines } from "../js/diff.js";
+import { diffLines, mapLines, unifiedDiff } from "../js/diff.js";
 
 export function activate(fresh) {
   const { h } = fresh;
   const root = fresh.workspace.root;
   const rel = (p) => (p && p.startsWith(root + "/") ? p.slice(root.length + 1) : null);
-  const git = (args) => fresh.host.run("git", args, { cwd: root });
+  // A restricted workspace runs no processes: git answers as a failure.
+  const git = (args) => fresh.workspace.trusted
+    ? fresh.host.run("git", args, { cwd: root })
+    : Promise.resolve({ code: 1, stdout: "", stderr: "The workspace is restricted: trust it to use git" });
   const baselines = new Map(); // path -> lines at HEAD (null: not tracked)
 
   // ---------------------------------------------------------------- branch
@@ -35,15 +39,21 @@ export function activate(fresh) {
       if (p.code === 0) refWatch = await fresh.host.watch(`${root}/${p.stdout.trim()}`, () => { refreshBranch(); const b = fresh.buffers.active(); if (b) schedule(b); });
     }
   };
-  fresh.events.on("app.ready", async () => {
+  const start = async () => {
     await refreshBranch();
     const head = await git(["rev-parse", "--git-path", "HEAD"]);
     if (head.code === 0) fresh.host.watch(`${root}/${head.stdout.trim()}`, async () => { await refreshBranch(); await watchRefs(); });
     await watchRefs();
-  });
+    const b = fresh.buffers.active();
+    if (b) schedule(b);
+  };
+  fresh.events.on("app.ready", () => { if (fresh.workspace.trusted) start(); });
+  fresh.events.on("workspace.trusted", start);
 
   // ---------------------------------------------------------------- gutter
 
+  // A whole buffer's lines, without the empty one after a final newline.
+  const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   const baseline = async (path) => {
     if (!baselines.has(path)) {
       const r = await git(["show", `HEAD:./${rel(path)}`]);
@@ -61,8 +71,7 @@ export function activate(fresh) {
     const d = b.decorations("gutter");
     d.clear();
     if (!base || !L) { b.render(); return; }
-    const cur = L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines;
-    const edits = diffLines(base, cur);
+    const edits = diffLines(base, held(L));
     if (!edits) { b.render(); return; }
     // An inserted line where a line was also deleted is a modified line.
     const added = new Set(), deletedAt = new Set();
@@ -105,6 +114,10 @@ export function activate(fresh) {
     const r = await git(["blame", "--line-porcelain", "--", rel(b.path)]);
     if (r.code !== 0) return fresh.ui.message(r.stderr.trim() || "Not tracked by git");
     const L = b.lines();
+    if (!L || !b.whole) return fresh.ui.message("Blame needs the whole file");
+    // Blame describes the file on disk; the buffer's lines map onto it.
+    const disk = (await fresh.host.read(b.path)).replace(/\n$/, "").split("\n");
+    const map = mapLines(disk, held(L));
     const info = [];
     let cur = null;
     for (const line of r.stdout.split("\n")) {
@@ -116,13 +129,13 @@ export function activate(fresh) {
       else if (line.startsWith("summary ")) cur.summary = line.slice(8);
       else if (line.startsWith("\t")) { info.push(cur); cur = null; }
     }
+    const byLine = new Map(info.map((x) => [x.line, x]));
     d.clear();
-    for (const x of info) {
-      const i = x.line - (L.firstLine ?? 0);
-      if (i < 0 || i >= L.starts.length) continue;
-      const committed = !/^0+$/.test(x.hash);
-      d.inline(L.starts[i] + fresh.text.byteLen(L.lines[i]), committed ? ` ${x.author}, ${x.time} · ${x.summary}` : " (not committed)", { edge: true, style: { fg: "editor.line_number_fg", italic: true } });
-    }
+    held(L).forEach((text, i) => {
+      const x = map ? byLine.get(map[i]) : byLine.get(i);
+      const committed = x && !/^0+$/.test(x.hash);
+      d.inline(L.starts[i] + fresh.text.byteLen(text), committed ? ` ${x.author}, ${x.time} · ${x.summary}` : " (not committed)", { edge: true, style: { fg: "editor.line_number_fg", italic: true } });
+    });
     blamed.add(b.id);
     b.render();
   };
@@ -151,12 +164,18 @@ export function activate(fresh) {
     logPanel.focus("log");
   };
 
+  // The buffer as it is against HEAD, so unsaved edits show too.
   const diffFile = async () => {
     const b = fresh.buffers.active();
-    if (!b || !rel(b.path)) return;
-    const r = await git(["diff", "HEAD", "--", rel(b.path)]);
-    if (!r.stdout.trim()) return fresh.ui.message("No changes against HEAD (saved file)");
-    showDiff(`diff ${b.name}`, r.stdout);
+    const L = b?.lines();
+    if (!b || !rel(b.path) || !L) return;
+    if (!b.whole) return fresh.ui.message("Diff needs the whole file");
+    const base = await baseline(b.path);
+    if (!base) return fresh.ui.message("Not in HEAD");
+    const text = unifiedDiff(base, held(L), `a/${rel(b.path)}`, `b/${rel(b.path)}`);
+    if (text === null) return fresh.ui.message("Too many changes to diff here");
+    if (!text) return fresh.ui.message("No changes against HEAD");
+    showDiff(`diff ${b.name}`, text);
   };
 
   const reg = (id, title, run, key) => { fresh.commands.register(id, { title, run }); if (key) fresh.keys.bind(key, id); };
@@ -165,6 +184,6 @@ export function activate(fresh) {
   reg("git.blame", "Git: Toggle Blame", blame);
   reg("git.diffFile", "Git: Diff Current File", diffFile);
   reg("git.nextChange", "Git: Next Change", () => step(1), "M-F5");
-  reg("git.prevChange", "Git: Previous Change", () => step(-1), "S-M-F5");
+  reg("git.prevChange", "Git: Previous Change", () => step(-1), "M-S-F5");
   reg("git.refresh", "Git: Refresh", () => { baselines.clear(); const b = fresh.buffers.active(); if (b) markGutter(b); refreshBranch(); });
 }

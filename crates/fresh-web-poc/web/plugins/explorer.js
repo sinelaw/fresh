@@ -74,13 +74,6 @@ export function activate(fresh) {
       render();
     } else fresh.buffers.open(r.path);
   };
-  // Resolves true when `yes` is picked.
-  const confirm = (title, yes) => new Promise((resolve) => fresh.ui.pick({
-    title,
-    items: [{ label: yes, value: true }, { label: "Cancel", value: false }],
-    onAccept: (it) => resolve(it.value),
-    onCancel: () => resolve(false),
-  }));
   const dirOf = (r) => (r ? (r.dir ? r.path : r.path.replace(/\/[^/]*$/, "")) : root);
   const ops = {
     newFile: async (r) => {
@@ -111,7 +104,7 @@ export function activate(fresh) {
     },
     remove: async (r) => {
       if (!r) return;
-      if (!(await confirm(`Delete ${r.name}${r.dir ? " and everything in it" : ""}?`, "Delete"))) return;
+      if (!(await fresh.ui.confirm(`Delete ${r.name}${r.dir ? " and everything in it" : ""}?`, "Delete"))) return;
       await fresh.host.remove(r.path);
       for (const d of [...open]) if (d === r.path || d.startsWith(r.path + "/")) collapse(d);
       await refresh();

@@ -100,7 +100,8 @@ export class Palette {
         return hits.map((it, i) => [lead(it), i, it]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
       },
       onSelect: o.onChange,
-      onAccept: (it) => it && o.onAccept?.(it),
+      // Enter with nothing left to pick is a cancel.
+      onAccept: (it) => (it ? o.onAccept?.(it) : o.onCancel?.()),
       onCancel: o.onCancel,
     });
   }

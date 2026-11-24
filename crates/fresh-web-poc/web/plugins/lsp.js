@@ -285,6 +285,8 @@ export function activate(fresh) {
   };
   const showStatus = (b) => status.set(b && fresh.lsp.available(b) ? `LSP ${b.language}` : "", { title: "Language server running for this file" });
   fresh.events.on("buffer.activated", ({ buffer }) => { showStatus(buffer); refreshFolds(buffer); });
+  // Trusting the workspace starts its language servers.
+  fresh.events.on("workspace.trusted", () => { const b = fresh.buffers.active(); showStatus(b); if (b) refreshFolds(b); });
   fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
 
   const reg = (id, title, run, key) => { fresh.commands.register(id, { title, run }); if (key) fresh.keys.bind(key, id); };
@@ -294,7 +296,7 @@ export function activate(fresh) {
   reg("lsp.hover", "LSP: Hover", hover, "C-k");
   reg("lsp.rename", "LSP: Rename Symbol", rename, "F2");
   reg("lsp.codeActions", "LSP: Code Actions", codeActions, "C-.");
-  reg("lsp.format", "LSP: Format Document", format, "S-M-f");
+  reg("lsp.format", "LSP: Format Document", format, "M-S-f");
   reg("lsp.symbols", "LSP: Document Symbols", symbols, "C-S-o");
   reg("lsp.signatureHelp", "LSP: Signature Help", signatureHelp, "C-S-Space");
   reg("lsp.diagnostics", "Diagnostics: Show Panel", diagnosticsPanel, "C-S-m");
