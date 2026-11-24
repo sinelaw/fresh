@@ -94,6 +94,10 @@ export function highlightLine(lang, text) {
   const out = [];
   if (!lang) return out;
   if (lang === "markdown") return markdown(text);
+  if (lang === "diff") {
+    const k = /^(\+\+\+|---)/.test(text) ? "syntax.keyword" : text[0] === "+" ? "git.added" : text[0] === "-" ? "git.deleted" : text.startsWith("@@") ? "syntax.type" : /^(commit|diff --git|index )/.test(text) ? "syntax.constant" : null;
+    return k ? [{ s: 0, e: text.length, k }] : [];
+  }
   const kws = kwSets[lang];
   const cm = COMMENT[lang];
   let i = 0;

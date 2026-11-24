@@ -147,8 +147,9 @@ export class Editing {
   // when it gave one, else the lines indented deeper than it.
   foldRangeAt(b, li) {
     const L = b.text;
-    const lsp = (b.foldRanges || []).find((r) => r.start === li && r.end > li);
-    if (lsp) return { start: li, end: lsp.end };
+    const first = L.firstLine ?? 0;
+    const lsp = (b.foldRanges || []).find((r) => r.start === li + first && r.end > r.start);
+    if (lsp) return { start: li, end: Math.min(L.count - 1, lsp.end - first) };
     const ind = (t) => /^\s*/.exec(t)[0].length;
     if (L.lines[li].trim() === "") return null;
     const base = ind(L.lines[li]);

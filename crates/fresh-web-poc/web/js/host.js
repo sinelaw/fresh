@@ -84,6 +84,9 @@ class BufferHandle {
   views() { return [...this.b.views].map((v) => new ViewHandle(this.app, v, this.plugin)); }
   setEntries(entries) { this.b.setEntries(entries); this.app.renderBuffer(this.b.id); }
   propsAt(pos) { return this.b.propsAt ? this.b.propsAt(pos) : []; }
+  // Foldable blocks, as document line ranges [{start, end}] (a language
+  // server's folding ranges); folding uses indentation where none are given.
+  setFoldRanges(ranges) { this.b.foldRanges = ranges; }
   render() { this.app.renderBuffer(this.b.id); }
 }
 
@@ -152,8 +155,19 @@ export class Host {
       commands: {
         register: (id, spec) => app.commands.set(id, { ...spec, source: name }),
         run: (id, ...args) => app.run(id, ...args),
+        all: () => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: !!c.hidden })),
       },
-      keys: { bind: (key, command) => app.bindKey(key, command), for: (command) => app.keyFor(command) },
+      keys: {
+        bind: (key, command) => app.bindKey(key, command),
+        for: (command) => app.keyFor(command),
+        // The effective keymap: {key: command}.
+        all: () => app.keymap(),
+        // The user's own bindings (saved in the browser), over the defaults.
+        user: () => ({ ...app.userKeys }),
+        setUser: (key, command) => { if (command) app.userKeys[key] = command; else delete app.userKeys[key]; app.saveKeys(); },
+        // The next key pressed, as the keymap names it.
+        capture: () => app.captureKey(),
+      },
       events: {
         on: (event, f) => {
           if (!host.handlers.has(event)) host.handlers.set(event, []);
@@ -189,6 +203,9 @@ export class Host {
         status: (id) => app.statusItem(id),
         message: (text) => app.setStatus(text),
         popup: (text, at) => app.popup(text, at),
+        // Colours: {key: css} for theme keys ("syntax.keyword", ...) and
+        // CSS variables ("--bg", ...).
+        theme: (t) => app.applyTheme(t),
       },
       host: {
         run: (program, args = [], opts = {}) => app.runProcess(program, args, opts),
@@ -212,6 +229,8 @@ export class Host {
         request: (buffer, method, params = {}, pos) => rpc("lsp.call", { doc: buffer.b.doc, method, params, pos }),
         // LSP (line, character) to a byte offset in a held buffer.
         offset: (buffer, line, character) => app.lspOffset(buffer.b, line, character),
+        // A byte offset in a held buffer as an LSP {line, character} (UTF-16).
+        position: (buffer, pos) => app.lspPosition(buffer.b, pos),
         diagnostics: (buffer) => buffer.b.decor.diags.map((d) => ({ ...d })),
       },
       // Text shown when the pointer rests on a position: f(buffer, pos) -> string|null.

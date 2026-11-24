@@ -15,6 +15,11 @@ const NO_SPANS = [];
 // its text (the highlighter is line-local), so scrolling and editing reuse
 // them. Each span carries its finished style.
 const spanCache = new Map();
+// After a theme change: styles are rebuilt from the new colours.
+export function resetStyleCaches() {
+  spanCache.clear();
+  cssCache.clear();
+}
 function spansFor(lang, text) {
   if (!lang) return NO_SPANS;
   const key = lang + "\u0000" + text;

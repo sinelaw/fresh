@@ -1,0 +1,303 @@
+// Language-server features. The server holds one connection per language
+// and keeps each document in sync from its edit log; this plugin asks it
+// questions about the active document and shows the answers.
+//
+//   F12 / Ctrl+click   go to definition        Shift+F12  find references
+//   Ctrl+Space         completion (also after ".")
+//   Ctrl+K / hover     hover information       F2         rename symbol
+//   Ctrl+.             code actions            Shift+Alt+F format document
+//   Ctrl+Shift+O       document symbols        Ctrl+Shift+M diagnostics panel
+//   ( and ,            signature help
+
+export function activate(fresh) {
+  const { h } = fresh;
+  const SEV = ["", "error", "warning", "info", "hint"];
+  const status = fresh.ui.status("lsp");
+
+  const active = () => {
+    const v = fresh.views.active();
+    return v && fresh.lsp.available(v.buffer) ? v : null;
+  };
+  const ask = async (v, method, params = {}) => {
+    try {
+      return await fresh.lsp.request(v.buffer, method, params, v.cursor);
+    } catch (e) {
+      fresh.ui.message(String(e.message || e).replace(/^lsp\.call: /, ""));
+      return null;
+    }
+  };
+  const pathOf = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
+  const rel = (p) => (p.startsWith(fresh.workspace.root + "/") ? p.slice(fresh.workspace.root.length + 1) : p);
+  const asList = (r) => (r == null ? [] : Array.isArray(r) ? r : [r]);
+  const loc = (l) => ({ path: pathOf(l.uri || l.targetUri), range: l.range || l.targetSelectionRange });
+
+  const goto = async (path, range) => {
+    const b = await fresh.buffers.open(path);
+    if (!b) return;
+    const v = fresh.views.active();
+    const p = fresh.lsp.offset(b, range.start.line, range.start.character);
+    if (p != null) v.setCursor(p, { center: true });
+  };
+
+  // ---------------------------------------------------------------- navigation
+
+  const definition = async () => {
+    const v = active();
+    if (!v) return;
+    const r = asList(await ask(v, "textDocument/definition")).map(loc);
+    if (!r.length) return fresh.ui.message("No definition found");
+    if (r.length === 1) return goto(r[0].path, r[0].range);
+    fresh.ui.pick({ title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range) });
+  };
+
+  let refsPanel = null;
+  const references = async () => {
+    const v = active();
+    if (!v) return;
+    const r = asList(await ask(v, "textDocument/references", { context: { includeDeclaration: true } })).map(loc);
+    if (!r.length) return fresh.ui.message("No references found");
+    // Show each reference's line: read it from the file through the server.
+    const texts = new Map();
+    for (const l of r) {
+      if (!texts.has(l.path)) {
+        try { texts.set(l.path, (await fresh.host.read(l.path)).split("\n")); } catch { texts.set(l.path, []); }
+      }
+    }
+    const items = [];
+    let last = null;
+    for (const l of r) {
+      if (l.path !== last) { items.push({ header: true, path: l.path }); last = l.path; }
+      items.push({ ...l, text: (texts.get(l.path)[l.range.start.line] || "").trim() });
+    }
+    refsPanel = fresh.ui.panel({ id: "references", title: `References (${r.length})`, place: "bottom" });
+    refsPanel.render(h("list", {
+      key: "refs",
+      items,
+      render: (it) => it.header ? h("text", { bold: true }, rel(it.path)) : h("row", {}, h("text", { dim: true }, `  ${it.range.start.line + 1}:${it.range.start.character + 1}`), h("text", { mono: true }, it.text)),
+      onActivate: (it) => !it.header && goto(it.path, it.range),
+    }));
+    refsPanel.focus("refs");
+  };
+
+  const symbols = async () => {
+    const v = active();
+    if (!v) return;
+    const r = asList(await ask(v, "textDocument/documentSymbol"));
+    const KIND = { 5: "class", 6: "method", 12: "function", 13: "variable", 14: "constant", 23: "struct", 10: "enum", 11: "interface", 8: "field", 2: "module" };
+    const flat = [];
+    const walk = (list, depth) => {
+      for (const s of list) {
+        const range = s.selectionRange || s.location?.range || s.range;
+        flat.push({ label: `${"  ".repeat(depth)}${s.name}`, detail: KIND[s.kind] || "", value: range });
+        if (s.children) walk(s.children, depth + 1);
+      }
+    };
+    walk(r, 0);
+    if (!flat.length) return fresh.ui.message("No symbols");
+    const b = v.buffer;
+    fresh.ui.pick({
+      title: "Symbols",
+      items: flat,
+      onChange: (it) => { if (it) { const p = fresh.lsp.offset(b, it.value.start.line, it.value.start.character); if (p != null) v.setCursor(p, { center: true }); } },
+      onAccept: (it) => { const p = fresh.lsp.offset(b, it.value.start.line, it.value.start.character); if (p != null) v.setCursor(p, { center: true }); },
+    });
+  };
+
+  // ---------------------------------------------------------------- edits
+
+  // Apply a WorkspaceEdit through the documents (open or not), so every
+  // client and every undo sees it.
+  const applyWorkspaceEdit = async (edit) => {
+    const byUri = new Map();
+    for (const [uri, edits] of Object.entries(edit.changes || {})) byUri.set(uri, edits);
+    for (const dc of edit.documentChanges || []) if (dc.textDocument) byUri.set(dc.textDocument.uri, dc.edits);
+    let n = 0;
+    for (const [uri, edits] of byUri) {
+      const b = await fresh.buffers.load(pathOf(uri));
+      n += applyTextEdits(b, edits);
+    }
+    return n;
+  };
+  const applyTextEdits = (b, edits) => {
+    const ops = [];
+    const resolved = edits
+      .map((e) => ({ s: fresh.lsp.offset(b, e.range.start.line, e.range.start.character), e: fresh.lsp.offset(b, e.range.end.line, e.range.end.character), text: e.newText }))
+      .filter((e) => e.s != null && e.e != null)
+      .sort((x, y) => y.s - x.s);
+    for (const e of resolved) {
+      if (e.e > e.s) ops.push({ t: "del", pos: e.s, len: e.e - e.s });
+      if (e.text) ops.push({ t: "ins", pos: e.s, text: e.text });
+    }
+    if (ops.length) b.edit(ops);
+    return resolved.length;
+  };
+
+  // The identifier around the cursor.
+  const currentWord = (v) => {
+    const b = v.buffer;
+    const left = b.text(Math.max(0, v.cursor - 100), v.cursor) || "";
+    const right = b.text(v.cursor, Math.min(b.length, v.cursor + 100)) || "";
+    return /[\w$]*$/.exec(left)[0] + /^[\w$]*/.exec(right)[0];
+  };
+
+  const rename = async () => {
+    const v = active();
+    if (!v) return;
+    const name = await fresh.ui.input({ title: "Rename to", value: currentWord(v) });
+    if (!name) return;
+    const r = await ask(v, "textDocument/rename", { newName: name });
+    if (!r) return fresh.ui.message("Nothing to rename here");
+    fresh.ui.message(`Renamed: ${await applyWorkspaceEdit(r)} edit(s)`);
+  };
+
+  const codeActions = async () => {
+    const v = active();
+    if (!v) return;
+    const sel = v.selection || { start: v.cursor, end: v.cursor };
+    const toPos = (p) => fresh.lsp.position(v.buffer, p);
+    const diags = fresh.lsp.diagnostics(v.buffer).filter((d) => d.start <= sel.end && d.end >= sel.start);
+    const r = asList(await ask(v, "textDocument/codeAction", {
+      range: { start: toPos(sel.start), end: toPos(sel.end) },
+      context: { diagnostics: diags.map((d) => ({ message: d.message, severity: d.severity, range: { start: toPos(d.start), end: toPos(d.end) } })) },
+    }));
+    if (!r.length) return fresh.ui.message("No code actions here");
+    fresh.ui.pick({
+      title: "Code actions",
+      items: r.map((a) => ({ label: a.title, detail: a.kind || "", value: a })),
+      onAccept: async ({ value: a }) => {
+        if (a.edit) await applyWorkspaceEdit(a.edit);
+        const cmd = a.command && typeof a.command === "object" ? a.command : a.command ? a : null;
+        if (cmd && cmd.command) await ask(v, "workspace/executeCommand", { command: cmd.command, arguments: cmd.arguments || [] });
+      },
+    });
+  };
+
+  const format = async () => {
+    const v = active();
+    if (!v) return;
+    const r = asList(await ask(v, "textDocument/formatting", { options: { tabSize: 4, insertSpaces: true } }));
+    if (!r.length) return fresh.ui.message("Already formatted (or the server does not format)");
+    fresh.ui.message(`Formatted: ${applyTextEdits(v.buffer, r)} edit(s)`);
+  };
+
+  // ---------------------------------------------------------------- completion, hover, signatures
+
+  const completion = async () => {
+    const v = active();
+    if (!v) return;
+    const r = await ask(v, "textDocument/completion");
+    const items = asList(r && r.items ? r.items : r);
+    if (!items.length) return fresh.ui.message("No completions");
+    const word = /[\w$]*$/.exec(v.buffer.text(Math.max(0, v.cursor - 100), v.cursor) || "")[0];
+    fresh.ui.pick({
+      title: "Complete",
+      value: word,
+      items: items.slice(0, 500).map((i) => ({ label: i.label, detail: i.detail || "", value: i })),
+      onAccept: ({ value: i }) => {
+        const vv = fresh.views.active();
+        const b = vv.buffer;
+        const left = b.text(Math.max(0, vv.cursor - 100), vv.cursor) || "";
+        const w = /[\w$]*$/.exec(left)[0];
+        const text = i.textEdit?.newText ?? i.insertText ?? i.label;
+        const start = vv.cursor - fresh.text.byteLen(w);
+        b.replace(start, vv.cursor, text);
+        vv.setCursor(start + fresh.text.byteLen(text));
+      },
+    });
+  };
+
+  const hoverText = (r) => {
+    const c = r?.contents;
+    if (!c) return null;
+    if (typeof c === "string") return c;
+    if (Array.isArray(c)) return c.map((x) => (typeof x === "string" ? x : x.value)).join("\n");
+    return c.value || null;
+  };
+  fresh.hover.provide(async (b, pos) => {
+    const diags = fresh.lsp.diagnostics(b).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
+    let text = diags.map((d) => `${SEV[d.severity] || "error"}: ${d.message}`).join("\n");
+    if (fresh.lsp.available(b)) {
+      try { const t = hoverText(await fresh.lsp.request(b, "textDocument/hover", {}, pos)); if (t) text = text ? `${text}\n\n${t}` : t; } catch {}
+    }
+    return text || null;
+  });
+  const hover = async () => {
+    const v = active();
+    if (!v) return;
+    const t = hoverText(await ask(v, "textDocument/hover"));
+    if (t) fresh.ui.popup(t);
+  };
+
+  const signatureHelp = async () => {
+    const v = active();
+    if (!v) return;
+    const r = await ask(v, "textDocument/signatureHelp");
+    const sig = r?.signatures?.[r.activeSignature ?? 0];
+    if (sig) fresh.ui.popup(sig.label + (sig.documentation ? `\n\n${typeof sig.documentation === "string" ? sig.documentation : sig.documentation.value}` : ""));
+  };
+
+  fresh.events.on("buffer.changed", ({ buffer, ops, local }) => {
+    if (!local || !fresh.lsp.available(buffer)) return;
+    const op = ops[0];
+    if (op?.t !== "ins") return;
+    if (op.text === "(" || op.text === ",") setTimeout(signatureHelp, 50);
+    if (op.text === ".") setTimeout(completion, 50);
+  });
+
+  // ---------------------------------------------------------------- diagnostics
+
+  let diagPanel = null;
+  const renderDiagnostics = () => {
+    if (!diagPanel || !diagPanel.open) return;
+    const items = [];
+    for (const b of fresh.buffers.all()) {
+      const ds = fresh.lsp.diagnostics(b);
+      if (!ds.length) continue;
+      items.push({ header: true, b });
+      const L = b.lines();
+      for (const d of ds.sort((x, y) => x.start - y.start)) {
+        const i = L ? L.starts.findIndex((s, k) => d.start >= s && (k + 1 >= L.starts.length || d.start < L.starts[k + 1])) : -1;
+        items.push({ b, d, line: i >= 0 ? (L.firstLine ?? 0) + i + 1 : "?" });
+      }
+    }
+    diagPanel.render(h("list", {
+      key: "diags",
+      items,
+      render: (it) => it.header
+        ? h("text", { bold: true }, rel(it.b.path))
+        : h("row", {}, h("text", { color: it.d.severity === 1 ? "#f14c4c" : "#cca700" }, it.d.severity === 1 ? "  ●" : "  ▲"), h("text", { dim: true }, String(it.line)), h("text", { mono: true }, it.d.message.split("\n")[0])),
+      onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path); fresh.views.active().setCursor(it.d.start, { center: true }); },
+    }));
+  };
+  const diagnosticsPanel = () => {
+    diagPanel = fresh.ui.panel({ id: "diagnostics", title: "Diagnostics", place: "bottom" });
+    renderDiagnostics();
+    diagPanel.focus("diags");
+  };
+  fresh.events.on("diagnostics.changed", renderDiagnostics);
+
+  // ---------------------------------------------------------------- folding and status
+
+  const refreshFolds = async (b) => {
+    if (!fresh.lsp.available(b)) return;
+    try {
+      const r = await fresh.lsp.request(b, "textDocument/foldingRange", {});
+      b.setFoldRanges(asList(r).map((f) => ({ start: f.startLine, end: f.endLine })));
+    } catch {}
+  };
+  const showStatus = (b) => status.set(b && fresh.lsp.available(b) ? `LSP ${b.language}` : "", { title: "Language server running for this file" });
+  fresh.events.on("buffer.activated", ({ buffer }) => { showStatus(buffer); refreshFolds(buffer); });
+  fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
+
+  const reg = (id, title, run, key) => { fresh.commands.register(id, { title, run }); if (key) fresh.keys.bind(key, id); };
+  reg("lsp.definition", "LSP: Go to Definition", definition, "F12");
+  reg("lsp.references", "LSP: Find References", references, "S-F12");
+  reg("lsp.completion", "LSP: Completion", completion, "C-Space");
+  reg("lsp.hover", "LSP: Hover", hover, "C-k");
+  reg("lsp.rename", "LSP: Rename Symbol", rename, "F2");
+  reg("lsp.codeActions", "LSP: Code Actions", codeActions, "C-.");
+  reg("lsp.format", "LSP: Format Document", format, "S-M-f");
+  reg("lsp.symbols", "LSP: Document Symbols", symbols, "C-S-o");
+  reg("lsp.signatureHelp", "LSP: Signature Help", signatureHelp, "C-S-Space");
+  reg("lsp.diagnostics", "Diagnostics: Show Panel", diagnosticsPanel, "C-S-m");
+}

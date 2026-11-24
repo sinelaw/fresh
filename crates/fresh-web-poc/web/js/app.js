@@ -7,7 +7,7 @@
 import { rpc, session, connectEvents } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { FileBuffer, VirtualBuffer, byteToIdx } from "./buffer.js";
-import { Pane } from "./view.js";
+import { Pane, resetStyleCaches } from "./view.js";
 import { Editing } from "./editing.js";
 import { TerminalPanel } from "./terminal.js";
 import { UIKit } from "./ui.js";
@@ -17,7 +17,7 @@ import { THEME } from "./highlight.js";
 
 const $ = (s) => document.querySelector(s);
 
-const PLUGINS = ["welcome", "explorer", "search"];
+const PLUGINS = ["welcome", "explorer", "search", "lsp", "git", "markdown", "compare", "tours", "keybindings", "themes"];
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
@@ -470,6 +470,13 @@ class App {
     return L.starts[i] + byteLen(L.lines[i].slice(0, character));
   }
 
+  lspPosition(b, pos) {
+    const L = b.text;
+    const i = L ? L.indexOf(pos) : -1;
+    if (i < 0) return null;
+    return { line: (L.firstLine ?? 0) + i, character: byteToIdx(L.lines[i], pos - L.starts[i]) };
+  }
+
   // ------------------------------------------------------------- input
 
   onInput() {
@@ -530,6 +537,30 @@ class App {
   }
 
   bindKey(key, command) { this.keys[key] = command; }
+
+  // Resolve with the next key pressed, as the keymap names it.
+  captureKey() {
+    return new Promise((resolve) => {
+      const f = (e) => {
+        if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        window.removeEventListener("keydown", f, true);
+        resolve(e.key === "Escape" ? null : this.keyName(e));
+      };
+      window.addEventListener("keydown", f, true);
+    });
+  }
+
+  applyTheme(t) {
+    for (const [k, v] of Object.entries(t)) {
+      if (k.startsWith("--")) document.documentElement.style.setProperty(k, v);
+      else THEME[k] = v;
+    }
+    resetStyleCaches();
+    for (const p of this.panes()) p.clearRows();
+    this.renderAll();
+  }
 
   keymap() {
     const base = {
