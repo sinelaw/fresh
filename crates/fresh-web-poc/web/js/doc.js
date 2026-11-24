@@ -39,8 +39,7 @@ const PLAIN = styleKey(EMPTY);
 const anchor = (p) => `<span data-a="${p}">​</span>`;
 
 export class DocView {
-  constructor(pane) {
-    this.pane = pane;
+  constructor() {
     this.el = document.createElement("div");
     this.el.className = "doc";
     this.el.innerHTML = `<div class="doc-content"><div class="doc-body"></div><div class="doc-carets"></div></div>`;
@@ -69,7 +68,7 @@ export class DocView {
   // ---------------------------------------------------------------- frame
 
   render(v) {
-    const pane = this.pane;
+    const pane = v.pane;
     const { cw, lh } = pane.metrics();
     const g = pane.geometry(v);
     // The compose width, leaving a margin on each side for fold toggles.
@@ -100,7 +99,7 @@ export class DocView {
     const L = buf.text;
     const d = buf.decor;
     const cursors = v.cursors.map((c) => c.pos);
-    const o = this.pane.layoutOpts(v, 0);
+    const o = v.pane.layoutOpts(v, 0);
     const vlines = new Map();
     for (const x of d.lines) {
       if (!applies(x, v.mode)) continue;
@@ -219,7 +218,7 @@ export class DocView {
 
   pass(v, ctx, lh) {
     const { L } = ctx;
-    const h = this.pane.size.h || this.pane.surfaceEl.clientHeight;
+    const h = v.pane.size.h || v.pane.surfaceEl.clientHeight;
     const hid = ctx.hidden(L.indexOf(v.top));
     if (hid) v.setTop(L.starts[hid.keep], 0);
     const ti = L.indexOf(v.top);
@@ -568,9 +567,9 @@ export class DocView {
   }
 
   // The byte at client point (x, y), held to the document's box.
-  posFromPoint(x, y) {
+  posFromPoint(v, x, y) {
     const cr = this.content.getBoundingClientRect();
-    const sr = this.pane.surfaceEl.getBoundingClientRect();
+    const sr = v.pane.surfaceEl.getBoundingClientRect();
     x = Math.max(cr.left + 1, Math.min(cr.right - 1, x));
     y = Math.max(sr.top + 1, Math.min(sr.bottom - 1, y));
     // Off the text (right of a short table, between blocks): into the
@@ -631,8 +630,8 @@ export class DocView {
   }
 
   // Lines [first, last] drawn on screen.
-  visibleLines() {
-    const h = this.pane.size.h;
+  visibleLines(v) {
+    const h = v.pane.size.h;
     const on = this.lineY.filter(([, y], i) => y < this.sy + h && (this.lineY[i + 1]?.[1] ?? Infinity) > this.sy);
     return on.length ? { first: on[0][0], last: on[on.length - 1][0] } : null;
   }
@@ -643,21 +642,21 @@ export class DocView {
   // probe points beyond the caret's line until one lands on another line,
   // scrolling when the probe leaves the view.
   lineFrom(v, p, dir, goal) {
-    const lh = this.pane.metrics().lh;
+    const lh = v.pane.metrics().lh;
     let r = this.caretRect(p);
     if (!r) return null;
     let top = r.top, bot = r.top + (r.height || lh);
     let y = dir > 0 ? bot : top;
     for (let guard = 0; guard < 2000; guard++) {
       y += dir * 3;
-      const sr = this.pane.surfaceEl.getBoundingClientRect();
+      const sr = v.pane.surfaceEl.getBoundingClientRect();
       if (y <= sr.top + 1 || y >= sr.bottom - 1) {
-        const shift = this.scrollBy(v, dir * Math.max(lh, (this.pane.size.h || sr.height) / 2));
+        const shift = this.scrollBy(v, dir * Math.max(lh, (v.pane.size.h || sr.height) / 2));
         if (!shift) return null;
         y -= shift; top -= shift; bot -= shift;
         continue;
       }
-      const q = this.posFromPoint(this.content.getBoundingClientRect().left + goal, y);
+      const q = this.posFromPoint(v, this.content.getBoundingClientRect().left + goal, y);
       if (q == null) continue;
       const qr = this.caretRect(q);
       if (qr && (dir > 0 ? qr.top >= bot - 2 : qr.top + (qr.height || lh) <= top + 2)) return q;

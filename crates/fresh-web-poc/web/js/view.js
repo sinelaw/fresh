@@ -29,13 +29,11 @@ export class View {
     this.mode = "source"; // or "compose"
     this.opts = { composeWidth: null, wrap: false, lineNumbers: !buf.isVirtual };
     this.folds = []; // [{start, end}] window line indices; start's line stays
-    buf.views.add(this);
   }
   get primary() { return this.cursors[0]; }
   get top() { return this._top; }
-  // Show the line starting at `b` at the top.
-  set top(b) { this.setTop(b, 0); }
-  setTop(b, px) { this._top = b; this.topPx = px; }
+  // Show the line starting at `b` at the top, `px` pixels into it.
+  setTop(b, px = 0) { this._top = b; this.topPx = px; }
   shift(op) {
     const sp = (p, r) => {
       if (op.t === "ins") return p > op.pos || (p === op.pos && r) ? p + byteLen(op.text) : p;
@@ -76,15 +74,28 @@ export class Pane {
     this.el = document.createElement("div");
     this.el.className = "pane";
     this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="rulers"></div><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="thumb"></div></div></div>`;
-    for (const k of ["tabs", "surface", "rulers", "gutter", "text", "carets", "scrollbar", "thumb"]) this[k + "El"] = this.el.querySelector("." + k);
+    const el = this.el;
+    const part = (k) => el.querySelector("." + k);
+    this.tabsEl = part("tabs");
+    this.surfaceEl = part("surface");
+    this.rulersEl = part("rulers");
+    this.gutterEl = part("gutter");
+    this.textEl = part("text");
+    this.caretsEl = part("carets");
+    this.scrollbarEl = part("scrollbar");
+    this.thumbEl = part("thumb");
     // A view in compose mode is drawn as a document instead of rows.
-    this.doc = new DocView(this);
+    this.doc = new DocView();
     this.surfaceEl.insertBefore(this.doc.el, this.scrollbarEl);
     this.rows = [];
     this.lastWidth = new Map();
     // Sizes come from a ResizeObserver, never read while drawing: reading
     // layout after writing rows would force a synchronous reflow.
     this.size = { w: 0, h: 0, sb: 0 };
+  }
+
+  // Take the surface's resizes and mouse (once, after `new`).
+  listen() {
     new ResizeObserver(() => {
       this.size = { w: this.surfaceEl.clientWidth, h: this.surfaceEl.clientHeight, sb: this.scrollbarEl.clientHeight };
       this.scheduleRender();
@@ -102,6 +113,7 @@ export class Pane {
     let v = this.views.find((x) => x.buf === buf);
     if (!v) {
       v = new View(this, buf);
+      buf.views.add(v);
       this.views.push(v);
     }
     this.view = v;
@@ -268,7 +280,7 @@ export class Pane {
   // Window line indices [first, last] on screen.
   visibleLineRange(v) {
     if (!v.buf.text || this.view !== v) return null;
-    if (v.mode === "compose") return this.doc.visibleLines();
+    if (v.mode === "compose") return this.doc.visibleLines(v);
     const { consumed } = this.computeRows(v, 0);
     return consumed.length ? { first: consumed[0], last: consumed[consumed.length - 1] } : null;
   }
@@ -302,7 +314,7 @@ export class Pane {
     if (!this.ready(v)) {
       buf.ensure(v.top, this.metrics().rows + 50).then(() => {
         const L2 = buf.text;
-        if (L2 && L2.indexOf(v.top) < 0) v.top = L2.starts[0];
+        if (L2 && L2.indexOf(v.top) < 0) v.setTop(L2.starts[0]);
         if (this.ready(v) || (L2 && L2.eof)) this.render();
       });
       if (!buf.text || buf.text.indexOf(v.top) < 0) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
@@ -452,7 +464,8 @@ export class Pane {
 
   // The byte drawn at client point (x, y).
   posFromPoint(x, y) {
-    if (this.view?.mode === "compose") return this.doc.posFromPoint(x, y);
+    const v = this.view;
+    if (v && v.mode === "compose") return this.doc.posFromPoint(v, x, y);
     const { cw, lh } = this.metrics();
     const rect = this.textEl.getBoundingClientRect();
     return this.posAt(Math.floor((y - rect.top) / lh), Math.max(0, (x - rect.left) / cw));
@@ -533,7 +546,7 @@ export class Pane {
       v.buf.ensure(Math.max(0, L.start - 1)).then(() => this.scrollLines(n));
       return;
     }
-    v.top = L.starts[j];
+    v.setTop(L.starts[j]);
     if (!v.buf.full && ((!L.eof && L.count - j < 400) || (!L.bof && j < 50))) v.buf.ensure(v.top, 400);
     this.scheduleRender();
   }
@@ -547,8 +560,8 @@ export class Pane {
     const L = v.buf.text;
     const ci = L.indexOf(v.primary.pos);
     if (ci < 0) return;
-    if (center) { v.top = L.starts[Math.max(0, ci - Math.floor(this.metrics().rows / 2))]; return; }
-    if (ci < L.indexOf(v.top)) { v.top = L.starts[ci]; return; }
+    if (center) { v.setTop(L.starts[Math.max(0, ci - Math.floor(this.metrics().rows / 2))]); return; }
+    if (ci < L.indexOf(v.top)) { v.setTop(L.starts[ci]); return; }
     for (let guard = 0; guard < 2000; guard++) {
       const { rows, g } = this.computeRows(v, 0);
       this.rows = rows;
@@ -556,7 +569,7 @@ export class Pane {
       if (at && at.r < g.rows) return;
       const ti = L.indexOf(v.top);
       if (ti >= ci || ti >= L.count - 1) return;
-      v.top = L.starts[ti + 1];
+      v.setTop(L.starts[ti + 1]);
     }
   }
 
@@ -594,7 +607,7 @@ export class Pane {
       if (t < 0) {
         const ti = L.indexOf(v.top);
         if (ti === 0) break;
-        v.top = L.starts[ti - 1];
+        v.setTop(L.starts[ti - 1]);
         ({ rows } = this.computeRows(v, Math.abs(n) + 2));
         this.rows = rows;
         at = this.caretXY(c.pos);

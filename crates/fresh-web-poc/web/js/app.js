@@ -44,7 +44,9 @@ class App {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem("fresh-poc:settings") || "{}"); } catch {}
     this.settings = { ...DEFAULT_SETTINGS, ...saved };
-    try { this.userKeys = JSON.parse(localStorage.getItem("fresh-poc:keys") || "{}"); } catch { this.userKeys = {}; }
+    let userKeys = {};
+    try { userKeys = JSON.parse(localStorage.getItem("fresh-poc:keys") || "{}"); } catch {}
+    this.userKeys = userKeys;
   }
 
   async start() {
@@ -84,7 +86,9 @@ class App {
     this.input.addEventListener("paste", (e) => { e.preventDefault(); this.paste(e.clipboardData.getData("text")); });
     this.input.addEventListener("copy", (e) => this.onCopy(e, false));
     this.input.addEventListener("cut", (e) => this.onCopy(e, true));
-    this.layoutTree = { pane: new Pane(this) };
+    const first = new Pane(this);
+    first.listen();
+    this.layoutTree = { pane: first };
     this.activePane = this.layoutTree.pane;
     this.registerCoreCommands();
     this.relayout();
@@ -166,6 +170,7 @@ class App {
   split(dir, ratio = 0.5, buf = null) {
     const old = this.activePane;
     const np = new Pane(this);
+    np.listen();
     const replace = (n) => {
       if (n.pane === old) return { dir, ratio, a: { pane: old }, b: { pane: np } };
       if (n.pane) return n;
@@ -436,15 +441,15 @@ class App {
     const b = v.buf;
     if (b.full) {
       const L = b.text;
-      v.top = L.starts[Math.min(L.count - 1, Math.floor(f * L.count))];
+      v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))]);
     } else if (b.totalLines) {
       const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * b.totalLines) });
-      if (r.pos != null) { await b.ensure(r.pos, 200); v.top = r.pos; }
+      if (r.pos != null) { await b.ensure(r.pos, 200); v.setTop(r.pos); }
     } else {
       const p = Math.floor(f * b.len);
       await b.ensure(p, 200);
       const L = b.text;
-      v.top = L.starts[Math.max(0, L.indexOf(p))];
+      v.setTop(L.starts[Math.max(0, L.indexOf(p))]);
     }
     pane.scheduleRender();
   }

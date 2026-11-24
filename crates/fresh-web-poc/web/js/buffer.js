@@ -251,7 +251,7 @@ export class FileBuffer extends Buffer {
     this.text = null;
     for (const v of this.views) {
       for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = null; }
-      v.top = 0;
+      v.setTop(0);
     }
     const v = [...this.views][0];
     return this.ensure(v ? v.primary.pos : 0);

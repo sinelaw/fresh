@@ -53,7 +53,7 @@ export class Palette {
         if (/^:\d/.test(q) && origin) this.app.pushHistory(origin.v, origin.pos);
         it?.run ? it.run() : this.openTyped(q);
       },
-      onCancel: () => { if (origin && /^:\d/.test(this.input.value)) { origin.v.top = origin.top; this.app.editing.place(origin.v.pane, origin.pos, false); } },
+      onCancel: () => { if (origin && /^:\d/.test(this.input.value)) { origin.v.setTop(origin.top); this.app.editing.place(origin.v.pane, origin.pos, false); } },
     });
   }
 
