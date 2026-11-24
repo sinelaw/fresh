@@ -30,6 +30,7 @@ export class View {
     this.opts = { composeWidth: null, wrap: false, lineNumbers: !buf.isVirtual };
     this.folds = []; // [{start, end}] window line indices; start's line stays
     this.left = 0; // columns scrolled sideways (no wrap)
+    this.preview = false; // the split's preview tab: the next preview replaces it
   }
   get primary() { return this.cursors[0]; }
   get top() { return this._top; }
@@ -126,13 +127,26 @@ export class Pane {
 
   // ---------------------------------------------------------------- tabs
 
-  show(buf) {
+  // Show `buf` in its tab here, made if there is none. `preview` true: a
+  // new tab is the split's preview tab, in the place of the one there was
+  // (unless that one holds unsaved changes: it is kept); false: the tab is
+  // kept (no longer a preview); null: as it is.
+  show(buf, preview = null) {
     let v = this.views.find((x) => x.buf === buf);
     if (!v) {
       v = new View(this, buf);
       buf.views.add(v);
-      this.views.push(v);
-    }
+      const old = preview ? this.views.find((x) => x.preview) : null;
+      if (old && !old.buf.modified) {
+        this.views.splice(this.views.indexOf(old), 1, v);
+        old.dispose();
+        this.app.dropIfUnshown(old.buf);
+      } else {
+        if (old) old.preview = false;
+        this.views.push(v);
+      }
+      v.preview = !!preview;
+    } else if (preview === false) v.preview = false;
     this.view = v;
     this.app.onViewShown(this, v);
     this.renderTabs();
@@ -154,13 +168,13 @@ export class Pane {
     const names = this.views.map((v) => v.buf.name);
     for (const [i, v] of this.views.entries()) {
       const t = document.createElement("div");
-      t.className = "tab" + (v === this.view ? " active" : "");
+      t.className = "tab" + (v === this.view ? " active" : "") + (v.preview ? " preview" : "");
       t.dataset.i = String(i);
       // Tabs of files with one name show their parent folder.
       const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path;
       const label = dup ? v.buf.path.split("/").slice(-2).join("/") : v.buf.name;
       t.textContent = (v.buf.modified ? "● " : "") + label + (v.buf.readOnly && !v.buf.isVirtual ? " [RO]" : "");
-      t.title = v.buf.path || v.buf.name;
+      t.title = (v.buf.path || v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
       // A press shows it (and may drag it: app.tabPress); the middle button
       // closes it; the right one opens its menu.
       t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.app.closeTab(this, v); else if (e.button === 0) this.app.tabPress(e, this, v); };

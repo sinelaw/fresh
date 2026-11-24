@@ -63,8 +63,10 @@ export function activate(fresh) {
       depth: (r) => r.depth,
       // Files the ignore rules leave out are shown dimmed.
       render: (r) => h("text", { mono: true, dim: r.ignored }, " ".repeat(r.depth * 2) + (r.dir ? (open.has(r.path) ? "▾ " : "▸ ") : "  ") + r.name),
-      onSelect: (r) => { selected = r.path; },
-      onActivate: (r) => activate(r),
+      // Moving onto a file with the keys, or a click on it, shows it in the
+      // preview tab; Enter or a double-click opens it for good.
+      onSelect: (r, _i, how) => { selected = r.path; if (how === "key" && !r.dir) showFile(r, true); },
+      onActivate: (r, _i, how) => activate(r, how),
       activateOnClick: true,
       onContext: (r, _i, at) => menu(r, at),
       onKey: (e, r) => key(e, r),
@@ -79,15 +81,20 @@ export function activate(fresh) {
     for (const d of open) if (d !== root) await load(d);
     render();
   };
-  const activate = async (r) => {
+  // A folder opens or closes (on its first click); a file opens in the
+  // preview tab on a click, and in a tab of its own, with the keyboard,
+  // on a double-click or Enter.
+  const activate = async (r, how) => {
     if (!r) return;
     selected = r.path;
     if (r.dir) {
+      if (how === "double") return;
       if (open.has(r.path)) collapse(r.path);
       else await expand(r.path);
       render();
-    } else fresh.buffers.open(r.path);
+    } else showFile(r, how === "click");
   };
+  const showFile = (r, preview) => fresh.buffers.open(r.path, preview ? { preview: true, focus: false } : { preview: false });
   const dirOf = (r) => (r ? (r.dir ? r.path : r.path.replace(/\/[^/]*$/, "")) : root);
   const parentOf = (p) => p.replace(/\/[^/]*$/, "");
   const rel = (p) => (p === root ? "the workspace's root" : p.slice(root.length + 1));

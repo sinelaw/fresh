@@ -30,7 +30,7 @@ const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.past
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
-  show_whitespace: false, show_indent_guides: true, highlight_brackets: true, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
+  show_whitespace: false, show_indent_guides: true, preview_tabs: true, highlight_brackets: true, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
 };
 
 class App {
@@ -46,6 +46,7 @@ class App {
     this.watches = new Map();
     this.hoverProviders = [];
     this.history = { back: [], fwd: [] };
+    this.opening = Promise.resolve(); // the file being opened (openFile)
     this.killRing = [];
     this.metrics = { cw: 8, lh: 18 };
     this.status = "";
@@ -149,7 +150,7 @@ class App {
   // document by its number) with their cursor and scroll, the active split
   // and tab, and whether the sidebar and the terminal show.
   layoutSnapshot() {
-    const tab = (v) => (this.tabKey(v.buf) ? { path: v.buf.path || null, untitled: v.buf.untitled, pos: v.primary.pos, top: v.top } : null);
+    const tab = (v) => (this.tabKey(v.buf) ? { path: v.buf.path || null, untitled: v.buf.untitled, pos: v.primary.pos, top: v.top, preview: v.preview } : null);
     const node = (n) => (n.pane
       ? { tabs: n.pane.views.map(tab).filter(Boolean), active: n.pane.view ? this.tabKey(n.pane.view.buf) : null }
       : { dir: n.dir, ratio: n.ratio, a: node(n.a), b: node(n.b) });
@@ -183,7 +184,7 @@ class App {
       for (const t of n.tabs) {
         let b;
         try { b = t.untitled ? await this.loadUntitled(t.untitled) : await this.loadFile(t.path); } catch { continue; }
-        const v = pane.show(b);
+        const v = pane.show(b, t.preview ? true : null);
         const pos = Math.max(0, Math.min(t.pos | 0, b.len));
         v.cursors = [{ pos, anchor: null, goalX: null }];
         v.setTop(Math.max(0, Math.min(t.top | 0, pos)));
@@ -319,6 +320,7 @@ class App {
   }
   split(dir, ratio = 0.5, buf = null) {
     const old = this.activePane;
+    if (old.view) this.keep(old.view);
     const np = new Pane(this);
     np.listen();
     const replace = (n) => {
@@ -416,15 +418,24 @@ class App {
   }
   // Show a buffer: in the active pane ("tab"), a new split below ("split")
   // or to the right ("right").
-  showBuffer(b, place = "tab") {
+  // `preview` and `focus` as for `openFile`; preview tabs are a setting.
+  showBuffer(b, place = "tab", { preview = null, focus = true } = {}) {
     if (place === "split" || place === "right") {
       const existing = this.panes().find((p) => p.view?.buf === b);
       if (existing) { this.focusPane(existing); return existing.view; }
       return this.split(place === "split" ? "v" : "h", 0.6, b).view;
     }
-    const v = this.activePane.show(b);
-    this.focusPane(this.activePane);
+    const v = this.activePane.show(b, preview && !this.settings.preview_tabs ? false : preview);
+    if (focus) this.focusPane(this.activePane);
     return v;
+  }
+  // A preview tab made a tab of its own (it was edited, clicked, split or
+  // kept open).
+  keep(v) {
+    if (!v.preview) return;
+    v.preview = false;
+    v.pane.renderTabs();
+    this.rememberLayout();
   }
 
   // ------------------------------------------------------------- tabs
@@ -435,7 +446,7 @@ class App {
   // the tab it lands beside (`.drop-before` / `.drop-after`) or the split
   // (`.drop-into`).
   tabPress(e, pane, v) {
-    pane.show(v.buf);
+    pane.show(v.buf, false);
     this.focusPane(pane);
     const x0 = e.clientX, y0 = e.clientY;
     let dragging = false, target = null, marked = null;
@@ -516,6 +527,7 @@ class App {
     const rel = b.path && b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
     const copy = (t) => navigator.clipboard?.writeText(t).then(() => this.setStatus(`Copied ${t}`), () => this.setStatus("The browser did not allow writing the clipboard"));
     this.ui.menu([
+      ...(v.preview ? [{ label: "Keep Open", run: () => this.keep(v) }] : []),
       { label: "Close", keys: this.keyLabel("view.closeTab"), run: () => this.closeTab(pane, v) },
       { label: "Close Others", run: () => this.closeTabs(pane, (x) => x !== v) },
       { label: "Close to the Right", disabled: pane.views.indexOf(v) === pane.views.length - 1, run: () => this.closeTabs(pane, (x, i) => i > pane.views.indexOf(v)) },
@@ -593,12 +605,21 @@ class App {
 
   // Show a file, at a line and (UTF-16) column when given. A navigation:
   // Go Back returns to where the active view was.
-  async openFile(path, { line, column, place } = {}) {
+  // `preview`: in the split's preview tab (true), in a tab of its own
+  // (false: a preview tab showing it is kept), or as it is shown already
+  // (left out). `focus: false` leaves the keyboard where it is (a list
+  // previewing what it selects). Files open in the order they were asked
+  // for (a click's preview, then the double-click's keep).
+  async openFile(path, { line, column, place, preview, focus } = {}) {
+    const turn = this.opening;
+    let done = () => {};
+    this.opening = new Promise((r) => { done = r; });
     try {
+      await turn;
       const from = this.view();
       const b = await this.loadFile(path);
       if (from) this.pushHistory(from);
-      const v = this.showBuffer(b, place);
+      const v = this.showBuffer(b, place, { preview, focus });
       this.noteRecent(b.path);
       if (line != null) await this.gotoLine(line - 1, column != null ? column - 1 : 0, { history: false });
       this.updateStatus();
@@ -606,6 +627,8 @@ class App {
     } catch (e) {
       this.setStatus(String(e.message || e));
       return null;
+    } finally {
+      done();
     }
   }
 
@@ -630,6 +653,8 @@ class App {
   }
 
   afterEdit(b, data) {
+    // Editing a preview tab's file keeps it.
+    if (data.local) for (const v of b.views) this.keep(v);
     this.host.emit("buffer.changed", { buffer: b, ops: [data.op], local: data.local });
     this.renderBuffer(b.id);
     for (const p of this.panes()) if (p.views.some((v) => v.buf === b)) p.renderTabs();
@@ -1178,6 +1203,8 @@ class App {
     cmd("view.nextSplit", "View: Next Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
     cmd("view.prevSplit", "View: Previous Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
     cmd("view.closeTab", "View: Close Tab", () => { const p = P(); if (p.view) this.closeTab(p, p.view); });
+    cmd("view.keepOpen", "View: Keep Tab Open (preview tab)", () => { const v = V(); if (v) this.keep(v); });
+    cmd("settings.previewTabs", "Settings: Toggle Preview Tabs", toggle("preview_tabs"));
     // Zoom: the editor's and the terminals' text, a tenth at a time.
     const zoom = (z) => {
       this.settings.zoom = Math.round(clamp(z, 0.5, 3) * 10) / 10;

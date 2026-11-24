@@ -169,7 +169,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Tabs | Drag to reorder; drag onto another split's tabs or text to move it there (cursors, scroll, mode and folds kept; an emptied split closes) | fixed |
 | Tabs | Wheel over the tab bar scrolls it | fixed |
 | Tabs | Same-name tabs show their folder | present |
-| Tabs | Preview (ephemeral) tab from a single click in the explorer | missing (needs a tab state model; after the rest) |
+| Tabs | Preview (ephemeral) tab, italic: a single click or the arrows in the explorer, and selecting a project-search result or a reference, show the file in the split's preview tab (the keyboard stays in the list), replaced by the next preview; editing it, Enter or a double-click, clicking its tab, splitting, or Keep Open (tab menu, palette) keep it; Edit ▸ Settings ▸ Preview Tabs turns them off; remembered with the layout | fixed |
 | Editor | Right-click context menu (Cut / Copy / Paste, Go to Definition, References, Rename, Code Actions, Hover, Format, comment / duplicate / delete line, select all / occurrences, Revert); a right press outside the selection moves the caret | fixed |
 | Editor | Scrollbar: drag, click to jump | present |
 | Editor | Scrollbar markers: git changes, search matches, diagnostics (in lanes), the cursor's line; for buffers held whole | fixed |

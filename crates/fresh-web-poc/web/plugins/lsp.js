@@ -32,7 +32,8 @@ export function activate(fresh) {
   const asList = (r) => (r == null ? [] : Array.isArray(r) ? r : [r]);
   const loc = (l) => ({ path: pathOf(l.uri || l.targetUri), range: l.range || l.targetSelectionRange });
 
-  const goto = (path, range) => fresh.buffers.open(path, { line: range.start.line + 1, column: range.start.character + 1 });
+  // `how` as for `fresh.buffers.open` ({preview, focus}).
+  const goto = (path, range, how = {}) => fresh.buffers.open(path, { line: range.start.line + 1, column: range.start.character + 1, ...how });
 
   // ---------------------------------------------------------------- navigation
 
@@ -69,7 +70,10 @@ export function activate(fresh) {
       key: "refs",
       items,
       render: (it) => it.header ? h("text", { bold: true }, rel(it.path)) : h("row", {}, h("text", { dim: true }, `  ${it.range.start.line + 1}:${it.range.start.character + 1}`), h("text", { mono: true }, it.text)),
-      onActivate: (it) => !it.header && goto(it.path, it.range),
+      // Selected, a reference shows in the preview tab (the keyboard stays
+      // in the list); Enter or a double-click opens it for good.
+      onSelect: (it) => !it.header && goto(it.path, it.range, { preview: true, focus: false }),
+      onActivate: (it) => !it.header && goto(it.path, it.range, { preview: false }),
     }));
     refsPanel.focus("refs");
   };

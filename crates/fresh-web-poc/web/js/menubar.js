@@ -70,6 +70,7 @@ export const MENUS = [
     { label: "Settings", items: [
       { command: "settings.autoSave", label: "Auto Save", checked: setting("auto_save") },
       { command: "settings.autoClose", label: "Auto Close Brackets", checked: setting("auto_close") },
+      { command: "settings.previewTabs", label: "Preview Tabs", checked: setting("preview_tabs") },
     ] },
     { command: "keys.editor", label: "Keyboard Shortcuts" },
   ] },

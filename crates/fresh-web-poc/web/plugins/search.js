@@ -228,9 +228,12 @@ export function activate(fresh) {
     }
     return out;
   };
-  const openMatch = async (m) => {
+  // A match selected (a click, the arrows) shows in the preview tab, the
+  // keyboard staying in the list; Enter or a double-click opens it in a
+  // tab of its own.
+  const openMatch = async (m, preview) => {
     if (!m || m.header) return;
-    const b = await fresh.buffers.open(m.path);
+    const b = await fresh.buffers.open(m.path, preview ? { preview: true, focus: false } : { preview: false });
     const v = fresh.views.active();
     const L = b?.lines();
     if (!L) return;
@@ -281,7 +284,8 @@ export function activate(fresh) {
         render: (m) => m.header
           ? h("text", { bold: true }, m.path)
           : h("row", {}, h("text", { dim: true }, `  ${m.line + 1}:${m.col + 1}`), h("text", { mono: true }, m.text.trim())),
-        onActivate: openMatch,
+        onSelect: (m) => openMatch(m, true),
+        onActivate: (m) => openMatch(m, false),
       })));
   };
   const openPanel = () => {

@@ -79,6 +79,7 @@ body {
 .tab.active { background: var(--bg); color: var(--fg); }
 .pane.active .tab.active { border-top: 1px solid var(--accent); }
 .tab .x { margin-left: 8px; opacity: .5; }
+.tab.preview { font-style: italic; }
 /* A dragged tab's landing place (app.tabPress). */
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }

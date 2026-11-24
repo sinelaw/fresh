@@ -341,12 +341,17 @@ class Panel {
         st.sel = i;
         for (const x of inner.children) x.classList.toggle("sel", +x.dataset.i === i);
         el.focus({ preventScroll: true });
-        p.onSelect?.(it, i);
+        // `onSelect(item, index, how)`: how is "mouse" (a press, with its
+        // event) or "key" (the arrows).
+        p.onSelect?.(it, i, "mouse", e);
         if (e.button === 0 && p.onDrop) dragFrom(e, it);
       };
-      r.ondblclick = () => p.onActivate?.(it, i);
+      // `onActivate(item, index, how)`: how is "click" (with
+      // `activateOnClick`, the first click of one or more), "double" or
+      // "key" (Enter).
+      r.ondblclick = () => p.onActivate?.(it, i, "double");
       r.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); p.onContext?.(it, i, { x: e.clientX, y: e.clientY }); };
-      if (p.activateOnClick) r.onclick = () => p.onActivate?.(it, i);
+      if (p.activateOnClick) r.onclick = (e) => { if (e.detail <= 1) p.onActivate?.(it, i, "click"); };
       return r;
     };
     // Dragging a row (`onDrop(item, onto)` given): past a few pixels it
@@ -399,7 +404,7 @@ class Panel {
     el.onkeydown = (e) => {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); this.listMove(key, e.key === "ArrowDown" ? 1 : -1); }
       else if (e.key === "PageDown" || e.key === "PageUp") { e.preventDefault(); this.listMove(key, (e.key === "PageDown" ? 1 : -1) * Math.floor(el.clientHeight / ROW_H)); }
-      else if (e.key === "Enter") { e.preventDefault(); p.onActivate?.(items[st.sel], st.sel); }
+      else if (e.key === "Enter") { e.preventDefault(); p.onActivate?.(items[st.sel], st.sel, "key"); }
       else p.onKey?.(e, items[st.sel], st.sel);
     };
     el._move = (d) => {
@@ -409,7 +414,7 @@ class Panel {
       st.sel = Math.max(0, Math.min(items.length - 1, i));
       show();
       draw();
-      p.onSelect?.(items[st.sel], st.sel);
+      p.onSelect?.(items[st.sel], st.sel, "key");
     };
     el._draw = draw;
     const show = () => {
@@ -453,8 +458,10 @@ class Panel {
       render: (r) => h("row", { class: "ui-tree-row" },
         h("text", { class: "ui-tree-indent" }, " ".repeat(r.depth * 2) + (r.nd.children ? (r.isOpen ? "▾ " : "▸ ") : "  ")),
         typeof r.nd.label === "string" ? h("text", {}, r.nd.label) : r.nd.label),
-      onActivate: (r) => {
+      onActivate: (r, _i, how) => {
         if (r.nd.children) {
+          // A folder opens or closes on its first click.
+          if (how === "double") return;
           if (r.isOpen) { open.delete(r.id); open.add("!" + r.id); } else { open.add(r.id); open.delete("!" + r.id); }
           this.render(this.tree);
           this.focus(key);
