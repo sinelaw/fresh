@@ -955,6 +955,11 @@ fn drawn_rows(buf: &Buffer) -> Vec<Vec<(u16, &ratatui::buffer::Cell)>> {
     let area = buf.area;
     let mut never = ratatui::buffer::Cell::default();
     never.set_symbol("\u{0}");
+    // A control character has no width of its own for ratatui to measure
+    // (it asserts against measuring one); the sentinel is one column.
+    never.set_diff_option(ratatui::buffer::CellDiffOption::ForcedWidth(
+        std::num::NonZeroU16::MIN,
+    ));
     let blank = Buffer::filled(area, never);
     let mut rows: Vec<Vec<(u16, &ratatui::buffer::Cell)>> = vec![Vec::new(); area.height as usize];
     for (x, y, cell) in blank.diff(buf) {
