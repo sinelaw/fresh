@@ -16,6 +16,7 @@ mod hub;
 mod lsp;
 mod ot;
 mod process;
+mod skins;
 mod terminal;
 mod themes;
 mod workspace;
@@ -139,6 +140,8 @@ impl App {
                 );
                 json!({})
             }
+            "skin.list" => skins::list(ws),
+            "host.stats" => skins::host_stats(ws),
             "fs.list" => {
                 let p = m
                     .get("path")
@@ -360,8 +363,8 @@ impl App {
             "lsp.call" => self.lsp_call(m)?,
             "lsp.status" => self.lsp.status(),
 
-            "theme.list" => themes::list(),
-            "theme.get" => themes::get(s(m, "key")?)?,
+            "theme.list" => themes::list(ws),
+            "theme.get" => themes::get(ws, s(m, "key")?)?,
 
             _ => fail!(UnknownOp, "unknown op {op}"),
         })
@@ -908,6 +911,14 @@ fn content_type(path: &str) -> &'static str {
         Some("css") => "text/css; charset=utf-8",
         Some("json") => "application/json",
         Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
         _ => "application/octet-stream",
     }
 }
@@ -927,6 +938,34 @@ fn asset(path: &str) -> Option<Vec<u8>> {
         .iter()
         .find(|(p, _)| *p == path)
         .map(|(_, b)| b.to_vec())
+}
+
+/// The names directly inside one of the client's own folders ("skins").
+fn asset_children(dir: &str) -> Vec<String> {
+    if let Some(root) = std::env::var_os("FRESH_POC_WEB") {
+        let mut names: Vec<String> = std::fs::read_dir(PathBuf::from(root).join(dir))
+            .map(|r| {
+                r.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        return names;
+    }
+    let prefix = format!("{dir}/");
+    let mut names: Vec<String> = assets::ASSETS
+        .iter()
+        .filter_map(|(p, _)| {
+            p.strip_prefix(&prefix)?
+                .split('/')
+                .next()
+                .map(str::to_string)
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn main() -> Result<()> {
@@ -1075,6 +1114,7 @@ async fn serve(app: Arc<App>, port: u16) -> Result<()> {
     let router = axum::Router::new()
         .route("/api", post(api))
         .route("/events", get(events))
+        .route("/skins/{id}/{*path}", get(skin_file))
         .fallback(get(static_file))
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -1152,6 +1192,32 @@ async fn static_file(uri: axum::http::Uri) -> axum::response::Response {
         Some(b) => (
             [
                 (axum::http::header::CONTENT_TYPE, content_type(p)),
+                (axum::http::header::CACHE_CONTROL, "no-store"),
+            ],
+            b,
+        )
+            .into_response(),
+        None => (axum::http::StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+/// A skin's file: a built-in skin's from the client's own files, a user
+/// skin's through the workspace's authority (`src/skins.rs`).
+async fn skin_file(
+    axum::extract::State(app): axum::extract::State<Arc<App>>,
+    axum::extract::Path((id, path)): axum::extract::Path<(String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let ws = app.ws.clone();
+    let p = path.clone();
+    let found = tokio::task::spawn_blocking(move || skins::file(&ws, &id, &p))
+        .await
+        .ok()
+        .flatten();
+    match found {
+        Some(b) => (
+            [
+                (axum::http::header::CONTENT_TYPE, content_type(&path)),
                 (axum::http::header::CACHE_CONTROL, "no-store"),
             ],
             b,

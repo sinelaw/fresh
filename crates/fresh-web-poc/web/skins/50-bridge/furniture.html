@@ -1,0 +1,23 @@
+<!-- Bridge — the console's frame, built inside #device. Decoration only:
+     the top bar's title and pill are the client's own top bar, and the
+     bottom bar is its status bar (skin.css moves them into the frame). This
+     draws the elbows, the bar's segments, and the column's readouts, which
+     are live values (data-bind). -->
+<div class="br-elbow br-elbow-top"><b>04</b><small>2216</small></div>
+<div class="br-bar br-bar-top">
+  <i class="br-tan"></i>
+  <i class="br-lilac br-blink"></i>
+  <i class="br-peach br-wide"></i>
+  <i class="br-lav"></i>
+</div>
+<div class="br-col">
+  <p class="br-read br-tan"><small>TIME</small><b data-bind="time">–</b></p>
+  <p class="br-read br-gauge br-peach" data-bind-var="--v:cpu"><small>CPU</small><b data-bind="cpu">–</b></p>
+  <p class="br-read br-gauge br-lilac" data-bind-var="--v:mem"><small>MEM</small><b data-bind="mem">–</b></p>
+  <p class="br-read br-gold"><small>LOAD</small><b data-bind="load">–</b></p>
+  <p class="br-read br-lav"><small>BUFFERS</small><b data-bind="buffers">–</b></p>
+  <p class="br-read br-red"><small>ERRORS</small><b data-bind="errors">0</b></p>
+  <p class="br-read br-peach"><small>WARNINGS</small><b data-bind="warnings">0</b></p>
+  <p class="br-read br-fill br-orange"><small>UPTIME</small><b data-bind="uptime">–</b></p>
+</div>
+<div class="br-elbow br-elbow-bot"><b>47</b><small>0939</small></div>

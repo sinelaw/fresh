@@ -1,0 +1,11 @@
+/* ==FreshSkin==
+@id           default
+@name         Default
+@description  The client's own look: a plain frame in the editor theme's colours
+@author       Fresh
+@frame        full
+@scale        1
+==/FreshSkin== */
+
+/* The default skin is the page's own stylesheet (style.css) with nothing on
+   top: every other skin is written against the same parts and variables. */

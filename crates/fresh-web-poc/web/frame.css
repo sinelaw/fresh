@@ -1,0 +1,33 @@
+/* The frame every skin builds on (js/skins.js; README "Skins"): the two
+   frames, the bezel kit and the skin button. A skin's stylesheet is linked
+   after this one.
+
+   `frame-full`: the client fills the window. `frame-bezel`: it sits inset in
+   #device — `--shell-pad` of the page's background (a skin's wallpaper)
+   around the device, and `--bezel-top/-side/-bot` of device around the
+   client — and the skin's furniture is built inside #device. */
+:root { --shell-pad: 40px; --bezel-top: 40px; --bezel-side: 22px; --bezel-bot: 30px; }
+#device { display: none; }
+/* Written at the weight of a bare `#device`, so any skin rule wins. */
+:where(.frame-bezel) #device { display: block; position: fixed; pointer-events: none; z-index: 0;
+  left: var(--shell-pad); right: var(--shell-pad); top: var(--shell-pad); bottom: var(--shell-pad);
+  border-radius: 14px; background: linear-gradient(180deg, #3a3d44, #24262c 40%, #1d1f24);
+  box-shadow: 0 40px 100px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .18); }
+.frame-bezel #app { position: fixed; height: auto; z-index: 1;
+  left: calc(var(--shell-pad) + var(--bezel-side)); right: calc(var(--shell-pad) + var(--bezel-side));
+  top: calc(var(--shell-pad) + var(--bezel-top)); bottom: calc(var(--shell-pad) + var(--bezel-bot)); }
+/* The kit: a dark well a little larger than the client, for furniture. */
+#device .dv-screen { position: absolute; border-radius: 6px; background: #000;
+  top: calc(var(--bezel-top) - 4px); bottom: calc(var(--bezel-bot) - 4px);
+  left: calc(var(--bezel-side) - 4px); right: calc(var(--bezel-side) - 4px); }
+/* A narrow window has no room for a bezel. */
+@media (max-width: 720px) {
+  .frame-bezel #device { display: none; }
+  .frame-bezel #app { inset: 0; }
+}
+
+/* The skin button: the skin's name at the end of the top bar. */
+#skin-btn { flex: 0 0 auto; padding: 1px 10px; border-radius: 999px; font: inherit; font-size: .92em; cursor: pointer;
+  color: var(--muted); background: transparent; border: 1px solid var(--border); }
+#skin-btn:hover { color: var(--fg); border-color: var(--accent); }
+#skin-btn:empty { display: none; }

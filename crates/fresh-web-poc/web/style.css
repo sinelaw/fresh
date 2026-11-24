@@ -25,7 +25,17 @@
   --lh: 18px;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px system-ui, sans-serif; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+/* Type: the chrome's face and sizes, and the editor's size, all from the
+   skin's density (`--ui-scale`). Declared on body, so a skin's body rule
+   that sets `--ui-font-size` or `--editor-font-size` scales what is derived
+   from them too. */
+body {
+  --ui-font: system-ui, sans-serif;
+  --ui-font-size: calc(13px * var(--ui-scale, 1)); --ui-font-sm: calc(var(--ui-font-size) * 12 / 13); --ui-font-xs: calc(var(--ui-font-size) * 11 / 13);
+  --editor-font-size: calc(13px * var(--ui-scale, 1));
+  font: var(--ui-font-size) var(--ui-font);
+}
 #app { display: flex; flex-direction: column; height: 100vh; }
 #topbar { display: flex; gap: 12px; align-items: center; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 #topbar .brand { font-weight: 600; color: var(--emphasis); }
@@ -61,7 +71,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .pane.active .tab.active { border-top: 1px solid var(--accent); }
 .tab .x { margin-left: 8px; opacity: .5; }
 .tab .x:hover { opacity: 1; }
-.surface { position: relative; flex: 1; overflow: hidden; font-family: var(--mono); font-size: 13px; line-height: var(--lh); cursor: text; }
+.surface { position: relative; flex: 1; overflow: hidden; background: var(--bg); font-family: var(--mono); font-size: var(--editor-font-size); line-height: var(--lh); cursor: text; }
 .gutter { position: absolute; left: 0; top: 0; color: var(--faint); white-space: pre; user-select: none; text-align: right; }
 .text { position: absolute; top: 0; right: 12px; white-space: pre; user-select: none; }
 .carets { position: absolute; top: 0; right: 12px; pointer-events: none; }
@@ -78,28 +88,28 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .term-tabs .plus { color: var(--fg); }
 .term-screens { flex: 1; min-height: 0; padding: 2px 4px; }
 .xterm-host { height: 100%; }
-#status { display: flex; justify-content: space-between; padding: 2px 10px; background: var(--status-bg); color: var(--status-fg); border-top: 1px solid var(--border); font-size: 12px; white-space: nowrap; overflow: hidden; }
+#status { display: flex; justify-content: space-between; padding: 2px 10px; background: var(--status-bg); color: var(--status-fg); border-top: 1px solid var(--border); font-size: var(--ui-font-sm); white-space: nowrap; overflow: hidden; }
 #prompt { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(700px, 90vw); background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); z-index: 10; }
 #prompt.hidden, #popup.hidden { display: none; }
-#prompt .hint { padding: 3px 10px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
+#prompt .hint { padding: 3px 10px; color: var(--muted); font-size: var(--ui-font-xs); border-top: 1px solid var(--border); }
 #prompt .hint:empty { display: none; }
 #prompt .bar { display: flex; align-items: center; gap: 8px; padding: 6px; }
 #prompt .label { color: var(--muted); white-space: nowrap; }
-#prompt input { flex: 1; background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--accent); padding: 4px 6px; font: 13px var(--mono); outline: none; }
+#prompt input { flex: 1; background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--accent); padding: 4px 6px; font: var(--ui-font-size) var(--mono); outline: none; }
 #prompt .list { max-height: 50vh; overflow: auto; }
-#prompt .item { display: flex; justify-content: space-between; gap: 12px; padding: 3px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; }
+#prompt .item { display: flex; justify-content: space-between; gap: 12px; padding: 3px 10px; cursor: pointer; font-family: var(--mono); font-size: var(--ui-font-sm); }
 #prompt .item .d { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #prompt .item.sel { background: var(--sel-bg); color: var(--sel-fg); }
 #prompt .item.sel .d { color: inherit; opacity: .75; }
-#popup { position: fixed; max-width: 600px; max-height: 300px; overflow: auto; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 6px 8px; white-space: pre-wrap; font: 12px var(--mono); z-index: 9; }
+#popup { position: fixed; max-width: 600px; max-height: 300px; overflow: auto; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 6px 8px; white-space: pre-wrap; font: var(--ui-font-sm) var(--mono); z-index: 9; }
 #input { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
-.measure { position: absolute; visibility: hidden; white-space: pre; font-family: var(--mono); font-size: 13px; line-height: normal; }
+.measure { position: absolute; visibility: hidden; white-space: pre; font-family: var(--mono); font-size: var(--editor-font-size); line-height: normal; }
 
 /* Panels (the plugin UI kit) */
 .panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); outline: none; }
 .panel-sidebar { flex: 1 1 0; border-bottom: 1px solid var(--border); }
 .panel-right { flex: 1 1 0; }
-.panel-head { display: flex; justify-content: space-between; padding: 5px 10px; text-transform: uppercase; font-size: 11px; color: var(--muted); }
+.panel-head { display: flex; justify-content: space-between; padding: 5px 10px; text-transform: uppercase; font-size: var(--ui-font-xs); color: var(--muted); }
 .panel-head .x { cursor: pointer; }
 .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 6px; gap: 4px; overflow: hidden; }
 .panel-bar .panel-body { flex-direction: row; padding: 4px 8px; }
@@ -109,28 +119,28 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .ui-col { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
 .ui-box { min-height: 0; }
 .ui-text.dim { color: var(--muted); }
-.ui-text.mono { font-family: var(--mono); font-size: 12px; }
+.ui-text.mono { font-family: var(--mono); font-size: var(--ui-font-sm); }
 .ui-text.bold { font-weight: 600; }
-.ui-input { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 6px; font: 12px var(--mono); outline: none; min-width: 0; flex: 1; }
+.ui-input { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 6px; font: var(--ui-font-sm) var(--mono); outline: none; min-width: 0; flex: 1; }
 .ui-input:focus { border-color: var(--accent); }
-.ui-button { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 10px; cursor: pointer; font: 12px system-ui; }
+.ui-button { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 10px; cursor: pointer; font: var(--ui-font-sm) var(--ui-font); }
 .ui-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .ui-button:disabled { opacity: .5; cursor: default; }
-.ui-toggle { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 1px 5px; cursor: pointer; font: 12px var(--mono); }
+.ui-toggle { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 1px 5px; cursor: pointer; font: var(--ui-font-sm) var(--mono); }
 .ui-toggle.on { color: var(--fg); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
 .ui-check { display: flex; gap: 4px; align-items: center; }
 .ui-select { background: var(--control-bg); color: var(--control-fg); border: 0; padding: 2px 4px; }
-.ui-badge { display: inline-block; padding: 0 6px; border-radius: 8px; background: var(--control-bg); color: var(--control-fg); font-size: 11px; }
+.ui-badge { display: inline-block; padding: 0 6px; border-radius: 8px; background: var(--control-bg); color: var(--control-fg); font-size: var(--ui-font-xs); }
 .ui-spacer { flex: 1; }
 .ui-list { position: relative; flex: 1; min-height: 60px; overflow: auto; outline: none; }
 .ui-list-inner { position: relative; }
-.ui-list-row { position: absolute; left: 0; right: 0; height: 22px; line-height: 22px; padding: 0 6px; white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; }
+.ui-list-row { position: absolute; left: 0; right: 0; height: 22px; line-height: 22px; padding: 0 6px; white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: var(--mono); font-size: var(--ui-font-sm); display: flex; gap: 8px; }
 .ui-list-row:hover { background: var(--hover-bg); }
 .ui-list-row.sel { background: var(--sel-inactive-bg); }
 .ui-list:focus .ui-list-row.sel { background: var(--sel-bg); color: var(--sel-fg); }
 .ui-list-row.header { color: var(--fg); font-weight: 600; }
 .ui-tree-row { gap: 0; }
-.ui-table { border-collapse: collapse; width: 100%; font: 12px var(--mono); }
+.ui-table { border-collapse: collapse; width: 100%; font: var(--ui-font-sm) var(--mono); }
 .ui-table th { text-align: left; color: var(--muted); font-weight: normal; padding: 3px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
 .ui-table td { padding: 2px 6px; border-bottom: 1px solid var(--border); }
 .ui-table tr:hover td { background: var(--hover-bg); }
@@ -141,7 +151,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .ui-markdown h1 { font-size: 1.3em; }
 .ui-markdown h2 { font-size: 1.15em; }
 .ui-markdown ul, .ui-markdown ol { padding-left: 1.4em; }
-.ui-markdown code { font: 12px var(--mono); background: var(--code-bg); border-radius: 3px; padding: 0 3px; }
+.ui-markdown code { font: var(--ui-font-sm) var(--mono); background: var(--code-bg); border-radius: 3px; padding: 0 3px; }
 .ui-markdown pre { background: var(--code-bg); border-radius: 4px; padding: 6px 8px; overflow: auto; }
 .ui-markdown pre code { background: none; padding: 0; }
 .ui-markdown blockquote { border-left: 3px solid var(--border); padding-left: 8px; color: var(--muted); }
@@ -150,7 +160,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #status .click { cursor: pointer; text-decoration: underline dotted; }
 #status-right { display: flex; gap: 14px; }
 #status-left { overflow: hidden; text-overflow: ellipsis; }
-.ctxmenu { position: fixed; z-index: 30; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 4px 0; min-width: 180px; font-size: 12px; }
+.ctxmenu { position: fixed; z-index: 30; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 4px 0; min-width: 180px; font-size: var(--ui-font-sm); }
 .ctxmenu div { padding: 3px 14px; cursor: pointer; }
 .ctxmenu div:hover { background: var(--sel-bg); color: var(--sel-fg); }
 .ctxmenu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
@@ -160,10 +170,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .caret { will-change: left, top; }
 .text .row, .gutter .row { contain: layout style paint; }
 
-/* A view in compose mode: a document (js/doc.js). */
-:root {
+/* A view in compose mode: a document (js/doc.js). Its size follows the
+   editor's (declared on body, beside it). */
+body {
   --doc-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --doc-size: 15px;
+  --doc-size: calc(var(--editor-font-size) * 15 / 13);
 }
 .doc { display: none; }
 .surface.compose .doc { display: block; position: absolute; top: 0; bottom: 0; left: 0; right: 12px; overflow: hidden; contain: strict; }
@@ -183,14 +194,14 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .doc-li .mk { position: absolute; right: calc(100% + .45em); color: var(--syntax-keyword); white-space: pre; }
 .doc-li .mk.num { font-variant-numeric: tabular-nums; }
 .doc-body blockquote { padding-left: calc(var(--depth) * 1em + .2em); color: var(--muted); background: repeating-linear-gradient(to right, var(--syntax-keyword) 0 3px, transparent 3px 1em) left top / calc(var(--depth) * 1em) 100% no-repeat; }
-.doc-code { position: relative; margin: .35em 0 !important; padding: 8px 14px; border-radius: 6px; background: var(--code-bg); font: 13px/var(--lh) var(--mono); }
-.doc-code[data-lang]::after { content: attr(data-lang); position: absolute; top: 3px; right: 8px; font: 11px var(--doc-font); color: var(--muted); }
+.doc-code { position: relative; margin: .35em 0 !important; padding: 8px 14px; border-radius: 6px; background: var(--code-bg); font: var(--editor-font-size)/var(--lh) var(--mono); }
+.doc-code[data-lang]::after { content: attr(data-lang); position: absolute; top: 3px; right: 8px; font: var(--ui-font-xs) var(--doc-font); color: var(--muted); }
 .doc-code .ln { min-height: var(--lh); }
 .doc-table { border-collapse: collapse; margin: .4em 0 !important; }
 .doc-table th, .doc-table td { border: 1px solid var(--border); padding: 3px 12px; vertical-align: top; }
 .doc-table th { background: var(--panel); font-weight: 600; text-align: left; }
 .doc-table tr:nth-child(odd) td { background: color-mix(in srgb, var(--panel) 60%, transparent); }
-.doc-table tr.raw td { color: var(--faint); font: 12px var(--mono); }
+.doc-table tr.raw td { color: var(--faint); font: var(--ui-font-sm) var(--mono); }
 .doc-hr { position: relative; color: var(--faint); }
 .doc-hr::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--border); pointer-events: none; }
 .doc-body .vt, .doc-body .vline { color: var(--muted); }

@@ -13,6 +13,7 @@ import { TerminalPanel } from "./terminal.js";
 import { UIKit } from "./ui.js";
 import { Host } from "./host.js";
 import { Palette } from "./palette.js";
+import { Skins } from "./skins.js";
 import { THEME } from "./highlight.js";
 
 const $ = (s) => document.querySelector(s);
@@ -47,6 +48,9 @@ class App {
   }
 
   async start() {
+    // The skin first: the editor's cell is measured in its fonts.
+    this.skins = new Skins(this);
+    await this.skins.load();
     this.measure();
     const hello = await rpc("hello");
     session.client = hello.client;
@@ -101,6 +105,17 @@ class App {
     this.metrics = { cw: r.width / 100, lh: Math.ceil(r.height) };
     document.documentElement.style.setProperty("--lh", `${this.metrics.lh}px`);
     s.remove();
+  }
+
+  // After the editor font changes (a skin's density or fonts): measure the
+  // cell again and redraw every view and terminal at it.
+  remeasure() {
+    const { cw, lh } = this.metrics;
+    this.measure();
+    this.term?.applyFont();
+    if (!this.editing || (cw === this.metrics.cw && lh === this.metrics.lh)) return;
+    for (const p of this.panes()) p.clearRows();
+    this.renderAll();
   }
 
   report(msg) {
@@ -679,7 +694,7 @@ class App {
 
   keymap() {
     const base = {
-      "C-s": "file.save", "C-M-s": "file.saveAll", "C-z": "edit.undo", "C-y": "edit.redo", "C-S-z": "edit.redo",
+      "C-s": "file.save", "C-M-s": "file.saveAll", "C-M-t": "skin.next", "C-z": "edit.undo", "C-y": "edit.redo", "C-S-z": "edit.redo",
       "C-p": "palette.commands", "C-S-p": "palette.commands", F1: "palette.commands", "C-o": "palette.files", "C-'": "palette.files", "C-;": "palette.buffers", "C-g": "palette.line",
       "C-`": "terminal.toggle", "C-\\": "view.splitRight", "C-w": "view.closeTab", "C-Tab": "view.nextTab", "C-S-Tab": "view.prevTab", "C-PageDown": "view.nextTab", "C-PageUp": "view.prevTab",
       "M-Left": "go.back", "M-Right": "go.forward", "M-z": "view.toggleWrap",
@@ -747,6 +762,8 @@ class App {
     cmd("palette.line", "Go to Line…", () => this.prompt.palette(":"));
     cmd("terminal.toggle", "Terminal: Toggle", () => this.term.toggle());
     cmd("terminal.new", "Terminal: New", async () => { if (!this.term.visible) await this.term.toggle(); await this.term.create(); });
+    cmd("skin.select", "Select Skin…", () => this.skins.pick());
+    cmd("skin.next", "Next Skin", () => this.skins.cycle(1));
     cmd("view.splitRight", "View: Split Right", () => this.split("h"));
     cmd("view.splitDown", "View: Split Down", () => this.split("v"));
     cmd("view.closeSplit", "View: Close Split", () => this.closePane(P()));

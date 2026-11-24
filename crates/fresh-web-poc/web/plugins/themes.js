@@ -126,6 +126,9 @@ export function activate(fresh) {
     try { saved = localStorage.getItem(STORE); } catch {}
     choose(saved || "dark");
   });
+  // A theme chosen by another part of the client: a skin's editor theme
+  // comes with the skin when it is picked.
+  fresh.commands.register("theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key) });
   fresh.commands.register("theme.select", {
     title: "Select Theme…",
     run: async () => {

@@ -6,12 +6,14 @@
 <title>Fresh</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="frame.css">
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
 </head>
 <body>
+<div id="device" aria-hidden="true"></div>
 <div id="app">
-  <header id="topbar"><span class="brand">Fresh</span><span id="ws-name"></span><span class="hint">Ctrl+P commands · Ctrl+O files · Ctrl+` terminal</span></header>
+  <header id="topbar"><span class="brand">Fresh</span><span id="ws-name"></span><span class="hint">Ctrl+P commands · Ctrl+O files · Ctrl+` terminal</span><button id="skin-btn" title="Select Skin… (Ctrl+Alt+T: next skin)"></button></header>
   <div id="main">
     <aside id="sidebar"><div id="side-panels"></div></aside>
     <section id="work">

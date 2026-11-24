@@ -1,0 +1,75 @@
+/* ==FreshSkin==
+@id           compact
+@name         Compact
+@description  A quiet, dense frame that follows your editor theme
+@author       Fresh
+@frame        full
+@scale        0.92
+==/FreshSkin== */
+
+/* A quiet, dense IDE frame. Every surface is mixed from the editor theme's
+   ground and ink — the frame one shade off the buffer, toward its ink, so it
+   is lighter on a dark theme and darker on a light one — with one calm
+   accent, so the window reads as one surface under any editor theme. */
+.skin-compact body {
+  --shell: color-mix(in srgb, var(--bg), var(--fg) 4%);
+  --well: color-mix(in srgb, var(--bg), var(--fg) 8%);
+  --hairline: color-mix(in srgb, var(--fg) 9%, transparent);
+  --hairline-strong: color-mix(in srgb, var(--fg) 16%, transparent);
+  --tint: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: var(--shell);
+}
+.skin-compact :is(#topbar, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+  --panel: var(--shell); --border: var(--hairline-strong); --muted: color-mix(in srgb, var(--fg) 62%, var(--bg));
+  --popup-bg: var(--well); --popup-fg: var(--fg); --popup-border: var(--hairline-strong);
+  --control-bg: var(--bg); --control-fg: var(--fg); --hover-bg: color-mix(in srgb, var(--fg) 6%, transparent);
+  --sel-bg: var(--tint); --sel-fg: var(--fg); --sel-inactive-bg: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* ---- top bar: one quiet line ---- */
+.skin-compact #topbar { padding: 2px 8px; gap: 10px; background: var(--shell); border-bottom: 1px solid var(--hairline); }
+.skin-compact #topbar .brand { color: var(--fg); }
+.skin-compact #topbar .hint { font-size: .9em; }
+.skin-compact #skin-btn { border-color: var(--hairline-strong); padding: 0 8px; }
+
+/* ---- tabs: inactive ones recede into the frame; the active one is part
+   of the buffer below it, marked by one accent edge ---- */
+.skin-compact :is(.pane .tabs, .term-tabs, .dock-tabs) { background: var(--shell); min-height: 26px; box-shadow: inset 0 -1px 0 var(--hairline); }
+.skin-compact .tab { padding: 4px 8px 4px 12px; border-right: 1px solid var(--hairline); border-top: 0; }
+.skin-compact .tab:not(.active):hover { background: var(--hover-bg); color: var(--fg); }
+.skin-compact .tab.active { background: var(--bg); }
+.skin-compact .pane.active .tab.active { border-top: 0; box-shadow: inset 0 2px 0 var(--accent); }
+
+/* ---- side panels: the frame's shade, hairline walls ---- */
+.skin-compact :is(#sidebar, #right-dock, #dock, #bar) { background: var(--shell); border-color: var(--hairline); }
+.skin-compact .panel-sidebar { border-bottom-color: var(--hairline); }
+.skin-compact .panel-head { font-size: .8em; letter-spacing: .04em; padding: 4px 10px; }
+.skin-compact .ui-list-row { height: 22px; margin: 0 4px; padding: 0 6px; border-radius: 3px; }
+.skin-compact .ui-list-row.sel { background: var(--sel-inactive-bg); }
+.skin-compact .ui-list:focus .ui-list-row.sel { background: var(--tint); }
+.skin-compact .split > * + * { border-color: var(--hairline); }
+.skin-compact #terminal { border-top-color: var(--hairline); }
+
+/* ---- status bar: one quiet line, not a banner ---- */
+.skin-compact #status { background: var(--shell); color: var(--muted); border-top: 1px solid var(--hairline); padding: 2px 10px; }
+
+/* ---- palette, dialogs, pop-ups: one card language ---- */
+.skin-compact :is(#prompt, #popup, .ctxmenu, .panel-dialog) { background: var(--well); border: 1px solid var(--hairline-strong); border-radius: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .4); }
+.skin-compact #prompt { width: min(560px, 90vw); overflow: hidden; }
+.skin-compact #prompt .bar { padding: 6px; }
+.skin-compact #prompt input { background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: 3px; padding: 3px 8px; }
+.skin-compact #prompt input:focus { border-color: var(--accent); }
+.skin-compact #prompt .item { height: 24px; align-items: center; margin: 0 4px; padding: 0 8px; border-radius: 3px; }
+.skin-compact #prompt .item.sel { background: var(--tint); }
+.skin-compact .ctxmenu { padding: 3px; }
+.skin-compact .ctxmenu div { border-radius: 3px; padding: 2px 10px; }
+.skin-compact .ctxmenu div:hover { background: var(--tint); }
+.skin-compact .ui-button { border-radius: 3px; padding: 2px 12px; background: var(--well); border: 1px solid var(--hairline-strong); }
+.skin-compact .ui-button.primary { background: var(--accent); border-color: var(--accent); }
+.skin-compact :is(.ui-input, .ui-select) { background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: 3px; }
+
+/* ---- scrollbar: thin and square, the accent under the pointer ---- */
+.skin-compact .scrollbar { width: 8px; background: transparent; box-shadow: inset 1px 0 0 var(--hairline); }
+.skin-compact .thumb { left: 2px; right: 1px; border-radius: 0; background: color-mix(in srgb, var(--fg) 22%, transparent); }
+.skin-compact .thumb:hover { background: var(--accent); }

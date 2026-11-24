@@ -18,6 +18,12 @@ const xtermTheme = () => {
   return { background: v("--terminal-bg"), foreground: v("--terminal-fg"), cursor: v("--caret"), selectionBackground: v("--selection") };
 };
 
+// The terminal's font: the editor's (the skin sets its size).
+const termFont = () => {
+  const css = getComputedStyle(document.body);
+  return { fontFamily: css.getPropertyValue("--mono"), fontSize: parseFloat(css.getPropertyValue("--editor-font-size")) || 13 };
+};
+
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 class Term {
@@ -30,8 +36,7 @@ class Term {
     this.el.className = "xterm-host";
     panel.screens.appendChild(this.el);
     this.xt = new Terminal({
-      fontFamily: getComputedStyle(document.body).getPropertyValue("--mono"),
-      fontSize: 13,
+      ...termFont(),
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 5000,
@@ -174,6 +179,12 @@ export class TerminalPanel {
   applyTheme() {
     const theme = xtermTheme();
     for (const t of this.terms.values()) t.xt.options.theme = theme;
+  }
+
+  applyFont() {
+    const f = termFont();
+    for (const t of this.terms.values()) Object.assign(t.xt.options, f);
+    this.refit();
   }
 
   refit() {
