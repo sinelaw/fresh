@@ -7466,6 +7466,11 @@ function resetPerSessionState(): void {
     state.commentsHighlightId = null;
     state.stickyCurrentFile = null;
     state.lineSelection = null;
+    // A new session opens on the overview. Carrying the last session's
+    // side-by-side over reopened the review on one file's composite
+    // instead of the list of changes (#3869).
+    state.reviewLayout = 'unified';
+    layoutReturn = null;
 }
 
 const REVIEW_LAYOUT = JSON.stringify({
@@ -7519,6 +7524,7 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
     editor.setContext("review-mode", true);
     const groupResult = await editor.createBufferGroup(groupName, "review-mode", REVIEW_LAYOUT);
     state.groupId = groupResult.groupId;
+    reviewWindowId = editor.activeWindow();
     state.panelBuffers = groupResult.panels;
     state.reviewBufferId = groupResult.panels["diff"];
     // A brand-new stream buffer holds nothing yet, whatever the last
@@ -7570,6 +7576,7 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
     startWatchPoll();
     editor.on("buffer_activated", on_review_buffer_activated);
     editor.on("buffer_closed", on_review_buffer_closed);
+    editor.on("buffer_group_closed", on_review_group_closed);
     editor.on("cursor_moved", on_review_cursor_moved);
     editor.on("viewport_changed", on_review_viewport_changed);
     editor.on("mouse_click", on_review_mouse_click);
@@ -7658,6 +7665,10 @@ async function start_review_diff() {
 registerHandler("start_review_diff", start_review_diff);
 
 function stop_review_diff() {
+    // While a composite is up it, not the unified stream buffer, is what
+    // the group's diff panel shows — so closing the group leaves the
+    // stream buffer behind, and it has to be closed here (#3869).
+    const streamDetached = state.centerComposite !== null;
     teardownCenterComposite();
     discardParkedComposite();
     state.streamMountedSignature = null;
@@ -7669,12 +7680,19 @@ function stop_review_diff() {
     filesPanel = null;
     commentsPanel = null;
     filesCollapsedKeys = new Set<string>();
-    if (state.groupId !== null) {
-        editor.closeBufferGroup(state.groupId);
-        state.groupId = null;
-        state.panelBuffers = {};
-    }
+    // Cleared before anything is closed: the closes below fire
+    // `buffer_closed` / `buffer_group_closed`, which must not find a live
+    // session to stop a second time.
+    const groupId = state.groupId;
+    const streamId = state.reviewBufferId;
+    state.groupId = null;
+    state.panelBuffers = {};
     state.reviewBufferId = null;
+    reviewWindowId = null;
+    if (groupId !== null) editor.closeBufferGroup(groupId);
+    if (streamDetached && streamId !== null) {
+        try { editor.closeBuffer(streamId); } catch { /* already gone */ }
+    }
     // Keyed by panel name, so the next session would inherit these — its
     // panels are different buffers in a differently sized group.
     state.panelWidths = {};
@@ -7686,6 +7704,7 @@ function stop_review_diff() {
     editor.off("resize", onReviewDiffResize);
     editor.off("buffer_activated", on_review_buffer_activated);
     editor.off("buffer_closed", on_review_buffer_closed);
+    editor.off("buffer_group_closed", on_review_group_closed);
     editor.off("cursor_moved", on_review_cursor_moved);
     editor.off("viewport_changed", on_review_viewport_changed);
     editor.off("mouse_click", on_review_mouse_click);
@@ -8080,6 +8099,26 @@ function on_review_buffer_closed(data: any) {
     if (data.buffer_id === state.reviewBufferId) stop_review_diff();
 }
 registerHandler("on_review_buffer_closed", on_review_buffer_closed);
+
+/** The window the review's group lives in: group ids are per window. */
+let reviewWindowId: number | null = null;
+
+/** The review's group was closed from outside the plugin — its tab closed
+ *  (Alt+W, Close Tab, the tab's ×). In the unified layout that also closes
+ *  the stream buffer and `on_review_buffer_closed` ends the session; in
+ *  side-by-side the diff panel shows the composite instead, so nothing
+ *  else tells the plugin, and `state.groupId` kept pointing at a group
+ *  that no longer exists — `Review Diff` then "focused" it and opened
+ *  nothing (#3869). */
+function on_review_group_closed(data: { group_id: number; window_id: number }): void {
+    if (state.groupId === null || data.group_id !== state.groupId) return;
+    if (reviewWindowId !== null && data.window_id !== reviewWindowId) return;
+    // The group (and its panel buffers) is already gone; don't close it again.
+    state.groupId = null;
+    state.panelBuffers = {};
+    stop_review_diff();
+}
+registerHandler("on_review_group_closed", on_review_group_closed);
 
 // Side-by-side diff for current file using composite buffers
 async function side_by_side_diff_current_file() {
