@@ -126,7 +126,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Editor | Line wrap toggle (Alt+Z), line numbers, current line, occurrences, whitespace, rulers | present |
 | Editor | Indentation guides, matching-bracket highlight, rainbow brackets | missing (drawing extras; after the chrome) |
 | Editor | Minimap, breadcrumbs | skipped (the editor has neither) |
-| Explorer | Sticky ancestors: the folders of the top visible row stay pinned | missing |
+| Explorer | Sticky ancestors: the folders of the top visible row stay pinned (any UI-kit tree); a click scrolls back to the folder | fixed |
 | Explorer | Drag and drop to move files and folders (confirmed) | missing |
 | Explorer | Refresh / collapse-all buttons in the header | missing |
 | Explorer | Toggle hidden / gitignored files | missing |

@@ -52,6 +52,8 @@ export function activate(fresh) {
       key: "tree",
       items: rows,
       selected: idx,
+      // Folders of the top row stay pinned (the UI kit's tree rows).
+      depth: (r) => r.depth,
       // Files the ignore rules leave out are shown dimmed.
       render: (r) => h("text", { mono: true, dim: r.ignored }, " ".repeat(r.depth * 2) + (r.dir ? (open.has(r.path) ? "▾ " : "▸ ") : "  ") + r.name),
       onSelect: (r) => { selected = r.path; },

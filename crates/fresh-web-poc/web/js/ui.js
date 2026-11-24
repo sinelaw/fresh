@@ -284,32 +284,68 @@ class Panel {
     const inner = div("ui-list-inner");
     inner.style.height = `${items.length * ROW_H}px`;
     el.appendChild(inner);
-    const draw = () => {
-      inner.innerHTML = "";
-      const h0 = el.clientHeight || 300;
-      const first = Math.max(0, Math.floor(el.scrollTop / ROW_H) - 5);
-      const last = Math.min(items.length, first + Math.ceil(h0 / ROW_H) + 10);
-      for (let i = first; i < last; i++) {
-        const it = items[i];
-        const r = div("ui-list-row" + (i === st.sel ? " sel" : "") + (it && it.header ? " header" : ""));
-        r.style.top = `${i * ROW_H}px`;
-        const content = p.render ? p.render(it, i) : String(it);
-        r.appendChild(typeof content === "string" ? document.createTextNode(content) : this.build(content));
-        r.dataset.i = i;
-        // Mark the selection in place: redrawing here would replace the row
-        // under the pointer, and its click would never arrive.
-        r.onmousedown = (e) => {
-          e.preventDefault();
-          st.sel = i;
-          for (const x of inner.children) x.classList.toggle("sel", +x.dataset.i === i);
-          el.focus({ preventScroll: true });
-          p.onSelect?.(it, i);
-        };
-        r.ondblclick = () => p.onActivate?.(it, i);
-        r.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); p.onContext?.(it, i, { x: e.clientX, y: e.clientY }); };
-        if (p.activateOnClick) r.onclick = () => p.onActivate?.(it, i);
-        inner.appendChild(r);
+    // A tree's rows (`depth` given): the rows of the folders holding the
+    // top visible row stay pinned at the top, outermost first — each
+    // ancestor of the row just under the pinned ones.
+    const ancestors = (i) => {
+      const out = [];
+      let d = p.depth(items[i]);
+      for (let k = i - 1; k >= 0 && d > 0; k--) {
+        const dk = p.depth(items[k]);
+        if (dk < d) { out.unshift(k); d = dk; }
       }
+      return out;
+    };
+    const pinned = (top) => {
+      let chain = [];
+      if (!p.depth) return chain;
+      for (let guard = 0; guard < 64; guard++) {
+        const i = top + chain.length;
+        if (i >= items.length) break;
+        const a = ancestors(i);
+        if (a.length <= chain.length) break;
+        chain = a.slice(0, chain.length + 1);
+      }
+      return chain;
+    };
+    const row = (i, at, cls) => {
+      const it = items[i];
+      const r = div("ui-list-row" + (i === st.sel ? " sel" : "") + (it && it.header ? " header" : "") + cls);
+      r.style.top = `${at}px`;
+      const content = p.render ? p.render(it, i) : String(it);
+      r.appendChild(typeof content === "string" ? document.createTextNode(content) : this.build(content));
+      r.dataset.i = i;
+      // Mark the selection in place: redrawing here would replace the row
+      // under the pointer, and its click would never arrive.
+      r.onmousedown = (e) => {
+        e.preventDefault();
+        st.sel = i;
+        for (const x of inner.children) x.classList.toggle("sel", +x.dataset.i === i);
+        el.focus({ preventScroll: true });
+        p.onSelect?.(it, i);
+      };
+      r.ondblclick = () => p.onActivate?.(it, i);
+      r.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); p.onContext?.(it, i, { x: e.clientX, y: e.clientY }); };
+      if (p.activateOnClick) r.onclick = () => p.onActivate?.(it, i);
+      return r;
+    };
+    const draw = () => {
+      const h0 = el.clientHeight || 300;
+      const scroll = el.scrollTop;
+      const first = Math.max(0, Math.floor(scroll / ROW_H) - 5);
+      const last = Math.min(items.length, first + Math.ceil(h0 / ROW_H) + 10);
+      const rows = [];
+      for (let i = first; i < last; i++) rows.push(row(i, i * ROW_H, ""));
+      // Pinned rows go over the rows they cover. A click on one scrolls
+      // its folder back to where it is (under the rows pinned above it).
+      const chain = pinned(Math.floor(scroll / ROW_H));
+      chain.forEach((i, k) => {
+        const r = row(i, scroll + k * ROW_H, " sticky" + (k === chain.length - 1 ? " last" : ""));
+        const down = r.onmousedown;
+        r.onmousedown = (e) => { el.scrollTop = (i - k) * ROW_H; down(e); };
+        rows.push(r);
+      });
+      inner.replaceChildren(...rows);
     };
     el.onscroll = () => { st.scroll = el.scrollTop; draw(); };
     el.onkeydown = (e) => {
@@ -330,7 +366,10 @@ class Panel {
     el._draw = draw;
     const show = () => {
       const top = st.sel * ROW_H;
-      if (top < el.scrollTop) el.scrollTop = top;
+      // In a tree, as many rows as the row has ancestors may be pinned
+      // over the top.
+      const pin = p.depth && items[st.sel] ? p.depth(items[st.sel]) * ROW_H : 0;
+      if (top - pin < el.scrollTop) el.scrollTop = Math.max(0, top - pin);
       else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
     };
     requestAnimationFrame(() => { el.scrollTop = st.scroll; if (moved) show(); draw(); });
@@ -362,6 +401,7 @@ class Panel {
     return this.list(h("list", {
       key,
       items: rows,
+      depth: (r) => r.depth,
       render: (r) => h("row", { class: "ui-tree-row" },
         h("text", { class: "ui-tree-indent" }, " ".repeat(r.depth * 2) + (r.nd.children ? (r.isOpen ? "▾ " : "▸ ") : "  ")),
         typeof r.nd.label === "string" ? h("text", {}, r.nd.label) : r.nd.label),

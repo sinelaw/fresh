@@ -306,7 +306,7 @@ A skin is CSS against the client's stable structure. `<html>` carries
 | `#prompt` | the palette and prompts: `.bar` (`.label`, `input`), `.list` (`.item`, `.item.sel`, `.d` its detail), `.hint` |
 | `#popup`, `.ctxmenu` | hover and other pop-ups; context menus (`div` rows, `hr`) |
 | `.panel` | a plugin panel: `.panel-head`, `.panel-body`; placed as `.panel-sidebar`, `.panel-right`, `.panel-bar`, `.panel-dialog` (over a `.backdrop`) |
-| `.ui-*` | the panel kit: `.ui-list` / `.ui-list-row` (`.sel`, `.header`), `.ui-tree-row`, `.ui-input`, `.ui-button` (`.primary`), `.ui-toggle` (`.on`), `.ui-select`, `.ui-badge`, `.ui-table`, `.ui-markdown` |
+| `.ui-*` | the panel kit: `.ui-list` / `.ui-list-row` (`.sel`, `.header`; a tree's pinned ancestor rows `.sticky`, the innermost `.last`), `.ui-tree-row`, `.ui-input`, `.ui-button` (`.primary`), `.ui-toggle` (`.on`), `.ui-select`, `.ui-badge`, `.ui-table`, `.ui-markdown` |
 
 **Colours.** The theme sets its variables (the table above) on `<html>`. A
 skin overrides any of them on `body` or on a part — the parts below inherit

@@ -140,6 +140,12 @@ body {
 .ui-list-row.sel { background: var(--sel-inactive-bg); }
 .ui-list:focus .ui-list-row.sel { background: var(--sel-bg); color: var(--sel-fg); }
 .ui-list-row.header { color: var(--fg); font-weight: 600; }
+/* A tree's pinned ancestor rows: opaque over the rows they cover. */
+.ui-list-row.sticky { z-index: 1; background-color: var(--panel); }
+.ui-list-row.sticky:hover { background: linear-gradient(var(--hover-bg), var(--hover-bg)) var(--panel); }
+.ui-list-row.sticky.sel { background: linear-gradient(var(--sel-inactive-bg), var(--sel-inactive-bg)) var(--panel); }
+.ui-list:focus .ui-list-row.sticky.sel { background: linear-gradient(var(--sel-bg), var(--sel-bg)) var(--panel); }
+.ui-list-row.sticky.last { box-shadow: 0 1px 0 var(--border), 0 3px 4px -2px var(--shadow); }
 .ui-tree-row { gap: 0; }
 .ui-table { border-collapse: collapse; width: 100%; font: var(--ui-font-sm) var(--mono); }
 .ui-table th { text-align: left; color: var(--muted); font-weight: normal; padding: 3px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }

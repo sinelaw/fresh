@@ -147,6 +147,9 @@
 .skin-winamp .ui-list-row:hover { background: rgba(78, 240, 127, .06); }
 .skin-winamp .ui-list-row.sel, .skin-winamp .ui-list:focus .ui-list-row.sel { background: var(--wa-lcd-sel); color: #eafff0; }
 .skin-winamp .ui-list-row.header { color: var(--wa-amber); }
+/* Pinned tree rows: the LCD's black under them. */
+.skin-winamp .ui-list-row.sticky { background-color: var(--wa-sunken); }
+.skin-winamp .ui-list-row.sticky.sel { background: var(--wa-lcd-sel), var(--wa-sunken); }
 .skin-winamp :is(#terminal, #dock) { border-top: 3px solid #2c2019; }
 .skin-winamp .split.h > .sash { border-left: 3px solid #2c2019; }
 .skin-winamp .split.v > .sash { border-top: 3px solid #2c2019; }
