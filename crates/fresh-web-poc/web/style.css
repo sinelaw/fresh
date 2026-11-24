@@ -80,7 +80,8 @@ body {
 .pane .tabs { scrollbar-width: none; }
 .tab .x:hover { opacity: 1; }
 .surface { position: relative; flex: 1; overflow: hidden; background: var(--bg); font-family: var(--mono); font-size: var(--editor-font-size); line-height: var(--lh); cursor: text; }
-.gutter { position: absolute; left: 0; top: 0; color: var(--faint); white-space: pre; user-select: none; text-align: right; }
+/* The gutter stays over the text scrolled sideways under it. */
+.gutter { position: absolute; left: 0; top: 0; z-index: 1; background: var(--bg); color: var(--faint); white-space: pre; user-select: none; text-align: right; }
 .text { position: absolute; top: 0; right: 12px; white-space: pre; user-select: none; }
 .carets { position: absolute; top: 0; right: 12px; pointer-events: none; }
 .row { height: var(--lh); white-space: pre; overflow: hidden; }

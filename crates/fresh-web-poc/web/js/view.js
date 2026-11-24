@@ -29,6 +29,7 @@ export class View {
     this.mode = "source"; // or "compose"
     this.opts = { composeWidth: null, wrap: false, lineNumbers: !buf.isVirtual };
     this.folds = []; // [{start, end}] window line indices; start's line stays
+    this.left = 0; // columns scrolled sideways (no wrap)
   }
   get primary() { return this.cursors[0]; }
   get top() { return this._top; }
@@ -94,6 +95,8 @@ export class Pane {
     // Sizes come from a ResizeObserver, never read while drawing: reading
     // layout after writing rows would force a synchronous reflow.
     this.size = { w: 0, h: 0, sb: 0 };
+    this.wantX = false; // keep the cursor in view sideways at the next draw
+    this.maxCols = 0; // the widest row drawn, in columns
   }
 
   // Take the surface's resizes and mouse (once, after `new`).
@@ -103,7 +106,14 @@ export class Pane {
       this.scheduleRender();
     }).observe(this.surfaceEl);
     this.surfaceEl.addEventListener("mousedown", (e) => this.onMouseDown(e));
-    this.surfaceEl.addEventListener("wheel", (e) => { e.preventDefault(); this.scrollLines(Math.sign(e.deltaY) * 3); }, { passive: false });
+    // The wheel scrolls lines; sideways (a tilt, or with Shift) it scrolls
+    // columns.
+    this.surfaceEl.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const dx = e.shiftKey ? e.deltaY || e.deltaX : Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0;
+      if (dx) this.scrollCols(Math.sign(dx) * 6);
+      else this.scrollLines(Math.sign(e.deltaY) * 3);
+    }, { passive: false });
     this.surfaceEl.addEventListener("mousemove", (e) => this.onHover(e));
     this.scrollbarEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
     this.gutterEl.addEventListener("mousedown", (e) => this.onGutter(e));
@@ -339,7 +349,20 @@ export class Pane {
     const { cw, lh } = this.metrics();
     const s = this.app.settings;
     this.gutterEl.style.width = `${g.gutter * cw}px`;
-    const left = (g.gutter + g.margin) * cw;
+    // Sideways: the widest row on screen bounds the scroll, and a cursor
+    // that moved is kept in view (a few columns in from the edge).
+    this.maxCols = rows.reduce((m, r) => Math.max(m, r.col), 0);
+    if (v.opts.wrap) v.left = 0;
+    else {
+      if (this.wantX) {
+        const at = this.caretXY(v.primary.pos);
+        if (at && at.x < v.left) v.left = Math.max(0, at.x - 4);
+        else if (at && at.x > v.left + g.width - 2) v.left = at.x - g.width + 6;
+      }
+      v.left = Math.max(0, Math.min(v.left, this.maxCols - 1));
+    }
+    this.wantX = false;
+    const left = (g.gutter + g.margin - v.left) * cw;
     this.textEl.style.left = this.caretsEl.style.left = this.rulersEl.style.left = `${left}px`;
     // Gutter marks and the worst diagnostic, by line.
     const marks = new Map();
@@ -604,10 +627,22 @@ export class Pane {
     this.scheduleRender();
   }
 
+  // Scroll `n` columns sideways (no wrap), as far as the widest row on
+  // screen goes.
+  scrollCols(n) {
+    const v = this.view;
+    if (!v || v.opts.wrap || v.mode === "compose") return;
+    const width = this.geom ? this.geom.width : this.metrics().cols;
+    v.left = Math.max(0, Math.min(v.left + n, (this.maxCols || 0) - width + 4));
+    this.scheduleRender();
+  }
+
   // Keep the primary cursor on screen; `center` puts it mid-screen.
+  // Sideways, the next draw keeps it in view (it measures the rows).
   reveal(center = false) {
     const v = this.view;
     if (!v || !v.buf.text) return;
+    this.wantX = true;
     // A document keeps the cursor in view as it draws (it measures there).
     if (v.mode === "compose") { this.doc.want = center ? "center" : this.doc.want || "keep"; this.scheduleRender(); return; }
     const L = v.buf.text;

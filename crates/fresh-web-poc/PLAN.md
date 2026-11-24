@@ -122,7 +122,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Editor | Right-click context menu (Cut / Copy / Paste, Go to Definition, References, Rename, Code Actions, Hover, Format, comment / duplicate / delete line, select all / occurrences, Revert); a right press outside the selection moves the caret | fixed |
 | Editor | Scrollbar: drag, click to jump | present |
 | Editor | Scrollbar markers: git changes, search matches, diagnostics (in lanes), the cursor's line; for buffers held whole | fixed |
-| Editor | Horizontal scrolling of long lines (wrap off) | missing |
+| Editor | Horizontal scrolling of long lines (wrap off): the cursor kept in view, Shift+wheel and sideways wheels | fixed |
 | Editor | Line wrap toggle (Alt+Z), line numbers, current line, occurrences, whitespace, rulers | present |
 | Editor | Indentation guides, matching-bracket highlight, rainbow brackets | missing (drawing extras; after the chrome) |
 | Editor | Minimap, breadcrumbs | skipped (the editor has neither) |
