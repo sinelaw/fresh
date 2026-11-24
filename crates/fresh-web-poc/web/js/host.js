@@ -96,7 +96,7 @@ class BufferHandle {
   decorations(name) { return new DecorationSet(this.b, `${this.plugin}:${name}`); }
   views() { return [...this.b.views].map((v) => new ViewHandle(this.app, v, this.plugin)); }
   setEntries(entries) { this.b.setEntries(entries); this.app.renderBuffer(this.b.id); }
-  propsAt(pos) { return this.b.propsAt ? this.b.propsAt(pos) : []; }
+  propsAt(pos) { return this.b.propsAt(pos); }
   // Foldable blocks, as document line ranges [{start, end}] (a language
   // server's folding ranges); folding uses indentation where none are given.
   setFoldRanges(ranges) { this.b.foldRanges = ranges; }

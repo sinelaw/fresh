@@ -12,7 +12,7 @@
 // per-entry properties live here and nowhere else.
 
 import { rpc } from "./rpc.js";
-import { byteLen, transformSeqs, shiftPos } from "./ot.js";
+import { byteLen, transformSeqs } from "./ot.js";
 import { Decor } from "./decor.js";
 
 // A window: this many lines before and after the line asked for. A file
@@ -143,20 +143,63 @@ class Lines {
   }
 }
 
+// A buffer: its text (all of it, or a window of it), decorations, views,
+// undo and listeners, whatever its kind. What differs by kind is its
+// source: a `FileSource` (a server document) or a `VirtualSource` (a
+// plugin's entries). Make one with `fileBuffer` or `virtualBuffer`.
 export class Buffer {
-  constructor(kind) {
+  constructor(source) {
     this.id = nextBufferId++;
-    this.kind = kind;
+    this.source = source;
+    this.name = "";
+    this.path = "";
+    // What the server says of a file (`setInfo`); a virtual buffer's
+    // language is its creator's.
+    this.language = null;
+    this.encoding = null;
+    this.lineEnding = null;
+    this.large = false; // read from disk as it is viewed, see FileSource
+    this.modified = false;
+    this.readOnly = false;
+    this.mode = null; // the plugin mode whose keys apply (a virtual buffer's)
+    this.text = null; // Lines, or null until (again) fetched
+    this.textGen = 0; // bumped on every change to the held text
+    this.len = 0;
+    this.totalLines = null; // null while a huge file has no line index
     this.decor = new Decor();
     this.views = new Set();
     this.undo = [];
     this.redo = [];
-    this.props = new Map();
+    this.typingRun = false;
+    this.lastUndoAt = 0;
+    this.lastEdit = 0;
     this.listeners = new Set();
+    // Kept by the app and plugins.
+    this.keep = false; // stays open while no view shows it
+    this.discard = false; // closing gives up its unsaved changes
+    this.keepMine = false; // the next save overwrites a change on disk
+    this.foldRanges = null; // a language server's, as line ranges
+    this.struct = null; // Markdown structure of the held lines, at `structGen`
+    this.structGen = -1;
   }
   emit(what, data) { for (const f of this.listeners) f(what, data); }
-  get isVirtual() { return this.kind === "virtual"; }
-  lineCount() { return this.text ? (this.text.firstLine != null && this.text.eof && this.text.bof ? this.text.count : this.totalLines) : null; }
+  get isVirtual() { return this.source.kind === "virtual"; }
+  // The server document's id; null for a virtual buffer.
+  get doc() { return this.source.doc; }
+  // The held text covers the whole document.
+  get full() { const L = this.text; return !!L && L.bof && L.eof; }
+
+  // The server's word on the document's file (after an open, a save, a
+  // rename or a delete): its path, name, language, format and whether it is
+  // unsaved.
+  setInfo(info) {
+    this.path = info.path;
+    this.name = info.path.split("/").pop();
+    this.language = info.language;
+    this.modified = info.modified;
+    this.encoding = info.encoding;
+    this.lineEnding = info.line_ending;
+  }
 
   // Move everything anchored in this buffer through `op`: text, decorations,
   // cursors in every view, and undo entries.
@@ -168,7 +211,7 @@ export class Buffer {
   // Apply a primitive to the held text. Returns the deleted text when the
   // window held it.
   applyText(op) {
-    this.textGen = (this.textGen || 0) + 1;
+    this.textGen++;
     const L = this.text;
     const n = op.t === "ins" ? byteLen(op.text) : op.len;
     let gone = null;
@@ -197,120 +240,22 @@ export class Buffer {
   }
 
   textRange(s, e) { return this.text ? this.text.text(s, Math.min(e, this.len)) : null; }
-  get readOnly() { return !!this._readOnly; }
-}
-
-// ---------------------------------------------------------------- file
-
-export class FileBuffer extends Buffer {
-  constructor(info) {
-    super("file");
-    this.doc = info.doc;
-    this.path = info.path;
-    this.name = info.path.split("/").pop();
-    this.len = info.len;
-    this.version = info.version;
-    this.large = info.large;
-    this.language = info.language;
-    this.modified = info.modified;
-    this.encoding = info.encoding;
-    this.lineEnding = info.line_ending;
-    this._readOnly = !!info.readonly;
-    this.totalLines = info.lines;
-    this.text = null;
-    this.inflight = null;
-    this.pending = [];
-    this.recent = []; // [{version, ops}] as sequenced, for windows fetched late
-    this.waiting = null;
-    this.fetching = null;
+  // Text for a plugin's getBufferText: local when held, else the source's.
+  async textAsync(s, e) {
+    const t = this.textRange(s, e);
+    if (t != null) return t;
+    return this.source.fetchText(s, e);
   }
 
-  // The server's word on the document's file (after a rename or a delete):
-  // its path, name, language and whether it is unsaved.
-  setInfo(info) {
-    this.path = info.path;
-    this.name = info.path.split("/").pop();
-    this.language = info.language;
-    this.modified = info.modified;
-    this.encoding = info.encoding;
-    this.lineEnding = info.line_ending;
-  }
+  // Make sure the held text has the line at `pos` and `after` lines past
+  // it. Resolves when it does (immediately when it already does).
+  ensure(pos, after = 200) { return this.source.ensure(this, pos, after); }
 
-  // The server replaced the document (a huge file reloaded from disk): a
-  // new log from `info.version`. Edits not yet sequenced are dropped (the
-  // server refuses them as based on the old log), undo starts over, and
-  // the window is fetched again.
-  reloaded(info) {
-    this.setInfo(info);
-    this.version = info.version;
-    this.len = info.len;
-    this.large = info.large;
-    this.totalLines = info.lines;
-    this.inflight = null;
-    this.pending = [];
-    this.recent = [];
-    this.undo = [];
-    this.redo = [];
-    this.text = null;
-    for (const v of this.views) {
-      for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = null; }
-      v.setTop(0);
-    }
-    const v = [...this.views][0];
-    return this.ensure(v ? v.primary.pos : 0);
-  }
-
-  // The held text covers the whole document.
-  get full() { const L = this.text; return !!L && L.bof && L.eof; }
-
-  // Make sure the window holds the line at `pos` and `after` lines past it.
-  // Resolves when it does (immediately when it already does).
-  ensure(pos, after = 200) {
-    const L = this.text;
-    if (L) {
-      const i = L.indexOf(pos);
-      if (i >= 0 && (L.eof || L.count - i > after) && (L.bof || i > 50)) return Promise.resolve();
-    }
-    if (this.fetching) return this.fetching;
-    const args = { doc: this.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2) };
-    this.fetching = (async () => {
-      for (;;) {
-        // A window is the server's text; with edits of ours not yet in it,
-        // wait for them to be confirmed.
-        while (this.inflight || this.pending.length) await new Promise((r) => setTimeout(r, 20));
-        const w = await rpc("doc.window", args);
-        if (this.inflight || this.pending.length) continue;
-        while (w.version > this.version) await new Promise((r) => setTimeout(r, 10));
-        const L2 = new Lines(w.start, w.text, w.bof, w.eof, w.first_line);
-        // Replay what we applied since the version the window was read at.
-        const savedLen = this.len;
-        this.len = w.len;
-        for (const e of this.recent) {
-          if (e.version <= w.version) continue;
-          for (const op of e.ops) {
-            const tmp = this.text;
-            this.text = L2;
-            const tl = this.totalLines;
-            this.applyText(op);
-            this.totalLines = tl;
-            this.text = tmp;
-          }
-        }
-        this.len = savedLen;
-        this.text = L2;
-        this.textGen = (this.textGen || 0) + 1;
-        break;
-      }
-      this.fetching = null;
-      this.emit("text");
-    })();
-    return this.fetching;
-  }
-
-  // A local edit: apply now, send when nothing is in flight.
+  // A local edit: applied now, and passed to the source (a file's goes to
+  // the server).
   edit(ops, { undoable = true, typing = null } = {}) {
     const inverse = [];
-    this.modified = true; // before the edit events, which redraw the tabs
+    if (this.doc) this.modified = true; // before the edit events, which redraw the tabs
     for (const op of ops) {
       const gone = op.t === "del" ? this.textRange(op.pos, op.pos + op.len) : null;
       if (op.t === "del") op.nl = gone != null ? nl(gone) : 0;
@@ -321,48 +266,8 @@ export class FileBuffer extends Buffer {
     }
     if (undoable) { pushUndo(this, inverse, typing); this.redo = []; }
     this.lastEdit = Date.now();
-    this.pending.push(...ops.map((o) => ({ ...o })));
-    this.flush();
+    this.source.send(this, ops);
     return inverse;
-  }
-
-  flush() {
-    if (this.inflight || !this.pending.length) return;
-    this.inflight = this.pending;
-    this.pending = [];
-    const ops = this.inflight.map(({ t, pos, text, len }) => (t === "ins" ? { t, pos, text } : { t, pos, len }));
-    rpc("doc.edit", { doc: this.doc, base: this.version, ops }).catch((e) => {
-      console.error(e);
-      this.emit("error", e);
-    });
-  }
-
-  // An event from the log, in order.
-  onOps(ev, me) {
-    if (ev.client === me) {
-      // Our own edit, sequenced: the acknowledgement.
-      this.version = ev.version;
-      this.recent.push({ version: ev.version, ops: ev.ops });
-      this.inflight = null;
-      this.modified = ev.modified;
-      this.flush();
-    } else {
-      let remote = ev.ops;
-      // Ours are sequenced after it: theirs win ties.
-      if (this.inflight) [this.inflight, remote] = transformSeqs(this.inflight, remote, false);
-      if (this.pending.length) [this.pending, remote] = transformSeqs(this.pending, remote, false);
-      for (const op of remote) {
-        const gone = this.applyText(op);
-        this.moveThrough(op);
-        this.undo = this.undo.map((u) => transformSeqs(u, [op], false)[0]);
-        this.redo = this.redo.map((u) => transformSeqs(u, [op], false)[0]);
-        this.emit("edit", { op, gone, local: false });
-      }
-      this.version = ev.version;
-      this.recent.push({ version: ev.version, ops: ev.ops });
-      this.modified = ev.modified;
-    }
-    if (this.recent.length > 2000) this.recent.splice(0, this.recent.length - 2000);
   }
 
   doUndo(stack = this.undo, other = this.redo) {
@@ -375,84 +280,248 @@ export class FileBuffer extends Buffer {
   }
   doRedo() { return this.doUndo(this.redo, this.undo); }
 
+  // The properties of the entries at `pos` (a virtual buffer's; a file
+  // has none).
+  propsAt(pos) { return this.source.propsAt(pos, this.len); }
+
+  // ---- a virtual buffer's
+
+  // Replace the text with `entries`: [{text, props, style}].
+  setEntries(entries) { this.source.setEntries(this, entries); }
+
+  // ---- a file buffer's
+
+  // The document log version this buffer has seen.
+  get version() { return this.source.version; }
+  // Every local edit has been sequenced by the server.
+  get synced() { return this.source.synced; }
+  // An event from the document's log, in order.
+  onOps(ev, me) { this.source.onOps(this, ev, me); }
+  // The edits applied here since log version `version`, in order: those
+  // sequenced after it, then this client's not yet sequenced.
+  opsSince(version) { return this.source.opsSince(version); }
   // `force`: overwrite a file that changed on disk since it was loaded.
-  async save({ force = false } = {}) {
-    while (this.inflight || this.pending.length) await new Promise((r) => setTimeout(r, 20));
+  save({ force = false } = {}) { return this.source.save(this, force); }
+
+  // The server replaced the document (a huge file reloaded from disk): a
+  // new log from `info.version`. Edits not yet sequenced are dropped (the
+  // server refuses them as based on the old log), undo starts over, and
+  // the window is fetched again.
+  reloaded(info) {
+    this.setInfo(info);
+    this.source.restart(info.version);
+    this.len = info.len;
+    this.large = info.large;
+    this.totalLines = info.lines;
+    this.undo = [];
+    this.redo = [];
+    this.text = null;
+    for (const v of this.views) {
+      for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = null; }
+      v.setTop(0);
+    }
+    const v = [...this.views][0];
+    return this.ensure(v ? v.primary.pos : 0);
+  }
+}
+
+// ---------------------------------------------------------------- file
+
+// A buffer for a server document (`doc.open`'s answer).
+export function fileBuffer(info) {
+  const b = new Buffer(new FileSource(info.doc, info.version));
+  b.setInfo(info);
+  b.len = info.len;
+  b.large = info.large;
+  b.totalLines = info.lines;
+  b.readOnly = !!info.readonly;
+  return b;
+}
+
+// A replica of a server document: windows of its text fetched as the view
+// moves, edits sent against the last log version seen, and the log applied
+// in the server's order.
+class FileSource {
+  constructor(doc, version) {
+    this.kind = "file";
+    this.doc = doc;
+    this.version = version;
+    this.inflight = null;
+    this.pending = [];
+    this.recent = []; // [{version, ops}] as sequenced, for windows fetched late
+    this.fetching = null;
+  }
+  get synced() { return !this.inflight && !this.pending.length; }
+
+  // A new log from `version` (the document was reloaded).
+  restart(version) {
+    this.version = version;
+    this.inflight = null;
+    this.pending = [];
+    this.recent = [];
+  }
+
+  ensure(buf, pos, after) {
+    const L = buf.text;
+    if (L) {
+      const i = L.indexOf(pos);
+      if (i >= 0 && (L.eof || L.count - i > after) && (L.bof || i > 50)) return Promise.resolve();
+    }
+    if (this.fetching) return this.fetching;
+    const args = { doc: this.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2) };
+    this.fetching = (async () => {
+      for (;;) {
+        // A window is the server's text; with edits of ours not yet in it,
+        // wait for them to be confirmed.
+        while (!this.synced) await new Promise((r) => setTimeout(r, 20));
+        const w = await rpc("doc.window", args);
+        if (!this.synced) continue;
+        while (w.version > this.version) await new Promise((r) => setTimeout(r, 10));
+        const L2 = new Lines(w.start, w.text, w.bof, w.eof, w.first_line);
+        // Replay what we applied since the version the window was read at.
+        const savedLen = buf.len;
+        buf.len = w.len;
+        for (const e of this.recent) {
+          if (e.version <= w.version) continue;
+          for (const op of e.ops) {
+            const tmp = buf.text;
+            buf.text = L2;
+            const tl = buf.totalLines;
+            buf.applyText(op);
+            buf.totalLines = tl;
+            buf.text = tmp;
+          }
+        }
+        buf.len = savedLen;
+        buf.text = L2;
+        buf.textGen++;
+        break;
+      }
+      this.fetching = null;
+      buf.emit("text");
+    })();
+    return this.fetching;
+  }
+
+  // Local edits: sent when nothing is in flight.
+  send(buf, ops) {
+    this.pending.push(...ops.map((o) => ({ ...o })));
+    this.flush(buf);
+  }
+
+  flush(buf) {
+    if (this.inflight || !this.pending.length) return;
+    this.inflight = this.pending;
+    this.pending = [];
+    const ops = this.inflight.map(({ t, pos, text, len }) => (t === "ins" ? { t, pos, text } : { t, pos, len }));
+    rpc("doc.edit", { doc: this.doc, base: this.version, ops }).catch((e) => {
+      console.error(e);
+      buf.emit("error", e);
+    });
+  }
+
+  onOps(buf, ev, me) {
+    if (ev.client === me) {
+      // Our own edit, sequenced: the acknowledgement.
+      this.version = ev.version;
+      this.recent.push({ version: ev.version, ops: ev.ops });
+      this.inflight = null;
+      buf.modified = ev.modified;
+      this.flush(buf);
+    } else {
+      let remote = ev.ops;
+      // Ours are sequenced after it: theirs win ties.
+      if (this.inflight) {
+        const [ours, theirs] = transformSeqs(this.inflight, remote, false);
+        this.inflight = ours;
+        remote = theirs;
+      }
+      if (this.pending.length) {
+        const [ours, theirs] = transformSeqs(this.pending, remote, false);
+        this.pending = ours;
+        remote = theirs;
+      }
+      for (const op of remote) {
+        const gone = buf.applyText(op);
+        buf.moveThrough(op);
+        buf.undo = buf.undo.map((u) => transformSeqs(u, [op], false)[0]);
+        buf.redo = buf.redo.map((u) => transformSeqs(u, [op], false)[0]);
+        buf.emit("edit", { op, gone, local: false });
+      }
+      this.version = ev.version;
+      this.recent.push({ version: ev.version, ops: ev.ops });
+      buf.modified = ev.modified;
+    }
+    if (this.recent.length > 2000) this.recent.splice(0, this.recent.length - 2000);
+  }
+
+  opsSince(version) {
+    const out = [];
+    for (const e of this.recent) if (e.version > version) out.push(...e.ops);
+    if (this.inflight) out.push(...this.inflight);
+    out.push(...this.pending);
+    return out;
+  }
+
+  async save(buf, force) {
+    while (!this.synced) await new Promise((r) => setTimeout(r, 20));
     const info = await rpc("doc.save", { doc: this.doc, force });
-    this.modified = info.modified;
+    buf.modified = info.modified;
     return info;
   }
 
-  // Text for a plugin's getBufferText: local when held, else the server's.
-  async textAsync(s, e) {
-    const t = this.textRange(s, e);
-    if (t != null) return t;
-    return (await rpc("doc.text", { doc: this.doc, start: s, end: e })).text;
-  }
+  // Text not held: the server's.
+  async fetchText(s, e) { return (await rpc("doc.text", { doc: this.doc, start: s, end: e })).text; }
+
+  propsAt() { return []; }
 }
 
 // ---------------------------------------------------------------- virtual
 
-export class VirtualBuffer extends Buffer {
-  constructor(name, opts = {}) {
-    super("virtual");
-    this.name = name;
-    this.path = "";
-    this.mode = opts.mode || null;
-    this._readOnly = !!opts.readOnly;
-    this.len = 0;
-    this.entries = [];
-    this.setEntries([]);
-    this.modified = false;
-    this.totalLines = 1;
-  }
-  setEntries(entries) {
-    this.entries = entries.map((e) => ({ ...e }));
-    let text = "";
-    this.ranges = [];
-    for (const e of this.entries) {
-      const s = byteLen(text);
-      text += e.text || "";
-      this.ranges.push({ start: s, end: byteLen(text), props: e.props || {}, style: e.style, inline: e.inlineOverlays });
-    }
-    this.len = byteLen(text);
-    this.text = new Lines(0, text, true, true, 0);
-    this.textGen = (this.textGen || 0) + 1;
-    this.offered = new Set();
-    this.totalLines = this.text.count;
-    this.decor.clearNamespace("entry-style");
-    for (const r of this.ranges) {
-      if (r.style) this.decor.add("overlays", { ns: "entry-style", start: r.start, end: r.end, style: r.style, when: null });
-    }
-    this.emit("text");
-  }
-  propsAt(pos) {
-    return this.ranges.filter((r) => pos >= r.start && (pos < r.end || (pos === r.end && r.end === this.len))).map((r) => r.props);
-  }
-  get full() { return true; }
-  ensure() { return Promise.resolve(); }
-  edit(ops, { undoable = true, typing = null } = {}) {
-    const inverse = [];
-    for (const op of ops) {
-      const gone = op.t === "del" ? this.textRange(op.pos, op.pos + op.len) : null;
-      this.applyText(op);
-      this.moveThrough(op);
-      inverse.unshift(op.t === "ins" ? { t: "del", pos: op.pos, len: byteLen(op.text) } : { t: "ins", pos: op.pos, text: gone ?? "" });
-      this.emit("edit", { op, gone, local: true });
-    }
-    if (undoable) { pushUndo(this, inverse, typing); this.redo = []; }
-    return inverse;
-  }
-  doUndo(stack = this.undo, other = this.redo) {
-    const ops = stack.pop();
-    if (!ops) return false;
-    this.typingRun = false;
-    other.push(this.edit(ops, { undoable: false }));
-    return ops;
-  }
-  doRedo() { return this.doUndo(this.redo, this.undo); }
-  async textAsync(s, e) { return this.textRange(s, e) ?? ""; }
-  async save() { return {}; }
+// A buffer local to this client, of `entries` (see `setEntries`).
+export function virtualBuffer(name, entries, { mode = null, readOnly = false } = {}) {
+  const b = new Buffer(new VirtualSource());
+  b.name = name;
+  b.mode = mode;
+  b.readOnly = !!readOnly;
+  b.setEntries(entries);
+  return b;
 }
 
-export { shiftPos };
+// A plugin's text: entries, each with its properties and style, held
+// whole and nowhere else.
+class VirtualSource {
+  constructor() {
+    this.kind = "virtual";
+    this.doc = null;
+    this.ranges = []; // [{start, end, props, style}], an entry's bytes
+  }
+
+  setEntries(buf, entries) {
+    let text = "";
+    this.ranges = [];
+    for (const e of entries) {
+      const s = byteLen(text);
+      text += e.text || "";
+      this.ranges.push({ start: s, end: byteLen(text), props: e.props || {}, style: e.style });
+    }
+    buf.len = byteLen(text);
+    buf.text = new Lines(0, text, true, true, 0);
+    buf.textGen++;
+    buf.totalLines = buf.text.count;
+    buf.decor.clearNamespace("entry-style");
+    for (const r of this.ranges) {
+      if (r.style) buf.decor.add("overlays", { ns: "entry-style", start: r.start, end: r.end, style: r.style, when: null });
+    }
+    buf.emit("text");
+  }
+
+  propsAt(pos, len) {
+    return this.ranges.filter((r) => pos >= r.start && (pos < r.end || (pos === r.end && r.end === len))).map((r) => r.props);
+  }
+
+  // Held whole: nothing to fetch, nothing to send.
+  ensure() { return Promise.resolve(); }
+  send() {}
+  async fetchText() { return ""; }
+}

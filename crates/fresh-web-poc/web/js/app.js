@@ -6,7 +6,7 @@
 
 import { rpc, session, connectEvents } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
-import { FileBuffer, VirtualBuffer, byteToIdx } from "./buffer.js";
+import { fileBuffer, virtualBuffer, byteToIdx } from "./buffer.js";
 import { Pane, View } from "./view.js";
 import { Editing } from "./editing.js";
 import { TerminalPanel } from "./terminal.js";
@@ -561,7 +561,7 @@ class App {
     const info = await rpc("doc.open", { path: abs });
     b = this.docs.get(info.doc);
     if (b) return b;
-    b = new FileBuffer(info);
+    b = fileBuffer(info);
     this.buffers.set(b.id, b);
     this.docs.set(b.doc, b);
     this.watchBuffer(b);
@@ -589,8 +589,7 @@ class App {
   }
 
   createVirtual(o) {
-    const b = new VirtualBuffer(o.name, { mode: o.mode, readOnly: o.readOnly ?? true });
-    b.setEntries(o.entries || [{ text: o.text || "" }]);
+    const b = virtualBuffer(o.name, o.entries || [{ text: o.text || "" }], { mode: o.mode, readOnly: o.readOnly ?? true });
     b.language = o.language || null;
     b.keep = !!o.keep;
     this.buffers.set(b.id, b);
@@ -655,7 +654,7 @@ class App {
     if (!this.settings.auto_save) return;
     const now = Date.now();
     for (const b of this.buffers.values()) {
-      if (b.doc && b.modified && !b.inflight && !b.pending.length && now - (b.lastEdit || 0) > this.settings.auto_save_seconds * 1000) {
+      if (b.doc && b.modified && b.synced && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
         b.lastEdit = now;
         this.saveBuffer(b, { ask: false });
       }
@@ -840,8 +839,7 @@ class App {
         // edit applied since, ours included.
         const items = ev.items.map((d) => ({ ...d }));
         const move = (op) => { for (const d of items) { d.start = shiftPos(d.start, op, true); d.end = Math.max(d.start, shiftPos(d.end, op, false)); } };
-        for (const e of b.recent) if (e.version > ev.version) for (const op of e.ops) move(op);
-        for (const op of [...(b.inflight || []), ...b.pending]) move(op);
+        for (const op of b.opsSince(ev.version)) move(op);
         b.decor.diags = items;
         b.decor.gen++;
         this.renderBuffer(b.id);
@@ -1068,7 +1066,7 @@ class App {
       for (const b of mod) await this.saveBuffer(b);
       this.setStatus(mod.length ? `Saved ${mod.length} file(s)` : "Nothing to save");
     });
-    cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b._readOnly = !b._readOnly; this.renderAll(); } });
+    cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b.readOnly = !b.readOnly; this.renderAll(); } });
     // Save As: the text written to another file (through the server's
     // file operations), which then opens; the original stays as it is.
     cmd("file.saveAs", "File: Save As…", async () => {
@@ -1430,7 +1428,7 @@ class App {
       const ds = b.decor.diags;
       if (ds.length) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
       if (v.mode === "compose") add("compose", titled("Markdown: Toggle Compose", "markdown.toggleCompose"), cmd("markdown.toggleCompose"));
-      if (b.doc) add(b.inflight || b.pending.length ? `v${b.version}…` : `v${b.version}`, "Document log version");
+      if (b.doc) add(b.synced ? `v${b.version}` : `v${b.version}…`, "Document log version");
     }
     for (const it of this.statusItems.values()) if (it.text) add(it.text, it.title, it.onClick);
     add(this.hostName, "Workspace host");
