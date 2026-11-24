@@ -33,7 +33,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); o
 body {
   --ui-font: system-ui, sans-serif;
   --ui-font-size: calc(13px * var(--ui-scale, 1)); --ui-font-sm: calc(var(--ui-font-size) * 12 / 13); --ui-font-xs: calc(var(--ui-font-size) * 11 / 13);
-  --editor-font-size: calc(13px * var(--ui-scale, 1));
+  --editor-font-size: calc(13px * var(--ui-scale, 1) * var(--editor-zoom, 1));
   font: var(--ui-font-size) var(--ui-font);
 }
 #app { display: flex; flex-direction: column; height: 100vh; }
@@ -64,6 +64,8 @@ body {
 .split.h { flex-direction: row; }
 .split.v { flex-direction: column; }
 /* A split's sash is its dividing line (js/sash.js). */
+/* A maximized split: the others (and their sashes) are hidden. */
+#editor-area.maximized :is(.pane:not(.max), .split:not(:has(.pane.max)), .sash) { display: none; }
 .split.h > .sash { border-left: 1px solid var(--border); }
 .split.v > .sash { border-top: 1px solid var(--border); }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1 1 0; }

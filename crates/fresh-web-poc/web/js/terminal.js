@@ -21,7 +21,9 @@ const xtermTheme = () => {
 // The terminal's font: the editor's (the skin sets its size).
 const termFont = () => {
   const css = getComputedStyle(document.body);
-  return { fontFamily: css.getPropertyValue("--mono"), fontSize: parseFloat(css.getPropertyValue("--editor-font-size")) || 13 };
+  // The size as the editor's text has it (the skin's density, the zoom).
+  const surface = document.querySelector(".surface");
+  return { fontFamily: css.getPropertyValue("--mono"), fontSize: parseFloat(getComputedStyle(surface || document.body).fontSize) || 13 };
 };
 
 // How an agent session's tab shows what it is doing (the server reads it

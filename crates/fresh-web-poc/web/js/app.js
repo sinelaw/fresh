@@ -30,7 +30,7 @@ const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.past
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
-  show_whitespace: false, rulers: [], page_width: 80, keymap: "default", theme: "dark",
+  show_whitespace: false, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
 };
 
 class App {
@@ -52,6 +52,7 @@ class App {
     this.statusSig = ""; // what the status bar shows, to write it only when it changes
     this.statusRuns = []; // its items' actions
     this.formats = null; // the server's languages, encodings and line endings
+    this.maximized = null; // the split filling the editor area, if one does
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
     this.log = [];
     let saved = {};
@@ -80,6 +81,7 @@ class App {
     // The skin first: the editor's cell is measured in its fonts.
     this.skins = new Skins(this);
     await this.skins.load();
+    document.body.style.setProperty("--editor-zoom", String(this.settings.zoom));
     this.measure();
     this.root = ws?.root ?? "";
     this.host = null;
@@ -244,7 +246,9 @@ class App {
       const d = document.createElement("div");
       d.className = `split ${n.dir}`;
       const a = build(n.a), b = build(n.b);
-      const flex = () => { a.style.flex = `${n.ratio} 1 0`; b.style.flex = `${1 - n.ratio} 1 0`; };
+      // Grow factors in thousandths: they sum past one, so a child left
+      // alone (its sibling hidden by a maximized split) fills the split.
+      const flex = () => { a.style.flex = `${n.ratio * 1000} 1 0`; b.style.flex = `${(1 - n.ratio) * 1000} 1 0`; };
       flex();
       // Its sash moves the line between them; the panes redraw at their
       // new sizes (each observes its own).
@@ -267,6 +271,7 @@ class App {
     el.style.flex = "1 1 0";
     area.appendChild(el);
     for (const p of this.panes()) p.el.classList.toggle("active", p === this.activePane);
+    this.showMaximized();
     this.renderAll();
     this.rememberLayout();
   }
@@ -304,6 +309,8 @@ class App {
     this.activePane = p;
     for (const x of this.panes()) x.el.classList.toggle("active", x === p);
     this.input.focus({ preventScroll: true });
+    // A maximized split gives way to the one focused.
+    if (this.maximized && this.maximized !== p) { this.maximized = p; this.showMaximized(); }
     if (changed) { this.renderAll(); if (p.view) this.host?.emit("buffer.activated", { buffer: p.view.buf, view: p.view }); }
   }
   split(dir, ratio = 0.5, buf = null) {
@@ -325,6 +332,13 @@ class App {
   }
   // Close a split. Files whose last views are in it and have unsaved
   // changes are asked about first (see `mayClose`).
+  // One split filling the editor area (the others hidden, not closed), or
+  // none.
+  showMaximized() {
+    if (this.maximized && !this.panes().includes(this.maximized)) this.maximized = null;
+    $("#editor-area").classList.toggle("maximized", !!this.maximized);
+    for (const p of this.panes()) p.el.classList.toggle("max", p === this.maximized);
+  }
   async closePane(p) {
     if (this.panes().length === 1) return;
     for (const b of new Set(p.views.map((v) => v.buf))) if (!(await this.mayClose(b, p.views))) return;
@@ -995,6 +1009,7 @@ class App {
       "C-a": "select.all", "C-l": "select.line", "C-S-k": "edit.deleteLine", "C-S-d": "edit.duplicateLine", "M-Up": "edit.moveLineUp", "M-Down": "edit.moveLineDown",
       "C-/": "edit.toggleComment", "C-d": "select.nextOccurrence", "C-S-l": "select.allOccurrences", "C-M-Up": "cursor.addAbove", "C-M-Down": "cursor.addBelow",
       "C-]": "cursor.matchingBracket", "C-{": "fold.toggle", "C-}": "fold.toggle",
+      "C-=": "view.zoomIn", "C-+": "view.zoomIn", "C--": "view.zoomOut", "C-0": "view.zoomReset",
       F10: "menu.open", "M-f": "menu.file", "M-e": "menu.edit", "M-v": "menu.view", "M-s": "menu.selection", "M-g": "menu.go", "M-l": "menu.lsp", "M-x": "menu.explorer", "M-h": "menu.help",
     };
     const emacs = this.settings.keymap === "emacs" ? {
@@ -1085,6 +1100,17 @@ class App {
     cmd("view.nextSplit", "View: Next Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
     cmd("view.prevSplit", "View: Previous Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
     cmd("view.closeTab", "View: Close Tab", () => { const p = P(); if (p.view) this.closeTab(p, p.view); });
+    // Zoom: the editor's and the terminals' text, a tenth at a time.
+    const zoom = (z) => {
+      this.settings.zoom = Math.round(clamp(z, 0.5, 3) * 10) / 10;
+      document.body.style.setProperty("--editor-zoom", String(this.settings.zoom));
+      this.saveSettings();
+      this.remeasure();
+      this.setStatus(`Zoom ${Math.round(this.settings.zoom * 100)}%`);
+    };
+    cmd("view.zoomIn", "View: Zoom In", () => zoom(this.settings.zoom + 0.1));
+    cmd("view.zoomOut", "View: Zoom Out", () => zoom(this.settings.zoom - 0.1));
+    cmd("view.zoomReset", "View: Reset Zoom", () => zoom(1));
     cmd("view.toggleSidebar", "View: Toggle Sidebar", () => { $("#sidebar").classList.toggle("hidden"); this.renderAll(); this.rememberLayout(); });
     cmd("file.recent", "File: Open Recent…", () => {
       const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
@@ -1094,6 +1120,11 @@ class App {
         items: list.length ? list.map((p) => ({ label: rel(p), detail: p.split("/").pop(), value: p })) : [{ label: "No recent files", value: null }],
         onAccept: (it) => it.value && this.openFile(it.value),
       });
+    });
+    cmd("view.maximizeSplit", "View: Toggle Maximize Split", () => {
+      this.maximized = this.maximized || this.panes().length < 2 ? null : P();
+      this.showMaximized();
+      this.renderAll();
     });
     cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); if (p.view) this.closeTabs(p, (x) => x !== p.view); });
     cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of this.panes()) await this.closeTabs(p, () => true); });

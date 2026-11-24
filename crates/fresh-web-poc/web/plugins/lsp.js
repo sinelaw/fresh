@@ -315,5 +315,19 @@ export function activate(fresh) {
   reg("lsp.symbols", "LSP: Document Symbols", symbols, "C-S-o");
   reg("lsp.signatureHelp", "LSP: Signature Help", signatureHelp, "C-S-Space");
   reg("lsp.diagnostics", "Diagnostics: Show Panel", diagnosticsPanel, "C-S-m");
+  // The next (previous) diagnostic after (before) the cursor, round the
+  // end of the file; its message in the status bar.
+  const stepDiagnostic = async (dir) => {
+    const v = fresh.views.active();
+    if (!v) return;
+    const ds = fresh.lsp.diagnostics(v.buffer).sort((a, b) => a.start - b.start || a.severity - b.severity);
+    if (!ds.length) { fresh.ui.message("No problems in this file"); return; }
+    const at = v.cursor;
+    const d = dir > 0 ? ds.find((x) => x.start > at) || ds[0] : [...ds].reverse().find((x) => x.start < at) || ds[ds.length - 1];
+    await v.setCursor(d.start, { center: true });
+    fresh.ui.message(`${SEV[d.severity] || "error"}: ${d.message.split("\n")[0]}`);
+  };
+  reg("lsp.nextDiagnostic", "Go to Next Problem", () => stepDiagnostic(1), "F8");
+  reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
   reg("lsp.status", "LSP: Show Status", lspStatus);
 }

@@ -107,11 +107,11 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Chrome | Status bar items open their action: position → Go to Line, line ending → Set Line Ending, encoding → reopen / save with, language → Set Language (the language server follows), diagnostics → panel, LSP → server status, git branch → log, theme → Select Theme, read-only, cursors, compose; tooltips name the action and its key | fixed |
 | Chrome | Skin picker button and Ctrl+Alt+T | present |
 | Chrome | Theme picker | present |
-| Chrome | Zoom: editor font size larger / smaller / reset | missing |
+| Chrome | Zoom: the editor's and terminals' text larger / smaller / reset (Ctrl+= / Ctrl+- / Ctrl+0, View menu), remembered | fixed |
 | Layout | Drag to resize: editor splits (double-click: even) | fixed |
 | Layout | Drag to resize: sidebar width, bottom dock and terminal height, right dock width (remembered per workspace; double-click: default) | fixed |
 | Layout | Split right / down, close, next / previous split | present |
-| Layout | Maximize split (toggle) | missing |
+| Layout | Maximize split (toggle; the others hidden, not closed; focus moves it) | fixed |
 | Layout | Scroll sync of same-buffer splits | missing (rarely used; after the rest) |
 | Layout | Session restore per workspace (in the browser): the splits and ratios, each split's file tabs with cursor and scroll, the active tab, sizes, sidebar and terminal | fixed |
 | Tabs | Close with ×, middle-click | present |
@@ -141,7 +141,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |
 | Palette | Go to symbol in the file (`@`), in the workspace | missing (`LSP: Document Symbols` is a panel) |
 | Navigation | Back / forward, go to definition / references, matching bracket, paragraphs | present |
-| Navigation | Next / previous error (F8 / Shift+F8) | missing |
+| Navigation | Next / previous problem (F8 / Shift+F8), its message in the status bar | fixed |
 | Navigation | Bookmarks (Ctrl+Shift+N set, Alt+N jump) | missing |
 | Editing | Multi-cursor, selection, undo / redo, comment, duplicate / move line, fold, auto-close, smart home, kill ring | present |
 | Editing | Case conversion, sort lines, trim trailing whitespace, transpose, block selection, expand selection, macros | missing (editing commands, not chrome; after the UI) |
