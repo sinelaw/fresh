@@ -189,3 +189,28 @@ fn scrolling_links_with_wide_labels_leaves_no_stale_cells() {
         harness.assert_terminal_model_matches_frame();
     }
 }
+
+/// A link's title is not part of what it opens, and a target inside the
+/// document (`#heading`, a relative path) is not something a terminal can
+/// open, so neither reaches the terminal as a hyperlink.
+#[test]
+fn link_opens_its_destination_only_and_only_an_absolute_one() {
+    let url = "https://example.com/guide";
+    let (harness, _temp) = page_view(&format!(
+        "# Links\n\nRead [the guide]({url} \"The Guide\") or [intro](#intro) or [notes](notes.md).\n"
+    ));
+    harness.assert_terminal_model_matches_frame();
+    let model = harness.terminal_model();
+    let targets: std::collections::BTreeSet<String> = (0..model.rows())
+        .flat_map(|row| model.links(row))
+        .flatten()
+        .collect();
+    assert_eq!(
+        targets.into_iter().collect::<Vec<_>>(),
+        vec![url.to_string()],
+        "\n{}",
+        model_text(&harness)
+    );
+    let rows = linked_text_per_row(&harness, url);
+    assert_eq!(rows.concat(), format!("theguide{url}"), "{rows:?}");
+}

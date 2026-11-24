@@ -2399,6 +2399,14 @@ function findInlineSpans(text: string, bufferId: number | null = null): InlineSp
     // (#1227). Only the `](` and `)` around it are concealed.
     const urlStart = textEnd + 2;
     const urlEnd = me - 1;
+    // What the link opens: the destination alone — not a `"title"` after
+    // it, not the `<…>` around it — and only an absolute URI (`https:`,
+    // `mailto:`, `file:` …). A `#heading` or a relative path is a target
+    // inside the document set that a terminal cannot open, so it is not
+    // handed to one as a hyperlink.
+    const dest = /^\s*<?([^\s<>]+)/.exec(m[2]);
+    const destStart = dest ? urlStart + dest.index + dest[0].length - dest[1].length : urlStart;
+    const target = dest && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(dest[1]) ? dest[1] : undefined;
     spans.push({
       type: 'link',
       matchStart: ms, matchEnd: me,
@@ -2408,9 +2416,9 @@ function findInlineSpans(text: string, bufferId: number | null = null): InlineSp
         { start: textEnd, end: urlStart, replacement: ' — ' },
         { start: urlEnd, end: me, replacement: null },
       ],
-      linkUrl: m[2],
-      linkUrlStart: urlStart,
-      linkUrlEnd: urlEnd,
+      linkUrl: target,
+      linkUrlStart: destStart,
+      linkUrlEnd: destStart + (dest ? dest[1].length : 0),
     });
   }
 
@@ -3310,7 +3318,7 @@ function processLineConceals(
           url: span.linkUrl,
         });
         // The shown URL links too, so it opens from any row it wraps over.
-        if (span.linkUrlStart !== undefined && span.linkUrlEnd !== undefined) {
+        if (span.linkUrl && span.linkUrlStart !== undefined && span.linkUrlEnd !== undefined) {
           addComposeOverlay(
             bufferId, "md-emphasis",
             charToByte(lineContent, span.linkUrlStart, byteStart),
