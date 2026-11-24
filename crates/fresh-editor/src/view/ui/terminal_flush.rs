@@ -236,6 +236,62 @@ fn plan_runs<'a>(updates: Vec<(u16, u16, &'a Cell)>) -> Vec<Vec<(u16, u16, &'a C
     runs
 }
 
+/// The OSC 8 opener of a linked cell's symbol (`ESC ] 8 ; params ; uri BEL`).
+fn hyperlink_opener(symbol: &str) -> Option<&str> {
+    let rest = symbol.strip_prefix(OSC8_START)?;
+    let end = rest.find(OSC8_END)?;
+    Some(&symbol[..OSC8_START.len() + end + OSC8_END.len_utf8()])
+}
+
+/// Within a run, write a link once per stretch of neighbouring cells rather
+/// than once per cell.
+///
+/// Every linked cell carries the whole sequence (opener, URL, glyph, closer)
+/// so that it stands on its own in the frame diff. Written that way, a
+/// 300-character URL wrapping over a few rows costs some 100 KB per full
+/// repaint — felt over SSH and by session-server clients. Cells written one
+/// after another with no cursor move in between (the inner backend moves the
+/// cursor only between non-neighbours) can share one opener and one closer:
+/// the first keeps its opener, the last its closer, and the cells between are
+/// written as their glyphs, still inside the link. Returns the replacement
+/// for each cell of `run`, `None` where the cell is written as it is.
+fn merge_hyperlinks(run: &[(u16, u16, &Cell)]) -> Vec<Option<Cell>> {
+    let openers: Vec<Option<&str>> = run
+        .iter()
+        .map(|(_, _, cell)| hyperlink_opener(cell.symbol()))
+        .collect();
+    // Whether cell `i` continues cell `i - 1`'s link with no cursor move.
+    let continues = |i: usize| -> bool {
+        i > 0
+            && openers[i].is_some()
+            && openers[i] == openers[i - 1]
+            && run[i].1 == run[i - 1].1
+            && u32::from(run[i].0) == u32::from(run[i - 1].0) + 1
+    };
+    (0..run.len())
+        .map(|i| {
+            let opener = openers[i]?;
+            let keep_opener = !continues(i);
+            let keep_closer = !(i + 1 < run.len() && continues(i + 1));
+            if keep_opener && keep_closer {
+                return None;
+            }
+            let symbol = run[i].2.symbol();
+            let mut merged = run[i].2.clone();
+            let mut text = String::with_capacity(symbol.len());
+            if keep_opener {
+                text.push_str(opener);
+            }
+            text.push_str(visible_symbol(symbol));
+            if keep_closer {
+                text.push_str(OSC8_CLOSE);
+            }
+            merged.set_symbol(&text);
+            Some(merged)
+        })
+        .collect()
+}
+
 impl<B: Backend> Backend for ClusterSafeBackend<B> {
     type Error = B::Error;
 
@@ -250,7 +306,12 @@ impl<B: Backend> Backend for ClusterSafeBackend<B> {
             return Ok(());
         }
         for run in plan_runs(updates) {
-            self.inner.draw(run.into_iter())?;
+            let merged = merge_hyperlinks(&run);
+            self.inner.draw(
+                run.iter()
+                    .zip(&merged)
+                    .map(|(&(x, y, cell), merged)| (x, y, merged.as_ref().unwrap_or(cell))),
+            )?;
         }
         Ok(())
     }
@@ -499,6 +560,29 @@ mod hyperlink_tests {
         let (text, links) = replay(&[plain, linked, row("see docs", 10)]);
         assert_eq!(text, "see docs");
         assert!(links.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn neighbouring_linked_cells_share_one_opener_and_closer() {
+        let mut buf = row("ab cd", 5);
+        link(&mut buf, 0..2);
+        link(&mut buf, 3..5);
+        let updates: Vec<_> = Buffer::empty(buf.area).diff(&buf);
+        let mut written = String::new();
+        for run in plan_runs(updates) {
+            let merged = merge_hyperlinks(&run);
+            for (&(_, _, cell), merged) in run.iter().zip(&merged) {
+                written.push_str(merged.as_ref().unwrap_or(cell).symbol());
+            }
+        }
+        let open = "\x1b]8;id=id1;https://example.com/a/long/path\x07";
+        let close = "\x1b]8;;\x07";
+        assert_eq!(
+            written,
+            // The blank at column 2 is unchanged, so not written: two stretches.
+            format!("{open}ab{close}{open}cd{close}"),
+            "one link per stretch of neighbouring cells"
+        );
     }
 
     #[test]
