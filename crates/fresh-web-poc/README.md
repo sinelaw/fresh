@@ -377,6 +377,7 @@ skin overrides them in its stylesheet (see Skins).
 | `--caret`, `--selection`, `--current-line`, `--occurrence` | the editor's cursor, selection, current line, occurrences |
 | `--whitespace`, `--ruler` | whitespace indicators; rulers (indentation guides are `--fg`, faint) |
 | `--bracket-match` | the bracket at the cursor and its match |
+| `--bracket-rainbow-1` … `-6` | brackets by nesting depth (rainbow brackets) |
 | `--match-bg`, `--match-fg`, `--match-current-bg`, `--match-current-fg` | search matches |
 | `--search-scope-bg` | the range a find in selection searches |
 | `--code-bg` | code in documents and Markdown text |

@@ -12,6 +12,8 @@
   --terminal-bg: #1e1e1e; --terminal-fg: #d4d4d4;
   /* The text */
   --bracket-match: #d4d4d4;
+  --bracket-rainbow-1: #569cd6; --bracket-rainbow-2: #ce9178; --bracket-rainbow-3: #dcdcaa;
+  --bracket-rainbow-4: #4ec9b0; --bracket-rainbow-5: #9cdcfe; --bracket-rainbow-6: #4fc1ff;
   --caret: #ffffff; --selection: #32323c; --current-line: #282828; --occurrence: #4b4b4b; --whitespace: #464646; --ruler: #323232;
   --match-bg: #646414; --match-fg: #ffffff; --match-current-bg: #40aae6; --match-current-fg: #000000; --search-scope-bg: #28282d;
   --code-bg: #3c3c3c; --tour-step-bg: #3c3c50; --diff-add-bg: #1e3c1e; --diff-remove-bg: #461e1e;

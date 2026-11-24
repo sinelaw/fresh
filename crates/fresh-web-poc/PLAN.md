@@ -162,7 +162,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Layout | Drag to resize: sidebar width, bottom dock and terminal height, right dock width (remembered per workspace; double-click: default) | fixed |
 | Layout | Split right / down, close, next / previous split | present |
 | Layout | Maximize split (toggle; the others hidden, not closed; focus moves it) | fixed |
-| Layout | Scroll sync of same-buffer splits | missing (rarely used; after the rest) |
+| Layout | Scroll sync: View ▸ Scroll Sync (Toggle Scroll Sync) makes the splits showing the same buffer follow the one scrolled (the focused split, or the one the pointer scrolled since), as the editor's same-buffer sync; a comparison's two sides always scroll together, line for line past the differences (`fresh.views.linkScroll`, as the editor's scroll-sync groups) | fixed |
 | Layout | Session restore per workspace (in the browser): the splits and ratios, each split's file tabs with cursor and scroll, the active tab, sizes, sidebar and terminal | fixed |
 | Tabs | Close with ×, middle-click | present |
 | Tabs | Context menu: Close, Close Others, Close to the Right, Close Saved, Close All, Split Right / Down, Copy Path / Relative Path, Reveal in Explorer | fixed |
@@ -176,7 +176,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Editor | Horizontal scrolling of long lines (wrap off): the cursor kept in view, Shift+wheel and sideways wheels | fixed |
 | Editor | Line wrap toggle (Alt+Z), line numbers, current line, occurrences, whitespace, rulers | present |
 | Editor | Indentation guides, matching-bracket highlight (theme's `bracket_match_fg`, bold), View toggles | fixed |
-| Editor | Rainbow brackets | missing (needs bracket depth over the whole file, skipping strings and comments, kept through edits) |
+| Editor | Rainbow brackets (View ▸ Rainbow Brackets, on by default as in the editor): each bracket in its nesting depth's colour (`--bracket-rainbow-1`…`6`, from the themes' `bracket_rainbow_N`), depth counted from the file's start for a buffer held whole, strings and comments left out (the line highlighter's spans: a block comment's inner lines are not known), recounted from cached per-line balances after an edit | fixed |
 | Editor | Minimap, breadcrumbs | skipped (the editor has neither) |
 | Explorer | Sticky ancestors: the folders of the top visible row stay pinned (any UI-kit tree); a click scrolls back to the folder | fixed |
 | Explorer | Drag and drop to move files and folders onto a folder (or the root), confirmed; open files follow | fixed |
@@ -210,9 +210,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Help | Settings screen | skipped (settings are palette toggles in the browser; a settings UI needs the editor's schema) |
 | Workspaces | Orchestrator / multi-session management | present (dock Alt+O, switcher Ctrl+Alt+O, New Workspace, Run Agent, Import Sessions, Workboard, attention beacon) |
 
-In all: 56 rows — 17 present, 28 fixed by this audit, 9 missing, 2 skipped.
-What is missing is behind the chrome: preview tabs, explorer
-multi-selection, scroll sync, rainbow brackets, untitled buffers,
-workspace symbols, the rarer editing and search commands (transpose,
-block and expand selection, macros, find in selection, query replace) and
-restarting a language server.
+In all: 56 rows — 17 present, 37 fixed by this audit, 2 skipped. The nine
+the audit first left missing (preview tabs, explorer multi-selection,
+scroll sync, rainbow brackets, untitled buffers, workspace symbols, the
+rarer editing and search commands, restarting a language server and inlay
+hints) were built after it.

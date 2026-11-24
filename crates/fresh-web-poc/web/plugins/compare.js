@@ -5,7 +5,18 @@
 import { changeBlocks } from "../js/diff.js";
 
 export function activate(fresh) {
-  let pair = null; // {a, b, blocks}
+  let pair = null; // {a, b, blocks, unlink}
+  // A line of one side to the other's, past the changed blocks before it
+  // (a line in a changed block goes to the start of its counterpart).
+  const across = (line, from, to, len) => {
+    let off = 0;
+    for (const k of pair ? pair.blocks : []) {
+      if (line < k[from]) break;
+      if (line < k[from] + k[len.from]) return k[to];
+      off = k[to] + k[len.to] - (k[from] + k[len.from]);
+    }
+    return line + off;
+  };
   // A whole buffer's lines, without the empty one after a final newline.
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   const markLines = (d, L, first, n, bg, glyph, color) => {
@@ -36,7 +47,12 @@ export function activate(fresh) {
     const b = typeof bufB === "string" ? await fresh.buffers.load(bufB) : bufB;
     fresh.buffers.show(a, "tab");
     fresh.buffers.show(b, "right");
-    pair = { a, b, blocks: [] };
+    pair?.unlink();
+    // The two sides scroll together, line for line past the differences.
+    const unlink = fresh.views.linkScroll(a, b,
+      (line) => across(line, "a", "b", { from: "del", to: "ins" }),
+      (line) => across(line, "b", "a", { from: "ins", to: "del" }));
+    pair = { a, b, blocks: [], unlink };
     mark();
   };
   const compareFiles = async () => {

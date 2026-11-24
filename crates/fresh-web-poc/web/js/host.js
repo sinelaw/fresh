@@ -214,6 +214,10 @@ export class Host {
         close: (buffer) => app.closeBuffer(buffer.b),
       },
       views: {
+        // Scroll two buffers' views together through a line mapping:
+        // aToB(line of a) -> line of b, bToA the other way. Returns the
+        // function that unlinks them.
+        linkScroll: (a, b, aToB, bToA) => app.linkScroll(a.b, b.b, aToB, bToA),
         active: () => host.view(app.view(), name),
         all: () => app.panes().flatMap((p) => p.views).map((v) => host.view(v, name)),
       },

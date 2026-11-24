@@ -31,7 +31,7 @@ const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.past
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
-  show_whitespace: false, show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
+  show_whitespace: false, show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rainbow_brackets: true, scroll_sync: false, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
 };
 
 class App {
@@ -48,6 +48,8 @@ class App {
     this.hoverProviders = [];
     this.history = { back: [], fwd: [] };
     this.opening = Promise.resolve(); // the file being opened (openFile)
+    this.scrollDriver = null; // the split the pointer scrolled last (syncScroll)
+    this.scrollLinks = []; // [{a, b, aToB, bToA}]: buffers scrolled together
     this.killRing = [];
     this.metrics = { cw: 8, lh: 18 };
     this.status = "";
@@ -314,6 +316,7 @@ class App {
   view() { return this.activePane?.view || null; }
   focusPane(p) {
     if (!p) return;
+    this.scrollDriver = null;
     const changed = this.activePane !== p;
     this.activePane = p;
     for (const x of this.panes()) x.el.classList.toggle("active", x === p);
@@ -440,6 +443,42 @@ class App {
     v.preview = false;
     v.pane.renderTabs();
     this.rememberLayout();
+  }
+
+  // ------------------------------------------------------------- scrolling together
+
+  // After split `pane` drew view `v`: when it leads (the focused split, or
+  // one the pointer scrolled since), the other splits follow its first
+  // line — those showing the same buffer while Scroll Sync is on (the
+  // editor's same-buffer sync), and those showing a buffer linked to it
+  // (a comparison's two sides) always, through the link's line mapping.
+  syncScroll(pane, v) {
+    if (pane !== (this.scrollDriver || this.activePane) || v.mode !== "source") return;
+    const L = v.buf.text;
+    const line = L ? L.indexOf(v.top) : -1;
+    if (line < 0) return;
+    for (const p of this.panes()) {
+      const w = p.view;
+      if (p === pane || !w || w.mode !== "source" || !w.buf.text) continue;
+      let top = null;
+      if (w.buf === v.buf) { if (this.settings.scroll_sync) top = v.top; }
+      else {
+        const link = this.scrollLinks.find((k) => (k.a === v.buf && k.b === w.buf) || (k.b === v.buf && k.a === w.buf));
+        if (link && v.buf.full && w.buf.full) {
+          const M = w.buf.text;
+          const to = link.a === v.buf ? link.aToB(line) : link.bToA(line);
+          top = M.starts[Math.max(0, Math.min(M.count - 1, to))];
+        }
+      }
+      if (top != null && top !== w.top) { w.setTop(top); p.scheduleRender(); }
+    }
+  }
+  // Scroll buffers `a` and `b` together through a line mapping (each
+  // function takes a line of one and gives the other's); returns the undo.
+  linkScroll(a, b, aToB, bToA) {
+    const link = { a, b, aToB, bToA };
+    this.scrollLinks.push(link);
+    return () => { this.scrollLinks = this.scrollLinks.filter((k) => k !== link); };
   }
 
   // ------------------------------------------------------------- tabs
@@ -1268,6 +1307,8 @@ class App {
     cmd("view.toggleWhitespace", "View: Toggle Whitespace Indicators", toggle("show_whitespace"));
     cmd("view.toggleIndentGuides", "View: Toggle Indentation Guides", toggle("show_indent_guides"));
     cmd("view.toggleBrackets", "View: Toggle Matching Bracket Highlight", toggle("highlight_brackets"));
+    cmd("view.toggleRainbow", "View: Toggle Rainbow Brackets", toggle("rainbow_brackets"));
+    cmd("view.toggleScrollSync", "View: Toggle Scroll Sync", toggle("scroll_sync"));
     cmd("view.scrollUp", "View: Scroll Up", () => P().scrollLines(-1), true);
     cmd("view.scrollDown", "View: Scroll Down", () => P().scrollLines(1), true);
     cmd("view.addRuler", "View: Add Ruler", async () => {

@@ -12,6 +12,40 @@ import { DocView } from "./doc.js";
 
 let nextPaneId = 1;
 
+const OPENERS = { "(": 1, "[": 1, "{": 1 }, CLOSERS = { ")": 1, "]": 1, "}": 1 };
+const RAINBOW = [1, 2, 3, 4, 5, 6].map((n) => THEME[`editor.bracket_rainbow_${n}`]);
+// Each line's bracket balance by language and text (strings and comments
+// left out), and each buffer's depth at every line start, for its text.
+const balanceCache = new Map();
+const depthCache = new WeakMap();
+function rainbowDepths(buf, lang, synFor) {
+  const hit = depthCache.get(buf);
+  if (hit && hit.gen === buf.textGen && hit.lang === lang) return hit.depths;
+  const L = buf.text;
+  const depths = new Int32Array(L.count + 1);
+  let d = 0;
+  for (let i = 0; i < L.count; i++) {
+    depths[i] = d;
+    const line = L.lines[i];
+    const key = `${lang}\u0000${line}`;
+    let n = balanceCache.get(key);
+    if (n == null) {
+      n = 0;
+      const skip = synFor(i).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
+      for (let k = 0; k < line.length; k++) {
+        const c = line[k];
+        if ((c in OPENERS || c in CLOSERS) && !skip.some((x) => k >= x.s && k < x.e)) n += c in OPENERS ? 1 : -1;
+      }
+      if (balanceCache.size > 100000) balanceCache.clear();
+      balanceCache.set(key, n);
+    }
+    d += n;
+  }
+  depths[L.count] = d;
+  depthCache.set(buf, { gen: buf.textGen, lang, depths });
+  return depths;
+}
+
 export const sel = (c) => (c.anchor == null || c.anchor === c.pos ? null : { start: Math.min(c.anchor, c.pos), end: Math.max(c.anchor, c.pos) });
 
 // One buffer as shown in one pane.
@@ -116,6 +150,8 @@ export class Pane {
     // columns.
     this.surfaceEl.addEventListener("wheel", (e) => {
       e.preventDefault();
+      // The split scrolled leads the ones that scroll with it.
+      this.app.scrollDriver = this;
       const dx = e.shiftKey ? e.deltaY || e.deltaX : Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0;
       if (dx) this.scrollCols(Math.sign(dx) * 6);
       else this.scrollLines(Math.sign(e.deltaY) * 3);
@@ -262,6 +298,10 @@ export class Pane {
       brackets = this.bracketPair;
     }
     const bracketSt = { fg: THEME["editor.bracket_match_fg"], bold: true, underline: true };
+    // Rainbow brackets: each bracket in the colour of its nesting depth,
+    // counted from the start of the file (a buffer held whole), strings
+    // and comments left out.
+    const depths = s.rainbow_brackets && buf.full ? rainbowDepths(buf, lang, synFor) : null;
     const selBg = THEME["editor.selection_bg"];
     const DIAG = ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]];
     const overlayFn = (o) => {
@@ -280,6 +320,21 @@ export class Pane {
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
       const above = [];
       for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
+      if (depths) {
+        const line = L.lines[li];
+        const skip = synFor(li).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
+        let depth = depths[li];
+        for (let k = 0; k < line.length; k++) {
+          const c = line[k];
+          if (!(c in OPENERS) && !(c in CLOSERS)) continue;
+          if (skip.some((x) => k >= x.s && k < x.e)) continue;
+          if (c in CLOSERS) depth--;
+          const fg = RAINBOW[((Math.max(0, depth) % 6) + 6) % 6];
+          if (c in OPENERS) depth++;
+          const at = L.starts[li] + byteLen(line.slice(0, k));
+          out.push({ s: at, e: at + 1, f: (st) => ({ ...st, fg }) });
+        }
+      }
       if (occ) {
         const line = L.lines[li];
         for (let k = line.indexOf(occ); k >= 0; k = line.indexOf(occ, k + occ.length)) {
@@ -508,6 +563,7 @@ export class Pane {
 
   finishRender(v, g) {
     this.renderScrollbar(v, g);
+    this.app.syncScroll(this, v);
     if (this.lastWidth.get(v) !== g.width) {
       this.lastWidth.set(v, g.width);
       this.app.host.emit("view.resized", { view: v });
@@ -879,6 +935,7 @@ export class Pane {
 
   onScrollbar(e) {
     e.preventDefault();
+    this.app.scrollDriver = this;
     const go = (ev) => {
       const r = this.scrollbarEl.getBoundingClientRect();
       this.app.scrollToFraction(this, Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)));
