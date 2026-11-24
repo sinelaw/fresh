@@ -54,7 +54,6 @@ const RANK = ["waiting", "done", "working", "idle", "unknown", "exited"];
 // A remote host's mark beside the state.
 const HOST_MARK = { ssh: "⇅", container: "⬢", agent: "⧉" };
 
-/** function stateOf(w: Object) => String */
 export function stateOf(w) {
   if (w.error) return "failed";
   if (w.pending) return "pending";
@@ -68,7 +67,6 @@ export function stateOf(w) {
 }
 
 // Its name: the user's, else its agent's terminal title, else its folder's.
-/** function displayName(w: Object) => String */
 export function displayName(w) {
   if (w.label) return w.label;
   const agent = w.status?.terminals.find((t) => t.agent && t.title);

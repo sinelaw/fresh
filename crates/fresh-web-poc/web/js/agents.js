@@ -10,6 +10,9 @@
 //   resume  the arguments that take up its latest conversation in the
 //           folder again ("continue"): run when the server starts again.
 
+/** type Agent = {id: String, label: String, command: String, prompt: {style: String, flag: String}, auto: String[], resume: String[]} */
+
+/** const AGENTS: Agent[] */
 export const AGENTS = [
   { id: "claude", label: "Claude Code", command: "claude", prompt: { style: "positional", flag: "" }, auto: ["--permission-mode", "auto"], resume: ["--continue"] },
   {
@@ -28,7 +31,7 @@ export const AGENT_CHOICES = [
   { value: "custom", label: "Custom command…" },
 ];
 
-/** function agentById(id: String) => Object */
+/** function agentById(id: String) => Agent | Null */
 export function agentById(id) {
   return AGENTS.find((a) => a.id === id) || null;
 }
@@ -41,7 +44,7 @@ export function shQuote(s) {
 
 // The command line that starts `agent` with its auto mode (`auto`) and a
 // first message (`prompt`, when the agent takes one).
-/** function agentCommand(agent: Object, auto: Boolean, prompt: String) => String */
+/** function agentCommand(agent: Agent, auto: Boolean, prompt: String) => String */
 export function agentCommand(agent, auto, prompt) {
   const words = [agent.command];
   if (auto) for (const f of agent.auto) words.push(f);
@@ -53,7 +56,7 @@ export function agentCommand(agent, auto, prompt) {
 
 // The command line that takes `agent` up again in its folder, with its
 // auto mode.
-/** function agentResume(agent: Object, auto: Boolean) => String */
+/** function agentResume(agent: Agent, auto: Boolean) => String */
 export function agentResume(agent, auto) {
   const words = [agent.command];
   for (const a of agent.resume) words.push(a);
