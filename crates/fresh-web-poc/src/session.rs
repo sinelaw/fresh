@@ -144,13 +144,22 @@ impl Session {
         f(&mut self.meta.lock().unwrap());
     }
 
-    /// The workspace as the registry keeps it.
+    /// The workspace as the registry keeps it, with how to take up again
+    /// the agents running in it now.
     pub fn record(&self) -> Record {
+        let mut meta = self.meta();
+        meta.resume = self
+            .terms
+            .list()
+            .iter()
+            .filter(|t| t["state"] != "exited")
+            .filter_map(|t| t["resume"].as_str().map(str::to_string))
+            .collect();
         Record {
             id: self.id,
             root: self.ws.root.to_string_lossy().into_owned(),
             trusted: self.trusted(),
-            meta: self.meta(),
+            meta,
         }
     }
 
@@ -541,7 +550,11 @@ impl Session {
                     .get("command")
                     .and_then(Value::as_str)
                     .filter(|c| !c.trim().is_empty());
-                json!({ "term": self.open_terminal((cols, rows), name, command)? })
+                let resume = m
+                    .get("resume")
+                    .and_then(Value::as_str)
+                    .filter(|c| !c.trim().is_empty());
+                json!({ "term": self.open_terminal((cols, rows), name, command, resume)? })
             }
             "term.input" => {
                 self.worked();
@@ -595,6 +608,7 @@ impl Session {
         size: (u16, u16),
         name: Option<&str>,
         command: Option<&str>,
+        resume: Option<&str>,
     ) -> Result<u64> {
         if !self.trusted() {
             fail!(
@@ -604,7 +618,7 @@ impl Session {
         }
         let id = self
             .terms
-            .open(self.room.clone(), &self.ws, size, name, command)?;
+            .open(self.room.clone(), &self.ws, size, name, command, resume)?;
         self.publish_status();
         Ok(id)
     }

@@ -180,6 +180,7 @@ Operations:
   or `{kind: "agent"}`; `~` is the home folder on that host; a folder
   already open on the same host answers that workspace as it is; `agent`, a
   command, starts an agent session in it, which needs `trusted`;
+  `agent_resume` takes it up again after a restart;
   `worktree: {branch, base}` makes a new git worktree of the folder's
   repository and opens that, also `trusted` only; `name` and `folder` place
   it in the dock; answers `{workspace, agent}`), `workspace.close`
@@ -209,8 +210,9 @@ Operations:
   encodings and line endings a document can be set to), `doc.set` (a
   document's `language`, or the `line_ending` and `encoding` its next save
   writes)
-- `term.open` (`{cols, rows, name, command}`: the login shell, or
-  `command` in it — an agent session), `term.input`, `term.resize`,
+- `term.open` (`{cols, rows, name, command, resume}`: the login shell, or
+  `command` in it — an agent session — and `resume`, the command that takes
+  it up again when the server restarts), `term.input`, `term.resize`,
   `term.attach` (the replay, and `{name, command, agent, title, state}`),
   `term.close`
 - `proc.run`, `proc.kill`
@@ -329,8 +331,10 @@ another's. Two tabs can view two workspaces side by side.
 - The registry — workspaces with their names, folders, pins, trust,
   worktrees, and the folders — is kept in
   `~/.local/share/fresh-poc/orchestrator-<port>.json` on this machine and
-  opened again at start, with the same ids; one that cannot be opened again
-  is listed with why, to retry or dismiss.
+  opened again at start, with the same ids, and the agents that were
+  running in them take up where they left off (`claude --continue`, `codex
+  resume --last`, …; an imported session by its id); one that cannot be
+  opened again is listed with why, to retry or dismiss.
 
 ## Themes and colours
 
@@ -535,7 +539,6 @@ properties, most of the plugin API — have no type yet.
   `.gitignore`), not `core.excludesFile`. Each folder's `.gitignore` costs one
   read through the filesystem per walk (a round trip on a remote host).
 - An SSH connection is not re-established if it drops. Agent sessions are
-  terminals: their state is read from the stream, as the editor does; an
-  agent is not resumed when the server restarts (Import Sessions resumes
-  one by hand). The orchestrator's gaps against the editor's are in
+  terminals: their state is read from the stream, as the editor does (a
+  full-screen agent that keeps redrawing reads as working). The orchestrator's gaps against the editor's are in
   `PLAN.md`.

@@ -32,7 +32,7 @@
 
 import { rpc } from "./rpc.js";
 import { h } from "./ui.js";
-import { AGENT_CHOICES, agentById, agentCommand } from "./agents.js";
+import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
@@ -566,6 +566,16 @@ export class Orchestrator {
     return agent ? agentCommand(agent, auto, prompt) : null;
   }
 
+  // The command line that takes that agent up again after the server
+  // restarts: the registry's agent continues its latest conversation; a
+  // command of one's own is run again only when it says (an imported
+  // session's resume).
+  resumeFor(choice, auto, resume) {
+    const agent = agentById(choice);
+    if (agent) return agentResume(agent, auto);
+    return choice === "custom" && resume ? resume : null;
+  }
+
   // Run Agent here: pick the agent, give it a task; a terminal running it.
   startAgent() {
     if (!this.app.workspace) return;
@@ -585,7 +595,7 @@ export class Orchestrator {
         this.prefs.agent = it.value;
         this.savePrefs();
         const term = this.app.term;
-        const id = await term.create({ command });
+        const id = await term.create({ command, resume: this.resumeFor(it.value, this.prefs.auto, "") });
         if (!term.visible) await term.toggle();
         term.select(id);
       },
@@ -701,7 +711,7 @@ export class Orchestrator {
       if (!x) return;
       panel.close();
       this.newWorkspace({
-        root: x.cwd, host: st.host, target: st.target, git: "folder", agent: "custom", custom: x.resume,
+        root: x.cwd, host: st.host, target: st.target, git: "folder", agent: "custom", custom: x.resume, resume: x.resume,
         name: x.title ? x.title.slice(0, 40) : "",
       });
     };
@@ -779,6 +789,7 @@ export class Orchestrator {
       agent: this.prefs.agent, custom: this.prefs.custom, auto: this.prefs.auto, prompt: "",
       host: this.prefs.host || "local", target: this.prefs.target || "", root: this.prefs.recent[0] || "",
       git: this.prefs.git || "worktree", branch: "", base: "", trusted: true, name: "", folder: "",
+      resume: "", // an imported session's: taken up again after a restart
       busy: false, error: "",
       ...(preset || {}),
     };
@@ -791,6 +802,7 @@ export class Orchestrator {
       const agent = f.agent === "terminal" ? null : this.commandFor(f.agent, f.auto, f.prompt, f.custom);
       const spec = {
         root: f.root.trim(), host, trusted: f.trusted, agent,
+        agent_resume: agent ? this.resumeFor(f.agent, f.auto, f.custom === f.resume ? f.resume : "") : null,
         worktree: f.git === "worktree" ? { branch: f.branch.trim() || null, base: f.base.trim() || null } : null,
         name: f.name.trim() || null, folder: f.folder,
       };

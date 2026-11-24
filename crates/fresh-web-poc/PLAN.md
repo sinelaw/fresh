@@ -110,7 +110,7 @@ porting, not yet; Skip = with the reason.
 | Launch / Launch in background, pending row, failure with Retry / Dismiss | Present | Pending rows are this page's; a failed restore is the server's |
 | "Here" mode (run the agent in the current workspace) | Adapt | Run Agent… (palette pick from the registry, then the task) |
 | Teach Fresh CLI (agent drives the editor) | Skip | No scripting surface in this split (PLAN: Scripting) |
-| Agent resume across restarts (`--session-id` provision / `--continue`) | Later | Workspaces come back; their agents do not restart on their own (the editor resumes them) |
+| Agent resume across restarts (`--session-id` provision / `--continue`) | Present (continue) | A registry agent's terminal carries its resume command (`claude --continue`, `codex resume --last`, `opencode --continue`, `aider --restore-chat-history`, with its auto mode); agents running when the registry is written are started that way with their workspace; an imported session resumes by its id. Provisioning a session id at launch: Later |
 | Projects list (repos and folders, main clone per machine, clone from URL) | Adapt / Later | Recent folders per browser; a server-kept project list and cloning: Later |
 | Machines list (saved SSH hosts, Test connection, ssh config hints, host-key prompt) | Adapt / Later | Host and target remembered per browser; SSH runs with `BatchMode`, so no host-key prompt |
 | Kubernetes / devcontainer up | Skip | Containers attach to a running one (`docker exec`); no `devcontainer up` |

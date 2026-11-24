@@ -71,6 +71,11 @@ pub struct Meta {
     pub worked: u64,
     #[serde(default)]
     pub worktree: Option<Worktree>,
+    /// The agents running in it when the registry was last written, as the
+    /// commands that take each up again (`claude --continue`, …): started
+    /// again when the workspace is.
+    #[serde(default)]
+    pub resume: Vec<String>,
 }
 
 /// A workspace as the registry keeps it.
@@ -167,6 +172,8 @@ pub struct Open<'a> {
     pub trusted: bool,
     /// A command to run in a terminal once it is open: an agent session.
     pub agent: Option<&'a str>,
+    /// The command that takes that agent up again after a restart.
+    pub agent_resume: Option<&'a str>,
     /// A new git worktree of the repository `root` is in, instead of
     /// `root` itself.
     pub worktree: Option<WorktreePlan<'a>>,
@@ -183,6 +190,7 @@ impl<'a> Open<'a> {
             root,
             trusted,
             agent: None,
+            agent_resume: None,
             worktree: None,
             name: None,
             folder: "",
@@ -297,8 +305,18 @@ impl Orchestrator {
             check_mounted(&*authority, &root)?;
         }
         let ws = Arc::new(Workspace { root, authority });
+        let resume = r.meta.resume.clone();
         let s = Session::new(r.id, ws, r.trusted, r.meta, self.hub.clone());
         self.sessions.lock().unwrap().insert(r.id, s.clone());
+        // Its agents take up where they left off (a restricted workspace
+        // runs none).
+        if r.trusted {
+            for cmd in &resume {
+                if let Err(e) = s.open_terminal((120, 30), None, Some(cmd), Some(cmd)) {
+                    eprintln!("workspace {}: {cmd}: {e}", r.id);
+                }
+            }
+        }
         Ok(s)
     }
 
@@ -372,6 +390,7 @@ impl Orchestrator {
                         created: now,
                         worked: now,
                         worktree,
+                        resume: Vec::new(),
                     };
                     let s = Session::new(id, ws, o.trusted, meta, self.hub.clone());
                     sessions.insert(id, s.clone());
@@ -385,7 +404,7 @@ impl Orchestrator {
             self.save();
         }
         let agent = match o.agent {
-            Some(cmd) => Some(session.open_terminal((120, 30), None, Some(cmd))?),
+            Some(cmd) => Some(session.open_terminal((120, 30), None, Some(cmd), o.agent_resume)?),
             None => None,
         };
         Ok((session, agent))
@@ -673,6 +692,7 @@ impl Orchestrator {
                     root: s(m, "root")?,
                     trusted: flag("trusted"),
                     agent: text("agent"),
+                    agent_resume: text("agent_resume"),
                     worktree,
                     name: text("name"),
                     folder: m.get("folder").and_then(Value::as_str).unwrap_or(""),
@@ -1331,5 +1351,40 @@ mod tests {
             "not a worktree"
         );
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn running_agents_are_taken_up_again_after_a_restart() {
+        let (state, d) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let root = d.path().to_str().unwrap();
+        let id = {
+            let orch = Orchestrator::new(false, store(state.path()));
+            let (w, _) = orch
+                .open(&Open {
+                    agent: Some("sleep 7304"),
+                    agent_resume: Some("echo resumed; sleep 7305"),
+                    ..Open::new(HostSpec::Local, root, true)
+                })
+                .unwrap();
+            // An agent that ended is not taken up again.
+            w.open_terminal((80, 24), None, Some("true"), Some("echo never"))
+                .unwrap();
+            assert!(until(|| w.status()["terminals"][1]["state"] == "exited"));
+            orch.shutdown();
+            w.id
+        };
+        let orch = Orchestrator::new(false, store(state.path()));
+        orch.restore();
+        let w = orch.session(id).unwrap();
+        let terms = w.status()["terminals"].clone();
+        let commands: Vec<&str> = terms
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["command"].as_str().unwrap())
+            .collect();
+        assert_eq!(commands, ["echo resumed; sleep 7305"]);
+        assert_eq!(terms[0]["resume"], "echo resumed; sleep 7305");
+        orch.shutdown();
     }
 }

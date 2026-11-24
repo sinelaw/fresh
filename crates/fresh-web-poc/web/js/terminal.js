@@ -154,8 +154,8 @@ export class TerminalPanel {
   }
 
   // A new terminal: the shell, or `command` in it (an agent session).
-  async create({ name, command } = {}) {
-    const id = (await rpc("term.open", { cols: 100, rows: 24, name, command })).term;
+  async create({ name, command, resume } = {}) {
+    const id = (await rpc("term.open", { cols: 100, rows: 24, name, command, resume })).term;
     await this.add(id);
     this.select(id);
     return id;

@@ -282,6 +282,9 @@ struct Term {
     name: String,
     /// The command it runs, `None` for an interactive shell.
     command: Option<String>,
+    /// The command that takes an agent up again where it left off (its
+    /// conversation), to run when the server starts again.
+    resume: Option<String>,
 }
 
 impl Term {
@@ -290,6 +293,7 @@ impl Term {
         let state = o.activity.state(o.exited, &o.replay, now);
         json!({
             "id": id, "name": self.name, "command": self.command, "agent": self.command.is_some(),
+            "resume": self.resume,
             "title": o.activity.title, "state": state.as_str(), "bells": o.activity.bells,
         })
     }
@@ -320,7 +324,8 @@ fn not_found(id: u64) -> anyhow::Error {
 }
 
 impl Terms {
-    /// A terminal running the user's shell, or `command` in it, in the
+    /// A terminal running the user's shell, or `command` in it (with
+    /// `resume`, the command that takes it up again later), in the
     /// workspace's root. `name` labels it (default: the command, or
     /// "Terminal").
     pub fn open(
@@ -330,6 +335,7 @@ impl Terms {
         size: (u16, u16),
         name: Option<&str>,
         command: Option<&str>,
+        resume: Option<&str>,
     ) -> Result<u64> {
         let (cols, rows) = size;
         let pair = native_pty_system()
@@ -402,6 +408,7 @@ impl Terms {
                 host,
                 name,
                 command: command.map(str::to_string),
+                resume: resume.map(str::to_string),
             },
         );
         Ok(id)
