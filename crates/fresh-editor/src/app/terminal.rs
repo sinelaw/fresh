@@ -2135,6 +2135,69 @@ impl Editor {
         }
     }
 
+    /// Settle a terminal scrollback view the wheel just moved: scrolled back
+    /// down to its end, it resumes following the live grid (the bottom of the
+    /// snapshot is where the grid was, and the grid has moved on since);
+    /// anywhere else, it is a view the user scrolled to read, which new
+    /// output must not yank away ([`ScrollbackVisit::Scrolled`]).
+    ///
+    /// Resuming is for the focused split only — it is what
+    /// [`Editor::enter_terminal_mode`] acts on — and never for a terminal
+    /// whose process has exited (there is no live grid to return to) or while
+    /// a selection is pending (resuming would discard it). No-op for a pane
+    /// that isn't a terminal in scrollback.
+    ///
+    /// [`ScrollbackVisit::Scrolled`]: crate::app::window::ScrollbackVisit::Scrolled
+    pub(crate) fn after_terminal_scrollback_wheel(
+        &mut self,
+        pane: LeafId,
+        buffer_id: BufferId,
+        delta: i32,
+    ) {
+        use crate::app::window::ScrollbackVisit;
+        if self
+            .active_window()
+            .split_terminal_scrollback_visit(pane, buffer_id)
+            .is_none()
+        {
+            return;
+        }
+        let resume = delta > 0
+            && self.active_window().effective_active_split() == pane
+            && self.active_buffer() == buffer_id
+            && !self
+                .active_window()
+                .exited_terminals
+                .contains_key(&buffer_id)
+            && !self.terminal_selection_pins_view()
+            && self.active_window_mut().split_view_at_end(buffer_id, pane);
+        if resume {
+            self.enter_terminal_mode();
+        } else {
+            self.active_window_mut()
+                .mark_split_terminal_scrollback_visit(pane, buffer_id, ScrollbackVisit::Scrolled);
+        }
+    }
+
+    /// Whether a text selection in the focused pane pins its terminal view:
+    /// a drag that just started on the live grid
+    /// (`PointerDrag::TerminalPress`), an in-progress selection drag, or a
+    /// completed selection waiting to be copied. Resuming the live grid
+    /// would destroy it — the exact case drag-to-select exists for.
+    pub(crate) fn terminal_selection_pins_view(&self) -> bool {
+        let win = self.active_window();
+        matches!(
+            win.mouse_state.drag,
+            Some(
+                crate::app::types::PointerDrag::Selection(_)
+                    | crate::app::types::PointerDrag::TerminalPress { .. }
+            )
+        ) || (win.buffers.splits().is_some() && {
+            let c = win.focused_view().cursors.primary();
+            c.anchor.is_some_and(|a| a != c.position)
+        })
+    }
+
     /// Get terminal content for rendering
     pub fn get_terminal_content(
         &self,

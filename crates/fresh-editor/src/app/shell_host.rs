@@ -3050,19 +3050,25 @@ impl Editor {
                 let Some(buffer_id) = self.active_window().pane_buffer(pane) else {
                     return;
                 };
+                self.dismiss_transient_popups();
+                self.active_window().wheel_plugin_hook(x, y, delta);
                 // Only a wheel over a pane changes that terminal's
                 // live/scrollback state; panning the tab strip or the explorer
                 // leaves a live terminal streaming.
-                if self.active_window().focused_terminal_live() {
+                if self.active_window().focused_terminal_live()
+                    && self.active_window().effective_active_split() == pane
+                {
+                    // The live grid already is the bottom: a wheel-down has
+                    // nowhere to go, and parking the terminal in a frozen
+                    // snapshot for it would stop it following output.
+                    if delta >= 0 {
+                        return;
+                    }
                     self.enter_terminal_scrollback();
-                } else {
-                    self.active_window_mut()
-                        .set_split_terminal_drag_scrollback(pane, buffer_id, false);
                 }
-                self.dismiss_transient_popups();
-                self.active_window().wheel_plugin_hook(x, y, delta);
                 self.active_window_mut()
                     .scroll_split_surface(pane, buffer_id, delta);
+                self.after_terminal_scrollback_wheel(pane, buffer_id, delta);
             }
             UiFact::PanePan { pane, delta } => {
                 let (x, y) = ev.at;

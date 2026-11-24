@@ -208,7 +208,8 @@ pub struct TerminalBuffer {
     /// The PTY session feeding this buffer, scoped to this window.
     pub terminal_id: crate::services::terminal::TerminalId,
 
-    /// The splits currently viewing THIS terminal in read-only scrollback.
+    /// The splits currently viewing THIS terminal in read-only scrollback,
+    /// each with how its visit began.
     ///
     /// This is the single source of truth for live-vs-scrollback, and it is
     /// **per split**: a split showing this terminal is *live* iff its `LeafId`
@@ -219,26 +220,33 @@ pub struct TerminalBuffer {
     ///
     /// There is exactly one representation of "live" (absence), so no split can
     /// be in a contradictory state, and — because this lives on `TerminalBuffer`
-    /// — only terminals can carry a mode at all. Membership is written solely
-    /// through [`Window::set_split_terminal_scrollback`] and pruned on split
-    /// close via [`Window::forget_split_terminal_modes`].
-    scrollback_splits: std::collections::HashSet<LeafId>,
+    /// — only terminals can carry a mode at all. The [`ScrollbackVisit`] rides
+    /// on the same entry, so a live split cannot carry a stale visit kind.
+    /// Membership is written solely through
+    /// [`Window::set_split_terminal_scrollback`] and pruned on split close via
+    /// [`Window::forget_split_terminal_modes`].
+    scrollback_splits: std::collections::HashMap<LeafId, ScrollbackVisit>,
+}
 
-    /// The subset of `scrollback_splits` that entered scrollback *implicitly*
-    /// — dropped there by a selection gesture on the live grid
-    /// (`begin_terminal_grid_selection`) rather than by an explicit request
-    /// (Ctrl+Space, Shift+PageUp, wheel-up, process exit).
-    ///
-    /// Implicit scrollback is an implementation detail of drag-to-select, so
-    /// it also *ends* automatically: completing the gesture (copying the
-    /// selection) or abandoning it (a bare click) resumes the live grid.
-    /// Engaging with the scrollback as a view — scrolling it — clears the
-    /// marker, converting the visit to an explicit one that only ends by the
-    /// explicit rules. Invariant: `drag_scrollback_splits ⊆
-    /// scrollback_splits`, maintained by `set_scrollback_in` (any transition
-    /// through the sole mutator clears the marker; the drag path re-marks
-    /// afterwards).
-    drag_scrollback_splits: std::collections::HashSet<LeafId>,
+/// How a split came to be reading a terminal's scrollback — which decides
+/// what ends the visit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbackVisit {
+    /// Asked for (Ctrl+Space, Shift+PageUp, process exit). Ends by the
+    /// explicit rules, and on new output when `jump_to_end_on_output` is on.
+    Explicit,
+    /// Dropped there *implicitly* by a selection gesture on the live grid
+    /// (`begin_terminal_grid_selection`). Implicit scrollback is an
+    /// implementation detail of drag-to-select, so it also *ends*
+    /// automatically: completing the gesture (copying the selection) or
+    /// abandoning it (a bare click) resumes the live grid.
+    Drag,
+    /// The user scrolled the view up off the live tail (wheel, scrollbar) to
+    /// read. Like any terminal emulator's scrolled-up view (or tmux
+    /// copy-mode), new output never yanks it back — that would make history
+    /// unreadable under a program that keeps printing (fresh#3138) — and
+    /// scrolling back down past the end resumes following the live grid.
+    Scrolled,
 }
 
 impl TerminalBuffer {
@@ -247,44 +255,40 @@ impl TerminalBuffer {
     pub fn new_live(terminal_id: crate::services::terminal::TerminalId) -> Self {
         Self {
             terminal_id,
-            scrollback_splits: std::collections::HashSet::new(),
-            drag_scrollback_splits: std::collections::HashSet::new(),
+            scrollback_splits: std::collections::HashMap::new(),
         }
     }
 
     /// Whether `split` is viewing this terminal in read-only scrollback.
     pub fn is_scrollback_in(&self, split: LeafId) -> bool {
-        self.scrollback_splits.contains(&split)
+        self.scrollback_splits.contains_key(&split)
     }
 
-    /// Whether `split`'s scrollback visit is implicit (drag-initiated).
-    pub fn is_drag_scrollback_in(&self, split: LeafId) -> bool {
-        self.drag_scrollback_splits.contains(&split)
+    /// How `split`'s scrollback visit began; `None` while it is live.
+    pub fn scrollback_visit_in(&self, split: LeafId) -> Option<ScrollbackVisit> {
+        self.scrollback_splits.get(&split).copied()
     }
 
     /// Record `split`'s live↔scrollback edge for this terminal: `true` adds it
-    /// to the scrollback set, `false` removes it (back to live). Sole mutator,
-    /// reached via [`Window::set_split_terminal_scrollback`]. Every transition
-    /// clears the implicit (drag-initiated) marker: leaving scrollback ends
-    /// the visit, and an explicit (re-)entry downgrades an implicit one —
-    /// only `begin_terminal_grid_selection` re-marks, after calling this.
+    /// to the scrollback set as an [`ScrollbackVisit::Explicit`] visit,
+    /// `false` removes it (back to live). Sole mutator of membership, reached
+    /// via [`Window::set_split_terminal_scrollback`]. An explicit (re-)entry
+    /// downgrades any other kind of visit — callers that mean another kind
+    /// re-mark afterwards with [`Self::mark_scrollback_visit`].
     fn set_scrollback_in(&mut self, split: LeafId, scrollback: bool) {
         if scrollback {
-            self.scrollback_splits.insert(split);
+            self.scrollback_splits
+                .insert(split, ScrollbackVisit::Explicit);
         } else {
             self.scrollback_splits.remove(&split);
         }
-        self.drag_scrollback_splits.remove(&split);
     }
 
-    /// Mark or unmark `split`'s scrollback visit as implicit (drag-initiated).
-    /// Marking a split that isn't in scrollback is a no-op, preserving the
-    /// subset invariant.
-    fn set_drag_scrollback_in(&mut self, split: LeafId, drag: bool) {
-        if drag && self.scrollback_splits.contains(&split) {
-            self.drag_scrollback_splits.insert(split);
-        } else if !drag {
-            self.drag_scrollback_splits.remove(&split);
+    /// Re-label `split`'s scrollback visit. A no-op for a live split: the
+    /// kind only exists alongside membership.
+    fn mark_scrollback_visit(&mut self, split: LeafId, visit: ScrollbackVisit) {
+        if let Some(v) = self.scrollback_splits.get_mut(&split) {
+            *v = visit;
         }
     }
 
@@ -292,8 +296,98 @@ impl TerminalBuffer {
     /// longer shows this terminal), reverting it to the live default.
     fn forget_split(&mut self, split: LeafId) {
         self.scrollback_splits.remove(&split);
-        self.drag_scrollback_splits.remove(&split);
     }
+}
+
+/// Scroll one view of a buffer by `delta` lines (negative = up, positive =
+/// down) — the body of [`Window::scroll_split_by_lines`]. After scrolling,
+/// skips ensure_visible and snaps the viewport top to a fold boundary if the
+/// new top byte landed inside a collapsed fold.
+fn scroll_view_by_lines(
+    state: &mut crate::state::EditorState,
+    view_state: &mut crate::view::split::BufferViewState,
+    delta: i32,
+) {
+    let top_byte_before = view_state.viewport.top_byte();
+    if let Some(rows) = flat_scroll_rows(view_state, state) {
+        view_state
+            .viewport
+            .scroll_flat_rows(&rows, &state.buffer, delta as isize);
+        view_state.viewport.set_skip_ensure_visible();
+        return;
+    }
+    let soft_breaks = state.collect_soft_break_positions(view_state.is_page_view());
+    let virtual_lines = state.collect_virtual_line_positions(view_state.is_page_view());
+    // Resolved before the mutable buffer borrow below: the
+    // row-space path needs only `&Buffer`.
+    let scroll_geometry = wrap_scroll_geometry(view_state, state);
+    let hidden_ranges = collapsed_hidden_ranges(view_state, state);
+    if let Some(geometry) = scroll_geometry {
+        // Row arithmetic off the wrap index: no text is read, so a
+        // wheel event on a file that is one enormous line costs the
+        // same as on any other. The byte-walking fallback below only
+        // runs before the index has been built for this geometry.
+        let index = state
+            .wrap_indices
+            .get(&geometry)
+            .expect("geometry resolved from a built index");
+        view_state
+            .viewport
+            .scroll_visual_rows(index, &state.buffer, delta as isize);
+    } else if delta < 0 {
+        let lines_to_scroll = delta.unsigned_abs() as usize;
+        view_state.viewport.scroll_up(
+            &mut state.buffer,
+            &soft_breaks,
+            &virtual_lines,
+            &hidden_ranges,
+            lines_to_scroll,
+        );
+    } else {
+        let lines_to_scroll = delta as usize;
+        view_state.viewport.scroll_down(
+            &mut state.buffer,
+            &soft_breaks,
+            &virtual_lines,
+            &hidden_ranges,
+            lines_to_scroll,
+        );
+    }
+    view_state.viewport.set_skip_ensure_visible();
+
+    let buffer = &mut state.buffer;
+    // Resolved first, from the folds and viewport as they are;
+    // the viewport is written after.
+    let snap_to = (!view_state.folds.is_empty())
+        .then(|| {
+            let top_line = buffer.get_line_number(view_state.viewport.top_byte());
+            let range = view_state
+                .folds
+                .resolved_ranges(buffer, &state.marker_list)
+                .into_iter()
+                .find(|r| top_line >= r.start_line && top_line <= r.end_line)?;
+            let target_line = if delta >= 0 {
+                range.end_line.saturating_add(1)
+            } else {
+                range.header_line
+            };
+            Some(
+                buffer
+                    .line_start_offset(target_line)
+                    .unwrap_or_else(|| buffer.len()),
+            )
+        })
+        .flatten();
+    if let Some(target_byte) = snap_to {
+        view_state.viewport.set_top_byte(target_byte);
+        view_state.viewport.set_top_view_line_offset(0);
+    }
+    tracing::trace!(
+        "scroll_split_by_lines: delta={}, top_byte {} -> {}",
+        delta,
+        top_byte_before,
+        view_state.viewport.top_byte()
+    );
 }
 
 /// An LSP completion candidate together with the server that offered it.
@@ -2316,88 +2410,27 @@ impl Window {
     pub fn scroll_split_by_lines(&mut self, buffer_id: BufferId, leaf_id: LeafId, delta: i32) {
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
-                let top_byte_before = view_state.viewport.top_byte();
-                if let Some(rows) = flat_scroll_rows(view_state, state) {
-                    view_state
-                        .viewport
-                        .scroll_flat_rows(&rows, &state.buffer, delta as isize);
-                    view_state.viewport.set_skip_ensure_visible();
-                    return;
-                }
-                let soft_breaks = state.collect_soft_break_positions(view_state.is_page_view());
-                let virtual_lines = state.collect_virtual_line_positions(view_state.is_page_view());
-                // Resolved before the mutable buffer borrow below: the
-                // row-space path needs only `&Buffer`.
-                let scroll_geometry = wrap_scroll_geometry(view_state, state);
-                let hidden_ranges = collapsed_hidden_ranges(view_state, state);
-                if let Some(geometry) = scroll_geometry {
-                    // Row arithmetic off the wrap index: no text is read, so a
-                    // wheel event on a file that is one enormous line costs the
-                    // same as on any other. The byte-walking fallback below only
-                    // runs before the index has been built for this geometry.
-                    let index = state
-                        .wrap_indices
-                        .get(&geometry)
-                        .expect("geometry resolved from a built index");
-                    view_state
-                        .viewport
-                        .scroll_visual_rows(index, &state.buffer, delta as isize);
-                } else if delta < 0 {
-                    let lines_to_scroll = delta.unsigned_abs() as usize;
-                    view_state.viewport.scroll_up(
-                        &mut state.buffer,
-                        &soft_breaks,
-                        &virtual_lines,
-                        &hidden_ranges,
-                        lines_to_scroll,
-                    );
-                } else {
-                    let lines_to_scroll = delta as usize;
-                    view_state.viewport.scroll_down(
-                        &mut state.buffer,
-                        &soft_breaks,
-                        &virtual_lines,
-                        &hidden_ranges,
-                        lines_to_scroll,
-                    );
-                }
-                view_state.viewport.set_skip_ensure_visible();
-
-                let buffer = &mut state.buffer;
-                // Resolved first, from the folds and viewport as they are;
-                // the viewport is written after.
-                let snap_to = (!view_state.folds.is_empty())
-                    .then(|| {
-                        let top_line = buffer.get_line_number(view_state.viewport.top_byte());
-                        let range = view_state
-                            .folds
-                            .resolved_ranges(buffer, &state.marker_list)
-                            .into_iter()
-                            .find(|r| top_line >= r.start_line && top_line <= r.end_line)?;
-                        let target_line = if delta >= 0 {
-                            range.end_line.saturating_add(1)
-                        } else {
-                            range.header_line
-                        };
-                        Some(
-                            buffer
-                                .line_start_offset(target_line)
-                                .unwrap_or_else(|| buffer.len()),
-                        )
-                    })
-                    .flatten();
-                if let Some(target_byte) = snap_to {
-                    view_state.viewport.set_top_byte(target_byte);
-                    view_state.viewport.set_top_view_line_offset(0);
-                }
-                tracing::trace!(
-                    "scroll_split_by_lines: delta={}, top_byte {} -> {}",
-                    delta,
-                    top_byte_before,
-                    view_state.viewport.top_byte()
-                );
+                scroll_view_by_lines(state, view_state, delta)
             });
         self.scroll_sync_driver = Some(leaf_id);
+    }
+
+    /// Whether `leaf_id`'s view of `buffer_id` is scrolled all the way down:
+    /// one more line down would not move it. Asks the same motion the wheel
+    /// makes, on a copy of the viewport, so "the end" is exactly where
+    /// scrolling stops — wrapping, folds and the last-line clamp included.
+    /// `false` when the split doesn't show the buffer.
+    pub fn split_view_at_end(&mut self, buffer_id: BufferId, leaf_id: LeafId) -> bool {
+        self.buffers
+            .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
+                let saved = view_state.viewport.clone();
+                scroll_view_by_lines(state, view_state, 1);
+                let at_end = view_state.viewport.top_byte() == saved.top_byte()
+                    && view_state.viewport.top_view_line_offset() == saved.top_view_line_offset();
+                view_state.viewport = saved;
+                at_end
+            })
+            .unwrap_or(false)
     }
 
     /// Scroll the Live Grep overlay's preview pane by `delta` lines
@@ -3953,24 +3986,33 @@ impl Window {
 
     /// Whether `split`'s scrollback visit for terminal `buffer_id` is
     /// implicit — entered by a selection gesture on the live grid rather than
-    /// an explicit request. `false` for live splits, explicit scrollback, and
+    /// an explicit request. `false` for live splits, other visits, and
     /// non-terminal buffers.
     pub fn split_terminal_drag_scrollback(&self, split: LeafId, buffer_id: BufferId) -> bool {
-        self.terminal_buffer(buffer_id)
-            .is_some_and(|tb| tb.is_drag_scrollback_in(split))
+        self.split_terminal_scrollback_visit(split, buffer_id) == Some(ScrollbackVisit::Drag)
     }
 
-    /// Mark (or unmark) `split`'s scrollback visit for terminal `buffer_id`
-    /// as implicit (drag-initiated). No-op for non-terminal buffers and, when
-    /// marking, for splits not currently in scrollback.
-    pub fn set_split_terminal_drag_scrollback(
+    /// How `split`'s scrollback visit for terminal `buffer_id` began; `None`
+    /// for a live split and for any non-terminal buffer.
+    pub fn split_terminal_scrollback_visit(
+        &self,
+        split: LeafId,
+        buffer_id: BufferId,
+    ) -> Option<ScrollbackVisit> {
+        self.terminal_buffer(buffer_id)
+            .and_then(|tb| tb.scrollback_visit_in(split))
+    }
+
+    /// Re-label `split`'s scrollback visit for terminal `buffer_id`. No-op for
+    /// non-terminal buffers and for splits not currently in scrollback.
+    pub fn mark_split_terminal_scrollback_visit(
         &mut self,
         split: LeafId,
         buffer_id: BufferId,
-        drag: bool,
+        visit: ScrollbackVisit,
     ) {
         if let Some(tb) = self.terminal_buffer_mut(buffer_id) {
-            tb.set_drag_scrollback_in(split, drag);
+            tb.mark_scrollback_visit(split, visit);
         }
     }
 

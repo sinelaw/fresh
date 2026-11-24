@@ -300,11 +300,15 @@ impl Editor {
         };
 
         self.focus_split(split_id, buffer_id);
-        // Grabbing the scrollbar of a drag-parked terminal scrollback view is
-        // scrollback *reading* — convert the implicit visit to an explicit one
-        // (no-op otherwise).
+        // Grabbing the scrollbar of a terminal scrollback view is scrollback
+        // *reading*: the view now holds its place against new output, as a
+        // wheel-scrolled one does (no-op for a live split).
         self.active_window_mut()
-            .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
+            .mark_split_terminal_scrollback_visit(
+                split_id,
+                buffer_id,
+                crate::app::window::ScrollbackVisit::Scrolled,
+            );
         if is_on_thumb {
             use crate::app::types::{VerticalGrab, VerticalScroll};
             let from = if self.active_window().is_composite_buffer(buffer_id) {

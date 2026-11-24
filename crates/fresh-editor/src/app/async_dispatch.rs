@@ -1069,38 +1069,30 @@ impl Editor {
         // late shell prompt used to steal focus from an explorer the user had
         // just clicked into.
         //
-        // ...but never yank the view away from a text selection: a drag that
-        // just started on the live grid (`PointerDrag::TerminalPress`), an
-        // in-progress selection drag, or a completed selection waiting to be
-        // copied all pin the scrollback view. A chatty program would
-        // otherwise destroy the selection the instant its next output
-        // arrived — the exact case drag-to-select exists for. Output keeps
-        // streaming underneath; the auto-jump resumes once the selection is
-        // gone (Ctrl+Space, typing, or a click that collapses it).
-        let selection_active = {
-            let win = self.active_window();
-            matches!(
-                win.mouse_state.drag,
-                Some(
-                    crate::app::types::PointerDrag::Selection(_)
-                        | crate::app::types::PointerDrag::TerminalPress { .. }
-                )
-            ) || (win.buffers.splits().is_some() && {
-                let c = win.focused_view().cursors.primary();
-                c.anchor.is_some_and(|a| a != c.position)
-            })
-        };
+        // ...but never yank the view away from what the user is reading:
+        //
+        // * A view they scrolled up (wheel, scrollbar) holds its place, as in
+        //   any terminal emulator; scrolling back down to the end is what
+        //   resumes following (fresh#3138). Yanking it made history
+        //   unreadable under a program that keeps printing — an agent CLI
+        //   streaming at the normal screen.
+        // * A text selection pins the view (see
+        //   `terminal_selection_pins_view`). A chatty program would otherwise
+        //   destroy the selection the instant its next output arrived — the
+        //   exact case drag-to-select exists for. Output keeps streaming
+        //   underneath; the auto-jump resumes once the selection is gone
+        //   (Ctrl+Space, typing, or a click that collapses it).
         if self.config.terminal.jump_to_end_on_output
             && self.active_window().key_context == crate::input::keybindings::KeyContext::Normal
-            && !selection_active
+            && !self.terminal_selection_pins_view()
         {
-            // Check if active buffer is this terminal
-            if let Some(active_terminal_id) =
-                self.active_window().get_terminal_id(self.active_buffer())
-            {
-                if active_terminal_id == terminal_id {
-                    self.enter_terminal_mode();
-                }
+            let win = self.active_window();
+            let active = win.active_buffer();
+            let scrolled = win
+                .split_terminal_scrollback_visit(win.effective_active_split(), active)
+                == Some(crate::app::window::ScrollbackVisit::Scrolled);
+            if !scrolled && win.get_terminal_id(active) == Some(terminal_id) {
+                self.enter_terminal_mode();
             }
         }
 
