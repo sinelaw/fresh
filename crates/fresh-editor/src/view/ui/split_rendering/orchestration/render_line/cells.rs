@@ -321,7 +321,7 @@ impl CellPass<'_, '_, '_> {
         // selection there. Keeping the selection's attributes on it would
         // leave a reverse-video selection's REVERSED on the cell and bury the
         // cursor in the band.
-        let is_selected = !(is_cursor && !self.input.is_active)
+        let is_selected = (self.input.is_active || !is_cursor)
             && self
                 .selection_sweep
                 .contains(byte_pos, self.block_line_column(byte_pos));

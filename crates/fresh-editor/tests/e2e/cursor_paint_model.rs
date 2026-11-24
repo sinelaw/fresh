@@ -26,9 +26,10 @@ fn harness_with(config: Config) -> EditorTestHarness {
 }
 
 fn themed(theme: &str) -> Config {
-    let mut config = Config::default();
-    config.theme = theme.into();
-    config
+    Config {
+        theme: theme.into(),
+        ..Default::default()
+    }
 }
 
 fn key(h: &mut EditorTestHarness, code: KeyCode, modifiers: KeyModifiers) {
