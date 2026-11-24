@@ -453,6 +453,48 @@ export class Editing {
     });
   }
 
+  // ---------------------------------------------------------------- transforms
+
+  // Each cursor's selection (or the word at it) through `f`, still
+  // selected afterwards.
+  transform(pane, f) {
+    const b = pane.view.buf;
+    this.replace(pane, (c) => {
+      const s = sel(c) || this.wordAt(b, c.pos);
+      if (!s) return null;
+      const text = f(b.textRange(s.start, s.end));
+      return { start: s.start, end: s.end, text, anchor: 0, caret: byteLen(text) };
+    });
+  }
+
+  // The lines each selection covers, sorted (case-sensitively, as the
+  // editor's Sort Lines) and selected.
+  sortLines(pane) {
+    const b = pane.view.buf;
+    const L = b.text;
+    this.replace(pane, (c) => {
+      const [a, z] = this.lineSpan(b, c);
+      if (z <= a) return null;
+      const text = L.lines.slice(a, z + 1).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0)).join("\n");
+      return { start: L.starts[a], end: L.lineEnd(z), text, anchor: 0, caret: byteLen(text) };
+    });
+  }
+
+  // Remove the spaces and tabs at the end of every line (a file held whole).
+  trimTrailing(pane) {
+    const b = pane.view.buf;
+    const L = b.text;
+    if (!b.full) { this.app.setStatus("Only a file held whole can be trimmed"); return; }
+    const ops = [];
+    for (let i = L.count - 1; i >= 0; i--) {
+      const m = /[ \t]+$/.exec(L.lines[i]);
+      if (m) ops.push({ t: "del", pos: L.starts[i] + byteLen(L.lines[i].slice(0, m.index)), len: byteLen(m[0]) });
+    }
+    if (ops.length) this.app.applyEdit(b, ops);
+    this.app.setStatus(ops.length ? `Trimmed ${ops.length} line${ops.length === 1 ? "" : "s"}` : "No trailing whitespace");
+    pane.scheduleRender();
+  }
+
   moveLines(pane, dir) {
     const v = pane.view;
     const b = v.buf;

@@ -103,7 +103,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 
 | Area | Feature | Status |
 |---|---|---|
-| Chrome | Menu bar: File, Edit, View, Selection, Go, LSP, Explorer, Help, from the command registry (keys shown, toggles checked, submenus); F10 and Alt+F / E / V / S / G / L / X / H, arrows, letters, Escape; plugins add rows (`fresh.menus.add`); one menu component for the menu bar and every context menu; styled by Winamp (engraved rail, olive plate) and Bridge (coloured segments in the top bar) | fixed |
+| Chrome | Menu bar: File, Edit, View, Selection, Go, LSP, Explorer, Help, from the command registry (keys shown, toggles checked, submenus); F10 and Alt+F / E / V / S / G / X / H, arrows, letters, Escape; plugins add rows (`fresh.menus.add`); one menu component for the menu bar and every context menu; styled by Winamp (engraved rail, olive plate) and Bridge (coloured segments in the top bar) | fixed |
 | Chrome | Status bar items open their action: position → Go to Line, line ending → Set Line Ending, encoding → reopen / save with, language → Set Language (the language server follows), diagnostics → panel, LSP → server status, git branch → log, theme → Select Theme, read-only, cursors, compose; tooltips name the action and its key | fixed |
 | Chrome | Skin picker button and Ctrl+Alt+T | present |
 | Chrome | Theme picker | present |
@@ -145,7 +145,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Navigation | Next / previous problem (F8 / Shift+F8), its message in the status bar | fixed |
 | Navigation | Bookmarks (Ctrl+Shift+N set, Alt+N jump) | missing |
 | Editing | Multi-cursor, selection, undo / redo, comment, duplicate / move line, fold, auto-close, smart home, kill ring | present |
-| Editing | Case conversion, sort lines, trim trailing whitespace, transpose, block selection, expand selection, macros | missing (editing commands, not chrome; after the UI) |
+| Editing | Uppercase / lowercase (Alt+U / Alt+L), sort lines, trim trailing whitespace (Edit ▸ Transform) | fixed |
+| Editing | Transpose, block selection, expand selection, macros | missing (editing commands, not chrome) |
 | Search | Find / replace bar with toggles, project search panel | present |
 | Search | Find in selection, query replace, find selection next | missing |
 | LSP | Hover, completion, definition, references, rename, code actions, format, symbols, signature help, diagnostics panel | present |

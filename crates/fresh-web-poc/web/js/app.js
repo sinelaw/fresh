@@ -1007,10 +1007,11 @@ class App {
       Enter: "edit.newline", Backspace: "edit.backspace", "C-Backspace": "edit.deleteWordBack", Delete: "edit.delete", "C-Delete": "edit.deleteWordForward",
       Tab: "edit.indent", "S-Tab": "edit.dedent", Esc: "edit.escape",
       "C-a": "select.all", "C-l": "select.line", "C-S-k": "edit.deleteLine", "C-S-d": "edit.duplicateLine", "M-Up": "edit.moveLineUp", "M-Down": "edit.moveLineDown",
+      "M-u": "edit.upperCase", "M-l": "edit.lowerCase",
       "C-/": "edit.toggleComment", "C-d": "select.nextOccurrence", "C-S-l": "select.allOccurrences", "C-M-Up": "cursor.addAbove", "C-M-Down": "cursor.addBelow",
       "C-]": "cursor.matchingBracket", "C-{": "fold.toggle", "C-}": "fold.toggle",
       "C-=": "view.zoomIn", "C-+": "view.zoomIn", "C--": "view.zoomOut", "C-0": "view.zoomReset",
-      F10: "menu.open", "M-f": "menu.file", "M-e": "menu.edit", "M-v": "menu.view", "M-s": "menu.selection", "M-g": "menu.go", "M-l": "menu.lsp", "M-x": "menu.explorer", "M-h": "menu.help",
+      F10: "menu.open", "M-f": "menu.file", "M-e": "menu.edit", "M-v": "menu.view", "M-s": "menu.selection", "M-g": "menu.go", "M-x": "menu.explorer", "M-h": "menu.help",
     };
     const emacs = this.settings.keymap === "emacs" ? {
       "C-f": "cursor.right", "C-b": "cursor.left", "C-n": "cursor.down", "C-p": "cursor.up", "C-a": "cursor.home", "C-e": "cursor.end",
@@ -1199,6 +1200,10 @@ class App {
     cmd("edit.moveLineUp", "Move Line Up", mutate(() => ed().moveLines(P(), -1)));
     cmd("edit.moveLineDown", "Move Line Down", mutate(() => ed().moveLines(P(), 1)));
     cmd("edit.toggleComment", "Toggle Comment", mutate(() => ed().toggleComment(P())));
+    cmd("edit.upperCase", "Transform to Uppercase", mutate(() => ed().transform(P(), (t) => t.toUpperCase())));
+    cmd("edit.lowerCase", "Transform to Lowercase", mutate(() => ed().transform(P(), (t) => t.toLowerCase())));
+    cmd("edit.sortLines", "Sort Lines", mutate(() => ed().sortLines(P())));
+    cmd("edit.trimTrailing", "Trim Trailing Whitespace", mutate(() => ed().trimTrailing(P())));
     vcmd("fold.toggle", "Toggle Fold", () => ed().toggleFold(P()));
     vcmd("fold.all", "Fold All", () => ed().foldAll(P()));
     vcmd("fold.none", "Unfold All", () => ed().unfoldAll(P()));

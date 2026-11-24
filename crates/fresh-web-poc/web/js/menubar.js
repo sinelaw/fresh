@@ -5,8 +5,8 @@
 // `fresh.menus.add(menu, row)`.
 //
 // The mouse: a title opens its menu, moving onto another title switches to
-// it. The keyboard: F10 opens the first menu, Alt+F / E / V / S / G / L / X
-// / H the one with that letter; Left and Right past a menu's edge move to
+// it. The keyboard: F10 opens the first menu, Alt+F / E / V / S / G / X / H
+// the one with that letter (LSP has none: Alt+L is lowercase); Left and Right past a menu's edge move to
 // the next title's.
 
 import { Menu } from "./menu.js";
@@ -62,6 +62,10 @@ export const MENUS = [
     { command: "edit.moveLineDown", label: "Move Line Down" },
     { command: "edit.toggleComment", label: "Toggle Comment" },
     { command: "lsp.format", label: "Format Document" },
+    { label: "Transform", items: [
+      { command: "edit.upperCase", label: "Uppercase" }, { command: "edit.lowerCase", label: "Lowercase" },
+      { command: "edit.sortLines", label: "Sort Lines" }, { command: "edit.trimTrailing", label: "Trim Trailing Whitespace" },
+    ] },
     null,
     { label: "Settings", items: [
       { command: "settings.autoSave", label: "Auto Save", checked: setting("auto_save") },
@@ -146,7 +150,7 @@ export const MENUS = [
     { command: "view.nextTab", label: "Next Tab" },
     { command: "view.prevTab", label: "Previous Tab" },
   ] },
-  { label: "LSP", key: "l", items: [
+  { label: "LSP", key: "", items: [
     { command: "lsp.hover", label: "Show Hover" },
     { command: "lsp.definition", label: "Go to Definition" },
     { command: "lsp.references", label: "Find References" },
@@ -219,7 +223,7 @@ export class MenuBar {
       b.dataset.i = String(i);
       b.tabIndex = -1;
       b.textContent = m.label;
-      b.title = `${m.label} (Alt+${m.key.toUpperCase()})`;
+      b.title = m.key ? `${m.label} (Alt+${m.key.toUpperCase()})` : m.label;
       b.setAttribute("aria-haspopup", "true");
       b.setAttribute("aria-expanded", String(this.open === i));
       return b;
