@@ -149,8 +149,8 @@
 .skin-bridge .tab.active { background: var(--br-tan); color: #000; }
 .skin-bridge .pane.active .tab.active, .skin-bridge .term-tabs .tab.active { background: var(--br-orange); color: #000; border: 0; }
 .skin-bridge .tab .x { opacity: .7; }
-.skin-bridge .split > * + * { border-left: 4px solid #000; }
-.skin-bridge .split.v > * + * { border-top: 4px solid #000; }
+.skin-bridge .split.h > .sash { border-left: 4px solid #000; }
+.skin-bridge .split.v > .sash { border-top: 4px solid #000; }
 
 /* ---- the explorer and the panels ----------------------------------------- */
 .skin-bridge :is(#sidebar, #dock, #right-dock, #bar) { background: #000; color: var(--br-text); border-color: #000; }

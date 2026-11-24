@@ -62,8 +62,9 @@ body {
 .split { display: flex; min-width: 0; min-height: 0; }
 .split.h { flex-direction: row; }
 .split.v { flex-direction: column; }
-.split > * + * { border-left: 1px solid var(--border); }
-.split.v > * + * { border-left: 0; border-top: 1px solid var(--border); }
+/* A split's sash is its dividing line (js/sash.js). */
+.split.h > .sash { border-left: 1px solid var(--border); }
+.split.v > .sash { border-top: 1px solid var(--border); }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1 1 0; }
 .pane .tabs { display: flex; background: var(--panel); overflow-x: auto; flex-shrink: 0; min-height: 28px; }
 .tab { padding: 5px 10px; border-right: 1px solid var(--border); white-space: nowrap; cursor: pointer; color: var(--muted); user-select: none; }
@@ -157,6 +158,15 @@ body {
 .ui-markdown blockquote { border-left: 3px solid var(--border); padding-left: 8px; color: var(--muted); }
 .ui-markdown hr { border: 0; border-top: 1px solid var(--border); }
 .ui-markdown a { color: var(--link); }
+/* Sashes (js/sash.js): no size in the layout; the grip reaches 3px either
+   side of the line it sits on, and lights up while pointed at or dragged. */
+.sash { flex: 0 0 auto; position: relative; z-index: 6; }
+.sash::before { content: ""; position: absolute; transition: background-color .1s .15s; }
+.sash.x { cursor: col-resize; } .sash.x::before { top: 0; bottom: 0; left: -3px; right: -3px; }
+.sash.y { cursor: row-resize; } .sash.y::before { left: 0; right: 0; top: -3px; bottom: -3px; }
+.sash:hover::before, .sash.dragging::before { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+.sash:has(+ .hidden), .hidden + .sash { display: none; }
+.sash-dragging body { user-select: none; }
 #status .click { cursor: pointer; text-decoration: underline dotted; }
 #status-right { display: flex; gap: 14px; }
 #status-left { overflow: hidden; text-overflow: ellipsis; }

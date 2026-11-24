@@ -148,8 +148,8 @@
 .skin-winamp .ui-list-row.sel, .skin-winamp .ui-list:focus .ui-list-row.sel { background: var(--wa-lcd-sel); color: #eafff0; }
 .skin-winamp .ui-list-row.header { color: var(--wa-amber); }
 .skin-winamp :is(#terminal, #dock) { border-top: 3px solid #2c2019; }
-.skin-winamp .split > * + * { border-left: 3px solid #2c2019; }
-.skin-winamp .split.v > * + * { border-left: 0; border-top: 3px solid #2c2019; }
+.skin-winamp .split.h > .sash { border-left: 3px solid #2c2019; }
+.skin-winamp .split.v > .sash { border-top: 3px solid #2c2019; }
 
 /* Floating windows: skin windows, metal around an inset LCD. */
 .skin-winamp :is(#prompt, #popup, .ctxmenu, .panel-dialog) { background: var(--wa-metal); color: #e9d9c2; border: 0; border-radius: 3px;

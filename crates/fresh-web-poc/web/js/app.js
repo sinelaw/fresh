@@ -15,6 +15,8 @@ import { Host } from "./host.js";
 import { Palette } from "./palette.js";
 import { Skins } from "./skins.js";
 import { THEME } from "./highlight.js";
+import { sash, clamp } from "./sash.js";
+import { Session } from "./session.js";
 import { PLUGINS } from "../plugins/index.js";
 
 const $ = (s) => document.querySelector(s);
@@ -47,6 +49,8 @@ class App {
     let userKeys = {};
     try { userKeys = JSON.parse(localStorage.getItem("fresh-poc:keys") || "{}"); } catch {}
     this.userKeys = userKeys;
+    // What this browser remembers of the workspace (session.js).
+    this.session = new Session();
   }
 
   async start() {
@@ -64,6 +68,8 @@ class App {
     document.title = `${hello.name} — Fresh`;
     $("#ws-name").textContent = `${hello.name} · ${hello.host}${hello.trusted ? "" : " · restricted"}`;
     connectEvents((ev) => this.onEvent(ev));
+    this.session.open(hello.host, hello.root);
+    this.installSashes();
     this.editing = new Editing(this);
     this.ui = new UIKit(this);
     this.prompt = new Palette(this);
@@ -145,9 +151,22 @@ class App {
       const d = document.createElement("div");
       d.className = `split ${n.dir}`;
       const a = build(n.a), b = build(n.b);
-      a.style.flex = `${n.ratio} 1 0`;
-      b.style.flex = `${1 - n.ratio} 1 0`;
-      d.append(a, b);
+      const flex = () => { a.style.flex = `${n.ratio} 1 0`; b.style.flex = `${1 - n.ratio} 1 0`; };
+      flex();
+      // Its sash moves the line between them; the panes redraw at their
+      // new sizes (each observes its own).
+      const s = document.createElement("div");
+      const x = n.dir === "h";
+      sash(s, x ? "x" : "y", {
+        begin: () => { const r = d.getBoundingClientRect(); return { at: n.ratio, size: x ? r.width : r.height }; },
+        drag: (c, delta) => {
+          const min = Math.min(0.45, 60 / Math.max(1, c.size));
+          n.ratio = clamp(c.at + delta / Math.max(1, c.size), min, 1 - min);
+          flex();
+        },
+        reset: () => { n.ratio = 0.5; flex(); },
+      });
+      d.append(a, s, b);
       return d;
     };
     const el = build(this.layoutTree);
@@ -155,6 +174,31 @@ class App {
     area.appendChild(el);
     for (const p of this.panes()) p.el.classList.toggle("active", p === this.activePane);
     this.renderAll();
+  }
+  // The sashes of the sidebar, the right dock, the bottom dock and the
+  // terminal; their sizes are remembered for the workspace.
+  installSashes() {
+    const parts = {
+      sidebar: { el: $("#sidebar"), axis: "x", dir: 1, min: 120, most: 0.5 },
+      right: { el: $("#right-dock"), axis: "x", dir: -1, min: 160, most: 0.6 },
+      dock: { el: $("#dock"), axis: "y", dir: -1, min: 80, most: 0.8 },
+      terminal: { el: $("#terminal"), axis: "y", dir: -1, min: 80, most: 0.8 },
+    };
+    const sizes = { ...(this.session.get("sizes") || {}) };
+    const prop = (p) => (p.axis === "x" ? "width" : "height");
+    for (const [name, p] of Object.entries(parts)) {
+      if (sizes[name]) p.el.style[prop(p)] = `${sizes[name]}px`;
+      sash(document.querySelector(`.sash[data-sash="${name}"]`), p.axis, {
+        // The most a part takes is a share of its container.
+        begin: () => {
+          const r = p.el.getBoundingClientRect(), box = p.el.parentElement.getBoundingClientRect();
+          return { at: p.axis === "x" ? r.width : r.height, max: (p.axis === "x" ? box.width : box.height) * p.most };
+        },
+        drag: (c, d) => { sizes[name] = Math.round(clamp(c.at + p.dir * d, p.min, Math.max(p.min, c.max))); p.el.style[prop(p)] = `${sizes[name]}px`; },
+        end: () => this.session.set("sizes", sizes),
+        reset: () => { delete sizes[name]; p.el.style[prop(p)] = ""; this.session.set("sizes", sizes); },
+      });
+    }
   }
   renderAll() { for (const p of this.panes()) { p.renderTabs(); p.scheduleRender(); } }
   renderBuffer(id) { for (const p of this.panes()) if (p.view?.buf.id === id) p.scheduleRender(); }

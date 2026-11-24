@@ -107,8 +107,8 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Chrome | Skin picker button and Ctrl+Alt+T | present |
 | Chrome | Theme picker | present |
 | Chrome | Zoom: editor font size larger / smaller / reset | missing |
-| Layout | Drag to resize: editor splits | missing |
-| Layout | Drag to resize: sidebar width, bottom dock and terminal height, right dock width | missing |
+| Layout | Drag to resize: editor splits (double-click: even) | fixed |
+| Layout | Drag to resize: sidebar width, bottom dock and terminal height, right dock width (remembered per workspace; double-click: default) | fixed |
 | Layout | Split right / down, close, next / previous split | present |
 | Layout | Maximize split (toggle) | missing |
 | Layout | Scroll sync of same-buffer splits | missing (rarely used; after the rest) |
