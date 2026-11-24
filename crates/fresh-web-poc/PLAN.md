@@ -159,3 +159,10 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Help | Welcome, keyboard shortcuts (keybinding editor), show log | present |
 | Help | Settings screen | skipped (settings are palette toggles in the browser; a settings UI needs the editor's schema) |
 | Workspaces | Orchestrator / multi-session management | present (overview Alt+O, switcher Ctrl+Alt+O, New Workspace, agent sessions, attention beacon) |
+
+In all: 56 rows — 17 present, 28 fixed by this audit, 9 missing, 2 skipped.
+What is missing is behind the chrome: preview tabs, explorer
+multi-selection, scroll sync, rainbow brackets, untitled buffers,
+workspace symbols, the rarer editing and search commands (transpose,
+block and expand selection, macros, find in selection, query replace) and
+restarting a language server.
