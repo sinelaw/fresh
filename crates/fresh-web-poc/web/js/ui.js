@@ -31,12 +31,14 @@ export class UIKit {
     this.dockBody = this.dock.querySelector(".dock-body");
     this.side = document.querySelector("#side-panels");
     this.right = document.querySelector("#right-dock");
+    this.left = document.querySelector("#left-dock");
     this.bar = document.querySelector("#bar");
     this.activeDock = null;
     this.context = null; // the open context menu
   }
 
-  // place: "bottom" | "sidebar" | "right" | "bar" | "dialog"
+  // place: "bottom" | "sidebar" | "left" (a column before the sidebar) |
+  // "right" | "bar" | "dialog"
   panel({ id, title, place = "bottom", onClose }) {
     let p = this.panels.get(id);
     if (p) { p.show(); return p; }
@@ -95,7 +97,7 @@ class Panel {
     this.el.tabIndex = -1;
     this.body = document.createElement("div");
     this.body.className = "panel-body";
-    if (place === "sidebar" || place === "right" || place === "dialog") {
+    if (place === "sidebar" || place === "left" || place === "right" || place === "dialog") {
       const head = document.createElement("div");
       head.className = "panel-head";
       head.innerHTML = `<span class="t"></span><span class="x" title="Close">×</span>`;
@@ -121,12 +123,14 @@ class Panel {
       document.body.appendChild(this.backdrop);
     } else if (place === "bottom") kit.dockBody.appendChild(this.el);
     else if (place === "sidebar") kit.side.appendChild(this.el);
+    else if (place === "left") kit.left.appendChild(this.el);
     else if (place === "right") kit.right.appendChild(this.el);
     else if (place === "bar") kit.bar.appendChild(this.el);
   }
 
   show() {
     if (this.place === "bottom") this.kit.dockShow(this);
+    if (this.place === "left") this.kit.left.classList.remove("hidden");
     if (this.place === "right") this.kit.right.classList.remove("hidden");
     if (this.place === "bar") this.kit.bar.classList.remove("hidden");
     this.kit.app.renderAll();
@@ -140,6 +144,7 @@ class Panel {
       const next = [...this.kit.panels.values()].find((p) => p.place === "bottom") || null;
       this.kit.dockShow(next);
     }
+    if (this.place === "left" && !this.kit.left.children.length) this.kit.left.classList.add("hidden");
     if (this.place === "right" && !this.kit.right.children.length) this.kit.right.classList.add("hidden");
     if (this.place === "bar" && !this.kit.bar.children.length) this.kit.bar.classList.add("hidden");
     this.onClose?.();
@@ -456,6 +461,8 @@ class Panel {
         } else p.onActivate?.(r.nd.data, r.nd);
       },
       onSelect: (r) => p.onSelect?.(r.nd.data, r.nd),
+      onKey: (e, r) => p.onKey?.(e, r?.nd.data, r?.nd),
+      onContext: (r, _i, at) => p.onContext?.(r.nd.data, r.nd, at),
       activateOnClick: true,
     }));
   }

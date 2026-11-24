@@ -69,7 +69,7 @@
 
 /* The chrome's own colours, where the chrome is: the buffers keep the
    editor theme's. */
-.skin-winamp :is(#topbar, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+.skin-winamp :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
   --fg: #e9d9c2; --muted: #bda88c; --faint: #8a7660; --border: #1b1109; --panel: #3c2c23;
   --accent: #4ef07f; --on-accent: #04140a; --emphasis: #f7c978; --link: #7fe8a0;
   --control-bg: #070606; --control-fg: #4ef07f; --hover-bg: rgba(255, 208, 150, .10);
@@ -139,9 +139,9 @@
   font-size: 1em; padding: 3px 12px; }
 
 /* The explorer, the dock and side panels: sunken playlist panes. */
-.skin-winamp :is(#sidebar, #dock, #right-dock, #bar) { background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); }
-.skin-winamp :is(#sidebar, #dock, #right-dock, #bar) .panel { background: transparent; }
-.skin-winamp #sidebar { border-right: 3px solid #2c2019; box-shadow: inset -1px 0 0 rgba(255, 214, 158, .12); }
+.skin-winamp :is(#left-dock, #sidebar, #dock, #right-dock, #bar) { background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); }
+.skin-winamp :is(#left-dock, #sidebar, #dock, #right-dock, #bar) .panel { background: transparent; }
+.skin-winamp :is(#left-dock, #sidebar) { border-right: 3px solid #2c2019; box-shadow: inset -1px 0 0 rgba(255, 214, 158, .12); }
 .skin-winamp .panel-head { color: var(--wa-amber); text-shadow: none; }
 .skin-winamp .panel-sidebar { border-bottom-color: #2c2019; }
 .skin-winamp .ui-list-row:hover { background: rgba(78, 240, 127, .06); }

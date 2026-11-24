@@ -19,7 +19,7 @@
   --tint: color-mix(in srgb, var(--accent) 26%, transparent);
   background: var(--shell);
 }
-.skin-compact :is(#topbar, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+.skin-compact :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
   --panel: var(--shell); --border: var(--hairline-strong); --muted: color-mix(in srgb, var(--fg) 62%, var(--bg));
   --popup-bg: var(--well); --popup-fg: var(--fg); --popup-border: var(--hairline-strong);
   --control-bg: var(--bg); --control-fg: var(--fg); --hover-bg: color-mix(in srgb, var(--fg) 6%, transparent);
@@ -41,7 +41,7 @@
 .skin-compact .pane.active .tab.active { border-top: 0; box-shadow: inset 0 2px 0 var(--accent); }
 
 /* ---- side panels: the frame's shade, hairline walls ---- */
-.skin-compact :is(#sidebar, #right-dock, #dock, #bar) { background: var(--shell); border-color: var(--hairline); }
+.skin-compact :is(#left-dock, #sidebar, #right-dock, #dock, #bar) { background: var(--shell); border-color: var(--hairline); }
 .skin-compact .panel-sidebar { border-bottom-color: var(--hairline); }
 .skin-compact .panel-head { font-size: .8em; letter-spacing: .04em; padding: 4px 10px; }
 .skin-compact .ui-list-row { height: 22px; margin: 0 4px; padding: 0 6px; border-radius: 3px; }

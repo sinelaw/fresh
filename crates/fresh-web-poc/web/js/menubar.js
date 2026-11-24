@@ -37,10 +37,9 @@ export const MENUS = [
     { command: "view.closeAllTabs", label: "Close All Tabs" },
     null,
     { command: "workspace.trust", label: "Trust Workspace" },
-    { command: "orchestrator.overview", label: "Workspaces…" },
-    { command: "orchestrator.switch", label: "Switch Workspace…" },
     { command: "orchestrator.new", label: "New Workspace…" },
-    { command: "orchestrator.agent", label: "Start Agent Session…" },
+    { command: "orchestrator.switch", label: "Switch Workspace…" },
+    { command: "orchestrator.agent", label: "Run Agent…" },
     { command: "orchestrator.close", label: "Close Workspace" },
   ] },
   { label: "Edit", key: "e", items: [
@@ -75,6 +74,7 @@ export const MENUS = [
     { command: "keys.editor", label: "Keyboard Shortcuts" },
   ] },
   { label: "View", key: "v", items: [
+    { command: "orchestrator.dock", label: "Orchestrator Dock", checked: (app) => !!app.orchestrator?.panel?.open },
     { command: "palette.commands", label: "Command Palette…" },
     null,
     { command: "explorer.toggle", label: "File Explorer", checked: () => !$("#sidebar").classList.contains("hidden") },

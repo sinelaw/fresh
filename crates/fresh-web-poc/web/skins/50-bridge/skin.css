@@ -52,7 +52,7 @@
   --ui-font-size: calc(16px * var(--ui-scale));
   background: #000; accent-color: var(--br-orange);
 }
-.skin-bridge :is(#topbar, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+.skin-bridge :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
   --fg: var(--br-text); --muted: var(--br-dim); --faint: #6d6390; --border: var(--br-line); --panel: #000;
   --accent: var(--br-orange); --on-accent: #000; --emphasis: var(--br-orange); --link: var(--br-blue);
   --control-bg: #000; --control-fg: var(--br-text); --hover-bg: rgba(255, 156, 26, .16);
@@ -164,8 +164,8 @@
 .skin-bridge .split.v > .sash { border-top: 4px solid #000; }
 
 /* ---- the explorer and the panels ----------------------------------------- */
-.skin-bridge :is(#sidebar, #dock, #right-dock, #bar) { background: #000; color: var(--br-text); border-color: #000; }
-.skin-bridge #sidebar { border-right: 4px solid #000; }
+.skin-bridge :is(#left-dock, #sidebar, #dock, #right-dock, #bar) { background: #000; color: var(--br-text); border-color: #000; }
+.skin-bridge :is(#left-dock, #sidebar) { border-right: 4px solid #000; }
 .skin-bridge .panel-sidebar { border-bottom: 6px solid #000; }
 .skin-bridge .panel-head { background: var(--br-lilac); color: #000; font-weight: 600; letter-spacing: .1em; font-size: .8em;
   border-radius: 999px 0 0 999px; margin: 0 0 6px; padding: 3px 10px 3px 16px; }

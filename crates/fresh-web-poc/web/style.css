@@ -45,6 +45,9 @@ body {
 #main { flex: 1; display: flex; min-height: 0; }
 #sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
 #sidebar.hidden { display: none; }
+#left-dock { width: 280px; background: var(--panel); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
+#left-dock.hidden { display: none; }
+.panel-left { flex: 1 1 0; }
 #side-panels { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #center { flex: 1; display: flex; min-height: 0; }
@@ -269,29 +272,32 @@ body {
 .doc-body > :hover .doc-fold, .doc-fold.folded { opacity: 1; }
 .doc-more { margin-left: .4em; padding: 0 .4em; border-radius: 4px; background: var(--doc-code-bg); color: var(--muted); cursor: pointer; }
 
-/* The orchestrator (js/orchestrator.js): the workspaces overview and the
-   New Workspace form */
+/* The orchestrator (js/orchestrator.js): the dock and the New Workspace form */
 #topbar #ws-name { cursor: pointer; }
-.orch .orch-list { min-height: 180px; }
+.orch-dock { gap: 4px; }
+#left-dock .ui-tree-row { flex: 1; min-width: 0; }
+.orch-why { color: var(--error); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-dock-head { gap: 4px; }
 .orch-row { flex: 1; min-width: 0; }
-.orch-mark { width: 1ch; flex-shrink: 0; color: var(--muted); }
-.orch-mark.attention, .orch-attention { color: var(--warning); }
-.orch-name { flex-shrink: 0; }
+.orch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-name.keep { flex-shrink: 0; }
 .orch-row.current .orch-name { color: var(--emphasis); }
-.orch-where, .orch-attention { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.orch-branch { flex-shrink: 0; color: var(--link); }
-.orch-restricted { color: var(--warning); background: transparent; border: 1px solid var(--warning); line-height: 14px; flex-shrink: 0; }
-.orch-agent { flex-shrink: 0; }
-.orch-agent.working { color: var(--accent); }
-.orch-agent.waiting { color: var(--warning); }
-.orch-agent.exited { color: var(--muted); }
-.orch-errors { color: var(--error); }
-.orch-warnings { color: var(--warning); }
-.ui-button.orch-act { padding: 0 6px; line-height: 16px; font-size: var(--ui-font-xs); }
-.orch-form { gap: 8px; padding: 4px 2px; }
-.orch-field { align-items: center; }
-.orch-label { width: 80px; flex-shrink: 0; color: var(--muted); }
-.orch-recent { flex-wrap: wrap; }
+.orch-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-modified { color: var(--warning); flex-shrink: 0; }
+.orch-restricted { color: var(--warning); flex-shrink: 0; }
+.orch-mark { flex-shrink: 0; min-width: 1ch; text-align: center; color: var(--muted); }
+.orch-mark.waiting, .orch-mark.failed { color: var(--error); }
+.orch-mark.working { color: var(--warning); }
+.orch-mark.done { color: var(--git-added); }
+.orch-attention-line { gap: 12px; padding: 0 4px; }
 .orch-error { color: var(--error); white-space: pre-wrap; }
+.orch-form { gap: 6px; padding: 4px 2px; overflow: auto; }
+.orch-section { color: var(--muted); font-size: var(--ui-font-xs); letter-spacing: .08em; margin-top: 4px; }
+.orch-field { align-items: center; }
+.orch-label { width: 90px; flex-shrink: 0; color: var(--muted); }
+.orch-note { font-size: var(--ui-font-xs); padding-left: 96px; }
+.orch-recent { flex-wrap: wrap; }
+.orch-import .orch-import-list { min-height: 260px; }
+.orch-agent-name { color: var(--accent); flex-shrink: 0; width: 6ch; }
 /* On the focused selection, the selection's own colours. */
-.ui-list:focus .ui-list-row.sel .orch-row :is(.ui-text, .ui-badge) { color: inherit; border-color: currentColor; }
+.ui-list:focus .ui-list-row.sel .orch-row :is(.ui-text, .ui-badge) { color: inherit; }

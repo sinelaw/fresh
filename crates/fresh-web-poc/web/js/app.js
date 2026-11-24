@@ -68,7 +68,7 @@ class App {
   async start() {
     // The workspace this page views: `?ws=<id>`, or the server's first.
     // None when it was closed (or none is open): the page is then the
-    // orchestrator's overview alone.
+    // orchestrator's dock alone.
     const params = new URLSearchParams(location.search);
     const hello = await rpc("hello", params.has("ws") ? { workspace: Number(params.get("ws")) } : {});
     session.client = hello.client;
@@ -77,7 +77,7 @@ class App {
       params.set("ws", String(ws.id));
       history.replaceState(null, "", `?${params}`);
     }
-    this.orchestrator = new Orchestrator(this, hello.workspaces);
+    this.orchestrator = new Orchestrator(this, hello.workspaces, hello.folders);
     // The skin first: the editor's cell is measured in its fonts.
     this.skins = new Skins(this);
     await this.skins.load();
@@ -127,10 +127,7 @@ class App {
     this.relayout();
     new ResizeObserver(() => this.renderAll()).observe($("#editor-area"));
     setInterval(() => this.autoSave(), 1000);
-    if (!ws) {
-      this.orchestrator.show();
-      return;
-    }
+    if (!ws) return;
     await this.host.load(PLUGINS);
     await this.term.adopt(ws.terminals);
     // What was open in this workspace last time, unless a file is named.
@@ -279,6 +276,7 @@ class App {
   // terminal; their sizes are remembered for the workspace.
   installSashes() {
     const parts = {
+      left: { el: $("#left-dock"), axis: "x", dir: 1, min: 160, most: 0.4 },
       sidebar: { el: $("#sidebar"), axis: "x", dir: 1, min: 120, most: 0.5 },
       right: { el: $("#right-dock"), axis: "x", dir: -1, min: 160, most: 0.6 },
       dock: { el: $("#dock"), axis: "y", dir: -1, min: 80, most: 0.8 },
@@ -870,7 +868,7 @@ class App {
       case "fs.changed":
         this.watches.get(ev.watch)?.(ev.path);
         break;
-      case "workspace.added": case "workspace.removed": case "workspace.status":
+      case "workspace.added": case "workspace.removed": case "workspace.status": case "workspace.changed": case "orchestrator.folders":
         this.orchestrator.onEvent(ev);
         break;
     }

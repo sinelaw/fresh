@@ -28,7 +28,7 @@ const termFont = () => {
 
 // How an agent session's tab shows what it is doing (the server reads it
 // from the terminal's stream: `src/terminal.rs`).
-export const STATE_MARK = { working: "* ", waiting: "● ", idle: "· ", exited: "✕ " };
+export const STATE_MARK = { working: "* ", waiting: "● ", done: "✓ ", idle: "· ", unknown: "? ", exited: "✕ " };
 
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
