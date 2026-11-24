@@ -279,6 +279,7 @@ fn setup_project() -> (tempfile::TempDir, PathBuf) {
 
 /// Like [`harness`], but on a data dir this test knows the path of, so it can
 /// plant state the plugin will read back. Returns the project root too.
+#[cfg(unix)]
 fn harness_with_data_home(
     data_home: &tempfile::TempDir,
 ) -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
@@ -302,6 +303,7 @@ fn harness_with_data_home(
 /// In place (`root` equal to `original_root`) so unarchiving is purely the
 /// manifest bookkeeping this is about — no `git worktree move` runs, and the
 /// directories need not exist.
+#[cfg(unix)]
 fn plant_legacy_archive(data_home: &tempfile::TempDir, root: &std::path::Path) {
     let legacy = root
         .to_string_lossy()
@@ -715,6 +717,12 @@ fn unarchiving_something_not_archived_returns_false() {
 /// workspace that was already back — and a second unarchive of it failed on a
 /// worktree that had moved. Asserted on what the archive lists afterwards,
 /// which is the surface a caller sees.
+// The directory this plants is the name a previous release gave the project,
+// which for a Windows root carried the drive colon — a name Windows cannot
+// hold, which is exactly why that release's state was never usable there. So
+// there is no legacy directory to find on Windows, and the scenario is a
+// POSIX one.
+#[cfg(unix)]
 #[test]
 fn unarchiving_clears_the_entry_from_the_manifest_it_was_found_in() {
     let data_home = tempfile::tempdir().unwrap();

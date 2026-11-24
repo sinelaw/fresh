@@ -2079,14 +2079,38 @@ fn git_init_repo(dir: &Path) {
 /// The path out of the form's `worktree at …` row, as the screen draws it.
 /// The row is a wrapped note inside the dialog, so the value runs to the
 /// frame's right border.
-fn previewed_worktree_path(screen: &str) -> String {
-    const MARKER: &str = "worktree at ";
-    let line = screen
-        .lines()
-        .find(|l| l.contains(MARKER))
-        .unwrap_or_else(|| panic!("no `worktree at` row on screen:\n{screen}"));
-    let rest = &line[line.find(MARKER).unwrap() + MARKER.len()..];
-    rest.split('│').next().unwrap_or(rest).trim().to_string()
+/// The screen with the frame and every space removed.
+///
+/// The `worktree at …` note is drawn with `wrap: true`, so a path too long
+/// for the dialog is split across rows mid-component — and how long is too
+/// long depends on the runner: a macOS or Windows temp directory is deeper
+/// than Linux's `/tmp/.tmpXXXXXX`, so a row that fits on one line here wraps
+/// there. Flattening the screen makes the assertion independent of where the
+/// break landed; a path holds no spaces, so nothing that matters is lost.
+fn screen_without_frame(screen: &str) -> String {
+    screen
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '│' && *c != '~')
+        .collect()
+}
+
+/// The worktree path the form previews for `name`, as the plugin builds it:
+/// `pathJoin` always renders forward slashes, whatever the host separator is.
+fn expected_worktree_path(
+    data_home: &tempfile::TempDir,
+    repo: &std::path::Path,
+    name: &str,
+) -> String {
+    format!(
+        "{}/orchestrator/{}/{name}",
+        data_home
+            .path()
+            .join("data")
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+        fresh_core::path_encode::storage_key_for_path(repo),
+    )
 }
 
 /// **A new workspace's worktree goes one level under the project's own state
@@ -2111,6 +2135,10 @@ fn previewed_worktree_path(screen: &str) -> String {
 /// key and two give two — is pinned by `path_encode`'s Rust tests. What this
 /// adds is that the *plugin* names the directory with that key, so it asserts
 /// the row equals the key exactly rather than re-proving its properties.
+// A directory with a colon in its name cannot exist on Windows — which is the
+// very reason the old slug was never usable there — so the POSIX spelling of
+// this case can only be driven on a POSIX host.
+#[cfg(unix)]
 #[test]
 fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
     let (_temp, workspace) = set_up_workspace();
@@ -2147,7 +2175,7 @@ fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
     focus_stop(&mut harness, "Workspace:");
     harness.type_text("wtname").unwrap();
     harness
-        .wait_until(|h| previewed_worktree_path(&h.screen_to_string()).ends_with("/wtname"))
+        .wait_until(|h| screen_without_frame(&h.screen_to_string()).contains("/wtname"))
         .unwrap_or_else(|_| {
             panic!(
                 "the worktree preview follows the workspace name. Screen:\n{}",
@@ -2155,19 +2183,14 @@ fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
             )
         });
 
+    let expected = expected_worktree_path(&data_home, &repo, "wtname");
     let screen = harness.screen_to_string();
-    let expected = format!(
-        "{}/orchestrator/{}/wtname",
-        data_home.path().join("data").display(),
-        fresh_core::path_encode::storage_key_for_path(&repo),
-    );
-    assert_eq!(
-        previewed_worktree_path(&screen),
-        expected,
+    assert!(
+        screen_without_frame(&screen).contains(&expected),
         "the worktree goes under the project's own state directory, named by \
          the key the editor names its own per-path directories with. A slug \
          that kept the drive colon took the data dir off the front of this \
-         row (#3811). Screen:\n{screen}",
+         row (#3811).\n  expected: {expected}\nScreen:\n{screen}",
     );
 }
 
@@ -2200,12 +2223,13 @@ fn a_typed_workspace_name_is_previewed_as_the_directory_it_will_be() {
     focus_stop(&mut harness, "Workspace:");
     harness.type_text("fix: colon").unwrap();
 
+    let expected = expected_worktree_path(&data_home, &repo, "fix-colon");
     harness
-        .wait_until(|h| previewed_worktree_path(&h.screen_to_string()).ends_with("/fix-colon"))
+        .wait_until(|h| screen_without_frame(&h.screen_to_string()).contains(&expected))
         .unwrap_or_else(|_| {
             panic!(
                 "the previewed worktree directory is the typed name reduced to what a \
-                 directory and a branch can hold. Screen:\n{}",
+                 directory and a branch can hold.\n  expected: {expected}\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
