@@ -149,6 +149,26 @@ class Panel {
 
   get open() { return this.kit.panels.get(this.id) === this; }
 
+  // Buttons in the panel's head, before its close: [{icon, title, run}].
+  actions(list) {
+    const head = this.el.querySelector(".panel-head");
+    if (!head) return;
+    head.querySelector(".panel-actions")?.remove();
+    const box = document.createElement("span");
+    box.className = "panel-actions";
+    for (const a of list) {
+      const b = document.createElement("button");
+      b.className = "panel-action";
+      b.textContent = a.icon;
+      b.title = a.title;
+      b.tabIndex = -1;
+      b.onmousedown = (e) => e.preventDefault();
+      b.onclick = () => a.run();
+      box.appendChild(b);
+    }
+    head.insertBefore(box, head.querySelector(".x"));
+  }
+
   focus(key) {
     const el = key ? this.body.querySelector(`[data-key="${CSS.escape(key)}"]`) : this.body.querySelector("input, select, button, .list");
     (el || this.el).focus();
@@ -317,11 +337,40 @@ class Panel {
         for (const x of inner.children) x.classList.toggle("sel", +x.dataset.i === i);
         el.focus({ preventScroll: true });
         p.onSelect?.(it, i);
+        if (e.button === 0 && p.onDrop) dragFrom(e, it);
       };
       r.ondblclick = () => p.onActivate?.(it, i);
       r.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); p.onContext?.(it, i, { x: e.clientX, y: e.clientY }); };
       if (p.activateOnClick) r.onclick = () => p.onActivate?.(it, i);
       return r;
+    };
+    // Dragging a row (`onDrop(item, onto)` given): past a few pixels it
+    // drags; the row under the pointer that `canDrop(item, onto)` accepts
+    // is marked `.drop-target` (empty space below the rows: the list
+    // itself, `onto` null); letting go there drops.
+    const dragFrom = (e, it) => {
+      const x0 = e.clientX, y0 = e.clientY;
+      let dragging = false, onto, ok = false;
+      const mark = (row) => { for (const x of inner.children) x.classList.toggle("drop-target", x === row); el.classList.toggle("drop-target", ok && !row); };
+      const move = (ev) => {
+        if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+        if (!dragging) { dragging = true; el.classList.add("dragging"); }
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+        const row = hit && hit.closest(".ui-list-row");
+        onto = row && inner.contains(row) ? items[+row.dataset.i] : el.contains(hit) ? null : undefined;
+        ok = onto !== undefined && (!p.canDrop || p.canDrop(it, onto));
+        mark(ok && row ? row : null);
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        el.classList.remove("dragging");
+        mark(null);
+        el.classList.remove("drop-target");
+        if (dragging && ok) p.onDrop(it, onto);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
     };
     const draw = () => {
       const h0 = el.clientHeight || 300;

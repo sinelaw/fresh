@@ -177,6 +177,8 @@ export class Host {
       keys: {
         bind: (key, command) => app.bindKey(key, command),
         for: (command) => app.keyFor(command),
+        // The first key for a command as people write it ("Ctrl+Shift+K").
+        label: (command) => app.keyLabel(command),
         // The effective keymap: {key: command}.
         all: () => app.keymap(),
         // The user's own bindings (saved in the browser), over the defaults.

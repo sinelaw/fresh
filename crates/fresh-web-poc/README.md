@@ -378,8 +378,8 @@ A skin is CSS against the client's stable structure. `<html>` carries
 | `#status` | `#status-left` (the message), `#status-right > span` (the facts; `.click` when clickable) |
 | `#prompt` | the palette and prompts: `.bar` (`.label`, `input`), `.list` (`.item`, `.item.sel`, `.d` its detail), `.hint` |
 | `#popup`, `.ctxmenu` | hover and other pop-ups; every menu — the menu bar's, their submenus and the context menus: `.menu-item` rows (`.check`, `.label`, `.keys`; `.hi` highlighted, `.sub`, `.disabled`), `hr` separators, `.checks` on a menu with a check column |
-| `.panel` | a plugin panel: `.panel-head`, `.panel-body`; placed as `.panel-sidebar`, `.panel-right`, `.panel-bar`, `.panel-dialog` (over a `.backdrop`) |
-| `.ui-*` | the panel kit: `.ui-list` / `.ui-list-row` (`.sel`, `.header`; a tree's pinned ancestor rows `.sticky`, the innermost `.last`), `.ui-tree-row`, `.ui-input`, `.ui-button` (`.primary`), `.ui-toggle` (`.on`), `.ui-select`, `.ui-badge`, `.ui-table`, `.ui-markdown` |
+| `.panel` | a plugin panel: `.panel-head` (`.t`, `.panel-actions` > `.panel-action` buttons, `.x`), `.panel-body`; placed as `.panel-sidebar`, `.panel-right`, `.panel-bar`, `.panel-dialog` (over a `.backdrop`) |
+| `.ui-*` | the panel kit: `.ui-list` / `.ui-list-row` (`.sel`, `.header`; a tree's pinned ancestor rows `.sticky`, the innermost `.last`; while a row is dragged the list is `.dragging` and its landing row (or the list) `.drop-target`), `.ui-tree-row`, `.ui-input`, `.ui-button` (`.primary`), `.ui-toggle` (`.on`), `.ui-select`, `.ui-badge`, `.ui-table`, `.ui-markdown` |
 
 **Colours.** The theme sets its variables (the table above) on `<html>`. A
 skin overrides any of them on `body` or on a part — the parts below inherit

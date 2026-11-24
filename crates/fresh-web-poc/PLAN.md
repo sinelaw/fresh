@@ -128,9 +128,9 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Editor | Indentation guides, matching-bracket highlight, rainbow brackets | missing (drawing extras; after the chrome) |
 | Editor | Minimap, breadcrumbs | skipped (the editor has neither) |
 | Explorer | Sticky ancestors: the folders of the top visible row stay pinned (any UI-kit tree); a click scrolls back to the folder | fixed |
-| Explorer | Drag and drop to move files and folders (confirmed) | missing |
-| Explorer | Refresh / collapse-all buttons in the header | missing |
-| Explorer | Toggle hidden / gitignored files | missing |
+| Explorer | Drag and drop to move files and folders onto a folder (or the root), confirmed; open files follow | fixed |
+| Explorer | New file / new folder / refresh / collapse-all buttons in the header (UI kit: `panel.actions`) | fixed |
+| Explorer | Show hidden / gitignored files (hidden by default, as the editor; Explorer menu, checked), remembered | fixed |
 | Explorer | Multi-selection (Shift+Up/Down) for cut / copy / delete | missing (after the rest) |
 | Explorer | Open, new file / folder, rename, delete, copy / cut / paste, copy path, follow active file, gitignore dimming, keyboard | present |
 | Files | Recent files (File ▸ Open Recent, and the file palette with nothing typed) | fixed |

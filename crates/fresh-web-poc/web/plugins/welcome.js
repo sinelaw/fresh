@@ -12,7 +12,7 @@ export function activate(fresh) {
     const entries = [
       { text: "Fresh\n", style: { fg: "syntax.type", bold: true } },
       { text: "\nThe server holds the workspace: its files, each open document's ordered edit log,\nterminals, processes and one connection per language server. This page does the\nrest: layout, editing, undo, decorations and plugins.\n\n" },
-      ...keys.map(([id, what]) => ({ text: `  ${(fresh.keys.for(id) || "palette").padEnd(22)} ${what}\n`, props: { command: id } })),
+      ...keys.map(([id, what]) => ({ text: `  ${(fresh.keys.label(id) || "palette").padEnd(22)} ${what}\n`, props: { command: id } })),
       { text: "\nOpen the same file in two browser tabs to edit it together.\nIn a Markdown file, run “Markdown: Toggle Compose”.\n", style: { fg: "editor.line_number_fg" } },
     ];
     const b = fresh.buffers.createVirtual({ name: "Welcome", entries, mode: "welcome", place: "tab", lineNumbers: false });

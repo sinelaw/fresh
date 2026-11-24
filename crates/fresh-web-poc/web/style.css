@@ -130,6 +130,10 @@ body {
 .panel-right { flex: 1 1 0; }
 .panel-head { display: flex; justify-content: space-between; padding: 5px 10px; text-transform: uppercase; font-size: var(--ui-font-xs); color: var(--muted); }
 .panel-head .x { cursor: pointer; }
+.panel-head .t { flex: 1; }
+.panel-actions { display: flex; gap: 2px; margin-right: 6px; }
+.panel-action { background: none; border: 0; padding: 0 4px; color: inherit; font: inherit; font-size: var(--ui-font-sm); line-height: 1; cursor: pointer; border-radius: 3px; text-transform: none; }
+.panel-action:hover { background: var(--hover-bg); color: var(--fg); }
 .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 6px; gap: 4px; overflow: hidden; }
 .panel-bar .panel-body { flex-direction: row; padding: 4px 8px; }
 .panel-dialog { position: fixed; top: 12vh; left: 50%; transform: translateX(-50%); width: min(820px, 92vw); max-height: 70vh; border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); }
@@ -158,6 +162,10 @@ body {
 .ui-list-row.sel { background: var(--sel-inactive-bg); }
 .ui-list:focus .ui-list-row.sel { background: var(--sel-bg); color: var(--sel-fg); }
 .ui-list-row.header { color: var(--fg); font-weight: 600; }
+/* Dragging a row: where it would land. */
+.ui-list.dragging, .ui-list.dragging * { cursor: grabbing; }
+.ui-list-row.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.ui-list.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* A tree's pinned ancestor rows: opaque over the rows they cover. */
 .ui-list-row.sticky { z-index: 1; background-color: var(--panel); }
 .ui-list-row.sticky:hover { background: linear-gradient(var(--hover-bg), var(--hover-bg)) var(--panel); }

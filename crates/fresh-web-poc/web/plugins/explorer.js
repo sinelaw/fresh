@@ -13,6 +13,12 @@ export function activate(fresh) {
   let rows = [];
   let selected = null; // path
   let clip = null; // {path, cut}
+  // What the tree leaves out, as the editor's explorer: dotfiles and files
+  // the ignore rules leave out, until shown (then ignored ones are dimmed).
+  const SHOW = "fresh-poc:explorer";
+  let show = { hidden: false, ignored: false };
+  try { show = { ...show, ...JSON.parse(localStorage.getItem(SHOW) || "{}") }; } catch {}
+  const visible = (e) => (show.hidden || !e.name.startsWith(".")) && (show.ignored || !e.ignored);
   const panel = fresh.ui.panel({ id: "explorer", title: "Explorer", place: "sidebar" });
 
   const load = async (dir) => {
@@ -39,6 +45,7 @@ export function activate(fresh) {
     rows = [];
     const walk = (dir, depth) => {
       for (const e of children.get(dir) || []) {
+        if (!visible(e)) continue;
         rows.push({ ...e, depth });
         if (e.dir && open.has(e.path)) walk(e.path, depth + 1);
       }
@@ -61,6 +68,10 @@ export function activate(fresh) {
       activateOnClick: true,
       onContext: (r, _i, at) => menu(r, at),
       onKey: (e, r) => key(e, r),
+      // Drag a file or folder onto a folder (or a file in it, or the space
+      // below: the root) to move it there.
+      canDrop: (r, onto) => { const to = dirOf(onto); return to !== parentOf(r.path) && to !== r.path && !to.startsWith(r.path + "/"); },
+      onDrop: (r, onto) => ops.move(r, dirOf(onto)),
     }));
   };
   const refresh = async () => {
@@ -78,6 +89,8 @@ export function activate(fresh) {
     } else fresh.buffers.open(r.path);
   };
   const dirOf = (r) => (r ? (r.dir ? r.path : r.path.replace(/\/[^/]*$/, "")) : root);
+  const parentOf = (p) => p.replace(/\/[^/]*$/, "");
+  const rel = (p) => (p === root ? "the workspace's root" : p.slice(root.length + 1));
   const ops = {
     newFile: async (r) => {
       const name = await fresh.ui.input({ title: "New file" });
@@ -125,6 +138,17 @@ export function activate(fresh) {
       await refresh();
     },
     copyPath: (r) => r && navigator.clipboard?.writeText(r.path),
+    // Move into folder `to`, once confirmed (open files follow, as a rename).
+    move: async (r, to) => {
+      if (!(await fresh.ui.confirm(`Move ${r.name} into ${rel(to)}?`, "Move"))) return;
+      const dest = `${to}/${r.name}`;
+      try { await fresh.host.rename(r.path, dest); } catch (e) { fresh.ui.message(`Not moved: ${e.detail || e.message || e}`); return; }
+      for (const d of [...open]) if (d === r.path || d.startsWith(r.path + "/")) collapse(d);
+      await expand(to);
+      selected = dest;
+      await refresh();
+      fresh.ui.message(`Moved ${r.name} into ${rel(to)}`);
+    },
   };
   const menu = (r, at) => fresh.ui.menu([
     { label: "New File…", run: () => ops.newFile(r) },
@@ -177,6 +201,22 @@ export function activate(fresh) {
     await reveal(fresh.buffers.active()?.path);
     panel.focus("tree");
   } });
+  const toggleShow = (k) => {
+    show[k] = !show[k];
+    try { localStorage.setItem(SHOW, JSON.stringify(show)); } catch {}
+    render();
+  };
+  fresh.commands.register("explorer.toggleHidden", { title: "Explorer: Toggle Hidden Files", run: () => toggleShow("hidden") });
+  fresh.commands.register("explorer.toggleIgnored", { title: "Explorer: Toggle Gitignored Files", run: () => toggleShow("ignored") });
+  fresh.menus.add("Explorer", null);
+  fresh.menus.add("Explorer", { command: "explorer.toggleHidden", label: "Show Hidden Files", checked: () => show.hidden });
+  fresh.menus.add("Explorer", { command: "explorer.toggleIgnored", label: "Show Gitignored Files", checked: () => show.ignored });
+  panel.actions([
+    { icon: "+", title: "New File…", run: () => ops.newFile(current()) },
+    { icon: "⊞", title: "New Folder…", run: () => ops.newFolder(current()) },
+    { icon: "⟳", title: "Refresh", run: refresh },
+    { icon: "⊟", title: "Collapse All", run: () => fresh.commands.run("explorer.collapseAll") },
+  ]);
   fresh.commands.register("explorer.collapseAll", { title: "Explorer: Collapse All", run: () => { for (const d of [...open]) if (d !== root) collapse(d); render(); } });
   fresh.keys.bind("C-e", "explorer.focus");
   fresh.keys.bind("C-b", "explorer.toggle");
