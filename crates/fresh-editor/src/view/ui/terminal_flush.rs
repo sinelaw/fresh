@@ -132,6 +132,23 @@ pub fn cell_hyperlink(symbol: &str) -> Option<&str> {
     params_and_uri.split_once(';').map(|(_, uri)| uri)
 }
 
+/// Clear the screen and make the next draw repaint every cell, without
+/// asking the terminal where its cursor is.
+///
+/// Since ratatui 0.30.1, `Terminal::clear` saves and restores the cursor
+/// around the clear, and saving it is a cursor-position report request: a
+/// blocking round trip to the terminal that fails after two seconds when the
+/// terminal does not answer (a PTY nobody reads, a slow remote link). Fresh
+/// positions the cursor itself on every draw, so it has nothing to restore.
+/// `Terminal::resize` to the terminal's current size clears and resets the
+/// back buffer the same way, with no query for a full-screen viewport.
+pub fn clear_for_full_repaint<B: Backend>(
+    terminal: &mut ratatui::Terminal<B>,
+) -> Result<(), B::Error> {
+    let area = terminal.size()?.into();
+    terminal.resize(area)
+}
+
 /// A [`Backend`] wrapper that makes the frame's cell writes independent of
 /// how wide the terminal draws each grapheme cluster. See the module docs.
 #[derive(Debug)]

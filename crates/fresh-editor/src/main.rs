@@ -15,7 +15,7 @@ use fresh::input::key_translator::KeyTranslator;
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::services::terminal_modes::{self, KeyboardConfig, TerminalModes};
 use fresh::services::tracing_setup;
-use fresh::view::ui::terminal_flush::ClusterSafeBackend;
+use fresh::view::ui::terminal_flush::{clear_for_full_repaint, ClusterSafeBackend};
 use fresh::{
     app::Editor,
     client, config,
@@ -2111,7 +2111,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     tracing::info!("Initializing terminal backend...");
     let backend = ClusterSafeBackend::new(ratatui::backend::CrosstermBackend::new(stdout()));
     let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    clear_for_full_repaint(&mut terminal)?;
     tracing::info!("Terminal backend ready");
 
     let size = terminal.size()?;
@@ -7348,7 +7348,7 @@ where
         {
             let _span = tracing::info_span!("editor_tick").entered();
             if fresh::app::editor_tick(editor, || {
-                terminal.clear()?;
+                clear_for_full_repaint(terminal)?;
                 Ok(())
             })? {
                 needs_render = true;

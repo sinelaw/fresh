@@ -1599,7 +1599,7 @@ impl EditorServer {
             terminal.backend_mut().inner_mut().reset_style_state();
             // Best-effort terminal clear for full redraw
             #[allow(clippy::let_underscore_must_use)]
-            let _ = terminal.clear();
+            let _ = crate::view::ui::terminal_flush::clear_for_full_repaint(terminal);
         }
 
         // Take any pending escape sequences (e.g., cursor style changes)
