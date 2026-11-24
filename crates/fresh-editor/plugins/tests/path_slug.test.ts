@@ -1,5 +1,9 @@
-/** Project-path slugs (`lib/path_slug.ts`). */
-import { slugify } from "../lib/path_slug.ts";
+/** Where a project's state lives (`lib/path_slug.ts`). */
+import {
+  legacyProjectStateDirs,
+  legacySeparatorSlug,
+  projectStateDir,
+} from "../lib/path_slug.ts";
 
 let failures = 0;
 function eq(actual: unknown, expected: unknown, name: string): void {
@@ -13,68 +17,59 @@ function eq(actual: unknown, expected: unknown, name: string): void {
   }
 }
 
-/** What `editor.pathJoin` needs of a component for
- *  `<data dir>/orchestrator/<slug>/<name>` to stay under the data dir: a
- *  non-empty name with no separator, no drive prefix it would read as
- *  absolute, and not one of the `.` / `..` it rewrites. Nothing Windows
- *  forbids in a component either, since the same slug names a directory
- *  there. */
-const isOneComponent = (s: string): boolean =>
-  s.length > 0 && !/[\\/:*?"<>|\u0000-\u001F]/.test(s) && s !== "." && s !== "..";
+// A project's state directory is named by `editor.pathStorageKey()` now, which
+// the editor computes and whose own tests pin it. What is left here is the
+// spelling a release before it used, kept only so a project's archive is still
+// found where that release wrote it. So these cases are a record of what was
+// written, warts and all — not of what a good name looks like.
 
-// ── separators ────────────────────────────────────────────────────
+eq(legacySeparatorSlug("/home/user/proj"), "home_user_proj", "separators became underscores");
+eq(legacySeparatorSlug("/home//user/proj"), "home_user_proj", "a run of them became one");
+eq(legacySeparatorSlug("C:\\code\\myrepo"), "C:_code_myrepo", "a windows root kept its drive colon");
+eq(legacySeparatorSlug("\\\\server\\share\\proj"), "server_share_proj", "a UNC share lost its lead");
+eq(legacySeparatorSlug("proj"), "proj", "a bare name was already a component");
+eq(legacySeparatorSlug("/home/u/a:b"), "home_u_a:b", "a POSIX colon survived — and worked");
+eq(legacySeparatorSlug("/home/user/proj/"), "home_user_proj_", "a trailing separator made its own");
 
-eq(slugify("/home/user/proj"), "home_user_proj", "a POSIX path loses its leading separator");
-eq(slugify("C:\\code\\myrepo"), "C_code_myrepo", "a windows path loses its drive colon");
-eq(slugify("\\\\server\\share\\proj"), "server_share_proj", "a UNC share is not anchored");
-eq(slugify("/home//user/proj"), "home_user_proj", "a run of separators collapses to one underscore");
-eq(slugify("proj"), "proj", "a bare name is already a component");
+// These are the names that were not a single component at all. `pathJoin`
+// skips an empty segment and a `.`, and pops the one before a `..`, so such a
+// project's state sat in `<data dir>/orchestrator/` itself — which is why
+// `legacyProjectStateDirs` still looks there rather than pretending nothing
+// was ever written for them.
+eq(legacySeparatorSlug("/"), "", "the filesystem root named no directory");
+eq(legacySeparatorSlug("."), ".", "`.` passed straight through");
+eq(legacySeparatorSlug(".."), "..", "`..` did too");
 
-// ── two spellings of one root agree ───────────────────────────────
+// ── where a project's state lives ─────────────────────────────────
 
-// `editor.getCwd()` hands plugins a canonicalised Windows path with its
-// `\\?\` prefix still on, and `?` is not a character a Windows file can be
-// named with. Dropping the leading run also makes the prefixed spelling
-// agree with the plain one, rather than giving the project a second state
-// directory.
-eq(slugify("\\\\?\\C:\\code\\myrepo"), "C_code_myrepo", "a `\\\\?\\` prefix slugs as the path it prefixes");
-eq(slugify("/home/user/proj/"), "home_user_proj", "a trailing separator is not a component of its own");
+// Only the three calls these two make. The key itself is the editor's — it
+// computes it with the same code that names the editor's own per-path
+// directories, which is the point of asking for it rather than spelling one
+// out here — so the stub just makes it visible.
+const ed = {
+  getDataDir: () => "/data",
+  pathStorageKey: (p: string) => `KEY(${p})`,
+  // Empty segments are skipped, as the host's `pathJoin` skips them.
+  pathJoin: (...parts: string[]) => parts.filter((p) => p !== "").join("/"),
+} as unknown as Parameters<typeof projectStateDir>[0];
 
-// ── a path with no component left ─────────────────────────────────
-
-// `pathJoin` drops a `.` and pops the component before a `..`, and an empty
-// slug contributes nothing, so all three put the project's state on top of
-// `<data dir>/orchestrator/` — the level `scanArchiveManifests` lists for
-// per-project directories. `getCwd()` answers a bare `.` when the editor
-// cannot read its own state.
-eq(slugify("/"), "_root", "the filesystem root still names a directory");
-eq(slugify("."), "_root", "`.` is not a component `pathJoin` keeps");
-eq(slugify(".."), "_root", "`..` would pop the directory above it");
-
-// ── the result is always one component ────────────────────────────
-
-for (
-  const p of [
-    "/home/user/proj",
-    "C:\\code\\myrepo",
-    "C:/code/myrepo",
-    "\\\\server\\share",
-    "\\\\?\\C:\\code\\myrepo",
-    "/",
-    ".",
-    "..",
-    "/srv/we*rd?name",
-    "/srv/a<b>c|d",
-  ]
-) {
-  eq(isOneComponent(slugify(p)), true, `${JSON.stringify(p)} slugs to one path component`);
-}
-
-// A drive colon left in the slug is the bug: `pathJoin` clears whatever it
-// was joined onto, so `<data dir>/orchestrator/<slug>/<name>` came out as the
-// drive-relative `C:_code_myrepo/<name>` and the worktree landed inside the
-// project.
-eq(/^[A-Za-z]:/.test(slugify("C:\\code\\myrepo")), false, "the slug carries no drive prefix");
+eq(
+  projectStateDir(ed, "/home/u/proj"),
+  "/data/orchestrator/KEY(/home/u/proj)",
+  "a project's state is the data dir, `orchestrator`, and the path's storage key",
+);
+eq(
+  legacyProjectStateDirs(ed, "/home/u/proj"),
+  ["/data/orchestrator/home_u_proj"],
+  "the legacy directory is the same two levels, under the old spelling",
+);
+// `pathJoin` skips the empty segment, so this really was the shared level —
+// looking there is what finds a manifest written for a filesystem root.
+eq(
+  legacyProjectStateDirs(ed, "/"),
+  ["/data/orchestrator"],
+  "a root's legacy state sat in the shared directory itself",
+);
 
 if (failures > 0) {
   console.log(`${failures} failure(s)`);
