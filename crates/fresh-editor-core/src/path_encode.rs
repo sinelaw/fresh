@@ -19,9 +19,11 @@ use std::path::Path;
 /// filesystem's own limit and not a byte less.
 ///
 /// Leaving headroom for a suffix would have been wrong in both directions.
-/// Several callers append nothing — `terminal_dir_for`, `working_data_dir_for`,
-/// `project_state_dir` and the recovery scope each join the encoding as a whole
-/// directory name — so a 250-byte encoding is live today and must not move.
+/// Several callers append nothing — `project_state_dir` and the recovery scope
+/// join the encoding as a whole directory name, and `terminal_dir_for` and
+/// `working_data_dir_for` still find directories an earlier release made that
+/// way (new ones are named by [`storage_key_for_path`]) — so a 250-byte
+/// encoding is live today and must not move.
 /// And the longest suffix is not a small constant either: `workspace_path_for`
 /// builds `<encoded>.<stable_id>.json`, and a `ws-<hex>-<hex>` id makes that
 /// roughly 28 bytes. A name that overflows *with* a suffix but fits without one
@@ -176,9 +178,142 @@ pub fn encode_path_for_filename(path: &Path) -> String {
     fold_to_max_len(final_result)
 }
 
+/// The longest readable part [`storage_key_for_path`] keeps of a path's last
+/// component, in bytes.
+///
+/// Long enough to name any workspace a person types, short enough that the
+/// whole key (this, a `-`, 16 hex digits) is 65 bytes: a quarter of
+/// `NAME_MAX`, which leaves every caller room for a suffix of its own (the
+/// trash's `<name>.trashinfo`, a temp file's `.tmp`) and keeps a full path
+/// under Windows' 260-character `MAX_PATH` from any ordinary data dir.
+const STORAGE_KEY_TAIL_LEN: usize = 48;
+
+/// A short, fixed-shape directory name for data the editor keeps *about* a
+/// path: `<tail>-<hash>`.
+///
+/// `tail` is the path's last component, reduced to `[A-Za-z0-9._-]` (anything
+/// else becomes `-`) and cut to [`STORAGE_KEY_TAIL_LEN`] bytes, so the name
+/// still says which directory it belongs to in a listing. `hash` is 64-bit
+/// FNV-1a over the whole normalised path, in 16 hex digits; it is what keeps
+/// two paths apart, so the tail is free to be lossy.
+///
+/// **Why not [`encode_path_for_filename`].** That encoding spells the whole
+/// path out so it can be decoded, which makes it grow with the path's depth
+/// and escape the `_` it uses for `/` as `%5F`. A workspace the orchestrator
+/// keeps inside the data dir therefore got a 255-byte name that repeated the
+/// home and data dirs, mixed both encodings, and left no room for anything
+/// appended to it (sinelaw/fresh#1971). Nothing decodes these names.
+///
+/// **What the result is.** No escapes, no separator, no leading or trailing
+/// `.` or `-`, nothing Windows reserves, and at most 65 bytes. Before hashing
+/// the path is normalised: `/` and `\` are both separators, and empty and `.`
+/// components are dropped, so `/a/b`, `/a//b`, `/a/b/`, `a/b` and `/a/./b`
+/// share a key. That is a little more than the spelled-out encoding merges (it
+/// kept a trailing separator and `.` apart), and nothing more is resolved:
+/// `..`, letter case and `\\?\` prefixes are taken as written. The hash is
+/// [`fold_hash`], spelled out because the name outlives the process.
+pub fn storage_key_for_path(path: &Path) -> String {
+    let lossy = path.to_string_lossy();
+    let normalised = lossy
+        .split(['/', '\\'])
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let last = normalised.rsplit('/').next().unwrap_or("");
+    let mut tail = String::with_capacity(STORAGE_KEY_TAIL_LEN);
+    for c in last.chars() {
+        if tail.len() >= STORAGE_KEY_TAIL_LEN {
+            break;
+        }
+        let c = if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            c
+        } else {
+            '-'
+        };
+        // One `-` stands for a run of replaced characters.
+        if !(c == '-' && tail.ends_with('-')) {
+            tail.push(c);
+        }
+    }
+    let tail = tail.trim_matches(|c| c == '.' || c == '-');
+    // Nothing readable survives of a name in another script; say so rather
+    // than calling it the root.
+    let tail = match (tail.is_empty(), normalised.is_empty()) {
+        (false, _) => tail,
+        (true, true) => "root",
+        (true, false) => "dir",
+    };
+
+    format!("{tail}-{:016x}", fold_hash(normalised.as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The value is a storage key that outlives the process, so it is pinned:
+    /// a change here silently strands every directory named by the old one.
+    #[test]
+    fn storage_key_is_stable() {
+        assert_eq!(
+            storage_key_for_path(Path::new("/home/user/project")),
+            "project-4cbcabc04ebf2296"
+        );
+    }
+
+    #[test]
+    fn storage_key_is_bounded_and_a_single_safe_component() {
+        let deep = format!(
+            "/{}/{}",
+            "a_very_long_directory_name/".repeat(40),
+            "x".repeat(300)
+        );
+        for p in [
+            deep.as_str(),
+            "/home/u/my project/naïve · bash — root@vm: ~",
+            "C:\\Users\\u\\code\\my_repo",
+            "\\\\server\\share\\proj",
+            "/home/u/.hidden.",
+            "/",
+            "",
+            "CON",
+        ] {
+            let key = storage_key_for_path(Path::new(p));
+            assert!(key.len() <= STORAGE_KEY_TAIL_LEN + 17, "{p:?} -> {key}");
+            assert!(
+                key.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')),
+                "{p:?} -> {key}"
+            );
+            for edge in [key.chars().next().unwrap(), key.chars().last().unwrap()] {
+                assert!(edge != '.' && edge != '-', "{p:?} -> {key}");
+            }
+        }
+        assert!(storage_key_for_path(Path::new("C:\\code\\my_repo")).starts_with("my_repo-"));
+        assert!(storage_key_for_path(Path::new("/")).starts_with("root-"));
+        assert!(storage_key_for_path(Path::new("/home/u/日本語")).starts_with("dir-"));
+    }
+
+    /// The spelled-out encoding maps `/a_b/c` and `/a/b_c` apart only by
+    /// escaping `_`; the key keeps them apart by hashing the path, while
+    /// treating the spellings of one path the encoder always treated as equal
+    /// as equal.
+    #[test]
+    fn storage_key_separates_paths_and_normalises_spellings() {
+        let k = |p: &str| storage_key_for_path(Path::new(p));
+        assert_ne!(k("/a_b/c"), k("/a/b_c"));
+        assert_ne!(k("/repo-one/ws"), k("/repo-two/ws"));
+        assert_ne!(
+            k("/a/b"),
+            k("/a/b-"),
+            "a sanitised tail does not merge paths"
+        );
+        assert_ne!(k("/a/b c"), k("/a/b-c"));
+        for spelling in ["/a//b", "/a/b/", "a/b", "\\a\\b", "/a/./b"] {
+            assert_eq!(k(spelling), k("/a/b"), "{spelling:?}");
+        }
+    }
 
     #[test]
     fn a_path_that_fits_is_encoded_whole() {

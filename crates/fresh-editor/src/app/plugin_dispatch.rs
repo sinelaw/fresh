@@ -1409,8 +1409,11 @@ impl Editor {
                 // terminals they ran. Deleting the workspace is their
                 // decision, but it should not be the last word on output they
                 // may still want.
-                let terminals = self.dir_context().terminal_dir_for(&root);
-                if terminals.is_dir() {
+                //
+                // Every directory for the root, under a name the trash can
+                // record: a legacy spelled-out name can be too long for
+                // `<name>.trashinfo` (#1971).
+                for terminals in self.dir_context().terminal_dirs_for_removal(&root) {
                     if let Err(e) = trash::delete(&terminals) {
                         tracing::warn!(
                             "DeleteWorkspace: could not move terminal state {:?} to the trash: {e}",
