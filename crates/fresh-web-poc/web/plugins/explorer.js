@@ -52,7 +52,8 @@ export function activate(fresh) {
       key: "tree",
       items: rows,
       selected: idx,
-      render: (r) => h("text", { mono: true }, " ".repeat(r.depth * 2) + (r.dir ? (open.has(r.path) ? "▾ " : "▸ ") : "  ") + r.name),
+      // Files the ignore rules leave out are shown dimmed.
+      render: (r) => h("text", { mono: true, dim: r.ignored }, " ".repeat(r.depth * 2) + (r.dir ? (open.has(r.path) ? "▾ " : "▸ ") : "  ") + r.name),
       onSelect: (r) => { selected = r.path; },
       onActivate: (r) => activate(r),
       activateOnClick: true,

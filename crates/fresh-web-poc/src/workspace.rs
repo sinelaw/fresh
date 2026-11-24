@@ -20,7 +20,9 @@ use fresh_editor_core::model::filesystem::{
     EntryType, FileSearchOptions, FileSystem, StdFileSystem, WalkOptions,
 };
 use fresh_editor_core::model::host_path::HostPathBuf;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -235,6 +237,100 @@ pub struct Workspace {
     pub authority: Arc<dyn Authority>,
 }
 
+/// Ignore rules as git applies them: `.git/info/exclude`, then the root's
+/// `.gitignore`, then each folder's own `.gitignore`, a deeper file's rules
+/// deciding over a shallower one's. Everything in an ignored folder is
+/// ignored, whatever rules lie inside it (git never reads them). Each
+/// `.gitignore` is read through the workspace's filesystem, once, when a
+/// path under its folder is first asked about.
+pub struct Ignores {
+    root: PathBuf,
+    fs: Fs,
+    exclude: Gitignore,
+    /// Each folder's own rules (by path relative to the root, `""` for the
+    /// root), `None` when it has none.
+    rules: HashMap<String, Option<Gitignore>>,
+    /// Whether each folder asked about is ignored.
+    dirs: HashMap<String, bool>,
+}
+
+impl Ignores {
+    pub fn new(root: &Path, fs: Fs) -> Self {
+        let exclude =
+            Self::read(&fs, root, &root.join(".git/info/exclude")).unwrap_or_else(Gitignore::empty);
+        Ignores {
+            root: root.to_path_buf(),
+            fs,
+            exclude,
+            rules: HashMap::new(),
+            dirs: HashMap::new(),
+        }
+    }
+
+    /// The rules in `file`, relative to the folder `base`.
+    fn read(fs: &Fs, base: &Path, file: &Path) -> Option<Gitignore> {
+        let bytes = fs.read_file(host(file).as_host_path()).ok()?;
+        let mut b = GitignoreBuilder::new(base);
+        for line in String::from_utf8_lossy(&bytes).lines() {
+            // A malformed pattern is skipped, as git skips it.
+            let _ = b.add_line(None, line);
+        }
+        b.build().ok()
+    }
+
+    fn rules_of(&mut self, dir: &str) -> Option<&Gitignore> {
+        if !self.rules.contains_key(dir) {
+            let base = if dir.is_empty() {
+                self.root.clone()
+            } else {
+                self.root.join(dir)
+            };
+            let rules = Self::read(&self.fs, &base, &base.join(".gitignore"));
+            self.rules.insert(dir.to_string(), rules);
+        }
+        self.rules.get(dir).and_then(Option::as_ref)
+    }
+
+    /// Whether `rel` (relative to the root, `/` between components) is
+    /// ignored; `dir` when it is a folder.
+    pub fn ignored(&mut self, rel: &str, dir: bool) -> bool {
+        if let Some((parent, _)) = rel.rsplit_once('/') {
+            if self.dir_ignored(parent) {
+                return true;
+            }
+        }
+        self.matched(rel, dir)
+    }
+
+    fn dir_ignored(&mut self, rel: &str) -> bool {
+        if let Some(&ignored) = self.dirs.get(rel) {
+            return ignored;
+        }
+        let ignored = self.ignored(rel, true);
+        self.dirs.insert(rel.to_string(), ignored);
+        ignored
+    }
+
+    /// The verdict on `rel` itself of the rules of every folder holding it,
+    /// the deepest that has one deciding.
+    fn matched(&mut self, rel: &str, dir: bool) -> bool {
+        let abs = self.root.join(rel);
+        let mut ignored = self.exclude.matched(&abs, dir).is_ignore();
+        let parts: Vec<&str> = rel.split('/').collect();
+        for depth in 0..parts.len() {
+            let folder = parts[..depth].join("/");
+            if let Some(rules) = self.rules_of(&folder) {
+                match rules.matched(&abs, dir) {
+                    ignore::Match::Ignore(_) => ignored = true,
+                    ignore::Match::Whitelist(_) => ignored = false,
+                    ignore::Match::None => {}
+                }
+            }
+        }
+        ignored
+    }
+}
+
 pub fn host(p: &Path) -> HostPathBuf {
     HostPathBuf::from_path_buf(p.to_path_buf())
 }
@@ -268,18 +364,37 @@ impl Workspace {
         }
     }
 
+    /// A folder's entries, folders first, each marked `ignored` by the
+    /// workspace's ignore rules (nested `.gitignore` files included).
     pub fn list_dir(&self, path: &Path) -> Result<Vec<Value>> {
+        // Relative to the root, `/`-separated; `None` outside the workspace.
+        let rel = path.strip_prefix(&self.root).ok().map(|r| {
+            r.components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        });
+        let mut ignores = Ignores::new(&self.root, self.fs());
         let mut out: Vec<Value> = self
             .fs()
             .read_dir(host(path).as_host_path())?
             .into_iter()
             .map(|e| {
                 let dir = matches!(e.entry_type, EntryType::Directory) || e.symlink_target_is_dir;
+                let ignored = rel.as_ref().is_some_and(|r| {
+                    let me = if r.is_empty() {
+                        e.name.clone()
+                    } else {
+                        format!("{r}/{}", e.name)
+                    };
+                    ignores.ignored(&me, dir)
+                });
                 json!({
                     "name": e.name,
                     "path": PathBuf::from(e.path).to_string_lossy(),
                     "dir": dir,
                     "size": e.metadata.as_ref().map(|m| m.size).unwrap_or(0),
+                    "ignored": ignored,
                 })
             })
             .collect();
@@ -424,43 +539,30 @@ impl Workspace {
         signature(&self.fs(), p)
     }
 
-    /// The root's ignore rules (`.gitignore`, `.git/info/exclude`), read
-    /// through the filesystem so a remote workspace's rules apply too.
-    fn ignore_rules(&self) -> ignore::gitignore::Gitignore {
-        let mut b = ignore::gitignore::GitignoreBuilder::new(&self.root);
-        let fs = self.fs();
-        for f in [".gitignore", ".git/info/exclude"] {
-            if let Ok(bytes) = fs.read_file(host(&self.root.join(f)).as_host_path()) {
-                for line in String::from_utf8_lossy(&bytes).lines() {
-                    let _ = b.add_line(None, line);
-                }
-            }
-        }
-        b.build()
-            .unwrap_or_else(|_| ignore::gitignore::Gitignore::empty())
-    }
-
     /// Every file under the root as (absolute path, relative path): hidden
-    /// and ignored files left out. The walk runs on the host's side.
+    /// and ignored files left out. The walk runs on the host's side; the
+    /// ignore rules are read after it, through the filesystem too.
     fn files(&self, max: usize, mut f: impl FnMut(&Path, &str) -> bool) -> Result<()> {
-        let rules = self.ignore_rules();
         let cancel = AtomicBool::new(false);
         let opts = WalkOptions {
             skip_dirs: SKIP_DIRS,
             max_entries: max,
             ..WalkOptions::default()
         };
+        let mut all: Vec<(PathBuf, String)> = Vec::new();
         self.fs()
             .walk(host(&self.root).as_host_path(), &opts, &cancel, &mut |e| {
-                if !matches!(e.entry_type, EntryType::File) {
-                    return true;
+                if matches!(e.entry_type, EntryType::File) {
+                    all.push((e.path.to_host_path_buf().into(), e.rel.to_string()));
                 }
-                if rules.matched_path_or_any_parents(e.rel, false).is_ignore() {
-                    return true;
-                }
-                let abs: PathBuf = e.path.to_host_path_buf().into();
-                f(&abs, e.rel)
+                true
             })?;
+        let mut ignores = Ignores::new(&self.root, self.fs());
+        for (abs, rel) in all {
+            if !ignores.ignored(&rel, false) && !f(&abs, &rel) {
+                break;
+            }
+        }
         Ok(())
     }
 
@@ -699,6 +801,72 @@ mod tests {
         assert!(!ws.exists(&r.join("a")));
         assert_eq!(ws.stat(&r.join("b"))["dir"], true);
         assert_eq!(ws.stat(&r.join("a"))["exists"], false);
+    }
+
+    #[test]
+    fn nested_gitignore_files_apply_below_their_folder() {
+        let (_d, ws) = local_ws();
+        let r = &ws.root;
+        for (p, t) in [
+            (".gitignore", "*.tmp\n"),
+            ("app/.gitignore", "dist/\n/local.rs\n!keep.tmp\n"),
+            ("app/src/main.rs", "needle\n"),
+            ("app/local.rs", "needle\n"),
+            ("app/sub/local.rs", "needle\n"),
+            ("app/dist/out.rs", "needle\n"),
+            ("app/keep.tmp", "needle\n"),
+            ("app/drop.tmp", "needle\n"),
+            ("other/x.tmp", "needle\n"),
+            ("other/dist/kept.rs", "needle\n"),
+            // An ignored folder's own rules are never read.
+            ("app/dist/.gitignore", "!*\n"),
+        ] {
+            ws.write_file(&r.join(p), t).unwrap();
+        }
+        let mut found = ws.find_files("", 100).unwrap();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                "app/keep.tmp",
+                "app/src/main.rs",
+                "app/sub/local.rs",
+                "other/dist/kept.rs"
+            ]
+        );
+        let res = ws.search("needle", false, false, false, 100).unwrap();
+        let mut hits: Vec<&str> = res["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["path"].as_str().unwrap())
+            .collect();
+        hits.sort();
+        assert_eq!(hits, found);
+
+        let listed: Vec<(String, bool)> = ws
+            .list_dir(&r.join("app"))
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["name"].as_str().unwrap().to_string(),
+                    e["ignored"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("dist".to_string(), true),
+                ("src".to_string(), false),
+                ("sub".to_string(), false),
+                (".gitignore".to_string(), false),
+                ("drop.tmp".to_string(), true),
+                ("keep.tmp".to_string(), false),
+                ("local.rs".to_string(), true),
+            ]
+        );
     }
 
     #[test]

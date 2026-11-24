@@ -73,7 +73,12 @@ and each client runs its own emulator (xterm.js). Terminals belong to the
 workspace and outlive clients. **Language servers** (`src/lsp.rs`): one per
 language, kept in sync from the edit log; requests are routed in, and
 diagnostics go out as data tagged with the version they describe.
-**Watches** poll a path's size and modification time through the filesystem,
+**Ignore rules** (`Ignores` in `src/workspace.rs`) are git's:
+`.git/info/exclude`, the root's `.gitignore` and every nested `.gitignore`,
+a deeper file deciding over a shallower one, and nothing inside an ignored
+folder is ever included again. They are read through the filesystem; file
+finding and project search leave ignored files out, and `fs.list` marks each
+entry `ignored` (the explorer dims them). **Watches** poll a path's size and modification time through the filesystem,
 so they work on any host.
 
 **The client is the editor** (`web/`): layout, views, cursors, undo,
@@ -175,7 +180,8 @@ the browser. A skin or plugin sets them with `fresh.ui.theme({"--bg": ...})`.
 - Killing a process or closing a terminal kills the local `ssh` or
   `docker exec` client; the remote or in-container process ends when its
   input closes or on hang-up, not by signal.
-- Ignore rules are the root's `.gitignore` and `.git/info/exclude`;
-  nested `.gitignore` files are not read.
+- Ignore rules are git's own files only (`.git/info/exclude` and every
+  `.gitignore`), not `core.excludesFile`. Each folder's `.gitignore` costs one
+  read through the filesystem per walk (a round trip on a remote host).
 - One workspace per server; the SSH connection is not re-established if it
   drops.
