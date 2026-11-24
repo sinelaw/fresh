@@ -113,8 +113,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .ui-text.bold { font-weight: 600; }
 .ui-input { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 6px; font: 12px var(--mono); outline: none; min-width: 0; flex: 1; }
 .ui-input:focus { border-color: var(--accent); }
-.ui-button { background: var(--control-bg); color: var(--control-fg); border: 0; padding: 3px 10px; cursor: pointer; font: 12px system-ui; }
-.ui-button.primary { background: var(--accent); color: var(--on-accent); }
+.ui-button { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 10px; cursor: pointer; font: 12px system-ui; }
+.ui-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .ui-button:disabled { opacity: .5; cursor: default; }
 .ui-toggle { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 1px 5px; cursor: pointer; font: 12px var(--mono); }
 .ui-toggle.on { color: var(--fg); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
