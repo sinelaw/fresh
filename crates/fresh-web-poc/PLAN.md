@@ -27,11 +27,11 @@ browser instead (`web/js/ui.js`):
 - Events are callbacks on the props; keyboard navigation and focus are the
   browser's.
 
-Native features with UI are written as client plugins on this API
-(`web/plugins/*.js`) against the same `editor` object the ported plugins use,
-so the line between "built in" and "plugin" stays where the editor draws it.
-Plugins that only touch text and decorations (compose, git status bar) keep
-running unchanged on the editor's API.
+Every feature with UI is a client plugin (`web/plugins/*.js`) on the
+client's own plugin API (`web/js/host.js`: buffers, views, decorations,
+commands, keys, host processes, LSP, and the panel kit in `web/js/ui.js`).
+The editor's plugins are reimplemented on it, not run through a
+compatibility layer: their API is inspiration, not a contract.
 
 Plugin freshness was checked (`git log` per file, and every `editor.*` call
 against `fresh.d.ts`): no shipped plugin calls a removed API. The
@@ -48,7 +48,7 @@ days; where they matter the feature is reimplemented rather than run.
 | Editing — current-line highlight, occurrence highlight, rulers, whitespace indicators, line wrap, read-only, auto-save | Native | Client view options; auto-save is a client timer calling the server's save |
 | Editing — code folding | Native | Folding ranges from the language server (server routes `textDocument/foldingRange`), indentation-based otherwise; folds are view state |
 | Editing — interrupted saves, hot exit | Adapt | The server holds unsaved documents across client reloads already, and a save refuses over another writer's change unless forced; add a recovery write on the server |
-| **Markdown** — compose | Run | `markdown_compose` runs unchanged (done) |
+| **Markdown** — compose | Native | `web/plugins/markdown.js` declares block nodes (headings, paragraphs, lists, quotes, code, tables, rules) and hides markup; compose views draw them as a real typographic document (`web/js/doc.js`) (done) |
 | Markdown — dual source/compose view | Native | Split showing the same buffer, one view composing |
 | Markdown — mermaid/math previews | Skip | Needs external renderers (`mmdc`, `utftex`) on the host; the plugin path exists but is not wired |
 | Markdown — contents panel | Native | Outline from the client's text, click to jump |
