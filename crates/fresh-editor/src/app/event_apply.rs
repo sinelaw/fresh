@@ -298,17 +298,22 @@ impl Editor {
         self.page_follows_caret();
 
         // 4. Trigger plugin hooks for this event (with pre-calculated line info)
-        self.trigger_plugin_hooks_for_event(event, line_info);
+        let snapshot_rebuilt = self.trigger_plugin_hooks_for_event(event, line_info);
         // A bulk edit (and the undo/redo of one) fires no per-edit hook
         // above, so say that the content changed for every kind of edit.
         if event.modifies_buffer() {
-            self.plugin_manager.read().unwrap().run_hook(
-                "buffer_modified",
-                crate::services::plugins::hooks::HookArgs::BufferModified {
-                    buffer_id: self.active_buffer(),
-                    window_id: self.active_window.0,
-                },
-            );
+            let buffer_id = self.active_buffer();
+            if snapshot_rebuilt {
+                // `trigger_plugin_hooks_for_event` rebuilt the snapshot on its
+                // way to `after_insert` / `after_delete`, for this event or for
+                // the sub-events of a `Batch`. Rebuilding again would double
+                // the cost of every keystroke.
+                self.run_buffer_modified_hook(buffer_id);
+            } else {
+                // A `BulkEdit` — the undo or redo of one — reaches no per-edit
+                // arm, so nothing has refreshed the snapshot for it.
+                self.fire_buffer_modified(buffer_id);
+            }
         }
 
         // 5. Notify LSP of the change using pre-calculated positions
@@ -751,39 +756,22 @@ impl Editor {
         self.handle_refresh_lines(buffer_id);
 
         // Not applied through `apply_event_to_active_buffer`, which fires this.
-        self.fire_buffer_modified_after_bulk_edit(buffer_id);
+        self.fire_buffer_modified(buffer_id);
 
         Some(bulk_edit)
     }
 
-    /// Fire `buffer_modified` for a bulk edit that did not go through
-    /// `apply_event_to_active_buffer`.
-    ///
-    /// The plugin state snapshot is rebuilt first, as
-    /// `trigger_plugin_hooks_for_event` does for a single edit: the hook runs
-    /// on the plugin thread, and a handler that reads the buffer (its length,
-    /// its text) before the next rebuild would see it as it was before the
-    /// edit.
-    pub(crate) fn fire_buffer_modified_after_bulk_edit(
-        &mut self,
-        buffer_id: crate::model::event::BufferId,
-    ) {
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_modified",
-            crate::services::plugins::hooks::HookArgs::BufferModified {
-                buffer_id,
-                window_id: self.active_window.0,
-            },
-        );
-    }
-
     /// Trigger plugin hooks for an event (if any)
     /// line_info contains pre-calculated line numbers from BEFORE buffer modification
-    fn trigger_plugin_hooks_for_event(&mut self, event: &Event, line_info: EventLineInfo) {
+    ///
+    /// Returns whether the plugin state snapshot was rebuilt on the way out —
+    /// it is, for every event that fires a hook. The caller fires
+    /// `buffer_modified` after this and must not leave a stale snapshot behind
+    /// it (see `fire_buffer_modified`), nor pay for a second rebuild when this
+    /// one already happened.
+    fn trigger_plugin_hooks_for_event(&mut self, event: &Event, line_info: EventLineInfo) -> bool {
         let buffer_id = self.active_buffer();
+        let mut rebuilt = false;
 
         // Convert event to hook args and fire the appropriate hook
         let hook_args = match event {
@@ -856,7 +844,11 @@ impl Editor {
                     // Use default line info for sub-events - they share the batch's line_info
                     // This is a simplification; proper tracking would need per-event pre-calculation
                     let sub_line_info = self.active_window().calculate_event_line_info(e);
-                    self.trigger_plugin_hooks_for_event(e, sub_line_info);
+                    // A `Batch` fires no hook of its own, so its freshness is
+                    // whatever its sub-events did. The whole batch is already
+                    // applied to the buffer by the time any of them runs, so a
+                    // rebuild for the last sub-event sees the final content.
+                    rebuilt |= self.trigger_plugin_hooks_for_event(e, sub_line_info);
                 }
                 None
             }
@@ -897,7 +889,10 @@ impl Editor {
             // This ensures the plugin can read up-to-date state (diff, cursors, viewport, etc.)
             // Without this, there's a race condition where the async hook might read stale data
             #[cfg(feature = "plugins")]
-            self.update_plugin_state_snapshot();
+            {
+                self.update_plugin_state_snapshot();
+                rebuilt = true;
+            }
 
             self.plugin_manager
                 .read()
@@ -935,6 +930,36 @@ impl Editor {
         if edit_changed_line_count {
             self.handle_refresh_lines(buffer_id);
         }
+
+        rebuilt
+    }
+
+    /// Fire `buffer_modified` for a buffer whose content just changed, on an
+    /// edit path that does not go through `apply_event_to_active_buffer`.
+    ///
+    /// The plugin state snapshot is rebuilt first, as
+    /// `trigger_plugin_hooks_for_event` does for a single edit: the hook runs
+    /// on the plugin thread, and a handler that reads the buffer (its length,
+    /// its text) before the next rebuild would otherwise see it as it was
+    /// before the edit.
+    pub(crate) fn fire_buffer_modified(&mut self, buffer_id: crate::model::event::BufferId) {
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+
+        self.run_buffer_modified_hook(buffer_id);
+    }
+
+    /// Fire `buffer_modified` without touching the plugin state snapshot —
+    /// only for a caller that has just rebuilt it. Everything else wants
+    /// `fire_buffer_modified`.
+    fn run_buffer_modified_hook(&mut self, buffer_id: crate::model::event::BufferId) {
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_modified",
+            crate::services::plugins::hooks::HookArgs::BufferModified {
+                buffer_id,
+                window_id: self.active_window.0,
+            },
+        );
     }
 }
 
