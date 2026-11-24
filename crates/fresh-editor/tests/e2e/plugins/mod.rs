@@ -11,6 +11,7 @@ pub mod background_process_kill;
 #[cfg(unix)]
 pub mod background_process_running;
 pub mod buffer_info_splits;
+pub mod buffer_modified_hook;
 pub mod command_keybinding_editor;
 pub mod compare_files;
 pub mod config_changed_adoption;
