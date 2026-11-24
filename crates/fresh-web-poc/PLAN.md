@@ -191,7 +191,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Files | New untitled buffer (Ctrl+N, File ▸ New File): `Untitled-N`, a server document bound to no file (`doc.new`); Save asks for a name (`doc.save_as`, which Save As uses too: the document moves to the new file); closing one with text asks Save / Discard / Cancel; restored on reload while the server keeps its unsaved text | fixed |
 | Palette | Commands, files, buffers, go to line; `path:line:col` | present |
 | Palette | Go to symbol in the file: the palette's `@` (Ctrl+Shift+O), previewed as selected, Escape goes back; plugins provide prefixes (`fresh.palette.provide`) | fixed |
-| Palette | Go to symbol in the workspace | missing (`workspace/symbol` through the server is the way) |
+| Palette | Go to symbol in the workspace: the palette's `%` (the editor has no such mode, and its `#` is buffers), Go ▸ / LSP ▸ Go to Symbol in Workspace…; `workspace/symbol` asked of every running server (`lsp.call` with a `language`) | fixed |
 | Navigation | Back / forward, go to definition / references, matching bracket, paragraphs | present |
 | Navigation | Next / previous problem (F8 / Shift+F8), its message in the status bar | fixed |
 | Navigation | Bookmarks: Ctrl+Shift+0…9 set / clear, Alt+0…9 jump, Bookmarks: List; a gutter digit that moves with edits | fixed |
@@ -202,7 +202,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Search | Find in Selection (and Find / Replace opened over a selection of several lines; the bar's ⊂ toggle), the range shaded (`--search-scope-bg`) and moved by edits; Find Selection Next / Previous (Ctrl+F3 / Ctrl+Shift+F3, Alt+N / Alt+P); Query Replace (Ctrl+Alt+R, or the replace row's ? toggle): at each match y, n, a or !, q or c, wrapping once; the current match drawn over the selection (decorations: `above`) | fixed |
 | LSP | Hover, completion, definition, references, rename, code actions, format, symbols, signature help, diagnostics panel | present |
 | LSP | Server status (status bar, `LSP: Show Status`) | fixed |
-| LSP | Restart / stop a server, inlay hints | missing (the server starts one per language and keeps it) |
+| LSP | Start/Restart and Stop a server (LSP menu, palette, and per server in Show Status; the status bar reads `LSP (off)` while stopped; server ops `lsp.restart` / `lsp.stop` on the workspace's manager), inlay hints (`textDocument/inlayHint` drawn as inline decorations in the line numbers' colour, asked again as edits settle; LSP ▸ Inlay Hints toggles) | fixed |
 | Git | Gutter, blame, log, diff, change navigation, branch in status | present |
 | Terminal | Multiple, tabs, toggle, keyboard capture (xterm) | present |
 | Terminal | Restart the terminal, send the selection (or line) to it | fixed |

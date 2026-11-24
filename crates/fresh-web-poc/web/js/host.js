@@ -175,6 +175,8 @@ export class Host {
       h,
       workspace: { get root() { return app.root; }, get host() { return app.hostName; }, get trusted() { return app.trusted; } },
       settings: app.settings,
+      // Remember a change a plugin made to `settings` (in the browser) and redraw.
+      saveSettings: () => app.saveSettings(),
       commands: {
         register: (id, spec) => app.commands.set(id, { ...spec, source: name }),
         run: (id, arg) => app.run(id, arg),
@@ -271,6 +273,13 @@ export class Host {
         // The languages with a server on the host, and which servers run: {language: running}.
         languages: () => [...(app.lspLanguages || [])],
         status: () => rpc("lsp.status", {}),
+        // A request about the workspace (`workspace/symbol`) to `language`'s
+        // running server.
+        requestWorkspace: (language, method, params = {}) => rpc("lsp.call", { language, method, params }),
+        // Stop a language's server (until restarted), or start it again;
+        // both resolve with {language: running}.
+        stop: (language) => rpc("lsp.stop", { language }),
+        restart: (language) => rpc("lsp.restart", { language }),
       },
       // Text shown when the pointer rests on a position: f(buffer, pos) -> string|null.
       hover: { provide: (f) => app.hoverProvide((b, p) => f(host.buffer(b, name), p)) },

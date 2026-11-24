@@ -365,6 +365,26 @@ impl Lsp {
         s
     }
 
+    /// Stop `language`'s server; it stays stopped (no file of the
+    /// language starts it) until [`Self::restart`].
+    pub fn stop(&self, language: &str) {
+        let old = self
+            .servers
+            .lock()
+            .unwrap()
+            .insert(language.to_string(), None);
+        // Stopped on the host as it is dropped, outside the lock.
+        drop(old);
+    }
+
+    /// Start `language`'s server again (stopping the one running): the
+    /// new one, or `None` when it is not installed or did not start.
+    pub fn restart(&self, language: &str) -> Option<Arc<Server>> {
+        let old = self.servers.lock().unwrap().remove(language);
+        drop(old);
+        self.server(language)
+    }
+
     /// Stop every server (a server is stopped on the host when dropped).
     pub fn stop_all(&self) {
         let servers: Vec<_> = self.servers.lock().unwrap().drain().collect();

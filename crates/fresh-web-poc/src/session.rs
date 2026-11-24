@@ -591,6 +591,8 @@ impl Session {
             "lsp.hover" | "lsp.definition" | "lsp.completion" => self.lsp_request(op, m)?,
             "lsp.call" => self.lsp_call(m)?,
             "lsp.status" => self.lsp.status(),
+            "lsp.restart" => self.lsp_restart(s(m, "language")?)?,
+            "lsp.stop" => self.lsp_stop(s(m, "language")?),
 
             _ => fail!(UnknownOp, "unknown op {op}"),
         })
@@ -1027,14 +1029,89 @@ impl Session {
         }
     }
 
+    /// Start `language`'s server again (`lsp.restart`): the running one is
+    /// stopped, a new one starts and is handed every open document of the
+    /// language. Every client gets `lsp.status`.
+    fn lsp_restart(&self, language: &str) -> Result<Value> {
+        if !self.lsp.available(language) {
+            fail!(
+                NoLanguageServer,
+                "no {language} language server on the workspace's host"
+            );
+        }
+        let started = self.lsp.restart(language).is_some();
+        {
+            let mut docs = self.docs.lock().unwrap();
+            let ids: Vec<u64> = docs
+                .docs
+                .values()
+                .filter(|d| d.language.as_deref() == Some(language))
+                .map(|d| d.id)
+                .collect();
+            for id in ids {
+                self.lsp_open(docs.get(id)?)?;
+            }
+        }
+        if !started {
+            fail!(
+                LanguageServer,
+                "the {language} language server did not start"
+            );
+        }
+        self.lsp_changed();
+        Ok(self.lsp.status())
+    }
+
+    /// Stop `language`'s server (`lsp.stop`) until it is restarted: its
+    /// documents' diagnostics are cleared, and every client gets
+    /// `lsp.status`.
+    fn lsp_stop(&self, language: &str) -> Value {
+        self.lsp.stop(language);
+        {
+            let docs = self.docs.lock().unwrap();
+            let mut diags = self.diags.lock().unwrap();
+            for d in docs.docs.values() {
+                if d.language.as_deref() == Some(language) {
+                    diags.remove(&d.id);
+                    self.send_to(
+                        d,
+                        &json!({"ev": "lsp.diagnostics", "doc": d.id, "version": d.version, "items": []}),
+                    );
+                }
+            }
+        }
+        self.lsp_changed();
+        self.lsp.status()
+    }
+
+    /// Which servers run changed: every client is told, and the
+    /// workspace's status follows (its diagnostics).
+    fn lsp_changed(&self) {
+        self.room
+            .broadcast(&json!({"ev": "lsp.status", "status": self.lsp.status()}));
+        self.publish_status();
+    }
+
     /// Any request about a document, by method: the server fills in the
     /// document (and the position, given `pos` as a byte offset) and returns
     /// the language server's result as it came. Positions in it are the
     /// server's (line, UTF-16 column); the client converts them with its copy
-    /// of the text.
+    /// of the text. A request about the workspace (`workspace/symbol`)
+    /// names a `language` instead of a document, and goes to that
+    /// language's running server.
     fn lsp_call(&self, m: &Value) -> Result<Value> {
         let method = s(m, "method")?.to_string();
         let mut params = m.get("params").cloned().unwrap_or(json!({}));
+        if m.get("doc").is_none() {
+            let language = s(m, "language")?;
+            let server = self.lsp.running(language).ok_or_else(|| {
+                err(
+                    Code::NoLanguageServer,
+                    format!("no running {language} language server"),
+                )
+            })?;
+            return server.request(&method, params, Duration::from_secs(20));
+        }
         let server = {
             let mut docs = self.docs.lock().unwrap();
             let d = docs.get(u(m, "doc")?)?;
@@ -1188,11 +1265,11 @@ fn git_branch(ws: &Workspace) -> Option<String> {
 /// (the server will send a fresh one).
 /// Their counts are kept for the workspace's status.
 fn publish_diagnostics(room: &Room, docs: &Mutex<Docs>, diags: &DiagCounts, params: &Value) {
-    let Some(path) = params["uri"].as_str().and_then(lsp::path_of) else {
+    let Some(uri) = params["uri"].as_str() else {
         return;
     };
     let mut docs = docs.lock().unwrap();
-    let Some(id) = docs.by_path(&path) else {
+    let Some(id) = docs.by_uri(uri) else {
         return;
     };
     let Ok(d) = docs.get(id) else { return };
@@ -1489,6 +1566,38 @@ mod tests {
         let mut docs = s.docs.lock().unwrap();
         assert!(docs.get(a).is_err(), "closed by every client: dropped");
         assert!(docs.get(b).is_ok());
+    }
+
+    #[test]
+    fn a_language_server_is_stopped_until_restarted() {
+        let (_dir, orch, s) = app(true);
+        let (c, mut rx) = client(&orch);
+        let status = orch
+            .dispatch(c, "lsp.stop", &json!({"language": "python"}))
+            .unwrap();
+        assert_eq!(status["python"], false);
+        let ev = event(&mut rx, "lsp.status", Duration::from_secs(1)).unwrap();
+        assert_eq!(ev["status"]["python"], false);
+        // Stopped: no file of the language starts it, and requests about
+        // the workspace find none.
+        assert!(s.lsp.server("python").is_none());
+        let e = orch
+            .dispatch(
+                c,
+                "lsp.call",
+                &json!({"language": "python", "method": "workspace/symbol", "params": {"query": "x"}}),
+            )
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::NoLanguageServer);
+        // A language with no server on the host cannot be restarted.
+        let e = orch
+            .dispatch(c, "lsp.restart", &json!({"language": "cobol"}))
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::NoLanguageServer);
+        let e = orch
+            .dispatch(c, "lsp.call", &json!({"method": "workspace/symbol"}))
+            .unwrap_err();
+        assert_eq!(code_of(&e), Code::BadRequest, "a document or a language");
     }
 
     #[test]

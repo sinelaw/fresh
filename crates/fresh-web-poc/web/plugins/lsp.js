@@ -8,6 +8,13 @@
 //   Ctrl+.             code actions            Shift+Alt+F format document
 //   Ctrl+Shift+O       document symbols        Ctrl+Shift+M diagnostics panel
 //   ( and ,            signature help
+//
+// The palette's `@` lists the file's symbols, its `%` the workspace's
+// (`workspace/symbol`, asked of every running server). Inlay hints
+// (`textDocument/inlayHint`) are drawn as inline decorations, asked again
+// after edits; LSP: Toggle Inlay Hints. LSP: Restart Server and Stop
+// Server act on the active file's language (Show Status offers them for
+// each).
 
 export function activate(fresh) {
   const { h } = fresh;
@@ -103,6 +110,39 @@ export function activate(fresh) {
     },
   });
   const symbols = () => fresh.commands.run("palette.open", "@");
+
+  // The palette's `%`: the workspace's symbols matching what is typed,
+  // from every running server.
+  let running = {}; // {language: running}, from the server
+  const runningLanguages = async () => {
+    try { running = await fresh.lsp.status(); } catch { running = {}; }
+    return Object.keys(running).filter((l) => running[l]).sort();
+  };
+  fresh.palette.provide("%", {
+    hint: "workspace symbols",
+    items: async (q) => {
+      if (!q) return [{ label: "Type a symbol's name" }];
+      const langs = await runningLanguages();
+      if (!langs.length) return [{ label: "No language server is running (open a file of its language)" }];
+      const out = [];
+      for (const l of langs) {
+        let r = null;
+        try { r = await fresh.lsp.requestWorkspace(l, "workspace/symbol", { query: q }); } catch { continue; }
+        for (const s of asList(r)) {
+          const loc = s.location;
+          if (!loc || !loc.uri || !loc.uri.startsWith("file://")) continue;
+          const path = pathOf(loc.uri), range = loc.range || { start: { line: 0, character: 0 } };
+          out.push({
+            label: s.name,
+            detail: [KINDS[s.kind], s.containerName, `${rel(path)}:${range.start.line + 1}`].filter(Boolean).join(" · "),
+            run: () => goto(path, range, { preview: false }),
+          });
+        }
+      }
+      return out.length ? out : [{ label: "No symbol matches" }];
+    },
+  });
+  const workspaceSymbols = () => fresh.commands.run("palette.open", "%");
 
   // ---------------------------------------------------------------- edits
 
@@ -290,24 +330,93 @@ export function activate(fresh) {
       b.setFoldRanges(asList(r).map((f) => ({ start: f.startLine, end: f.endLine })));
     } catch {}
   };
-  const showStatus = (b) => status.set(b && fresh.lsp.available(b) ? `LSP ${b.language}` : "", { title: "Language servers: Show Status", onClick: () => fresh.commands.run("lsp.status") });
-  fresh.events.on("buffer.activated", ({ buffer }) => { showStatus(buffer); refreshFolds(buffer); });
+  // The status bar: the active file's server, or `LSP (off)` when it was
+  // stopped.
+  const showStatus = (b) => {
+    const installed = b && b.language && fresh.lsp.languages().includes(b.language) && !b.isVirtual;
+    const text = !installed ? "" : fresh.lsp.available(b) ? `LSP ${b.language}` : running[b.language] === false ? "LSP (off)" : "";
+    status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.commands.run("lsp.status") });
+  };
+  fresh.events.on("buffer.activated", ({ buffer }) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
   // Its language changed: another server, or none.
   fresh.events.on("buffer.info", ({ buffer }) => { if (buffer.id === fresh.buffers.active()?.id) showStatus(buffer); });
   // Each language's server: running, available (started with its first
   // file), or none found on the host.
+  // Picking one offers to restart or stop it.
   const lspStatus = async () => {
-    const running = await fresh.lsp.status();
+    await runningLanguages();
     const langs = [...new Set([...fresh.lsp.languages(), ...Object.keys(running)])].sort();
-    const state = (l) => (running[l] ? "running" : fresh.lsp.languages().includes(l) ? "available (starts with a file)" : "not started");
+    const state = (l) => (running[l] ? "running" : running[l] === false ? "stopped" : fresh.lsp.languages().includes(l) ? "available (starts with a file)" : "not started");
     fresh.ui.pick({
       title: fresh.workspace.trusted ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
       items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", value: null }],
-      onAccept: () => {},
+      onAccept: async (it) => {
+        if (!it.value || !fresh.workspace.trusted) return;
+        const what = await fresh.ui.choose(`${it.value} language server (${state(it.value)})`, [
+          { label: running[it.value] ? "Restart" : "Start", value: "restart" },
+          ...(running[it.value] ? [{ label: "Stop", value: "stop" }] : []),
+        ]);
+        if (what) await serverOp(what, it.value);
+      },
     });
   };
+  // Restart or stop `language`'s server (the active file's when not given).
+  const serverOp = async (what, language) => {
+    const b = fresh.buffers.active();
+    const l = language || (b && fresh.lsp.languages().includes(b.language) ? b.language : null);
+    if (!l) { lspStatus(); return; }
+    try {
+      running = await (what === "stop" ? fresh.lsp.stop(l) : fresh.lsp.restart(l));
+      fresh.ui.message(what === "stop" ? `Stopped the ${l} language server` : `Restarted the ${l} language server`);
+    } catch (e) { fresh.ui.message(e.detail ?? String(e.message || e)); }
+  };
+  fresh.events.on("lsp.status", ({ status: s }) => {
+    running = s;
+    const b = fresh.buffers.active();
+    showStatus(b);
+    for (const x of fresh.buffers.all()) refreshHints(x);
+  });
+
+  // ---------------------------------------------------------------- inlay hints
+
+  // A document's hints, drawn before the character they are at (in the
+  // line numbers' colour), asked for the whole document once its text has
+  // settled after an edit. An answer to an older text is dropped.
+  const hintTimers = new Map();
+  const refreshHints = async (b) => {
+    const deco = b.decorations("inlay");
+    if (!fresh.settings.inlay_hints || !fresh.lsp.available(b) || !b.whole) { deco.clear(); b.render(); return; }
+    const L = b.lines();
+    if (!L) return;
+    const len = b.length, text0 = b.text(0, Math.min(len, 64));
+    let r = null;
+    try {
+      r = await fresh.lsp.request(b, "textDocument/inlayHint", { range: { start: { line: 0, character: 0 }, end: { line: L.lines.length, character: 0 } } });
+    } catch { return; }
+    if (b.length !== len || b.text(0, Math.min(len, 64)) !== text0) return;
+    deco.clear();
+    for (const hnt of asList(r)) {
+      const pos = fresh.lsp.offset(b, hnt.position.line, hnt.position.character);
+      if (pos == null) continue;
+      const label = typeof hnt.label === "string" ? hnt.label : asList(hnt.label).map((p) => p.value).join("");
+      const text = (hnt.paddingLeft ? " " : "") + label + (hnt.paddingRight ? " " : "");
+      deco.inline(pos, text, { side: "before", style: { fg: "editor.line_number_fg", italic: true } });
+    }
+    b.render();
+  };
+  const hintsSoon = (b) => {
+    clearTimeout(hintTimers.get(b.id));
+    hintTimers.set(b.id, setTimeout(() => { hintTimers.delete(b.id); refreshHints(b); }, 500));
+  };
+  fresh.events.on("buffer.changed", ({ buffer }) => { if (fresh.settings.inlay_hints && fresh.lsp.available(buffer)) hintsSoon(buffer); });
+  const toggleHints = () => {
+    fresh.settings.inlay_hints = !fresh.settings.inlay_hints;
+    fresh.saveSettings();
+    for (const b of fresh.buffers.all()) refreshHints(b);
+    fresh.ui.message(`Inlay hints: ${fresh.settings.inlay_hints ? "on" : "off"}`);
+  };
   // Trusting the workspace starts its language servers.
-  fresh.events.on("workspace.trusted", () => { const b = fresh.buffers.active(); showStatus(b); if (b) refreshFolds(b); });
+  fresh.events.on("workspace.trusted", () => { const b = fresh.buffers.active(); showStatus(b); if (b) { refreshFolds(b); refreshHints(b); } });
   fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
 
   const reg = (id, title, run, key) => { fresh.commands.register(id, { title, run }); if (key) fresh.keys.bind(key, id); };
@@ -336,4 +445,8 @@ export function activate(fresh) {
   reg("lsp.nextDiagnostic", "Go to Next Problem", () => stepDiagnostic(1), "F8");
   reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
   reg("lsp.status", "LSP: Show Status", lspStatus);
+  reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", workspaceSymbols);
+  reg("lsp.restart", "LSP: Start/Restart Server", () => serverOp("restart"));
+  reg("lsp.stop", "LSP: Stop Server", () => serverOp("stop"));
+  reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", toggleHints);
 }

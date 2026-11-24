@@ -31,7 +31,7 @@ const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.past
 
 const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
-  show_whitespace: false, show_indent_guides: true, preview_tabs: true, highlight_brackets: true, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
+  show_whitespace: false, show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
 };
 
 class App {
@@ -90,6 +90,7 @@ class App {
     this.hostName = ws?.host ?? "";
     this.trusted = !!ws?.trusted;
     this.lspLanguages = new Set(ws?.lsp ?? []);
+    this.lspStatus = {}; // {language: running}, as `lsp.status` events say
     document.title = ws ? `${ws.name} — Fresh` : "Workspaces — Fresh";
     $("#ws-name").textContent = ws ? `${ws.name} · ${ws.host}${ws.trusted ? "" : " · restricted"}` : "No workspace";
     $("#ws-name").title = "Workspaces (Alt+O)";
@@ -940,6 +941,12 @@ class App {
         else this.procs.set(ev.proc, ev); // arrived before the request returned
         break;
       }
+      case "lsp.status":
+        // A language server was stopped or restarted: {language: running}.
+        this.lspStatus = ev.status || {};
+        this.host.emit("lsp.status", { status: { ...this.lspStatus } });
+        this.updateStatus();
+        break;
       case "workspace.trusted":
         // The language servers start now: the event names them.
         this.trusted = true;
@@ -970,7 +977,9 @@ class App {
     return () => { this.watches.delete(watch); rpc("fs.unwatch", { watch }); };
   }
 
-  lspAvailable(b) { return !!(b.doc && b.language && !b.large && this.lspLanguages?.has(b.language)); }
+  // A language server answers for `b`: one is installed for its language
+  // and not stopped (`lsp.stop`).
+  lspAvailable(b) { return !!(b.doc && b.language && !b.large && this.lspLanguages?.has(b.language) && this.lspStatus[b.language] !== false); }
 
   // A language server's (line, UTF-16 column) as a byte offset in a held buffer.
   lspOffset(b, line, character) {

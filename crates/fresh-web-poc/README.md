@@ -216,8 +216,14 @@ Operations:
   `term.attach` (the replay, and `{name, command, agent, title, state}`),
   `term.close`
 - `proc.run`, `proc.kill`
-- `lsp.call` (any request about a document), `lsp.hover`,
-  `lsp.definition`, `lsp.completion`, `lsp.status`
+- `lsp.call` (any request about a document: `{doc, method, params,
+  pos}`; or about the workspace, such as `workspace/symbol`: `{language,
+  method, params}`, to that language's running server), `lsp.hover`,
+  `lsp.definition`, `lsp.completion`, `lsp.status` (`{language:
+  running}`), `lsp.restart` (`{language}`: the server starts again and is
+  handed the language's open documents), `lsp.stop` (`{language}`: it
+  stays stopped — no file starts it — until restarted; its documents'
+  diagnostics are cleared)
 - `theme.list`, `theme.get` (the editor's built-in themes and the skins'
   themes, resolved)
 - `skin.list` (every skin's header), `host.stats` (the host's load, for skin
@@ -257,7 +263,8 @@ is null for an untitled document saved as a file),
 `doc.deleted` (`{doc, info}`), `doc.changed_on_disk` (`{doc, info}`),
 `doc.reloaded` (`{doc, lost, info}`), `doc.info` (`{doc, info}`, after `doc.set`), `doc.indexing`, `doc.indexed`,
 `lsp.diagnostics`, `term.data`, `term.size`, `term.exit`, `proc.exit`,
-`fs.changed`, `workspace.trusted` (with the available language servers) —
+`fs.changed`, `workspace.trusted` (with the available language servers),
+`lsp.status` (`{status}`, after a server was restarted or stopped) —
 to the clients of the workspace they concern; and to every client,
 `workspace.added` (`{workspace}`), `workspace.removed` (`{workspace: id}`),
 `workspace.changed` (`{workspace}`: its name, folder, pin, or a retry),

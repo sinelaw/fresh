@@ -791,6 +791,15 @@ impl Docs {
         self.by_path.get(path).copied()
     }
 
+    /// The document a language server names by `uri`: a file's by its
+    /// path, an untitled one by its `untitled:` URI.
+    pub fn by_uri(&self, uri: &str) -> Option<u64> {
+        match crate::lsp::path_of(uri) {
+            Some(path) => self.by_path(&path),
+            None => self.docs.values().find(|d| d.uri() == uri).map(|d| d.id),
+        }
+    }
+
     /// A client disconnected: it closes everything.
     pub fn drop_client(&mut self, client: u64) -> Vec<Doc> {
         let ids: Vec<u64> = self.docs.keys().copied().collect();
@@ -976,6 +985,18 @@ mod tests {
             .unwrap();
         assert_eq!(d.text(0, 100).unwrap(), "hello, \n");
         assert_eq!(d.version, 2);
+    }
+
+    #[test]
+    fn a_language_server_names_a_file_or_an_untitled_document_by_uri() {
+        let (_d, mut docs, id) = doc_with("x\n");
+        let fs: Fs = std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem);
+        let u = docs.create(1, fs);
+        let file_uri = docs.get(id).unwrap().uri();
+        assert!(file_uri.starts_with("file://"));
+        assert_eq!(docs.by_uri(&file_uri), Some(id));
+        assert_eq!(docs.by_uri("untitled:Untitled-1"), Some(u));
+        assert_eq!(docs.by_uri("untitled:Untitled-2"), None);
     }
 
     #[test]
