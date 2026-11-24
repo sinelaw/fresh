@@ -953,8 +953,10 @@ class App {
   keyName(e) {
     const names = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", " ": "Space", Escape: "Esc" };
     let k = names[e.key] || e.key;
+    // A digit is named by its key, shifted or not (Shift+1 is "S-1", not "!").
+    if (/^Digit\d$/.test(e.code)) k = e.code.slice(5);
     if (k.length === 1) k = k.toLowerCase();
-    const shift = e.shiftKey && (k.length > 1 || /[a-z]/.test(k));
+    const shift = e.shiftKey && (k.length > 1 || /[a-z0-9]/.test(k));
     return (e.ctrlKey || e.metaKey ? "C-" : "") + (e.altKey ? "M-" : "") + (shift ? "S-" : "") + k;
   }
 

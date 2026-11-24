@@ -13,6 +13,7 @@ import * as compare from "./compare.js";
 import * as tours from "./tours.js";
 import * as keybindings from "./keybindings.js";
 import * as themes from "./themes.js";
+import * as bookmarks from "./bookmarks.js";
 
 export const PLUGINS = [
   { name: "welcome", activate: welcome.activate },
@@ -25,4 +26,5 @@ export const PLUGINS = [
   { name: "tours", activate: tours.activate },
   { name: "keybindings", activate: keybindings.activate },
   { name: "themes", activate: themes.activate },
+  { name: "bookmarks", activate: bookmarks.activate },
 ];

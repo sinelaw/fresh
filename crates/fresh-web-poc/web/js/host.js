@@ -64,6 +64,8 @@ class DecorationSet {
   }
   // A mark in the gutter on the line holding `pos`.
   gutter(pos, opts) { this.d.add("gutters", { ns: this.ns, start: pos, end: pos, glyph: opts.glyph || "▎", color: opts.color, title: opts.title || "" }); }
+  // This set's gutter marks where they are now (edits move them): [{pos, glyph}].
+  gutters() { return this.d.gutters.filter((g) => g.ns === this.ns).map((g) => ({ pos: g.start, glyph: g.glyph })); }
 }
 
 class BufferHandle {

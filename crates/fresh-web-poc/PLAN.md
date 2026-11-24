@@ -144,7 +144,7 @@ Status: **present** (was there), **fixed** (added by this audit), **missing**
 | Palette | Go to symbol in the workspace | missing (`workspace/symbol` through the server is the way) |
 | Navigation | Back / forward, go to definition / references, matching bracket, paragraphs | present |
 | Navigation | Next / previous problem (F8 / Shift+F8), its message in the status bar | fixed |
-| Navigation | Bookmarks (Ctrl+Shift+N set, Alt+N jump) | missing |
+| Navigation | Bookmarks: Ctrl+Shift+0…9 set / clear, Alt+0…9 jump, Bookmarks: List; a gutter digit that moves with edits | fixed |
 | Editing | Multi-cursor, selection, undo / redo, comment, duplicate / move line, fold, auto-close, smart home, kill ring | present |
 | Editing | Uppercase / lowercase (Alt+U / Alt+L), sort lines, trim trailing whitespace (Edit ▸ Transform) | fixed |
 | Editing | Transpose, block selection, expand selection, macros | missing (editing commands, not chrome) |
