@@ -2071,6 +2071,133 @@ fn typing_a_repository_path_arms_the_worktree_toggle() {
         });
 }
 
+/// Initialise `dir` as a repository with one commit.
+fn git_init_repo(dir: &Path) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "t@example.com"],
+        vec!["config", "user.name", "t"],
+        vec!["commit", "-q", "--allow-empty", "-m", "seed"],
+    ] {
+        let out = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?} failed: {:?}", args, out);
+    }
+}
+
+/// The path out of the form's `worktree at …` row, as the screen draws it.
+/// The row is a wrapped note inside the dialog, so the value runs to the
+/// frame's right border.
+fn previewed_worktree_path(screen: &str) -> String {
+    const MARKER: &str = "worktree at ";
+    let line = screen
+        .lines()
+        .find(|l| l.contains(MARKER))
+        .unwrap_or_else(|| panic!("no `worktree at` row on screen:\n{screen}"));
+    let rest = &line[line.find(MARKER).unwrap() + MARKER.len()..];
+    rest.split('│').next().unwrap_or(rest).trim().to_string()
+}
+
+/// **A new workspace's worktree goes one level under the project's own state
+/// directory, and the slug that names it is a single path component.**
+///
+/// `<data dir>/orchestrator/<slug of the project>/<name>` is built with
+/// `editor.pathJoin`, which reads a component whose second character is `:`
+/// as drive-absolute and throws away everything joined before it. A slug
+/// that kept the drive colon therefore took the data dir with it, which is
+/// #3811: `git worktree add` resolved the leftover against the current
+/// directory, inside the project, and the absolute-path check on the other
+/// side refused the session.
+///
+/// A Windows root cannot be driven through this form on a POSIX host — the
+/// folder probe answers "non-git" for `C:\code\myrepo` and the GIT section
+/// never renders — but a colon is legal in a POSIX directory name, and the
+/// rule the slug has to keep is the same one. So the project here is
+/// `my:repo`, and the row it draws says whether the slug still carries a
+/// character `pathJoin` would read as a prefix.
+///
+/// `plugins/tests/path_slug.test.ts` covers the rest of the matrix (the
+/// Windows spellings, `\\?\`, and the roots that slug to nothing); that
+/// suite is not wired into CI, so this is the assertion that runs there.
+#[test]
+fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
+    let (_temp, workspace) = set_up_workspace();
+    let repo = workspace.join("my:repo");
+    fs::create_dir(&repo).unwrap();
+    git_init_repo(&repo);
+
+    // A data dir of this test's own: the row names an absolute path under it,
+    // and the assertions below read it back.
+    let data_home = tempfile::tempdir().unwrap();
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("plain folder"))
+        .expect("the form opens on a non-git workspace, so the plan starts as a plain folder");
+
+    // The form opens focused on the Folder field.
+    harness.type_text(repo.to_str().unwrap()).unwrap();
+    // Leave the field: the path-completion popup it opened covers the rows
+    // under it, and Tab closes it without accepting a suggestion.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("new worktree"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "`my:repo` is a repository, so the plan must be a new worktree. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // The worktree path is previewed in the GIT section, which the Details
+    // fold reveals — and name the workspace, so the row's last component is
+    // this test's own rather than an auto-generated counter.
+    set_details(&mut harness, true);
+    focus_stop(&mut harness, "Workspace:");
+    harness.type_text("wtname").unwrap();
+    harness
+        .wait_until(|h| previewed_worktree_path(&h.screen_to_string()).ends_with("/wtname"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the worktree preview follows the workspace name. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    let screen = harness.screen_to_string();
+    let path = previewed_worktree_path(&screen);
+    let under = format!(
+        "{}/",
+        data_home.path().join("data").join("orchestrator").display()
+    );
+    assert!(
+        path.starts_with(&under),
+        "the worktree belongs under {under:?}; the slug took the data dir off the front of \
+         {path:?}. Screen:\n{screen}",
+    );
+    let tail: Vec<&str> = path[under.len()..].split('/').collect();
+    assert_eq!(
+        tail.len(),
+        2,
+        "the project's state directory is one component, then the workspace: {path:?}. \
+         Screen:\n{screen}",
+    );
+    let slug = tail[0];
+    assert!(
+        !slug.is_empty() && slug != "." && slug != "..",
+        "a slug `pathJoin` drops or walks up through puts the workspace on top of the \
+         per-project level: {path:?}. Screen:\n{screen}",
+    );
+    assert!(
+        !slug.contains(':'),
+        "a colon left in the slug is what #3811 reported: `pathJoin` reads `C:…` as \
+         drive-absolute and discards the data dir joined before it. Slug {slug:?} in \
+         {path:?}. Screen:\n{screen}",
+    );
+}
+
 /// **And the same for a `~` path**, which is the shape the disabled toggle
 /// was actually reported on: `git -C ~/repo` with a literal tilde fails, the
 /// form reads that as "not a git path", and a repository that plainly is one
