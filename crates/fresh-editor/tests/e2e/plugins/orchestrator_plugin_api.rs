@@ -120,6 +120,24 @@ registerHandler("probe_list_archived", function () {
     report("PROBE_ARCHIVED " + rows.length);
 });
 
+// An archive written under an older per-project directory name is still
+// listed, and unarchiving one of its entries has to clear it from the file it
+// was found in. Clearing the file the storage key now points at instead would
+// leave the old one still saying the workspace is archived, so it would keep
+// being listed after it came back.
+registerHandler("probe_unarchive_legacy", async function () {
+    const before = orch().listArchived().length;
+    let ok = false;
+    let err = "";
+    try {
+        ok = await orch().unarchiveWorkspace("planted-one");
+    } catch (e: any) {
+        err = " threw=" + e.message;
+    }
+    const left = orch().listArchived().map(function (r: any) { return r.name; }).join(",");
+    report("PROBE_LEGACY before=" + before + " ok=" + ok + " left=" + left + err);
+});
+
 // Unarchiving something that was never archived is a `false`, not a throw.
 registerHandler("probe_unarchive_missing", async function () {
     try {
@@ -192,6 +210,7 @@ editor.registerCommand("Probe Unknown Target", "", "probe_unknown_target", null)
 editor.registerCommand("Probe Unknown Folder", "", "probe_unknown_folder", null);
 editor.registerCommand("Probe List Archived", "", "probe_list_archived", null);
 editor.registerCommand("Probe Unarchive Missing", "", "probe_unarchive_missing", null);
+editor.registerCommand("Probe Unarchive Legacy", "", "probe_unarchive_legacy", null);
 // A bare IPv6 literal is a host, not a host with a port. The pending row's
 // name is `ssh:<destination>`, which is the only place the parsed
 // destination is observable without a host that answers.
@@ -256,6 +275,63 @@ fn setup_project() -> (tempfile::TempDir, PathBuf) {
         .success();
     assert!(ok);
     (temp_dir, root)
+}
+
+/// Like [`harness`], but on a data dir this test knows the path of, so it can
+/// plant state the plugin will read back. Returns the project root too.
+fn harness_with_data_home(
+    data_home: &tempfile::TempDir,
+) -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
+    let (tmp, root) = setup_project();
+    let mut h = EditorTestHarness::with_shared_dir_context(
+        120,
+        32,
+        Default::default(),
+        root.clone(),
+        fresh::config_io::DirectoryContext::for_testing(data_home.path()),
+    )
+    .unwrap();
+    h.render().unwrap();
+    (tmp, root, h)
+}
+
+/// Write an `archived.json` holding two in-place entries under the
+/// per-project directory name a release before `pathStorageKey` used: the
+/// path with its separators folded to `_` and a leading one dropped.
+///
+/// In place (`root` equal to `original_root`) so unarchiving is purely the
+/// manifest bookkeeping this is about — no `git worktree move` runs, and the
+/// directories need not exist.
+fn plant_legacy_archive(data_home: &tempfile::TempDir, root: &std::path::Path) {
+    let legacy = root
+        .to_string_lossy()
+        .trim_start_matches(['/', '\\'])
+        .replace(['/', '\\'], "_");
+    let dir = data_home
+        .path()
+        .join("data")
+        .join("orchestrator")
+        .join(legacy);
+    fs::create_dir_all(&dir).unwrap();
+    let entry = |name: &str, at: &str| {
+        let ws = root.join(name);
+        serde_json::json!({
+            "label": name,
+            "root": ws,
+            "original_root": ws,
+            "branch": name,
+            "archived_at": at,
+            "repo_root": root,
+        })
+    };
+    let manifest = serde_json::json!({
+        "version": 1,
+        "sessions": [
+            entry("planted-one", "2026-01-02T00:00:00Z"),
+            entry("planted-two", "2026-01-01T00:00:00Z"),
+        ],
+    });
+    fs::write(dir.join("archived.json"), manifest.to_string()).unwrap();
 }
 
 fn harness() -> (tempfile::TempDir, EditorTestHarness) {
@@ -623,6 +699,39 @@ fn unarchiving_something_not_archived_returns_false() {
     h.wait_until(|h| h.screen_to_string().contains("PROBE_UNARCH_"))
         .unwrap();
     h.assert_screen_contains("PROBE_UNARCH_FALSE");
+}
+
+/// **An entry is cleared from the manifest it was found in.** The
+/// per-project state directory is named by `editor.pathStorageKey()` now, and
+/// a project whose archive was written under the older separator-folded name
+/// still has it there. Nothing moves it — a worktree is found through git,
+/// which records it by absolute path, and every path inside an entry is
+/// absolute — so the manifest is read, and written, where it already is.
+///
+/// Without that, `unarchiveWorkspace` dropped the entry through a path
+/// rebuilt from the repo root, i.e. the *new* name's manifest. The restore
+/// itself worked, but `scanArchiveManifests` walks every directory and cares
+/// nothing for the name, so the old file kept the entry and kept listing a
+/// workspace that was already back — and a second unarchive of it failed on a
+/// worktree that had moved. Asserted on what the archive lists afterwards,
+/// which is the surface a caller sees.
+#[test]
+fn unarchiving_clears_the_entry_from_the_manifest_it_was_found_in() {
+    let data_home = tempfile::tempdir().unwrap();
+    let (_tmp, root, mut h) = harness_with_data_home(&data_home);
+    plant_legacy_archive(&data_home, &root);
+    open_dock(&mut h);
+
+    run_command(&mut h, "Probe Unarchive Legacy");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_LEGACY"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("PROBE_LEGACY before=2 ok=true left=planted-two"),
+        "a legacy archive is listed, the restored entry leaves the file it was \
+         found in, and the other entry stays. Screen:\n{screen}",
+    );
 }
 
 /// An SSH create with no host is refused with the dialog's own message, and
