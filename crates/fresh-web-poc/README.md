@@ -112,7 +112,12 @@ API. See `PLAN.md` for how each editor feature is ported.
 
 `POST /api` with a JSON object `{op, client, ...}` answers `{"ok": ...}` or
 `{"error": {"code", "message"}}`: `code` is stable and meant for programs,
-`message` is for people. `hello` registers a client and returns its id; the
+`message` is for people. The client sends its operations that change
+documents or files (`doc.open`, `doc.close`, `doc.edit`, `doc.save`,
+`doc.reload`, `fs.write`, `fs.create`, `fs.rename`, `fs.delete`, `fs.copy`,
+`workspace.trust`) one at a time, each after the previous one is answered,
+so the server applies them in the order they were made; reads, searches and
+language-server requests are not held back. `hello` registers a client and returns its id; the
 client then opens `GET /events?client=ID`, a Server-Sent Events stream of
 JSON events. When that stream ends the client is forgotten: its documents
 are closed, its watches removed and its processes killed.
