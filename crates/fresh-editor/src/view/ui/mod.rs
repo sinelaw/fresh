@@ -12,6 +12,7 @@
 // WASM-compatible modules (pure rendering, no runtime deps)
 pub mod layout;
 pub mod scroll_panel;
+pub mod terminal_flush;
 pub mod view_pipeline;
 
 /// `TextEdit` lives in `crate::primitives::text_edit` now (shared

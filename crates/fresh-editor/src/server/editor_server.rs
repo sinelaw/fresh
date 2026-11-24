@@ -28,6 +28,7 @@ use crate::server::input_parser::ClientInputParser;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
 use crate::server::protocol::{ClientControl, ServerControl, ServerHello, TermSize};
 use crate::view::color_support::ColorCapability;
+use crate::view::ui::terminal_flush::ClusterSafeBackend;
 
 /// Configuration for the editor server
 pub struct EditorServerConfig {
@@ -95,7 +96,7 @@ pub struct EditorServer {
     listener: ServerListener,
     clients: Vec<ConnectedClient>,
     editor: Option<Editor>,
-    terminal: Option<Terminal<CaptureBackend>>,
+    terminal: Option<Terminal<ClusterSafeBackend<CaptureBackend>>>,
     last_client_activity: Instant,
     shutdown: Arc<AtomicBool>,
     /// Effective terminal size (from the client that sizes the session)
@@ -826,8 +827,13 @@ impl EditorServer {
     }
 
     /// Build the `Editor` from the current configuration and stored authority.
-    fn build_editor_instance(&mut self) -> io::Result<(Editor, Terminal<CaptureBackend>)> {
-        let backend = CaptureBackend::new(self.term_size.cols, self.term_size.rows);
+    fn build_editor_instance(
+        &mut self,
+    ) -> io::Result<(Editor, Terminal<ClusterSafeBackend<CaptureBackend>>)> {
+        let backend = ClusterSafeBackend::new(CaptureBackend::new(
+            self.term_size.cols,
+            self.term_size.rows,
+        ));
         let terminal = Terminal::new(backend)
             .map_err(|e| io::Error::other(format!("Failed to create terminal: {}", e)))?;
 
@@ -1438,7 +1444,7 @@ impl EditorServer {
     /// Update terminal size after resize
     fn update_terminal_size(&mut self) -> io::Result<()> {
         if let Some(ref mut terminal) = self.terminal {
-            let backend = terminal.backend_mut();
+            let backend = terminal.backend_mut().inner_mut();
             backend.resize(self.term_size.cols, self.term_size.rows);
         }
 
@@ -1588,7 +1594,7 @@ impl EditorServer {
                 self.clients.iter().filter(|c| c.needs_full_render).count()
             );
             // Force full redraw by invalidating terminal state
-            terminal.backend_mut().reset_style_state();
+            terminal.backend_mut().inner_mut().reset_style_state();
             // Best-effort terminal clear for full redraw
             #[allow(clippy::let_underscore_must_use)]
             let _ = terminal.clear();
@@ -1623,7 +1629,7 @@ impl EditorServer {
         }
 
         // Get the captured output
-        let output = terminal.backend_mut().take_buffer();
+        let output = terminal.backend_mut().inner_mut().take_buffer();
 
         if output.is_empty() && pending_sequences.is_empty() {
             return Ok(true);

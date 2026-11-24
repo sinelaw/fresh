@@ -50,6 +50,9 @@ pub mod scrollbar;
 pub mod sidebar;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod terminal_model;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod timing;
 #[cfg(test)]
 #[allow(dead_code)]

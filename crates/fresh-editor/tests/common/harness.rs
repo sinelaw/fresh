@@ -643,6 +643,10 @@ pub struct EditorTestHarness {
     /// This simulates how a real terminal would interpret the escape sequences
     vt100_parser: vt100::Parser,
 
+    /// A terminal emulator model fed through the production backend stack,
+    /// when a test enables one (see [`Self::enable_terminal_model`]).
+    terminal_model: Option<crate::common::terminal_model::TerminalModel>,
+
     /// Terminal dimensions for vt100
     term_width: u16,
     term_height: u16,
@@ -1022,6 +1026,7 @@ impl EditorTestHarness {
             shadow_undo_stack: Vec::new(),
             shadow_redo_stack: Vec::new(),
             vt100_parser: vt100::Parser::new(height, width, 0),
+            terminal_model: None,
             term_width: width,
             term_height: height,
             _teardown_stall: None,
@@ -1883,6 +1888,9 @@ impl EditorTestHarness {
         self.terminal.draw(|frame| {
             self.editor.render(frame);
         })?;
+        if let Some(model) = self.terminal_model.as_mut() {
+            model.present(self.terminal.backend().buffer());
+        }
         // A visible text pane is placed once, formatted once, and has its
         // rows built once per frame — the invariant the retained-mode
         // migration rests on (`split_rendering::instrument`). Asserted on
@@ -1989,6 +1997,47 @@ impl EditorTestHarness {
         self.render()?;
 
         Ok(())
+    }
+
+    /// From now on, also flush every rendered frame through the backend stack
+    /// the `fresh` binary uses — ratatui's frame diff, `ClusterSafeBackend`,
+    /// `CrosstermBackend` — into a terminal emulator model with the given
+    /// width policy, and present the current frame to it.
+    pub fn enable_terminal_model(&mut self, policy: crate::common::terminal_model::WidthPolicy) {
+        let mut model = crate::common::terminal_model::TerminalModel::new(
+            self.term_width,
+            self.term_height,
+            policy,
+        );
+        model.present(self.terminal.backend().buffer());
+        self.terminal_model = Some(model);
+    }
+
+    /// The terminal model enabled by [`Self::enable_terminal_model`].
+    pub fn terminal_model(&self) -> &crate::common::terminal_model::TerminalModel {
+        self.terminal_model
+            .as_ref()
+            .expect("enable_terminal_model was not called")
+    }
+
+    /// Assert that the terminal model shows exactly the frame ratatui meant
+    /// to draw: the same cluster starting in every column. A write that
+    /// landed in the wrong column leaves a stray glyph or a hole here.
+    pub fn assert_terminal_model_matches_frame(&self) {
+        let model = self.terminal_model();
+        let frame = self.buffer();
+        for row in 0..model.rows() {
+            let shown = model.columns(row);
+            let meant = crate::common::terminal_model::expected_columns(frame, row as u16);
+            assert_eq!(
+                shown,
+                meant,
+                "row {row}: the terminal shows {:?} but the frame is {:?}\nframe:\n{}",
+                model.row_text(row),
+                self.screen_row_text(row as u16),
+                self.screen_to_string()
+            );
+        }
     }
 
     /// Get the screen content as parsed by vt100 (simulating real terminal)

@@ -15,6 +15,7 @@ use fresh::input::key_translator::KeyTranslator;
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::services::terminal_modes::{self, KeyboardConfig, TerminalModes};
 use fresh::services::tracing_setup;
+use fresh::view::ui::terminal_flush::ClusterSafeBackend;
 use fresh::{
     app::Editor,
     client, config,
@@ -28,6 +29,9 @@ use fresh::{
 };
 use fresh_input_parser::Event as InputEvent;
 use ratatui::Terminal;
+
+/// The backend the editor draws the local terminal through.
+type TerminalBackend = ClusterSafeBackend<ratatui::backend::CrosstermBackend<io::Stdout>>;
 use std::{
     io::{self, stdout},
     path::{Path, PathBuf},
@@ -697,7 +701,7 @@ struct IterationOutcome {
 struct SetupState {
     config: config::Config,
     tracing_handles: Option<TracingHandles>,
-    terminal: Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: Terminal<TerminalBackend>,
     terminal_size: (u16, u16),
     file_locations: Vec<FileLocation>,
     show_file_explorer: bool,
@@ -2105,7 +2109,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     tracing::info!("Set cursor style to {:?}", config.editor.cursor_style);
 
     tracing::info!("Initializing terminal backend...");
-    let backend = ratatui::backend::CrosstermBackend::new(stdout());
+    let backend = ClusterSafeBackend::new(ratatui::backend::CrosstermBackend::new(stdout()));
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
     tracing::info!("Terminal backend ready");
@@ -2151,7 +2155,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 fn run_editor_iteration(
     editor: &mut Editor,
     workspace_enabled: bool,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TerminalBackend>,
     key_translator: &KeyTranslator,
     #[cfg(target_os = "linux")] gpm_client: &Option<GpmClient>,
     terminal_modes: &mut TerminalModes,
@@ -7113,7 +7117,7 @@ fn handle_suspend_request(
 #[cfg(target_os = "linux")]
 fn run_event_loop(
     editor: &mut Editor,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TerminalBackend>,
     workspace_enabled: bool,
     key_translator: &KeyTranslator,
     gpm_client: &Option<GpmClient>,
@@ -7137,7 +7141,7 @@ fn run_event_loop(
 #[cfg(windows)]
 fn run_event_loop(
     editor: &mut Editor,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TerminalBackend>,
     workspace_enabled: bool,
     key_translator: &KeyTranslator,
     terminal_modes: &mut TerminalModes,
@@ -7241,7 +7245,7 @@ fn run_event_loop(
 #[cfg(not(any(target_os = "linux", windows)))]
 fn run_event_loop(
     editor: &mut Editor,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TerminalBackend>,
     workspace_enabled: bool,
     key_translator: &KeyTranslator,
     terminal_modes: &mut TerminalModes,
@@ -7307,7 +7311,7 @@ fn safe_event_read() -> std::io::Result<Option<InputEvent>> {
 
 fn run_event_loop_common<F>(
     editor: &mut Editor,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TerminalBackend>,
     workspace_enabled: bool,
     _key_translator: &KeyTranslator,
     terminal_modes: &mut TerminalModes,
