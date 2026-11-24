@@ -67,7 +67,12 @@ export function activate(fresh) {
   };
   // Select row `r` as a press or a key with modifiers `e` asks: alone,
   // toggled (Ctrl), or the range from the anchor (Shift).
+  // The list is drawn again only when the marked rows change (a redraw
+  // replaces the row under the pointer, and its click never arrives):
+  // returns whether it was.
   const pick = (r, e) => {
+    const shown = () => (marks.size > 1 ? [...marks].join("\n") : "");
+    const before = shown();
     if (e && e.shiftKey && anchor) marks = range(anchor, r.path);
     else if (e && (e.ctrlKey || e.metaKey)) {
       if (!marks.size && selected) marks.add(selected);
@@ -75,7 +80,9 @@ export function activate(fresh) {
       anchor = r.path;
     } else { marks = new Set([r.path]); anchor = r.path; }
     selected = r.path;
+    if (shown() === before) return false;
     render();
+    return true;
   };
   // What an action on row `r` acts on: the marked rows when `r` is one of
   // them (in tree order, leaving out what a marked folder holds), else `r`.
@@ -109,8 +116,10 @@ export function activate(fresh) {
       onSelect: (r, _i, how, e) => {
         const mods = !!e && (e.shiftKey || e.ctrlKey || e.metaKey);
         if (how === "mouse" && !mods && marks.size > 1 && marks.has(r.path)) { selected = r.path; return; }
-        pick(r, e);
-        if (how === "key" && !r.dir && !mods) showFile(r, true);
+        const redrawn = pick(r, e);
+        // A press that redrew the list loses its click: it acts here.
+        if (how === "mouse" && redrawn && !mods && e.button === 0) activate(r, "click");
+        else if (how === "key" && !r.dir && !mods) showFile(r, true);
       },
       onActivate: (r, _i, how, e) => {
         if (e && (e.shiftKey || e.ctrlKey || e.metaKey)) return;
