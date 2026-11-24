@@ -140,11 +140,10 @@ export class DocView {
   }
 
   // A height the block surely has at least, from line `from` on: a line
-  // draws at least a line height, a blank line half of one; a code block's
-  // fences and a table's delimiter row may draw nothing.
+  // draws at least a line height; a code block's fences and a table's
+  // delimiter row may draw nothing.
   low(ctx, blk, lh, from = blk.first) {
-    const { L } = ctx;
-    if (!blk.node) return from > blk.last ? 0 : L.lines[blk.first] === "" ? lh / 2 : lh;
+    if (!blk.node) return from > blk.last ? 0 : lh;
     let n = blk.last - from + 1;
     if (blk.node.type === "code") n -= 2;
     if (blk.node.type === "table") n -= 1;
@@ -278,7 +277,7 @@ export class DocView {
     const n = blk.node;
     const ls = L.starts[blk.first], le = L.lineEnd(blk.last);
     const joined = () => { const r = this.walk(ctx, ls, le); return r.html + (r.shown ? "" : anchor(le)); };
-    if (!n) return `<p class="l${L.lines[blk.first] === "" ? " blank" : ""}">${joined()}</p>`;
+    if (!n) return `<p class="l">${joined()}</p>`;
     switch (n.type) {
       case "heading": {
         const lv = Math.max(1, Math.min(6, n.level || 1));
@@ -458,21 +457,28 @@ export class DocView {
   }
 
   // Where a caret at byte `p` is drawn, in client coordinates, or null when
-  // it is not drawn.
+  // it is not drawn: as tall as its line's box (the line height of the line
+  // element holding it), centred on the glyphs there.
   caretRect(p) {
     const e = this.find(p);
     if (!e) return null;
+    let r = null;
     if (e.kind === "p") {
       const tn = e.el.firstChild;
       const idx = byteToIdx(tn.data, p - e.start);
       this.range.setStart(tn, idx);
       this.range.setEnd(tn, idx);
       const rs = this.range.getClientRects();
-      if (rs.length) return rs[rs.length > 1 && idx > 0 ? rs.length - 1 : 0];
+      if (rs.length) r = rs[rs.length > 1 && idx > 0 ? rs.length - 1 : 0];
     }
-    const r = e.el.getBoundingClientRect();
-    const after = e.kind === "at" && p > e.start;
-    return { left: after ? r.right : r.left, top: r.top, height: r.height };
+    if (!r) {
+      const b = e.el.getBoundingClientRect();
+      r = { left: e.kind === "at" && p > e.start ? b.right : b.left, top: b.top, height: b.height };
+    }
+    const box = e.el.closest(".l");
+    const lh = box ? parseFloat(getComputedStyle(box).lineHeight) : NaN;
+    if (!(lh > 0)) return { left: r.left, top: r.top, height: r.height };
+    return { left: r.left, top: r.top + r.height / 2 - lh / 2, height: lh };
   }
 
   // The byte at client point (x, y), held to the document's box.
