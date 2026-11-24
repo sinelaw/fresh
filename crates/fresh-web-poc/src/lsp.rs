@@ -9,6 +9,7 @@
 //! the document version they describe; each client anchors them in its own
 //! marker trees. The server keeps no annotations itself.
 
+use crate::authority::{Authority, HostProc};
 use crate::workspace::Workspace;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -74,6 +75,8 @@ pub struct Server {
     pending: Arc<Mutex<HashMap<i64, Sender<Value>>>>,
     next_id: AtomicI64,
     child: Mutex<Child>,
+    authority: Arc<dyn Authority>,
+    host: HostProc,
 }
 
 fn write_msg(w: &mut ChildStdin, msg: &Value) -> std::io::Result<()> {
@@ -109,9 +112,8 @@ impl Server {
         ws: &Workspace,
         on_notify: OnNotify,
     ) -> Result<Arc<Self>> {
-        let mut child = ws
-            .authority
-            .command(&cmd[0], &cmd[1..], &ws.root)
+        let (mut command, host) = ws.authority.command(&cmd[0], &cmd[1..], &ws.root);
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -126,6 +128,8 @@ impl Server {
             pending: pending.clone(),
             next_id: AtomicI64::new(1),
             child: Mutex::new(child),
+            authority: ws.authority.clone(),
+            host,
         });
 
         // Replies to the server's own requests go out through the writer
@@ -241,7 +245,18 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.child.lock().unwrap().kill();
+        // The local child lives as long as the server on the host (or the
+        // link to it): only a running one is stopped there.
+        let mut child = self.child.lock().unwrap();
+        let running = matches!(child.try_wait(), Ok(None));
+        if running {
+            self.authority.stop(&self.host);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        if running {
+            self.authority.release(&self.host);
+        }
     }
 }
 
@@ -301,6 +316,7 @@ impl Lsp {
             self.ws
                 .authority
                 .command("sh", &["-c".into(), probe_script(&programs)], &self.ws.root)
+                .0
                 .stdin(Stdio::null())
                 .stderr(Stdio::null())
                 .output()
@@ -347,6 +363,12 @@ impl Lsp {
             .and_then(|cmd| Server::start(language, &cmd, &self.ws, self.on_notify.clone()).ok());
         m.insert(language.to_string(), s.clone());
         s
+    }
+
+    /// Stop every server (a server is stopped on the host when dropped).
+    pub fn stop_all(&self) {
+        let servers: Vec<_> = self.servers.lock().unwrap().drain().collect();
+        drop(servers);
     }
 
     /// The server for `language` only if it is already running.

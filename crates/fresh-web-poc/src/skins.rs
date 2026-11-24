@@ -355,7 +355,7 @@ mod tests {
     fn builtin_skins_parse_and_their_themes_resolve() {
         let ws = Workspace {
             root: std::env::temp_dir(),
-            authority: Arc::new(crate::workspace::Local::new()),
+            authority: Arc::new(crate::authority::Local::new()),
         };
         let l = list(&ws);
         let ids: Vec<&str> = l["skins"]

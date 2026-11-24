@@ -1,6 +1,7 @@
 //! Processes run on the workspace's host for a client (a plugin's
 //! `runOnTarget`, `spawnProcess`), and paths a client watches.
 
+use crate::authority::{Authority, HostProc};
 use crate::hub::Hub;
 use crate::workspace::Workspace;
 use anyhow::Result;
@@ -13,11 +14,44 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// A running process: the local child (the program here, or the `ssh` or
+/// `docker` client reaching it) and the process on the host.
+struct Running {
+    client: u64,
+    child: Child,
+    authority: Arc<dyn Authority>,
+    host: HostProc,
+    stopped: bool,
+}
+
+type Table = Arc<Mutex<HashMap<u64, Running>>>;
+
 #[derive(Default)]
 pub struct Procs {
-    /// Each running process, with the client it reports to.
-    running: Arc<Mutex<HashMap<u64, (u64, Child)>>>,
+    running: Table,
     next: AtomicU64,
+}
+
+/// Stop process `id` on its host, then its local child. The local child
+/// lives as long as the host process (or the link to it), so only one still
+/// running is stopped. Returns whether it was running.
+fn stop(running: &Table, id: u64) -> bool {
+    let target = {
+        let mut m = running.lock().unwrap();
+        m.get_mut(&id).and_then(|r| {
+            let alive = matches!(r.child.try_wait(), Ok(None));
+            r.stopped |= alive;
+            alive.then(|| (r.authority.clone(), r.host.clone()))
+        })
+    };
+    let Some((authority, host)) = target else {
+        return false;
+    };
+    authority.stop(&host);
+    if let Some(r) = running.lock().unwrap().get_mut(&id) {
+        let _ = r.child.kill();
+    }
+    true
 }
 
 impl Procs {
@@ -34,7 +68,7 @@ impl Procs {
         let cwd = cwd
             .map(|c| ws.resolve(c))
             .unwrap_or_else(|| ws.root.clone());
-        let mut cmd = ws.authority.command(program, args, &cwd);
+        let (mut cmd, host) = ws.authority.command(program, args, &cwd);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -65,14 +99,23 @@ impl Procs {
             }
             String::from_utf8_lossy(&s).into_owned()
         });
-        self.running.lock().unwrap().insert(id, (client, child));
+        self.running.lock().unwrap().insert(
+            id,
+            Running {
+                client,
+                child,
+                authority: ws.authority.clone(),
+                host,
+                stopped: false,
+            },
+        );
         let running = self.running.clone();
         std::thread::spawn(move || {
             let code = loop {
                 let status = {
                     let mut m = running.lock().unwrap();
                     match m.get_mut(&id) {
-                        Some((_, c)) => c.try_wait().ok().flatten(),
+                        Some(r) => r.child.try_wait().ok().flatten(),
                         None => break -1,
                     }
                 };
@@ -81,7 +124,11 @@ impl Procs {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             };
-            running.lock().unwrap().remove(&id);
+            let ended = running.lock().unwrap().remove(&id);
+            // A stop that raced the process's own end leaves its marker.
+            if let Some(r) = ended.filter(|r| r.stopped) {
+                r.authority.release(&r.host);
+            }
             let stdout = out_t.join().unwrap_or_default();
             let stderr = err_t.join().unwrap_or_default();
             hub.send(
@@ -92,20 +139,37 @@ impl Procs {
         Ok(id)
     }
 
+    /// Kill process `id` and its process group on the host. Returns whether
+    /// it was running.
     pub fn kill(&self, id: u64) -> bool {
-        match self.running.lock().unwrap().get_mut(&id) {
-            Some((_, c)) => c.kill().is_ok(),
-            None => false,
-        }
+        stop(&self.running, id)
     }
 
     /// A client disconnected: nobody is left to report its processes to,
-    /// so they are killed (and reaped by their waiting threads).
+    /// so they are killed (and reaped by their waiting threads), in the
+    /// background, since a stop may take a round trip to the host.
     pub fn drop_client(&self, client: u64) {
-        for (owner, c) in self.running.lock().unwrap().values_mut() {
-            if *owner == client {
-                let _ = c.kill();
+        let ids: Vec<u64> = self
+            .running
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, r)| r.client == client)
+            .map(|(id, _)| *id)
+            .collect();
+        let running = self.running.clone();
+        std::thread::spawn(move || {
+            for id in ids {
+                stop(&running, id);
             }
+        });
+    }
+
+    /// Kill every process, and wait for it.
+    pub fn stop_all(&self) {
+        let ids: Vec<u64> = self.running.lock().unwrap().keys().copied().collect();
+        for id in ids {
+            stop(&self.running, id);
         }
     }
 

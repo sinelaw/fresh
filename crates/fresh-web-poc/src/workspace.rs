@@ -9,22 +9,17 @@
 //! actually viewed. Listing, finding and searching run through it too (on the
 //! host's side for a remote one), so there is one code path for every host.
 //!
-//! Every process — a client's `proc.run`, a terminal's shell, a language
-//! server and its availability probe — is built by the authority too
-//! ([`Authority::command`], [`Authority::shell_command`]): directly here, `ssh`
-//! to a remote host, `docker exec` into a container.
+//! Every process is started through the authority too
+//! ([`crate::authority`]).
 
+use crate::authority::Authority;
 use anyhow::Result;
-use fresh::services::remote::ConnectionParams;
-use fresh_editor_core::model::filesystem::{
-    EntryType, FileSearchOptions, FileSystem, StdFileSystem, WalkOptions,
-};
+use fresh_editor_core::model::filesystem::{EntryType, FileSearchOptions, FileSystem, WalkOptions};
 use fresh_editor_core::model::host_path::HostPathBuf;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -33,204 +28,6 @@ pub type Fs = Arc<dyn FileSystem + Send + Sync>;
 
 /// Folders never walked: version control internals and build output.
 const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".hg", ".svn"];
-
-pub trait Authority: Send + Sync {
-    /// A short name for the host, shown to the user.
-    fn name(&self) -> String;
-    /// The host's filesystem.
-    fn fs(&self) -> Fs;
-    /// A command to run on the host, before it is started.
-    fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command;
-    /// The interactive shell a terminal runs, to be started on a PTY.
-    fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder;
-}
-
-/// This machine.
-pub struct Local {
-    pub fs: Fs,
-}
-
-impl Local {
-    pub fn new() -> Self {
-        Local {
-            fs: Arc::new(StdFileSystem),
-        }
-    }
-}
-
-fn login_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
-}
-
-impl Authority for Local {
-    fn name(&self) -> String {
-        "local".into()
-    }
-    fn fs(&self) -> Fs {
-        self.fs.clone()
-    }
-    fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command {
-        let mut c = Command::new(program);
-        c.args(args).current_dir(cwd);
-        c
-    }
-    fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder {
-        let mut c = portable_pty::CommandBuilder::new(login_shell());
-        c.cwd(cwd);
-        c.env("TERM", "xterm-256color");
-        c.env("COLORTERM", "truecolor");
-        c
-    }
-}
-
-/// Quote a word for a POSIX shell.
-fn sh_quote(s: &str) -> String {
-    if !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-_./=:@%+,".contains(&b))
-    {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
-}
-
-/// Another machine over SSH: files through the editor's remote agent (one
-/// persistent connection, ranged reads, newline counting and searching on
-/// the remote side); processes and terminals through `ssh`, with the port,
-/// identity and options of the agent's connection.
-pub struct Ssh {
-    pub params: ConnectionParams,
-    pub fs: Fs,
-    /// Keeps the connection's async tasks alive.
-    pub _runtime: tokio::runtime::Runtime,
-    pub _conn: fresh::services::remote::SshConnection,
-}
-
-/// `ssh … <target> 'cd <cwd> && exec <program> <args…>'`: a non-interactive
-/// command on the host of `params`.
-fn ssh_command(params: &ConnectionParams, program: &str, args: &[String], cwd: &Path) -> Command {
-    let mut c = Command::new("ssh");
-    c.args([
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-    ]);
-    if let Some(port) = params.port {
-        c.arg("-p").arg(port.to_string());
-    }
-    if let Some(id) = &params.identity_file {
-        c.arg("-i").arg(id);
-    }
-    c.args(&params.extra_args).arg(params.ssh_target());
-    let mut line = format!(
-        "cd {} && exec {}",
-        sh_quote(&cwd.to_string_lossy()),
-        sh_quote(program)
-    );
-    for a in args {
-        line.push(' ');
-        line.push_str(&sh_quote(a));
-    }
-    c.arg(line);
-    c
-}
-
-/// The editor's own SSH terminal command: a login shell in `cwd`, with auth
-/// prompts allowed to surface in the terminal.
-fn ssh_shell_command(params: &ConnectionParams, cwd: &Path) -> portable_pty::CommandBuilder {
-    let mut c = portable_pty::CommandBuilder::new("ssh");
-    c.args(fresh::services::remote::build_ssh_terminal_args(
-        params,
-        Some(&cwd.to_string_lossy()),
-    ));
-    c.env("TERM", "xterm-256color");
-    c
-}
-
-impl Authority for Ssh {
-    fn name(&self) -> String {
-        format!("ssh {}", self.params)
-    }
-    fn fs(&self) -> Fs {
-        self.fs.clone()
-    }
-    fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command {
-        ssh_command(&self.params, program, args, cwd)
-    }
-    fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder {
-        ssh_shell_command(&self.params, cwd)
-    }
-}
-
-/// A container whose workspace is bind-mounted at the same path, as in a
-/// devcontainer: files stay on this machine; processes, terminals and
-/// language servers run in the container through `docker exec`.
-pub struct Container {
-    /// The container's name or id.
-    pub id: String,
-    pub fs: Fs,
-}
-
-impl Authority for Container {
-    fn name(&self) -> String {
-        format!("container {}", self.id)
-    }
-    fn fs(&self) -> Fs {
-        self.fs.clone()
-    }
-    fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command {
-        // `-i` keeps stdin open: a language server is spoken to on it.
-        let mut c = Command::new("docker");
-        c.args(["exec", "-i", "-w"])
-            .arg(cwd)
-            .arg(&self.id)
-            .arg(program)
-            .args(args);
-        c
-    }
-    fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder {
-        let mut c = portable_pty::CommandBuilder::new("docker");
-        c.args(["exec", "-it", "-w"]);
-        c.arg(cwd);
-        c.args([
-            "-e",
-            "TERM=xterm-256color",
-            "-e",
-            "COLORTERM=truecolor",
-            &self.id,
-            "sh",
-            "-c",
-            "exec \"${SHELL:-/bin/sh}\" -l",
-        ]);
-        c
-    }
-}
-
-/// The editor's remote agent run on this machine, without ssh: the whole
-/// remote path (agent protocol, ranged reads, remote-side counting and
-/// searching) with only the transport left out. Processes and terminals run
-/// locally.
-pub struct Agent {
-    pub fs: Fs,
-    pub _runtime: tokio::runtime::Runtime,
-}
-
-impl Authority for Agent {
-    fn name(&self) -> String {
-        "agent".into()
-    }
-    fn fs(&self) -> Fs {
-        self.fs.clone()
-    }
-    fn command(&self, program: &str, args: &[String], cwd: &Path) -> Command {
-        Local::new().command(program, args, cwd)
-    }
-    fn shell_command(&self, cwd: &Path) -> portable_pty::CommandBuilder {
-        Local::new().shell_command(cwd)
-    }
-}
 
 pub struct Workspace {
     pub root: PathBuf,
@@ -650,20 +447,7 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn argv(c: &Command) -> Vec<String> {
-        std::iter::once(c.get_program())
-            .chain(c.get_args())
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect()
-    }
-
-    fn pty_argv(c: &portable_pty::CommandBuilder) -> Vec<String> {
-        c.get_argv()
-            .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect()
-    }
+    use crate::authority::Local;
 
     fn local_ws() -> (tempfile::TempDir, Workspace) {
         let dir = tempfile::tempdir().unwrap();
@@ -673,89 +457,6 @@ mod tests {
             authority: Arc::new(Local::new()),
         };
         (dir, ws)
-    }
-
-    #[test]
-    fn container_runs_processes_with_docker_exec() {
-        let c = Container {
-            id: "dev-1".into(),
-            fs: Arc::new(StdFileSystem),
-        };
-        let cmd = c.command("rust-analyzer", &["--stdio".into()], Path::new("/w s/p"));
-        assert_eq!(
-            argv(&cmd),
-            [
-                "docker",
-                "exec",
-                "-i",
-                "-w",
-                "/w s/p",
-                "dev-1",
-                "rust-analyzer",
-                "--stdio"
-            ]
-        );
-        // No local working directory: the path is the container's.
-        assert_eq!(cmd.get_current_dir(), None);
-        let sh = c.shell_command(Path::new("/w"));
-        assert_eq!(
-            pty_argv(&sh),
-            [
-                "docker",
-                "exec",
-                "-it",
-                "-w",
-                "/w",
-                "-e",
-                "TERM=xterm-256color",
-                "-e",
-                "COLORTERM=truecolor",
-                "dev-1",
-                "sh",
-                "-c",
-                "exec \"${SHELL:-/bin/sh}\" -l",
-            ]
-        );
-    }
-
-    #[test]
-    fn ssh_commands_carry_port_identity_and_options() {
-        let mut p = ConnectionParams::parse("me@box:2222").unwrap();
-        p.identity_file = Some("/k/id".into());
-        p.extra_args = vec!["-J".into(), "jump".into()];
-        let cmd = ssh_command(&p, "git", &["log".into(), "a b".into()], Path::new("/p q"));
-        assert_eq!(
-            argv(&cmd),
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                "-p",
-                "2222",
-                "-i",
-                "/k/id",
-                "-J",
-                "jump",
-                "me@box",
-                "cd '/p q' && exec git log 'a b'",
-            ]
-        );
-        let sh = pty_argv(&ssh_shell_command(&p, Path::new("/p")));
-        assert_eq!(sh[0], "ssh");
-        assert!(sh.windows(2).any(|w| w == ["-p", "2222"]), "{sh:?}");
-        assert!(sh.windows(2).any(|w| w == ["-i", "/k/id"]), "{sh:?}");
-        assert!(sh.iter().any(|a| a == "-t"), "{sh:?}");
-        assert!(sh.iter().any(|a| a == "me@box"), "{sh:?}");
-    }
-
-    #[test]
-    fn shell_quoting() {
-        assert_eq!(sh_quote("plain/path-1.rs"), "plain/path-1.rs");
-        assert_eq!(sh_quote(""), "''");
-        assert_eq!(sh_quote("it's"), "'it'\\''s'");
-        assert_eq!(sh_quote("$HOME"), "'$HOME'");
     }
 
     #[test]

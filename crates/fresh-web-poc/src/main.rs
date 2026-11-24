@@ -9,6 +9,7 @@
 //!
 //! Usage: `fresh-poc [--port N] [DIR]`, then open the printed URL.
 
+mod authority;
 #[macro_use]
 mod error;
 mod docs;
@@ -22,6 +23,7 @@ mod themes;
 mod workspace;
 
 use anyhow::{anyhow, Result};
+use authority::{Agent, Authority, Container, Local, Ssh};
 use docs::Docs;
 use error::{err, Code};
 use fresh_editor_core::model::filesystem::StdFileSystem;
@@ -30,7 +32,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use workspace::{Agent, Authority, Container, Local, Ssh, Workspace};
+use workspace::Workspace;
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -788,6 +790,14 @@ impl App {
         })
     }
 
+    /// The server is exiting: stop every process, terminal and language
+    /// server it started on the host.
+    fn shutdown(&self) {
+        self.procs.stop_all();
+        self.terms.close_all();
+        self.lsp.stop_all();
+    }
+
     fn drop_client(&self, client: u64) {
         self.hub.forget(client);
         self.watches.drop_client(client);
@@ -1073,23 +1083,35 @@ fn main() -> Result<()> {
         // the same paths: the root must be bind-mounted at its own path.
         let seen = authority
             .command(
-                "test",
-                &["-d".into(), root.to_string_lossy().into()],
+                "sh",
+                &[
+                    "-c".into(),
+                    "if test -d \"$1\"; then echo folder; else echo absent; fi".into(),
+                    "sh".into(),
+                    root.to_string_lossy().into(),
+                ],
                 Path::new("/"),
             )
+            .0
             .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| anyhow!("{}: cannot run docker: {e}", authority.name()))?;
-        let err = String::from_utf8_lossy(&seen.stderr);
-        if !err.trim().is_empty() {
-            return Err(anyhow!("{}: {}", authority.name(), err.trim()));
-        }
-        if !seen.status.success() {
-            return Err(anyhow!(
-                "{}: {} is not a folder in the container; bind-mount it at the same path",
-                authority.name(),
-                root.display(),
-            ));
+        match String::from_utf8_lossy(&seen.stdout).trim() {
+            "folder" => {}
+            "absent" => {
+                return Err(anyhow!(
+                    "{}: {} is not a folder in the container; bind-mount it at the same path",
+                    authority.name(),
+                    root.display(),
+                ))
+            }
+            _ => {
+                return Err(anyhow!(
+                    "{}: {}",
+                    authority.name(),
+                    String::from_utf8_lossy(&seen.stderr).trim()
+                ))
+            }
         }
     }
     let ws = Arc::new(Workspace {
@@ -1116,9 +1138,24 @@ async fn serve(app: Arc<App>, port: u16) -> Result<()> {
         .route("/events", get(events))
         .route("/skins/{id}/{*path}", get(skin_file))
         .fallback(get(static_file))
-        .with_state(app);
+        .with_state(app.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    axum::serve(listener, router).await?;
+    tokio::select! {
+        r = axum::serve(listener, router) => r?,
+        r = stop_signal() => r?,
+    }
+    // Everything started on the host ends with the server.
+    tokio::task::spawn_blocking(move || app.shutdown()).await?;
+    Ok(())
+}
+
+/// Interrupt or termination.
+async fn stop_signal() -> Result<()> {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        r = tokio::signal::ctrl_c() => r?,
+        _ = term.recv() => {}
+    }
     Ok(())
 }
 

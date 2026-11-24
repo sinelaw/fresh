@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 fresh-editor = { path = "../fresh-editor" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 axum = "0.8"
 futures-util = "0.3"
 portable-pty = "0.9"

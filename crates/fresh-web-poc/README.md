@@ -20,7 +20,7 @@ listens on loopback only). `DIR` defaults to the current directory.
 |---|---|
 | *(none)* | Local: files, processes and terminals on this machine. |
 | `--ssh [user@]host[:port]` | The workspace is on another machine. Files go through the editor's remote agent (a Python script bootstrapped over one `ssh` connection: ranged reads, line counting, walking and searching on the remote side). Processes, terminals and language servers run there through `ssh` with the same port, identity and options; `BatchMode` is on for processes, so key-based login is required. Needs `python3` on the remote. |
-| `--container NAME_OR_ID` | A devcontainer-style workspace: files are read on this machine; processes, terminals and language servers run in the running container through `docker exec -w <dir>`. `DIR` must be bind-mounted at the same path in the container; this is checked at start. |
+| `--container NAME_OR_ID` | A devcontainer-style workspace: files are read on this machine; processes, terminals and language servers run in the running container through `docker exec`. `DIR` must be bind-mounted at the same path in the container; this is checked at start. |
 | `--agent` | The remote agent run locally without `ssh`: the whole remote file path minus the transport, for testing it. Processes are local. |
 | `--slow-network` | Adds network-like delays to every filesystem call (any authority). |
 | `--restricted` | Start untrusted: no processes, terminals or language servers (and no probing for them) until the client trusts the workspace. Files and documents work. |
@@ -32,13 +32,25 @@ reload.
 ## Architecture
 
 **The server is the data authority.** It holds one workspace on one host,
-reached through an `Authority` (`src/workspace.rs`): `Local`, `Ssh`,
+reached through an `Authority` (`src/authority.rs`): `Local`, `Ssh`,
 `Container` or `Agent`. The authority supplies the host's filesystem (the
 editor's `FileSystem` trait: `StdFileSystem` or the agent's
 `RemoteFileSystem`) and builds every process — a client's `proc.run`, a
 terminal's shell, a language server and the probe that finds the servers.
 Nothing in the server touches the disk or spawns a program except through it;
 the one exception is reading the client's own files under `FRESH_POC_WEB`.
+
+Every process is one `sh` script on the host, built the same way for every
+authority. On another host (SSH, container) the program runs in the user's
+login environment there (`$SHELL -l`, its stdout output discarded), so `PATH`
+is an interactive login's; on this machine it inherits the server's
+environment. The script records its pid in `/tmp/fresh-poc-*.pid` on the
+host and leads its own process group (sshd and `docker exec` start it as a
+session; locally the server starts it as a group), so killing a process
+signals its whole group on the host (`SIGKILL`), closing a terminal hangs up
+its shell there (`SIGHUP`, passed on to its jobs), and a process stopped
+before its script ran exits at once. A disconnected client's processes, and
+on `SIGINT`/`SIGTERM` everything the server started, are stopped this way.
 
 **Documents** (`src/docs.rs`) are the editor's lazy piece-tree `Buffer`
 behind a windowed API: a client asks for runs of lines around a byte offset
@@ -365,9 +377,6 @@ properties, most of the plugin API — have no type yet.
 
 ## Limits
 
-- Killing a process or closing a terminal kills the local `ssh` or
-  `docker exec` client; the remote or in-container process ends when its
-  input closes or on hang-up, not by signal.
 - Ignore rules are git's own files only (`.git/info/exclude` and every
   `.gitignore`), not `core.excludesFile`. Each folder's `.gitignore` costs one
   read through the filesystem per walk (a round trip on a remote host).

@@ -1,13 +1,14 @@
 //! Terminals: a PTY on the workspace's host, and its raw output.
 //!
 //! The server does not emulate a terminal. It spawns the host's shell on a
-//! PTY (through the workspace's [`Authority`](crate::workspace::Authority), so
+//! PTY (through the workspace's [`Authority`](crate::authority::Authority), so
 //! the same code serves a local shell, an SSH session or a devcontainer) and
 //! streams the bytes. Each client runs its own terminal emulator (xterm.js)
 //! on them. A replay buffer of recent output lets a client that attaches
 //! late, or reconnects, rebuild the screen: every chunk carries its offset in
 //! the stream, and the replay says where it ends, so nothing is shown twice.
 
+use crate::authority::{Authority, HostProc};
 use crate::hub::Hub;
 use crate::workspace::Workspace;
 use anyhow::{anyhow, Result};
@@ -35,6 +36,9 @@ struct Term {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     size: (u16, u16),
+    authority: Arc<dyn Authority>,
+    /// The shell on the host.
+    host: HostProc,
 }
 
 #[derive(Default)]
@@ -57,9 +61,10 @@ impl Terms {
                 pixel_height: 0,
             })
             .map_err(|e| anyhow!("{e}"))?;
+        let (command, host) = ws.authority.shell_command(&ws.root);
         let child = pair
             .slave
-            .spawn_command(ws.authority.shell_command(&ws.root))
+            .spawn_command(command)
             .map_err(|e| anyhow!("{e}"))?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(|e| anyhow!("{e}"))?;
@@ -72,6 +77,7 @@ impl Terms {
         }));
         {
             let out = out.clone();
+            let (authority, host) = (ws.authority.clone(), host.clone());
             std::thread::spawn(move || {
                 let mut buf = [0u8; 32768];
                 loop {
@@ -95,6 +101,9 @@ impl Terms {
                 }
                 out.lock().unwrap().exited = true;
                 hub.broadcast(&json!({"ev": "term.exit", "term": id}), None);
+                // The shell's pid file outlives it (the shell replaced the
+                // script that would have removed it).
+                authority.release(&host);
             });
         }
         self.map.lock().unwrap().insert(
@@ -105,6 +114,8 @@ impl Terms {
                 master: pair.master,
                 child,
                 size: (cols, rows),
+                authority: ws.authority.clone(),
+                host,
             },
         );
         Ok(id)
@@ -164,8 +175,24 @@ impl Terms {
     pub fn close(&self, id: u64) {
         let term = self.map.lock().unwrap().remove(&id);
         if let Some(mut t) = term {
+            // A hang-up to the shell on the host (it passes it on to its
+            // jobs), then the local end. The local child lives as long as
+            // the shell (or the link to it): only a running one is stopped.
+            let running = matches!(t.child.try_wait(), Ok(None));
+            if running {
+                t.authority.stop(&t.host);
+            }
             let _ = t.child.kill();
             let _ = t.child.wait();
+            if running {
+                t.authority.release(&t.host);
+            }
+        }
+    }
+
+    pub fn close_all(&self) {
+        for id in self.list() {
+            self.close(id);
         }
     }
 
