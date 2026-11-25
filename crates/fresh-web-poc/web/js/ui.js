@@ -28,8 +28,10 @@ export function h(type, props, children = []) {
 const ROW_H = 22;
 
 export class UIKit {
-  constructor(app) {
-    this.app = app;
+  // `editor` (main.js): focus back to the editor, and redraw its panes
+  // (the dock took or gave room).
+  constructor(editor) {
+    this.editor = editor;
     this.panels = new Map();
     this.dock = $("#dock");
     this.dockTabs = this.dock.querySelector(".dock-tabs");
@@ -67,7 +69,7 @@ export class UIKit {
   // A context menu of `items`, the one open (`closed()` when it closes).
   contextMenu(items, closed) {
     for (const open of this.contexts) open.close();
-    const m = makeMenu(items, menuSpec(() => { const app = this.app(); app.focusPane(app.activePane); }, [], null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
+    const m = makeMenu(items, menuSpec(() => { this.editor.focus(); }, [], null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
     this.contexts = [m];
     return m;
   }
@@ -107,7 +109,7 @@ export class UIKit {
     for (const x of this.panels.values()) if (x.place === "bottom") x.el.style.display = shown.includes(x) ? "flex" : "none";
     setClass(this.dock, "hidden", ![...this.panels.values()].some((x) => x.place === "bottom"));
     this.renderDockTabs();
-    this.app().renderAll();
+    this.editor.redraw();
   }
   renderDockTabs() {
     this.dockTabs.innerHTML = "";
@@ -173,7 +175,7 @@ class Panel {
       e.preventDefault();
       e.stopPropagation();
       if (this.place === "dialog" || this.place === "bar") this.close();
-      else this.kit.app().focusPane(this.kit.app().activePane);
+      else this.kit.editor.focus();
     });
     const backdrop = this.backdrop;
     if (backdrop) backdrop.onmousedown = (e) => { if (e.target === backdrop) this.close(); };
@@ -184,7 +186,7 @@ class Panel {
     if (this.place === "left") this.kit.left.classList.remove("hidden");
     if (this.place === "right") this.kit.right.classList.remove("hidden");
     if (this.place === "bar") this.kit.bar.classList.remove("hidden");
-    this.kit.app().renderAll();
+    this.kit.editor.redraw();
   }
 
   close() {
@@ -198,8 +200,8 @@ class Panel {
     if (this.place === "right" && !this.kit.right.children.length) this.kit.right.classList.add("hidden");
     if (this.place === "bar" && !this.kit.bar.children.length) this.kit.bar.classList.add("hidden");
     this.onClose?.();
-    this.kit.app().focusPane(this.kit.app().activePane);
-    this.kit.app().renderAll();
+    this.kit.editor.focus();
+    this.kit.editor.redraw();
   }
 
   get open() { return this.kit.panels.get(this.id) === this; }

@@ -76,6 +76,10 @@ function matching(items, q) {
   return hits.map((it, i) => ({ lead: lead(it), i, it })).sort((a, b) => a.lead - b.lead || a.i - b.i).map((x) => x.it);
 }
 
+// `path` from `root` (as it is if not under it).
+/** function relative(root: String, path: String) => String */
+function relative(root, path) { return path.startsWith(root + "/") ? path.slice(root.length + 1) : path; }
+
 /** function commonPrefix(list: String[]) => String */
 function commonPrefix(list) {
   let p = list.at(0) ?? "";
@@ -84,8 +88,10 @@ function commonPrefix(list) {
 }
 
 export class Palette {
-  constructor(app) {
-    this.app = app;
+  // `editor` (main.js): where the active view is (to put it back), and the
+  // commands, buffers, recent files and files the palette lists.
+  constructor(editor) {
+    this.editor = editor;
     this.el = $("#prompt");
     this.label = $("#prompt .label");
     this.input = $("#prompt input");
@@ -114,8 +120,7 @@ export class Palette {
 
   // The palette, in the mode `prefix` selects.
   palette(prefix) {
-    const v = this.app().view();
-    const origin = v ? [{ v, pos: v.primary.pos, top: v.top }] : [];
+    const origin = this.editor.here();
     let moved = false;
     /** const modes: String[] */
     const modes = [];
@@ -125,59 +130,58 @@ export class Palette {
       (q) => {
         // Preview a `:N` jump; Escape puts the view back.
         const m = /^:(\d+)/.exec(q);
-        if (m !== null && origin.length) this.app().gotoLine(parseInt(m[1], 10) - 1, 0, { history: false });
+        if (m !== null) this.editor.goto(parseInt(m[1], 10) - 1);
       },
       // A provider's item previews where it goes.
       (it) => { if (previewed(it)) moved = true; },
       (it, q) => {
         // The jump is remembered from where the palette opened, not from
         // the preview.
-        if (/^:\d/.test(q)) for (const o of origin) this.app().pushHistory(o.v, o.pos);
+        if (/^:\d/.test(q)) for (const o of origin) o.remember();
         if (!ran(it)) this.openTyped(q);
       },
       () => {
         if (!moved && !/^:\d/.test(this.input.value)) return;
-        for (const o of origin) { o.v.setTop(o.top); this.app().editing.place(o.v.pane, o.pos, false); }
+        for (const o of origin) o.restore();
       }));
   }
 
   async paletteItems(q) {
-    const app = this.app();
+    const ed = this.editor;
     if (q.startsWith(">")) {
       const terms = q.slice(1).toLowerCase().split(/\s+/).filter(Boolean);
-      return [...app.commands]
-        .filter(([, c]) => !c.hidden && terms.every((t) => c.title.toLowerCase().includes(t)))
-        .map(([id, c]) => paletteItem(c.title, [app.keyFor(id), c.source !== "core" ? c.source : ""].filter(Boolean).join(" · "), () => { app.run(id); }))
+      return ed.commands()
+        .filter((c) => terms.every((t) => c.title.toLowerCase().includes(t)))
+        .map((c) => paletteItem(c.title, [c.key, c.source !== "core" ? c.source : ""].filter(Boolean).join(" · "), c.run))
         .sort((a, b) => a.label.localeCompare(b.label));
     }
     if (q.startsWith("#")) {
       const t = q.slice(1).toLowerCase();
-      return [...app.buffers.values()]
+      return ed.buffers()
         .filter((b) => (b.path || b.name).toLowerCase().includes(t))
-        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", () => { app.showBuffer(b, "tab", { preview: null, focus: true }); }));
+        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path ? relative(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
     }
     const pr = this.providers.get(q[0]);
     for (const m of modeList(pr)) return await m.items(q.slice(1).trim());
     if (q.startsWith(":")) {
       const n = parseInt(q.slice(1), 10);
-      return [n > 0 ? paletteItem(`Go to line ${n}`, null, () => { app.gotoLine(n - 1, 0, { history: false }); }) : paletteItem("Type a line number", null, null)];
+      return [n > 0 ? paletteItem(`Go to line ${n}`, null, () => { ed.goto(n - 1); }) : paletteItem("Type a line number", null, null)];
     }
     const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
     // Nothing typed: the files opened lately.
     if (!q.trim()) {
-      const rel = (p) => (p.startsWith(app.root + "/") ? p.slice(app.root.length + 1) : p);
-      return app.recentFiles().map((p) => paletteItem(rel(p), "recent", () => { app.openFile(p, { line: null, column: 1, place: "tab", preview: null, focus: true }); }));
+      return ed.recent().map((p) => paletteItem(relative(ed.root(), p), "recent", () => { ed.open(p, null, 1); }));
     }
     if (!m) return [];
     const files = (await rpc("fs.find", { query: m[1] })).files;
     return files.map((f) => paletteItem(f, null, () => {
-      app.openFile(f, { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true });
+      ed.open(f, m[2] ? Number(m[2]) : null, m[3] ? Number(m[3]) : 1);
     }));
   }
 
   openTyped(q) {
     const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
-    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app().openFile(m[1], { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true });
+    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.editor.open(m[1], m[2] ? Number(m[2]) : null, m[3] ? Number(m[3]) : 1);
   }
 
   // Pick from a list (`o`: a PickOptions, types/fresh.d.js). Enter with
@@ -267,7 +271,7 @@ export class Palette {
   close() {
     this.specs = [];
     this.el.classList.add("hidden");
-    this.app().focusPane(this.app().activePane);
+    this.editor.focus();
   }
 
   accept() {

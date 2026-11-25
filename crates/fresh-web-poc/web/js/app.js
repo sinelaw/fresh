@@ -98,6 +98,9 @@ const MODIFIERS = new Map([["C", "Ctrl"], ["M", "Alt"], ["S", "Shift"]]);
 /** function modeKey(modes: Map<String, ModeKey[]>, mode: String | Null, k: String) => ModeKey | Undefined */
 function modeKey(modes, mode, k) { return mode === null ? undefined : (modes.get(mode) ?? []).find((b) => b.key === k); }
 
+/** function spot(remember: () => Undefined, restore: () => Undefined) => Spot */
+function spot(remember, restore) { return { remember, restore }; }
+
 export class App {
   constructor(c) {
     this.buffers = new Map();
@@ -394,6 +397,14 @@ export class App {
   renderAll() { for (const p of this.panes()) { p.renderTabs(); p.scheduleRender(); } }
   renderBuffer(id) { for (const p of this.panes()) if (p.view?.buf.id === id) p.scheduleRender(); }
   view() { return this.activePane?.view || null; }
+  // Where the active view is, to go back to (a list of at most one):
+  // remembered for Go Back, or restored.
+  here() {
+    const v = this.view();
+    if (!v) return [];
+    const pos = v.primary.pos, top = v.top;
+    return [spot(() => { this.pushHistory(v, pos); }, () => { v.setTop(top); this.editing.place(v.pane, pos, false); })];
+  }
   focusPane(p) {
     if (!p) return;
     this.scrollDriver = null;

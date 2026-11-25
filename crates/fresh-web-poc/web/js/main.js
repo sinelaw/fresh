@@ -32,9 +32,6 @@ async function main() {
     params.set("ws", String(ws.id));
     history.replaceState(null, "", `?${params}`);
   }
-  // Each part gets its own getter for the application (made below): one
-  // function shared by all of them would make the checker take their
-  // classes for one type (each calls it as its method, `this.app()`).
   // What each part asks of the editor: the few functions it needs, not the
   // whole application. The terminal panel: say something in the status
   // bar, give the keyboard back, lay the window out again, and let the
@@ -78,6 +75,28 @@ async function main() {
     isOn: (kind, name) => app.isOn(kind, name),
     focus: () => { app.focusPane(app.activePane); },
   };
+  // The palette: where the active view is (to put it back after a
+  // preview), go to a line, and the commands, buffers and files it lists.
+  const paletteEditor = {
+    here: () => app.here(),
+    goto: (line) => { app.gotoLine(line, 0, { history: false }); },
+    commands: () => [...app.commands].filter(([, c]) => !c.hidden).map(([id, c]) => ({ title: c.title, key: app.keyFor(id), source: c.source, run: () => { app.run(id, undefined); } })),
+    buffers: () => [...app.buffers.values()].map((b) => ({ name: b.name, path: b.path, modified: b.modified, stored: b.doc !== null, show: () => { app.showBuffer(b, "tab", { preview: null, focus: true }); } })),
+    root: () => app.root,
+    recent: () => app.recentFiles(),
+    open: (path, line, column) => { app.openFile(path, { line, column, place: "tab", preview: null, focus: true }); },
+    focus: () => { app.focusPane(app.activePane); },
+  };
+  // The panel kit: give the keyboard back, and redraw the panes when the
+  // dock takes or gives room.
+  const uiEditor = {
+    focus: () => { app.focusPane(app.activePane); },
+    redraw: () => { app.renderAll(); },
+  };
+  // The parts not yet given their own ports each get their own getter for
+  // the application: one function shared by all of them would make the
+  // checker take their classes for one type (each calls it as its method,
+  // `this.app()`).
   const app = new App({
     settings: loadSettings(),
     userKeys: loadUserKeys(),
@@ -87,8 +106,8 @@ async function main() {
     orchestrator: new Orchestrator(() => app, hello.workspaces, hello.folders, hello.machines),
     skins: new Skins(skinsEditor, ws === null ? null : ws.id),
     editing: new Editing(() => app),
-    ui: new UIKit(() => app),
-    prompt: new Palette(() => app),
+    ui: new UIKit(uiEditor),
+    prompt: new Palette(paletteEditor),
     term: new TerminalPanel(terminalEditor, $("#terminal")),
     host: new Host((text) => { app.report(text); }),
     macros: new Macros(macrosEditor),

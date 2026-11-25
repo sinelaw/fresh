@@ -367,6 +367,9 @@
 
 // A row a palette mode lists (`fresh.paletteMode`): `run` when it is
 // chosen, `preview` when it is selected; a row with neither is a note.
+// Where a view was, to go back to: remembered for Go Back, or restored.
+/** type Spot = {remember: () => Undefined, restore: () => Undefined} */
+
 /** type PaletteItem = {
  *   label: String,
  *   detail: String | Null,
