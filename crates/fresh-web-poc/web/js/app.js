@@ -178,6 +178,7 @@ export class App {
     for (const c of this.macros.commands()) this.commands.set(c.id, { title: c.title, run: asCommand(c.run), source: "core", hidden: false });
     this.menubar.listen();
     for (const c of this.menubar.commands()) this.commands.set(c.id, { title: c.title, run: asCommand(c.run), source: "core", hidden: true });
+    for (const c of this.orchestrator.commands()) this.commands.set(c.id, { title: c.title, run: c.run, source: "core", hidden: false });
     this.orchestrator.listen();
     this.relayout();
     new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));

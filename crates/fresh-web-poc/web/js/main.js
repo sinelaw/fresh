@@ -131,17 +131,41 @@ async function main() {
     lspPosition: (b, pos) => app.lspPosition(b, pos),
     lspOffset: (b, line, character) => app.lspOffset(b, line, character),
   };
-  // The parts not yet given their own ports each get their own getter for
-  // the application: one function shared by all of them would make the
-  // checker take their classes for one type (each calls it as its method,
-  // `this.app()`).
+  // The orchestrator: the workspace this page views (its id, root and
+  // trust, and that it was closed); saying, asking and confirming; the keys
+  // it binds; its status bar item; the panels and menus it shows; and the
+  // terminals it reports on and runs agents in.
+  const orchestratorEditor = {
+    workspaceId: () => app.workspace?.id ?? null,
+    root: () => app.root,
+    trusted: () => app.trusted,
+    closed: () => { app.workspace = null; },
+    say: (text) => { app.setStatus(text); },
+    focus: () => { app.focusPane(app.activePane); },
+    pick: (o) => { app.prompt.open(o); },
+    ask: (o) => app.prompt.ask(o),
+    confirm: (title, yes) => app.confirm(title, yes),
+    bindKey: (key, id) => { app.bindKey(key, id); },
+    passKey: (key) => { app.terminalKeys.add(key); },
+    status: (text, o) => { app.statusItem("orchestrator").set(text, o); },
+    panel: (o) => app.ui.panel(o),
+    shown: (id) => app.ui.shown(id),
+    menu: (items, at) => { app.ui.menu(items, at); },
+    dropdown: (items, anchor) => { app.ui.dropdown(items, anchor); },
+    terminals: (states) => { app.term.states(states); },
+    runInTerminal: async (command, resume) => {
+      const id = await app.term.create(null, command, resume);
+      if (!app.term.visible) await app.term.toggle();
+      app.term.select(id);
+    },
+  };
   const app = new App({
     settings: loadSettings(),
     userKeys: loadUserKeys(),
     session: new Session(),
     workspace: ws,
     params,
-    orchestrator: new Orchestrator(() => app, hello.workspaces, hello.folders, hello.machines),
+    orchestrator: new Orchestrator(orchestratorEditor, hello.workspaces, hello.folders, hello.machines),
     skins: new Skins(skinsEditor, ws === null ? null : ws.id),
     editing: new Editing(editingEditor),
     ui: new UIKit(uiEditor),
