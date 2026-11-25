@@ -14,7 +14,7 @@
 // focus and the caret back on the control with the same key. Lists are
 // virtualised (any number of items) and keyboard-navigable.
 
-import { $, setClass } from "./dom.js";
+import { $, setClass, escapeHtml } from "./dom.js";
 import { color } from "./highlight.js";
 import { makeMenu, menuSpec } from "./menu.js";
 
@@ -505,7 +505,8 @@ class Panel {
     el?._move(d, e || null);
   }
 
-  // A tree: nodes {label, children?, data, open?}; expansion is kept by path.
+  // A tree: nodes {id, label, children, open, leaf, data} (a leaf has no
+  // children, a folder may have none); expansion is kept by id.
   treeView(n) {
     const p = n.props;
     const key = p.key || "tree";
@@ -515,7 +516,7 @@ class Panel {
     const walk = (nodes, depth, path) => {
       nodes.forEach((nd, i) => {
         const id = nd.id ?? `${path}/${i}`;
-        const isOpen = nd.children && (open.has(id) || (nd.open && !open.has("!" + id)));
+        const isOpen = !nd.leaf && (open.has(id) || (nd.open && !open.has("!" + id)));
         rows.push({ nd, depth, id, isOpen });
         if (isOpen) walk(nd.children, depth + 1, id);
       });
@@ -526,11 +527,11 @@ class Panel {
       items: rows,
       depth: (r) => r.depth,
       render: (r) => h("row", { class: "ui-tree-row" }, [
-        h("text", { class: "ui-tree-indent" }, [" ".repeat(r.depth * 2) + (r.nd.children ? (r.isOpen ? "▾ " : "▸ ") : "  ")]),
+        h("text", { class: "ui-tree-indent" }, [" ".repeat(r.depth * 2) + (r.nd.leaf ? "  " : r.isOpen ? "▾ " : "▸ ")]),
         typeof r.nd.label === "string" ? h("text", {}, [r.nd.label]) : r.nd.label,
       ]),
       onActivate: (r, _i, how) => {
-        if (r.nd.children) {
+        if (!r.nd.leaf) {
           // A folder opens or closes on its first click.
           if (how === "double") return;
           if (r.isOpen) { open.delete(r.id); open.add("!" + r.id); } else { open.add(r.id); open.delete("!" + r.id); }
@@ -566,8 +567,7 @@ class Panel {
 // headings, paragraphs, lists, quotes, fenced code, rules, and inline code,
 // bold, italic and links. Everything is escaped first; links keep only web,
 // mail and relative targets.
-const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-const esc = (t) => t.replace(/[&<>"']/g, (c) => ESC[c]);
+const esc = escapeHtml;
 function inline(t) {
   return t.split(/(`[^`]+`)/).map((part, i) => {
     if (i % 2) return `<code>${esc(part.slice(1, -1))}</code>`;

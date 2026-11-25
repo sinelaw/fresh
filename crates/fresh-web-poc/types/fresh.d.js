@@ -281,6 +281,41 @@
  *   openBelow: (DOMRect, Boolean) => Undefined,
  * } */
 
+// A skin as the server lists it (`skin.list`, src/skins.rs): what it
+// extends, its frame ("full" or "bezel"), its scale (null: the base's),
+// its furniture stylesheet and theme, and whether it is built in or the
+// user's ("builtin", "user").
+/** type SkinInfo = {
+ *   id: String,
+ *   name: String,
+ *   description: String,
+ *   author: String,
+ *   extends: String | Null,
+ *   frame: String,
+ *   scale: Number | Null,
+ *   furniture: String | Null,
+ *   theme: String | Null,
+ *   keys: String,
+ *   source: String,
+ * } */
+
+// Pick from a list (`fresh.pick`): `value` is the text typed at first;
+// `onChange` runs as an item is selected (a preview), `onAccept` with the
+// item chosen, `onCancel` when it is given up (Escape, or Enter with
+// nothing left to pick).
+/** type PickItem<T> = {label: String, detail: String, value: T} */
+/** type PickOptions<T> = {
+ *   title: String,
+ *   value: String,
+ *   items: PickItem<T>[],
+ *   onAccept: (PickItem<T>) => Undefined,
+ *   onChange: (PickItem<T>) => Undefined,
+ *   onCancel: () => Undefined,
+ * } */
+// Ask for text (`fresh.input`): `value` the text at first (all selected
+// when `select`), `hint` shown under it.
+/** type AskOptions = {title: String, value: String, hint: String, select: Boolean} */
+
 // A row a palette mode lists (`fresh.paletteMode`): `run` when it is
 // chosen, `preview` when it is selected; a row with neither is a note.
 /** type PaletteItem = {

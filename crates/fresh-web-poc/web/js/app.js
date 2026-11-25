@@ -387,18 +387,24 @@ export class App {
     if (this.maximized.length > 0 && !this.maximized.includes(p)) { this.maximized = [p]; this.showMaximized(); }
     if (changed) { this.renderAll(); if (p.view) this.host.emitBuffer("buffer.activated", p.view.buf, [], false); }
   }
-  split(dir, ratio = 0.5, buf = null) {
+  // Split the active split in direction `dir` ("h", "v"), the new one
+  // `ratio` of it, showing `shown` (a list of at most one buffer).
+  split(dir, ratio, shown) {
     const old = this.activePane;
     if (old.view) this.keep(old.view);
     const np = new Pane(() => this);
     np.listen();
     this.layoutTree = withSplit(this.layoutTree, old, np, dir, ratio);
-    const b = buf || old.view?.buf;
-    if (b) np.show(b, null);
+    for (const b of shown) np.show(b, null);
     this.activePane = np;
     this.relayout();
     this.focusPane(np);
     return np;
+  }
+  // Split the active split in half, showing its buffer in both.
+  splitActive(dir) {
+    const v = this.activePane.view;
+    return this.split(dir, 0.5, v ? [v.buf] : []);
   }
   // Close a split. Files whose last views are in it and have unsaved
   // changes are asked about first (see `mayClose`).
@@ -482,7 +488,7 @@ export class App {
     if (place === "split" || place === "right") {
       const existing = this.panes().find((p) => p.view?.buf === b);
       if (existing) { this.focusPane(existing); return existing.view; }
-      return this.split(place === "split" ? "v" : "h", 0.6, b).view;
+      return this.split(place === "split" ? "v" : "h", 0.6, [b]).view;
     }
     const v = this.activePane.show(b, preview && !this.settings.preview_tabs ? false : preview);
     if (focus) this.focusPane(this.activePane);
@@ -622,18 +628,18 @@ export class App {
   tabMenu(pane, v, at) {
     const b = v.buf;
     const rel = b.path && b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
-    const copy = (t) => navigator.clipboard?.writeText(t).then(() => this.setStatus(`Copied ${t}`), () => this.setStatus("The browser did not allow writing the clipboard"));
+    const copy = (t) => navigator.clipboard?.writeText(t).then((_r) => this.setStatus(`Copied ${t}`)).catch((_e) => this.setStatus("The browser did not allow writing the clipboard"));
     const path = b.path;
     this.ui.menu([
       ...(v.preview ? [action("Keep Open", null, () => this.keep(v))] : []),
       action("Close", this.keyLabel("view.closeTab"), () => this.closeTab(pane, v)),
-      action("Close Others", null, () => this.closeTabs(pane, (x) => x !== v)),
+      action("Close Others", null, () => this.closeTabs(pane, (x, _i) => x !== v)),
       actionOf("Close to the Right", null, null, pane.views.indexOf(v) === pane.views.length - 1, () => this.closeTabs(pane, (x, i) => i > pane.views.indexOf(v))),
-      action("Close Saved", null, () => this.closeTabs(pane, (x) => !x.buf.modified)),
-      action("Close All", null, () => this.closeTabs(pane, () => true)),
+      action("Close Saved", null, () => this.closeTabs(pane, (x, _i) => !x.buf.modified)),
+      action("Close All", null, () => this.closeTabs(pane, (_x, _i) => true)),
       SEPARATOR,
-      action("Split Right", this.keyLabel("view.splitRight"), () => { this.focusPane(pane); this.split("h"); }),
-      action("Split Down", null, () => { this.focusPane(pane); this.split("v"); }),
+      action("Split Right", this.keyLabel("view.splitRight"), () => { this.focusPane(pane); this.splitActive("h"); }),
+      action("Split Down", null, () => { this.focusPane(pane); this.splitActive("v"); }),
       ...(path ? [
         SEPARATOR,
         action("Copy Path", null, () => copy(path)),
@@ -792,7 +798,7 @@ export class App {
   // panel) has its text written to the file, which then opens.
   async saveBufferAs(b) {
     const rel = (p) => (p && p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p || "");
-    const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name });
+    const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name, hint: "", select: true });
     if (!name) return;
     const path = name.startsWith("/") ? name : `${this.root}/${name}`;
     if (path === b.path) { await this.saveBuffer(b); return; }
@@ -1326,8 +1332,8 @@ export class App {
     });
     cmd("skin.select", "Select Skin…", () => this.skins.pick());
     cmd("skin.next", "Next Skin", () => this.skins.cycle(1));
-    cmd("view.splitRight", "View: Split Right", () => this.split("h"));
-    cmd("view.splitDown", "View: Split Down", () => this.split("v"));
+    cmd("view.splitRight", "View: Split Right", () => this.splitActive("h"));
+    cmd("view.splitDown", "View: Split Down", () => this.splitActive("v"));
     cmd("view.closeSplit", "View: Close Split", () => this.closePane(P()));
     cmd("view.nextSplit", "View: Next Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
     cmd("view.prevSplit", "View: Previous Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
@@ -1350,10 +1356,14 @@ export class App {
     cmd("file.recent", "File: Open Recent…", () => {
       const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
       const list = this.recentFiles();
+      if (!list.length) { this.setStatus("No recent files"); return; }
       this.prompt.open({
         title: "Open Recent",
-        items: list.length ? list.map((p) => ({ label: rel(p), detail: p.split("/").pop(), value: p })) : [{ label: "No recent files", value: null }],
-        onAccept: (it) => it.value && this.openFile(it.value, { line: null, column: 1, place: "tab", preview: null, focus: true }),
+        value: "",
+        items: list.map((p) => ({ label: rel(p), detail: p.split("/").pop() ?? "", value: p })),
+        onAccept: (it) => { this.openFile(it.value, { line: null, column: 1, place: "tab", preview: null, focus: true }); },
+        onChange: (_it) => {},
+        onCancel: () => {},
       });
     });
     cmd("view.maximizeSplit", "View: Toggle Maximize Split", () => {
@@ -1361,8 +1371,8 @@ export class App {
       this.showMaximized();
       this.renderAll();
     });
-    cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); if (p.view) this.closeTabs(p, (x) => x !== p.view); });
-    cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of this.panes()) await this.closeTabs(p, () => true); });
+    cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); if (p.view) this.closeTabs(p, (x, _i) => x !== p.view); });
+    cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of this.panes()) await this.closeTabs(p, (_x, _i) => true); });
     cmd("view.nextTab", "View: Next Tab", () => this.cycleTab(1));
     cmd("view.prevTab", "View: Previous Tab", () => this.cycleTab(-1));
     cmd("view.toggleWrap", "View: Toggle Line Wrap (Current Buffer)", () => { const v = V(); if (v) { v.opts.wrap = !v.opts.wrap; P().scheduleRender(); } });
@@ -1377,7 +1387,7 @@ export class App {
     cmd("view.scrollUp", "View: Scroll Up", () => P().scrollLines(-1), true);
     cmd("view.scrollDown", "View: Scroll Down", () => P().scrollLines(1), true);
     cmd("view.addRuler", "View: Add Ruler", async () => {
-      const t = await this.prompt.ask({ title: "Ruler at column", value: "80" });
+      const t = await this.prompt.ask({ title: "Ruler at column", value: "80", hint: "", select: true });
       const n = parseInt(t, 10);
       if (n > 0) { this.settings.rulers = [...new Set([...this.settings.rulers, n])].sort((a, b) => a - b); this.saveSettings(); }
     });
@@ -1490,7 +1500,7 @@ export class App {
     if (!b?.doc) { this.setStatus("Not a file"); return null; }
     const items = choices.map((c) => (c.value === current ? { ...c, detail: c.detail ? `${c.detail} · current` : "current" } : c));
     const i = Math.max(0, items.findIndex((c) => c.value === current));
-    return new Promise((resolve) => this.prompt.open({ title, items: [...items.slice(i), ...items.slice(0, i)], onAccept: (it) => resolve(it.value), onCancel: () => resolve(null) }));
+    return new Promise((resolve) => this.prompt.open({ title, value: "", items: [...items.slice(i), ...items.slice(0, i)], onAccept: (it) => { resolve(it.value); }, onChange: (_it) => {}, onCancel: () => { resolve(null); } }));
   }
   async setFormat(b, change) {
     try { await rpc("doc.set", { doc: b.doc, ...change }); } catch (e) { this.setStatus(String(e.detail || e.message || e)); }
@@ -1584,9 +1594,11 @@ export class App {
   choose(title, answers) {
     return new Promise((resolve) => this.prompt.open({
       title,
-      items: answers,
-      onAccept: (it) => resolve(it.value),
-      onCancel: () => resolve(null),
+      value: "",
+      items: answers.map((a) => ({ label: a.label, detail: "", value: a.value })),
+      onAccept: (it) => { resolve(it.value); },
+      onChange: (_it) => {},
+      onCancel: () => { resolve(null); },
     }));
   }
   // Ask a yes/no question: resolves true when `yes` is picked.

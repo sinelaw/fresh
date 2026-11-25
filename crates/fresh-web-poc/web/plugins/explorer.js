@@ -228,7 +228,7 @@ export function activate(app) {
   };
   const ops = {
     newFile: async (dir) => {
-      const name = await fresh.input(app, { title: "New file" });
+      const name = await fresh.input(app, { title: "New file", value: "", hint: "", select: true });
       if (!name) return;
       const p = `${dir}/${name}`;
       await fresh.create(app, p, false);
@@ -238,14 +238,14 @@ export function activate(app) {
       fresh.open(app, p, { line: null, column: 1, place: "tab", preview: null, focus: true });
     },
     newFolder: async (dir) => {
-      const name = await fresh.input(app, { title: "New folder" });
+      const name = await fresh.input(app, { title: "New folder", value: "", hint: "", select: true });
       if (!name) return;
       await fresh.create(app, `${dir}/${name}`, true);
       await expand(dir);
       await refresh();
     },
     rename: async (r) => {
-      const name = await fresh.input(app, { title: "Rename to", value: r.name });
+      const name = await fresh.input(app, { title: "Rename to", value: r.name, hint: "", select: true });
       if (!name || name === r.name) return;
       const to = r.path.replace(/[^/]*$/, name);
       await fresh.rename(app, r.path, to);

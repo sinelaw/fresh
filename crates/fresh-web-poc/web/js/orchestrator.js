@@ -35,7 +35,27 @@ import { h } from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
 import { asCommand } from "./commands.js";
-import { action, actionOf } from "./menu.js";
+import { action, actionOf, SEPARATOR } from "./menu.js";
+
+// What a dock row is: a group (pinned, a day), a folder, a workspace, or
+// one being made (by its key among those being made).
+/** type DockRow = {kind: "group"} | {kind: "folder", path: String} | {kind: "ws", w: WorkspaceEntry} | {kind: "pending", key: Number} */
+/** const GROUP_ROW: DockRow */
+const GROUP_ROW = { kind: "group" };
+/** function folderData(path: String) => DockRow */
+function folderData(path) { return { kind: "folder", path }; }
+/** function wsData(w: WorkspaceEntry) => DockRow */
+function wsData(w) { return { kind: "ws", w }; }
+/** function pendingData(key: Number) => DockRow */
+function pendingData(key) { return { kind: "pending", key }; }
+
+// The start of today and of this week (Monday), in ms.
+/** function dayStarts() => {day: Number, week: Number} */
+function dayStarts() {
+  const now = new Date();
+  const day = now.getTime() - (((now.getHours() * 60 + now.getMinutes()) * 60 + now.getSeconds()) * 1000 + now.getMilliseconds());
+  return { day, week: day - ((now.getDay() + 6) % 7) * 86400000 };
+}
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
@@ -89,7 +109,7 @@ export function displayName(w) {
 
 const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 const hostKind = (w) => (w.host.startsWith("ssh ") ? "ssh" : w.host.startsWith("container ") ? "container" : w.host === "agent" ? "agent" : "local");
-const leaf = (path) => path.split("/").pop();
+const leaf = (path) => path.slice(path.lastIndexOf("/") + 1);
 const parentOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
 export class Orchestrator {
@@ -261,12 +281,15 @@ export class Orchestrator {
   quickSwitch() {
     this.app().prompt.open({
       title: "Switch workspace",
+      value: "",
       items: this.list.filter((w) => w.status).map((w) => ({
         label: `${markOf(stateOf(w))} ${displayName(w)}${w.id === this.current ? " (this one)" : ""}`,
         detail: [w.folder, w.host, w.status.branch, w.status.attention].filter(Boolean).join(" · "),
         value: w.id,
       })),
-      onAccept: (it) => this.switchTo(it.value),
+      onAccept: (it) => { this.switchTo(it.value); },
+      onChange: (_it) => {},
+      onCancel: () => {},
     });
   }
 
@@ -355,7 +378,7 @@ export class Orchestrator {
     ]);
   }
 
-  wsNode(w) { return { id: `w${w.id}`, label: this.row(w), data: { kind: "ws", w } }; }
+  wsNode(w) { return { id: `w${w.id}`, label: this.row(w), children: [], open: false, leaf: true, data: wsData(w) }; }
 
   // The dock's tree: pinned workspaces, then folders (or days), then the
   // rest; workspaces being made last.
@@ -364,39 +387,33 @@ export class Orchestrator {
     const pinned = shown.filter((w) => w.pinned);
     const rest = shown.filter((w) => !w.pinned);
     const out = [];
-    if (pinned.length) out.push({ id: "g:pinned", label: this.folderRow("Pinned", pinned), children: pinned.map((w) => this.wsNode(w)), open: true, data: { kind: "group" } });
+    if (pinned.length) out.push({ id: "g:pinned", label: this.folderRow("Pinned", pinned), children: pinned.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
     if (this.prefs.group === "date") {
-      const day = new Date();
-      day.setHours(0, 0, 0, 0);
-      const week = new Date(day);
-      week.setDate(day.getDate() - ((day.getDay() + 6) % 7));
-      const when = (w) => w.status?.worked || w.worked || w.created || 0;
+      const { day, week } = dayStarts();
+      const when = (w) => (w.status === null ? 0 : w.status.worked) || w.created;
       const groups = [
-        ["Today", rest.filter((w) => when(w) >= day.getTime())],
-        ["This week", rest.filter((w) => when(w) < day.getTime() && when(w) >= week.getTime())],
-        ["Older", rest.filter((w) => when(w) < week.getTime())],
+        { label: "Today", items: rest.filter((w) => when(w) >= day) },
+        { label: "This week", items: rest.filter((w) => when(w) < day && when(w) >= week) },
+        { label: "Older", items: rest.filter((w) => when(w) < week) },
       ];
-      for (const [label, items] of groups) {
-        if (!items.length) continue;
-        items.sort((a, b) => when(b) - when(a));
-        out.push({ id: `g:${label}`, label: this.folderRow(label, items), children: items.map((w) => this.wsNode(w)), open: true, data: { kind: "group" } });
+      for (const g of groups) {
+        if (!g.items.length) continue;
+        const items = [...g.items].sort((a, b) => when(b) - when(a));
+        out.push({ id: `g:${g.label}`, label: this.folderRow(g.label, items), children: items.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
       }
     } else {
       const searching = !!this.filter.trim();
+      // A folder's node (none while searching finds nothing in it).
       const folder = (path) => {
-        const subs = this.folders.filter((f) => parentOf(f) === path).map(folder).filter(Boolean);
+        const subs = this.folders.filter((f) => parentOf(f) === path).flatMap((f) => folder(f));
         const own = rest.filter((w) => w.folder === path).map((w) => this.wsNode(w));
         const all = rest.filter((w) => w.folder === path || w.folder.startsWith(`${path}/`));
-        if (searching && !all.length) return null;
-        return { id: `f:${path}`, label: this.folderRow(leaf(path), all), children: [...subs, ...own], open: true, data: { kind: "folder", path } };
+        return searching && !all.length ? [] : [{ id: `f:${path}`, label: this.folderRow(leaf(path), all), children: [...subs, ...own], open: true, leaf: false, data: folderData(path) }];
       };
-      for (const f of this.folders.filter((x) => !x.includes("/"))) {
-        const n = folder(f);
-        if (n) out.push(n);
-      }
+      for (const f of this.folders.filter((x) => !x.includes("/"))) for (const n of folder(f)) out.push(n);
       for (const w of rest.filter((x) => !x.folder)) out.push(this.wsNode(w));
     }
-    for (const p of this.pending.filter((x) => !this.filter.trim() || x.name.toLowerCase().includes(this.filter.trim().toLowerCase()))) out.push({ id: `p${p.key}`, label: this.pendingRow(p), data: { kind: "pending", p } });
+    for (const p of this.pending.filter((x) => !this.filter.trim() || x.name.toLowerCase().includes(this.filter.trim().toLowerCase()))) out.push({ id: `p${p.key}`, label: this.pendingRow(p), children: [], open: false, leaf: true, data: pendingData(p.key) });
     return out;
   }
 
@@ -415,7 +432,7 @@ export class Orchestrator {
       h("row", {}, [h("input", {
         key: "q", value: this.filter, placeholder: "/ search workspaces", list: "dock",
         onInput: (v) => { this.filter = v; this.renderDock(); },
-        onKey: (e) => { if (e.key === "Escape" && this.filter) { this.filter = ""; this.renderDock(); panel.focus("dock"); return true; } return false; },
+        onKey: (e) => { if (e.key === "Escape" && this.filter !== "") { this.filter = ""; this.renderDock(); panel.focus("dock"); return true; } return false; },
         onEnter: () => panel.focus("dock"),
       })]),
       waiting || done
@@ -450,52 +467,63 @@ export class Orchestrator {
   }
 
   activate(d) {
-    if (d.kind === "ws") { if (d.w.error) this.retry(d.w); else this.switchTo(d.w.id); }
-    else if (d.kind === "pending" && d.p.error) this.launch(d.p.spec, true, d.p);
+    if (d.kind === "ws") { const w = d.w; if (w.error) this.retry(w); else this.switchTo(w.id); return; }
+    if (d.kind !== "pending") return;
+    const key = d.key;
+    const p = this.pending.find((x) => x.key === key);
+    if (p !== undefined && p.error) this.launch(p.spec, true, p);
   }
 
+  // A dock row's menu.
   rowMenu(d) {
     if (d.kind === "pending") {
-      return d.p.error ? [{ label: "Retry", run: () => this.launch(d.p.spec, true, d.p) }, { label: "Dismiss", run: () => this.dropPending(d.p) }] : [{ label: "Creating…", run: () => {}, disabled: true }];
+      const key = d.key;
+      const p = this.pending.find((x) => x.key === key);
+      if (p === undefined) return [];
+      return p.error
+        ? [action("Retry", null, () => this.launch(p.spec, true, p)), action("Dismiss", null, () => this.dropPending(p))]
+        : [actionOf("Creating…", null, null, true, () => {})];
     }
     if (d.kind === "folder") {
+      const path = d.path;
       return [
-        { label: "New Subfolder…", run: () => this.newFolder(d.path) },
-        { label: "Rename…", run: () => this.renameFolder(d.path) },
-        { label: "Delete Folder", run: () => this.deleteFolder(d.path) },
+        action("New Subfolder…", null, () => this.newFolder(path)),
+        action("Rename…", null, () => this.renameFolder(path)),
+        action("Delete Folder", null, () => this.deleteFolder(path)),
       ];
     }
-    if (d.kind !== "ws") return [{ label: "New Folder…", run: () => this.newFolder("") }];
+    if (d.kind !== "ws") return [action("New Folder…", null, () => this.newFolder(""))];
     const w = d.w;
     if (w.error) {
-      return [{ label: "Retry", run: () => this.retry(w) }, { label: "Rename…", run: () => this.rename(w) }, { label: "Move to Folder…", run: () => this.move(w) }, null, { label: "Dismiss", run: () => this.dismiss(w) }];
+      return [action("Retry", null, () => this.retry(w)), action("Rename…", null, () => this.rename(w)), action("Move to Folder…", null, () => this.move(w)), SEPARATOR, action("Dismiss", null, () => this.dismiss(w))];
     }
     const here = w.id === this.current;
+    const st = w.status;
     return [
-      { label: here ? "This workspace" : "Switch to It", run: () => this.switchTo(w.id), disabled: here },
-      { label: "Rename…", run: () => this.rename(w) },
-      { label: "Move to Folder…", run: () => this.move(w) },
-      { label: w.pinned ? "Unpin" : "Pin to Top", run: () => this.pin(w) },
-      here ? { label: "Run Agent…", run: () => this.startAgent(), disabled: !w.status.trusted } : false,
-      null,
-      { label: "Close Workspace…", run: () => this.close(w, false) },
-      w.worktree ? { label: "Close and Delete Worktree…", run: () => this.close(w, true) } : false,
-    ].filter((x) => x !== false); // false: not offered here; null: a separator
+      actionOf(here ? "This workspace" : "Switch to It", null, null, here, () => this.switchTo(w.id)),
+      action("Rename…", null, () => this.rename(w)),
+      action("Move to Folder…", null, () => this.move(w)),
+      action(w.pinned ? "Unpin" : "Pin to Top", null, () => this.pin(w)),
+      ...(here ? [actionOf("Run Agent…", null, null, st === null || !st.trusted, () => this.startAgent())] : []),
+      SEPARATOR,
+      action("Close Workspace…", null, () => this.close(w, false)),
+      ...(w.worktree !== null ? [action("Close and Delete Worktree…", null, () => this.close(w, true))] : []),
+    ];
   }
 
   dockMenu() {
     const g = this.prefs.group;
     this.ui().menu([
-      { label: "Group: Folders", checked: g === "folders", run: () => this.setGroup("folders") },
-      { label: "Group: By Date", checked: g === "date", run: () => this.setGroup("date") },
-      null,
-      { label: "New Workspace…", run: () => this.newWorkspace() },
-      { label: "New Folder…", run: () => this.newFolder("") },
-      { label: "Import Sessions…", run: () => this.importSessions() },
-      { label: "Workboard", run: () => this.workboard() },
-      null,
-      { label: "Jump to Attention", run: () => this.jump() },
-      { label: "Jump Back", run: () => this.jumpBack() },
+      actionOf("Group: Folders", null, g === "folders", false, () => this.setGroup("folders")),
+      actionOf("Group: By Date", null, g === "date", false, () => this.setGroup("date")),
+      SEPARATOR,
+      action("New Workspace…", null, () => this.newWorkspace()),
+      action("New Folder…", null, () => this.newFolder("")),
+      action("Import Sessions…", null, () => this.importSessions()),
+      action("Workboard", null, () => this.workboard()),
+      SEPARATOR,
+      action("Jump to Attention", null, () => this.jump()),
+      action("Jump Back", null, () => this.jumpBack()),
     ], this.menuAt());
   }
 
@@ -507,21 +535,32 @@ export class Orchestrator {
 
   async rename(w) {
     if (!w) return;
-    const name = await this.app().prompt.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder" });
+    const name = await this.app().prompt.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder", select: true });
     if (name !== null) await this.set(w, { name });
   }
 
   move(w) {
     if (!w) return;
-    const items = [{ label: "Top level", value: "" }, ...this.folders.map((f) => ({ label: f, value: f })), { label: "New folder…", value: null }];
+    // A folder, or a new one.
+    const to = (folder, create) => ({ folder, create });
+    const items = [
+      { label: "Top level", detail: "", value: to("", false) },
+      ...this.folders.map((f) => ({ label: f, detail: "", value: to(f, false) })),
+      { label: "New folder…", detail: "", value: to("", true) },
+    ];
     this.app().prompt.open({
       title: `Move ${displayName(w)} to`,
+      value: "",
       items,
-      onAccept: async (it) => {
-        let folder = it.value;
-        if (folder === null) folder = await this.newFolder("");
-        if (folder !== null) await this.set(w, { folder });
+      onAccept: (it) => {
+        const go = async () => {
+          const folder = it.value.create ? await this.newFolder("") : it.value.folder;
+          if (folder !== null) await this.set(w, { folder });
+        };
+        go();
       },
+      onChange: (_it) => {},
+      onCancel: () => {},
     });
   }
 
@@ -529,14 +568,14 @@ export class Orchestrator {
 
   // A new folder under `parent`; resolves with its path (null: cancelled).
   async newFolder(parent) {
-    const name = await this.app().prompt.ask({ title: parent ? `New folder in ${parent}` : "New folder", value: "" });
+    const name = await this.app().prompt.ask({ title: parent ? `New folder in ${parent}` : "New folder", value: "", hint: "", select: true });
     if (!name || !name.trim()) return null;
     const path = parent ? `${parent}/${name.trim()}` : name.trim();
     try { await rpc("folder.create", { path }); return path; } catch (e) { this.app().setStatus(`No folder: ${e.detail || e}`); return null; }
   }
 
   async renameFolder(path) {
-    const name = await this.app().prompt.ask({ title: `Rename folder ${path}`, value: leaf(path) });
+    const name = await this.app().prompt.ask({ title: `Rename folder ${path}`, value: leaf(path), hint: "", select: true });
     if (!name || !name.trim()) return;
     const to = parentOf(path) ? `${parentOf(path)}/${name.trim()}` : name.trim();
     try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.app().setStatus(`Not renamed: ${e.detail || e}`); }
@@ -602,12 +641,13 @@ export class Orchestrator {
     if (!this.app().trusted) { this.app().setStatus("Trust the workspace to run an agent (Workspace: Trust)"); return; }
     this.app().prompt.open({
       title: "Run agent",
-      items: AGENT_CHOICES.filter((c) => c.value !== "terminal").map((c) => ({ label: c.label, value: c.value })),
+      value: "",
+      items: AGENT_CHOICES.filter((c) => c.value !== "terminal").map((c) => ({ label: c.label, detail: "", value: c.value })),
       onAccept: async (it) => {
         const agent = agentById(it.value);
-        const custom = it.value === "custom" ? await this.app().prompt.ask({ title: "Command", value: this.prefs.custom, hint: "Runs in a terminal in the workspace's root, in your login shell" }) : "";
+        const custom = it.value === "custom" ? await this.app().prompt.ask({ title: "Command", value: this.prefs.custom, hint: "Runs in a terminal in the workspace's root, in your login shell", select: true }) : "";
         if (custom === null) return;
-        const prompt = agent ? await this.app().prompt.ask({ title: `${agent.label}: the task (optional)`, value: "" }) : "";
+        const prompt = agent ? await this.app().prompt.ask({ title: `${agent.label}: the task (optional)`, value: "", hint: "", select: true }) : "";
         if (prompt === null) return;
         const command = this.commandFor(it.value, this.prefs.auto, prompt, custom);
         if (!command) return;

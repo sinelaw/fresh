@@ -8,6 +8,12 @@ export function $(selector) {
   return el;
 }
 
+// `text` as HTML text.
+/** function escapeHtml(text: String) => String */
+export function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 // `cls` on `el` or off it.
 export function setClass(el, cls, on) {
   if (on) el.classList.add(cls);

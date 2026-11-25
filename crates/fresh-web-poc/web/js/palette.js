@@ -10,11 +10,36 @@
 
 import { rpc } from "./rpc.js";
 
-import { $ } from "./dom.js";
+import { $, escapeHtml } from "./dom.js";
+import { some, none } from "./maybe.js";
 
 // A palette row that runs `run` when chosen (none: a note).
 /** function paletteItem(label: String, detail: String | Null, run: (() => Undefined) | Null) => PaletteItem */
 function paletteItem(label, detail, run) { return { label, detail, run, preview: null }; }
+
+// What the prompt shows and does: its label, first text and hint; where
+// its rows come from as the text changes (none: it asks for text); and
+// what runs as the text changes, as a row is selected, on Enter (the
+// row, if any, and the text) and when it is given up. A prompt asking for
+// text has no rows.
+/** type PromptSpec = {
+ *   label: String,
+ *   value: String,
+ *   hint: String,
+ *   source: (String) => Promise<PaletteItem[]>,
+ *   onChange: (String) => Undefined,
+ *   onSelect: (PaletteItem | Undefined) => Undefined,
+ *   onAccept: (PaletteItem | Undefined, String) => Undefined,
+ *   onCancel: () => Undefined,
+ * } */
+/** function promptSpec(label: String, value: String, hint: String, source: (String) => Promise<PaletteItem[]>, onChange: (String) => Undefined, onSelect: (PaletteItem | Undefined) => Undefined, onAccept: (PaletteItem | Undefined, String) => Undefined, onCancel: () => Undefined) => PromptSpec */
+function promptSpec(label, value, hint, source, onChange, onSelect, onAccept, onCancel) {
+  return { label, value, hint, source, onChange, onSelect, onAccept, onCancel };
+}
+/** function noSpec() => PromptSpec[] */
+function noSpec() { return []; }
+/** function noItems() => PaletteItem[] */
+function noItems() { return []; }
 
 // Run a palette row's action, or its preview: whether it has one.
 /** function ran(it: PaletteItem | Undefined) => Boolean */
@@ -32,60 +57,77 @@ function previewed(it) {
   return true;
 }
 
+// Items holding every word of `q`; those whose label starts with the
+// first word come first, each group in the given order.
+/** function matching(items: PaletteItem[], q: String) => PaletteItem[] */
+function matching(items, q) {
+  const t = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = items.filter((it) => t.every((x) => `${it.label} ${it.detail ?? ""}`.toLowerCase().includes(x)));
+  if (!t.length) return hits;
+  const lead = (it) => (it.label.toLowerCase().startsWith(t[0]) ? 0 : 1);
+  return hits.map((it, i) => ({ lead: lead(it), i, it })).sort((a, b) => a.lead - b.lead || a.i - b.i).map((x) => x.it);
+}
+
+/** function commonPrefix(list: String[]) => String */
+function commonPrefix(list) {
+  let p = list.at(0) ?? "";
+  for (const s of list) while (!s.startsWith(p)) p = p.slice(0, -1);
+  return p;
+}
+
 export class Palette {
   constructor(app) {
     this.app = app;
     this.el = $("#prompt");
-    this.label = this.el.querySelector(".label");
-    this.input = this.el.querySelector("input");
-    this.list = this.el.querySelector(".list");
-    this.hint = this.el.querySelector(".hint");
-    this.items = [];
+    this.label = $("#prompt .label");
+    this.input = $("#prompt input");
+    this.list = $("#prompt .list");
+    this.hint = $("#prompt .hint");
+    this.items = noItems();
     this.sel = 0;
-    this.spec = null;
+    this.specs = noSpec(); // the prompt open: a list of at most one
     this.seq = 0;
     this.providers = new Map(); // prefix -> {hint, items(query)}
   }
 
   // A mode for prefix `prefix` (one character): `items(query)` resolves
-  // with [{label, detail, run, preview?}]; `preview()` runs as the item is
-  // selected (Escape puts the view back where it was).
+  // with PaletteItems; an item's `preview()` runs as it is selected
+  // (Escape puts the view back where it was).
   provide(prefix, o) { this.providers.set(prefix, o); }
 
   // Take the input's events (once, after `new`).
   listen() {
-    this.input.addEventListener("input", () => this.changed());
-    this.input.addEventListener("keydown", (e) => this.key(e));
-    this.input.addEventListener("blur", () => setTimeout(() => { if (this.spec && document.activeElement !== this.input) this.cancel(); }, 150));
+    this.input.addEventListener("input", () => { this.changed(); });
+    this.input.addEventListener("keydown", (e) => { this.key(e); });
+    this.input.addEventListener("blur", () => { setTimeout(() => { if (this.isOpen && document.activeElement !== this.input) this.cancel(); }, 150); });
   }
 
-  get isOpen() { return !!this.spec; }
+  get isOpen() { return this.specs.length > 0; }
 
   // The palette, in the mode `prefix` selects.
   palette(prefix) {
     const v = this.app().view();
-    const origin = v ? { v, pos: v.primary.pos, top: v.top } : null;
+    const origin = v ? [{ v, pos: v.primary.pos, top: v.top }] : [];
     let moved = false;
-    this.show({
-      label: "",
-      value: prefix,
-      hint: ["files · > commands · # buffers · : go to line", ...[...this.providers].map(([k, o]) => `${k} ${o.hint}`)].join(" · "),
-      source: (q) => this.paletteItems(q),
-      onChange: (q) => {
+    const hint = ["files · > commands · # buffers · : go to line", ...[...this.providers.keys()].map((k) => `${k} ${this.providers.get(k)?.hint ?? ""}`)].join(" · ");
+    this.show(promptSpec("", prefix, hint, (q) => this.paletteItems(q),
+      (q) => {
         // Preview a `:N` jump; Escape puts the view back.
         const m = /^:(\d+)/.exec(q);
-        if (m && origin) this.app().gotoLine(parseInt(m[1], 10) - 1, 0, { history: false });
-      },
-      onAccept: (it, q) => {
-        // The jump is remembered from where the palette opened, not from
-        // the preview.
-        if (/^:\d/.test(q) && origin) this.app().pushHistory(origin.v, origin.pos);
-        if (!ran(it)) this.openTyped(q);
+        if (m !== null && origin.length) this.app().gotoLine(parseInt(m[1], 10) - 1, 0, { history: false });
       },
       // A provider's item previews where it goes.
-      onSelect: (it) => { if (previewed(it)) moved = true; },
-      onCancel: () => { if (origin && (moved || /^:\d/.test(this.input.value))) { origin.v.setTop(origin.top); this.app().editing.place(origin.v.pane, origin.pos, false); } },
-    });
+      (it) => { if (previewed(it)) moved = true; },
+      (it, q) => {
+        // The jump is remembered from where the palette opened, not from
+        // the preview.
+        if (/^:\d/.test(q)) for (const o of origin) this.app().pushHistory(o.v, o.pos);
+        if (!ran(it)) this.openTyped(q);
+      },
+      () => {
+        if (!moved && !/^:\d/.test(this.input.value)) return;
+        for (const o of origin) { o.v.setTop(o.top); this.app().editing.place(o.v.pane, o.pos, false); }
+      }));
   }
 
   async paletteItems(q) {
@@ -127,47 +169,30 @@ export class Palette {
     if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app().openFile(m[1], { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true });
   }
 
-  // Pick from a list: {title, items: [{label, detail, value}], onAccept(item), onChange(item)}
+  // Pick from a list (`o`: a PickOptions, types/fresh.d.js). Enter with
+  // nothing left to pick is a cancel.
   open(o) {
-    this.show({
-      label: o.title || "",
-      value: o.value || "",
-      // Items holding every typed word; those whose label starts with the
-      // first word come first, each group in the given order.
-      source: (q) => {
-        const t = q.toLowerCase().split(/\s+/).filter(Boolean);
-        const hits = (o.items || []).filter((it) => t.every((x) => `${it.label} ${it.detail || ""}`.toLowerCase().includes(x)));
-        if (!t.length) return hits;
-        const lead = (it) => (it.label.toLowerCase().startsWith(t[0]) ? 0 : 1);
-        return hits.map((it, i) => ({ lead: lead(it), i, it })).sort((a, b) => a.lead - b.lead || a.i - b.i).map((x) => x.it);
-      },
-      onSelect: o.onChange,
-      // Enter with nothing left to pick is a cancel.
-      onAccept: (it) => (it ? o.onAccept?.(it) : o.onCancel?.()),
-      onCancel: o.onCancel,
-    });
+    const rows = o.items.map((it) => ({ label: it.label, detail: it.detail, run: () => { o.onAccept(it); }, preview: () => { o.onChange(it); } }));
+    this.show(promptSpec(o.title, o.value, "", async (q) => matching(rows, q), (_q) => {},
+      (it) => { previewed(it); },
+      (it, _q) => { if (!ran(it)) o.onCancel(); },
+      () => { o.onCancel(); }));
   }
 
-  // Ask for text: resolves with it, or null when cancelled.
+  // Ask for text (`o`: an AskOptions): resolves with it, or null when
+  // cancelled.
   ask(o) {
     return new Promise((resolve) => {
-      this.show({
-        label: o.title || "",
-        value: o.value || "",
-        hint: o.hint || "",
-        source: null,
-        onAccept: (_it, q) => resolve(q),
-        onCancel: () => resolve(null),
-      });
-      if (o.select !== false) this.input.select();
+      this.show(promptSpec(o.title, o.value, o.hint, async (_q) => noItems(), (_q) => {}, (_it) => {}, (_it, q) => { resolve(some(q)); }, () => { resolve(none()); }));
+      if (o.select) this.input.select();
     });
   }
 
   show(spec) {
-    if (this.spec) this.cancel();
-    this.spec = spec;
+    if (this.isOpen) this.cancel();
+    this.specs = [spec];
     this.label.textContent = spec.label;
-    this.hint.textContent = spec.hint || "";
+    this.hint.textContent = spec.hint;
     this.input.value = spec.value;
     this.items = [];
     this.sel = 0;
@@ -177,18 +202,17 @@ export class Palette {
   }
 
   async changed() {
-    const s = this.spec;
-    if (!s) return;
-    const q = this.input.value;
-    s.onChange?.(q);
-    if (!s.source) { this.items = []; this.render(); return; }
-    const seq = ++this.seq;
-    const r = await s.source(q);
-    if (this.spec !== s || seq !== this.seq) return;
-    this.items = r || [];
-    this.sel = 0;
-    this.render();
-    if (this.items[0]) s.onSelect?.(this.items[0]);
+    for (const s of this.specs) {
+      const q = this.input.value;
+      s.onChange(q);
+      const seq = ++this.seq;
+      const r = await s.source(q);
+      if (!this.specs.includes(s) || seq !== this.seq) return;
+      this.items = r;
+      this.sel = 0;
+      this.render();
+      if (r.length) s.onSelect(r[0]);
+    }
   }
 
   render() {
@@ -196,20 +220,19 @@ export class Palette {
     this.items.slice(0, 300).forEach((it, i) => {
       const d = document.createElement("div");
       d.className = "item" + (i === this.sel ? " sel" : "");
-      d.innerHTML = `<span class="t"></span><span class="d"></span>`;
-      d.querySelector(".t").textContent = it.label;
-      d.querySelector(".d").textContent = it.detail || "";
+      d.innerHTML = `<span class="t">${escapeHtml(it.label)}</span><span class="d">${escapeHtml(it.detail ?? "")}</span>`;
       d.onmousedown = (e) => { e.preventDefault(); this.sel = i; this.accept(); };
       this.list.appendChild(d);
     });
-    this.list.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+    const sel = this.list.querySelector(".sel");
+    if (sel !== null) sel.scrollIntoView({ block: "nearest" });
   }
 
   key(e) {
     const move = (d) => {
       this.sel = Math.max(0, Math.min(this.items.length - 1, this.sel + d));
       this.render();
-      this.spec?.onSelect?.(this.items[this.sel]);
+      for (const s of this.specs) s.onSelect(this.items[this.sel]);
     };
     if (e.key === "Escape") { e.preventDefault(); this.cancel(); }
     else if (e.key === "Enter") { e.preventDefault(); this.accept(); }
@@ -217,7 +240,7 @@ export class Palette {
     else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
     else if (e.key === "PageDown") { e.preventDefault(); move(10); }
     else if (e.key === "PageUp") { e.preventDefault(); move(-10); }
-    else if (e.key === "Tab" && this.items[this.sel]) {
+    else if (e.key === "Tab" && this.sel < this.items.length) {
       // Complete to the top suggestion (a path a folder at a time).
       e.preventDefault();
       const it = this.items[this.sel];
@@ -231,30 +254,22 @@ export class Palette {
   }
 
   close() {
-    this.spec = null;
+    this.specs = [];
     this.el.classList.add("hidden");
     this.app().focusPane(this.app().activePane);
   }
 
   accept() {
-    const s = this.spec;
-    if (!s) return;
-    const item = this.items[this.sel];
+    const was = this.specs;
+    const item = this.items.at(this.sel);
     const q = this.input.value;
     this.close();
-    s.onAccept?.(item, q);
+    for (const s of was) s.onAccept(item, q);
   }
 
   cancel() {
-    const s = this.spec;
+    const was = this.specs;
     this.close();
-    s?.onCancel?.();
+    for (const s of was) s.onCancel();
   }
-}
-
-function commonPrefix(list) {
-  if (!list.length) return "";
-  let p = list[0];
-  for (const s of list) while (!s.startsWith(p)) p = p.slice(0, -1);
-  return p;
 }

@@ -85,7 +85,7 @@ export function activate(app) {
         if (name !== null) items.push({ label: `${n}  ${name}`, detail: open ? "open" : "closed file", value: n });
       }
       if (!items.length) items.push({ label: "No bookmarks (Ctrl+Shift+0…9 sets one)", detail: "", value: null });
-      fresh.pick(app, { title: "Bookmarks", items, onAccept: (it) => { const n = it.value; if (n !== null) jump(n); } });
+      fresh.pick(app, { title: "Bookmarks", value: "", items, onAccept: (it) => { const n = it.value; if (n !== null) jump(n); }, onChange: (_it) => {}, onCancel: () => {} });
     },
   });
   fresh.addMenuItem(app, "Go", fresh.MENU_BAR_SEPARATOR);

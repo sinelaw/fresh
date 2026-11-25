@@ -97,7 +97,8 @@ export function activate(app) {
     if (!files.length) return fresh.message(app, "No tours: add .tours/*.tour (CodeTour format)");
     fresh.pick(app, {
       title: "Code tour",
-      items: files.map((f) => ({ label: f.name.replace(/\.tour$/, ""), value: f.path })),
+      value: "",
+      items: files.map((f) => ({ label: f.name.replace(/\.tour$/, ""), detail: "", value: f.path })),
       onAccept: async (it) => {
         /** const tour: Tour */
         const tour = JSON.parse(await fresh.read(app, it.value));
@@ -105,6 +106,8 @@ export function activate(app) {
         fresh.panel(app, { id: "tour", title: "Tour", place: "right", onClose: unmark });
         go(0);
       },
+      onChange: (_it) => {},
+      onCancel: () => {},
     });
   };
   fresh.register(app, "tour.open", { title: "Code Tour: Open…", hidden: false, run: open });

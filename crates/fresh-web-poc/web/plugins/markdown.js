@@ -252,7 +252,7 @@ export function activate(app) {
   const setWidth = async () => {
     const v = fresh.activeView(app);
     if (!v) return;
-    const t = await fresh.input(app, { title: "Compose width (columns, empty for the setting)", value: String(v.composeWidth() ?? fresh.settings(app).page_width) });
+    const t = await fresh.input(app, { title: "Compose width (columns, empty for the setting)", value: String(v.composeWidth() ?? fresh.settings(app).page_width), hint: "", select: true });
     if (t == null) return;
     const n = parseInt(t, 10);
     v.setComposeWidth(n > 20 ? n : null);

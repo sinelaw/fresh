@@ -8,6 +8,7 @@
 // Registers last as long as the page.
 
 import { asCommand } from "./commands.js";
+import { some, none } from "./maybe.js";
 
 const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -132,8 +133,13 @@ export class Macros {
 
   // Ask for a register: resolves with it, or null.
   pick(title) {
-    return this.app().choose(title, REGISTERS.map((r) => {
-      return { label: r, detail: this.registers.has(r) ? plural((this.registers.get(r) ?? []).length, "step") : "empty", value: r };
+    return new Promise((resolve) => this.app().prompt.open({
+      title,
+      value: "",
+      items: REGISTERS.map((r) => ({ label: r, detail: this.registers.has(r) ? plural((this.registers.get(r) ?? []).length, "step") : "empty", value: r })),
+      onAccept: (it) => { resolve(some(it.value)); },
+      onChange: (_it) => {},
+      onCancel: () => { resolve(none()); },
     }));
   }
 
@@ -144,9 +150,9 @@ export class Macros {
 
   register() {
     const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: false }); };
-    cmd("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r) this.start(r); });
+    cmd("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r !== null) this.start(r); });
     cmd("macro.stop", "Macro: Stop Recording Macro", () => this.stop());
-    cmd("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r) await this.play(r); });
+    cmd("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r !== null) await this.play(r); });
     cmd("macro.playLast", "Macro: Play Last Macro", async () => {
       if (!this.last.length) { this.app().setStatus("No macro recorded yet"); return; }
       for (const r of this.last) await this.play(r);

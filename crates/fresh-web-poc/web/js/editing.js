@@ -510,10 +510,10 @@ export class Editing {
   toggleFoldAt(pane, li) {
     const v = pane.view;
     const r = this.foldRangeAt(v, li);
-    const i = v.folds.findIndex((f) => f.start === li || (r && f.start === r.start));
+    const i = v.folds.findIndex((f) => f.start === li || (r !== null && f.start === r.start));
     if (i >= 0) v.folds.splice(i, 1);
     else {
-      if (!r) return;
+      if (r === null) return;
       v.folds = v.folds.filter((f) => f.start < r.start || f.start > r.end);
       v.folds.push(r);
       // A cursor the fold hides moves to the end of the last line it keeps.

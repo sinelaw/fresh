@@ -56,7 +56,7 @@ export function activate(app) {
     const r = await ask(v, "textDocument/definition", {});
     if (!r.length) return fresh.message(app, "No definition found");
     if (r.length === 1) { await goto(r[0].path, r[0].range, null); return; }
-    fresh.pick(app, { title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => { goto(it.value.path, it.value.range, null); } });
+    fresh.pick(app, { title: "Definitions", value: "", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, detail: "", value: l })), onAccept: (it) => { goto(it.value.path, it.value.range, null); }, onChange: (_it) => {}, onCancel: () => {} });
   };
 
   const references = async () => {
@@ -218,7 +218,7 @@ export function activate(app) {
   const rename = async () => {
     const v = active();
     if (!v) return;
-    const name = await fresh.input(app, { title: "Rename to", value: currentWord(v) });
+    const name = await fresh.input(app, { title: "Rename to", value: currentWord(v), hint: "", select: true });
     if (!name) return;
     /** const r: LspFileEdit[] */
     const r = await ask(v, "textDocument/rename", { newName: name });
@@ -240,12 +240,18 @@ export function activate(app) {
     if (!r.length) return fresh.message(app, "No code actions here");
     fresh.pick(app, {
       title: "Code actions",
+      value: "",
       items: r.map((a) => ({ label: a.title, detail: a.kind ?? "", value: a })),
-      onAccept: async ({ value: a }) => {
-        const edit = a.edit, cmd = a.command;
-        if (edit) await applyWorkspaceEdit(edit);
-        if (cmd) await ask(v, "workspace/executeCommand", { command: cmd.command, arguments: JSON.parse(cmd.arguments) });
+      onAccept: ({ value: a }) => {
+        const run = async () => {
+          const edit = a.edit, cmd = a.command;
+          if (edit) await applyWorkspaceEdit(edit);
+          if (cmd) await ask(v, "workspace/executeCommand", { command: cmd.command, arguments: JSON.parse(cmd.arguments) });
+        };
+        run();
       },
+      onChange: (_it) => {},
+      onCancel: () => {},
     });
   };
 
@@ -282,6 +288,8 @@ export function activate(app) {
         b.replace(start, vv.cursor(), text);
         vv.setCursor(start + fresh.byteLen(text), { center: false });
       },
+      onChange: (_it) => {},
+      onCancel: () => {},
     });
   };
 
@@ -393,17 +401,21 @@ export function activate(app) {
     await runningLanguages();
     const langs = [...new Set([...fresh.lspLanguages(app), ...running.keys()])].sort();
     const state = (l) => { const on = running.get(l); return on === true ? "running" : on === false ? "stopped" : fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started"; };
+    if (!langs.length) { fresh.message(app, "No language server found on the host"); return; }
     fresh.pick(app, {
       title: fresh.trusted(app) ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
-      items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", detail: "", value: "" }],
+      value: "",
+      items: langs.map((l) => ({ label: l, detail: state(l), value: l })),
       onAccept: async (it) => {
-        if (!it.value || !fresh.trusted(app)) return;
+        if (!fresh.trusted(app)) return;
         const what = await fresh.choose(app, `${it.value} language server (${state(it.value)})`, [
           { label: running.get(it.value) ? "Restart" : "Start", value: "restart" },
           ...(running.get(it.value) ? [{ label: "Stop", value: "stop" }] : []),
         ]);
         if (what) await serverOp(what, it.value);
       },
+      onChange: (_it) => {},
+      onCancel: () => {},
     });
   };
   // The active file's language, when a server is found for it.

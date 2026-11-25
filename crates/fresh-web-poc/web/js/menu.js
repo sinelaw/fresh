@@ -14,6 +14,8 @@
 // Escape closes. While a menu is open it has the keyboard; closing gives it
 // back to the editor.
 
+import { escapeHtml } from "./dom.js";
+
 // A row that runs `run`, with `keys` shown beside it, a check when
 // `checked` is true or false, greyed out when `disabled`.
 /** function actionOf<R>(label: String, keys: String | Null, checked: Boolean | Null, disabled: Boolean, run: () => R) => MenuItem */
@@ -63,12 +65,6 @@ function callIf(f) { if (f !== null) f(); }
 // `f(d)`, when there is an `f` (a menu's Left / Right past its edge).
 /** function sideIf(f: ((Number) => Undefined) | Null, d: Number) => Undefined */
 function sideIf(f, d) { if (f !== null) f(d); }
-
-// `text` as HTML text.
-/** function escapeHtml(text: String) => String */
-function escapeHtml(text) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 // A key's name (KeyboardEvent.key).
 /** function keyName(k: String) => String */

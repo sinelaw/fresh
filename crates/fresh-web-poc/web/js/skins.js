@@ -36,12 +36,47 @@ const VALUES = ["cpu", "mem", "memText", "load", "uptime", "errors", "warnings",
 const HOST_VALUES = new Set(["cpu", "mem", "memText", "load", "uptime"]);
 const REFRESH_MS = 3000;
 
+// The skin `id` among `all`, if listed.
+/** function skinIn(all: SkinInfo[], id: String) => SkinInfo | Null */
+function skinIn(all, id) { return all.find((s) => s.id === id) ?? null; }
+// Skin `id` and what it extends, the base first (a loop, or a chain past
+// eight, is cut).
+/** function chainOf(all: SkinInfo[], id: String, depth: Number) => SkinInfo[] */
+function chainOf(all, id, depth) {
+  const s = skinIn(all, id);
+  if (s === null || depth >= 8) return [];
+  const base = s.extends;
+  const below = base === null ? [] : chainOf(all, base, depth + 1);
+  return below.some((x) => x.id === s.id) ? below : [...below, s];
+}
+// What a chain of skins comes to: the last to set each wins (`base(id)`:
+// where skin `id`'s files are served).
+/** type ResolvedSkin = {id: String, name: String, chain: String[], frame: String, scale: Number, furniture: String | Null, theme: String | Null} */
+/** function resolvedSkin(id: String, chain: SkinInfo[], base: (String) => String) => ResolvedSkin */
+function resolvedSkin(id, chain, base) {
+  const scales = chain.flatMap((s) => { const x = s.scale; return x === null ? [] : [x]; });
+  const furniture = chain.flatMap((s) => { const x = s.furniture; return x === null ? [] : [`${base(s.id)}${x}`]; });
+  const themes = chain.flatMap((s) => { const x = s.theme; return x === null ? [] : [x]; });
+  return {
+    id,
+    name: chain.at(-1)?.name ?? id,
+    chain: chain.map((s) => s.id),
+    frame: chain.at(-1)?.frame ?? "full",
+    scale: scales.at(-1) ?? 1,
+    furniture: furniture.at(-1) ?? null,
+    theme: themes.at(-1) ?? null,
+  };
+}
+/** function noSkins() => SkinInfo[] */
+function noSkins() { return []; }
+
 export class Skins {
   constructor(app) {
     this.app = app;
-    this.all = [];
+    this.all = noSkins();
     this.current = null; // the resolved skin on screen
     this.timer = 0;
+    this.applying = Promise.resolve(undefined); // the skins being put on, in order
   }
 
   // List the skins and put the chosen one on: before the first paint, so
@@ -53,38 +88,25 @@ export class Skins {
     await this.apply(id !== null && this.byId(id) !== null ? id : "default");
   }
 
-  byId(id) { return this.all.find((s) => s.id === id) ?? null; }
+  byId(id) { return skinIn(this.all, id); }
 
   // Where a skin's files are served: a built-in skin's beside the client's
   // own files, a user skin's through the workspace whose host has it.
   base(id) {
-    return this.byId(id)?.source === "user" ? `workspaces/${this.app().workspace.id}/skins/${id}/` : `skins/${id}/`;
+    const s = skinIn(this.all, id);
+    return s !== null && s.source === "user" ? `workspaces/${this.app().workspace.id}/skins/${id}/` : `skins/${id}/`;
   }
 
   // A skin with what it extends folded in: the chain base first; the last
   // skin to set a frame, scale, furniture or theme wins.
   resolve(id) {
-    const chain = [];
-    let next = this.byId(id);
-    while (next !== null && !chain.includes(next) && chain.length < 8) {
-      chain.unshift(next);
-      const base = next.extends;
-      next = base ? this.byId(base) : null;
-    }
-    const r = { id, name: chain.at(-1)?.name || id, chain: chain.map((s) => s.id), frame: "full", scale: 1, furniture: null, theme: null };
-    for (const s of chain) {
-      r.frame = s.frame;
-      if (s.scale) r.scale = s.scale;
-      if (s.furniture) r.furniture = `${this.base(s.id)}${s.furniture}`;
-      if (s.theme) r.theme = s.theme;
-    }
-    return r;
+    return resolvedSkin(id, chainOf(this.all, id, 0), (x) => this.base(x));
   }
 
   // Put a skin on screen. One at a time, in order: a quick run through the
   // picker never ends with an earlier skin's furniture over a later one.
   apply(id) {
-    this.applying = (this.applying || Promise.resolve()).then(() => this.put(id));
+    this.applying = this.applying.then(async () => { await this.put(id); });
     return this.applying;
   }
 
@@ -199,14 +221,15 @@ export class Skins {
     const before = this.current?.id || "default";
     this.app().prompt.open({
       title: "Skin",
+      value: "",
       items: this.all.map((s) => ({
         label: s.name,
         detail: [s.id === before ? "current" : "", s.description, s.source === "user" ? "skins folder" : ""].filter(Boolean).join(" · "),
         value: s.id,
       })),
-      onChange: (it) => it && this.apply(it.value),
-      onAccept: (it) => this.choose(it.value),
-      onCancel: () => this.apply(before),
+      onChange: (it) => { this.apply(it.value); },
+      onAccept: (it) => { this.choose(it.value); },
+      onCancel: () => { this.apply(before); },
     });
   }
 

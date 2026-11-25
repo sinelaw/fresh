@@ -180,10 +180,11 @@ export function activate(app) {
       const before = current;
       fresh.pick(app, {
         title: "Theme",
+        value: "",
         items: themes.map((t) => ({ label: t.name, detail: t.key === current ? "current" : "", value: t.key })),
-        onChange: (it) => { if (it) show(it.value); },
-        onAccept: (it) => choose(it.value),
-        onCancel: () => show(before),
+        onChange: (it) => { show(it.value); },
+        onAccept: (it) => { choose(it.value); },
+        onCancel: () => { show(before); },
       });
     },
   });
