@@ -17,7 +17,7 @@ import { MenuBar } from "./menubar.js";
 import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
 
-const $ = (s) => document.querySelector(s);
+import { $ } from "./dom.js";
 
 async function main() {
   // The workspace this page views: `?ws=<id>`, or the server's first. None

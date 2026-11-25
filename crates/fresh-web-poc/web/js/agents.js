@@ -46,11 +46,13 @@ export function shQuote(s) {
 // first message (`prompt`, when the agent takes one).
 /** function agentCommand(agent: Agent, auto: Boolean, prompt: String) => String */
 export function agentCommand(agent, auto, prompt) {
-  const words = [agent.command];
-  if (auto) for (const f of agent.auto) words.push(f);
   const text = prompt.trim();
-  if (text && agent.prompt.style === "flag") words.push(agent.prompt.flag, text);
-  if (text && agent.prompt.style === "positional") words.push(text);
+  const style = text ? agent.prompt.style : "none";
+  const words = [
+    agent.command,
+    ...(auto ? agent.auto : []),
+    ...(style === "flag" ? [agent.prompt.flag, text] : style === "positional" ? [text] : []),
+  ];
   return words.map(shQuote).join(" ");
 }
 

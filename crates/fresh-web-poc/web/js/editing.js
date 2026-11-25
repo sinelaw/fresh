@@ -6,7 +6,7 @@
 
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
-import { sel } from "./view.js";
+import { sel, cursorAt, selecting } from "./view.js";
 import { rpc } from "./rpc.js";
 import { charWidth } from "./layout.js";
 
@@ -45,6 +45,61 @@ function idxAt(line, col) {
   return i;
 }
 
+// The line holding a position: its index among the held lines, its start
+// and end, its text, and the next line's start (null: the last).
+/** type LineAt = {i: Number, start: Number, end: Number, text: String, next: Number | Null} */
+
+// What a cursor's text becomes: [start, end) replaced by `text`, the caret
+// `caret` into it (null: at its end) and the selection's anchor `anchor`
+// into it (null: no selection).
+/** type Replacement = {start: Number, end: Number, text: String, caret: Number | Null, anchor: Number | Null} */
+/** function putWith(start: Number, end: Number, text: String, caret: Number | Null, anchor: Number | Null) => Replacement | Null */
+export function putWith(start, end, text, caret, anchor) { return { start, end, text, caret, anchor }; }
+// [start, end) replaced by `text`, the caret after it.
+/** function put(start: Number, end: Number, text: String) => Replacement | Null */
+export function put(start, end, text) { return putWith(start, end, text, null, null); }
+// A cursor's text left alone.
+/** const KEEP: Replacement | Null */
+export const KEEP = null;
+
+// Each cursor's replacement, last in the text first.
+/** function replacements(cursors: Cursor[], fn: (Cursor) => Replacement | Null) => {cursor: Cursor, r: Replacement}[] */
+function replacements(cursors, fn) {
+  /** const out: {cursor: Cursor, r: Replacement}[] */
+  const out = [];
+  for (const cursor of cursors) {
+    const r = fn(cursor);
+    if (r) out.push({ cursor, r });
+  }
+  return out.sort((x, y) => y.r.start - x.r.start);
+}
+
+// The edits making `reps` (last in the text first, so each applies where it
+// was asked).
+/** function editsOf(reps: {cursor: Cursor, r: Replacement}[]) => Op[] */
+function editsOf(reps) {
+  /** const ops: Op[] */
+  const ops = [];
+  for (const { r } of reps) {
+    if (r.end > r.start) ops.push({ t: "del", pos: r.start, len: r.end - r.start });
+    if (r.text) ops.push({ t: "ins", pos: r.start, text: r.text });
+  }
+  return ops;
+}
+
+// Where each replacement leaves its cursor once all are made.
+/** function placesAfter(reps: {cursor: Cursor, r: Replacement}[]) => {cursor: Cursor, at: Cursor}[] */
+function placesAfter(reps) {
+  let delta = 0;
+  return [...reps].reverse().map(({ cursor, r }) => {
+    const s = r.start + delta;
+    const len = byteLen(r.text);
+    delta += len - (r.end - r.start);
+    const anchor = r.anchor;
+    return { cursor, at: selecting(s + (r.caret ?? len), anchor === null ? null : s + anchor) };
+  });
+}
+
 export class Editing {
   constructor(app) { this.app = app; }
 
@@ -53,8 +108,9 @@ export class Editing {
   lineAt(b, p) {
     const L = b.text;
     const i = L.indexOf(p);
-    if (i < 0) return null;
-    return { i, start: L.starts[i], end: L.lineEnd(i), text: L.lines[i], next: i + 1 < L.count ? L.starts[i + 1] : null };
+    /** const at: LineAt | Null */
+    const at = i < 0 ? null : { i, start: L.starts[i], end: L.lineEnd(i), text: L.lines[i], next: i + 1 < L.count ? L.starts[i + 1] : null };
+    return at;
   }
   charBefore(b, p) {
     const ln = this.lineAt(b, p);
@@ -69,7 +125,9 @@ export class Editing {
     const ln = this.lineAt(b, p);
     if (!ln) return null;
     const idx = byteToIdx(ln.text, p - ln.start);
-    return idx >= ln.text.length ? "\n" : String.fromCodePoint(ln.text.codePointAt(idx));
+    /** const c: String | Null */
+    const c = idx >= ln.text.length ? "\n" : String.fromCodePoint(ln.text.codePointAt(idx));
+    return c;
   }
   isWord(c) { return c != null && /[\p{L}\p{N}_]/u.test(c); }
   wordEdge(b, p, dir) {
@@ -90,40 +148,25 @@ export class Editing {
 
   // ---------------------------------------------------------------- the core
 
-  // `fn(cursor)` returns {start, end, text, caret?, anchor?} or null; caret
-  // and anchor are offsets from `start` in the result (caret defaults to the
-  // end of the text). One batch, one undo step (`typing`: see buffer.js).
-  replace(pane, fn, typing = null) {
+  // `fn(cursor)` gives each cursor's Replacement (`put`, `putWith`), or
+  // KEEP to leave its text alone. One batch, one undo step (`typing`: see
+  // buffer.js); each cursor ends where its replacement puts it.
+  replace(pane, fn, typing) {
     const v = pane.view;
     const b = v.buf;
     if (b.readOnly) { this.app().setStatus("Read-only buffer"); return false; }
     v.normalize();
-    const reps = [];
-    for (const c of v.cursors) {
-      const r = fn(c);
-      if (r) reps.push({ c, ...r });
-    }
+    const reps = replacements(v.cursors, fn);
     if (!reps.length) return false;
-    reps.sort((x, y) => y.start - x.start);
-    const ops = [];
-    for (const r of reps) {
-      if (r.end > r.start) ops.push({ t: "del", pos: r.start, len: r.end - r.start });
-      if (r.text) ops.push({ t: "ins", pos: r.start, text: r.text });
-    }
     const old = v.primary.pos;
-    for (const c of v.cursors) c.anchor = null;
+    const ops = editsOf(reps);
     if (ops.length) this.app().applyEdit(b, ops, typing);
-    // Final place of each replacement: shifted by every one before it.
-    const asc = [...reps].sort((x, y) => x.start - y.start);
-    let delta = 0;
-    for (const r of asc) {
-      const s = r.start + delta;
-      const len = byteLen(r.text || "");
-      r.c.pos = s + (r.caret ?? len);
-      r.c.anchor = r.anchor != null ? s + r.anchor : null;
-      r.c.goalX = null;
-      delta += len - (r.end - r.start);
-    }
+    // Each cursor where its replacement put it (the others' selections
+    // go), shifted by every replacement before it.
+    /** const placed: Map<Cursor, Cursor> */
+    const placed = new Map();
+    for (const x of placesAfter(reps)) placed.set(x.cursor, x.at);
+    v.cursors = v.cursors.map((c) => placed.get(c) ?? cursorAt(c.pos));
     v.normalize();
     pane.reveal();
     if (old !== v.primary.pos) this.app().cursorMoved(v, old);
@@ -303,7 +346,7 @@ export class Editing {
     const key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
     const prev = v.expansions && v.expansions.key === key ? v.expansions.stack.pop() : null;
     if (prev) {
-      v.cursors = prev.map((c) => ({ pos: c.pos, anchor: c.anchor, goalX: null }));
+      v.cursors = prev.map((c) => selecting(c.pos, c.anchor));
       v.expansions.key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
     } else for (const c of v.cursors) c.anchor = null;
     pane.reveal();
@@ -317,17 +360,17 @@ export class Editing {
   transposeChars(pane) {
     const b = pane.view.buf;
     this.replace(pane, (c) => {
-      if (sel(c)) return null;
+      if (sel(c)) return KEEP;
       const ln = this.lineAt(b, c.pos);
       const i = byteToIdx(ln.text, c.pos - ln.start);
       const chars = [...ln.text];
       // The character index of the caret.
       const ci = [...ln.text.slice(0, i)].length;
       const at = ci >= chars.length ? ci - 1 : ci;
-      if (at < 1 || chars.length < 2) return null;
+      if (at < 1 || chars.length < 2) return KEEP;
       const start = ln.start + byteLen(chars.slice(0, at - 1).join(""));
       const text = chars[at] + chars[at - 1];
-      return { start, end: start + byteLen(text), text };
+      return put(start, start + byteLen(text), text);
     });
   }
 
@@ -338,10 +381,10 @@ export class Editing {
     const L = b.text;
     this.replace(pane, (c) => {
       const li = L.indexOf(c.pos);
-      if (li < 1) return null;
+      if (li < 1) return KEEP;
       const start = L.starts[li - 1], end = L.lineEnd(li);
       const text = L.lines[li] + "\n" + L.lines[li - 1];
-      return { start, end, text, caret: byteLen(text) + (li + 1 < L.count ? 1 : 0) };
+      return putWith(start, end, text, byteLen(text) + (li + 1 < L.count ? 1 : 0), null);
     });
   }
 
@@ -356,15 +399,14 @@ export class Editing {
     const v = pane.view;
     const L = v.buf.text;
     const lo = Math.min(anchor.line, head.line), hi = Math.max(anchor.line, head.line);
-    const cs = [];
-    for (let k = lo; k <= hi; k++) {
+    // A cursor on each line, the head's line's first (the primary).
+    const lines = [head.line];
+    for (let k = lo; k <= hi; k++) if (k !== head.line) lines.push(k);
+    v.cursors = lines.map((k) => {
       const line = L.lines[k];
       const at = (col) => L.starts[k] + byteLen(line.slice(0, idxAt(line, col)));
-      cs.push({ pos: at(head.col), anchor: at(anchor.col), goalX: null, line: k });
-    }
-    // The head's line holds the primary cursor.
-    const prim = cs.find((c) => c.line === head.line);
-    v.cursors = [prim, ...cs.filter((c) => c !== prim)].map((c) => ({ pos: c.pos, anchor: c.anchor === c.pos ? null : c.anchor, goalX: null }));
+      return selecting(at(head.col), at(anchor.col));
+    });
     v.block = { anchor, head, key: this.blockKey(v) };
     pane.reveal();
     pane.scheduleRender();
@@ -577,20 +619,20 @@ export class Editing {
           if (s) {
             // Surround the selection.
             const inner = b.textRange(s.start, s.end) ?? "";
-            return { start: s.start, end: s.end, text: text + inner + closer, caret: 1 + byteLen(inner), anchor: 1 };
+            return putWith(s.start, s.end, text + inner + closer, 1 + byteLen(inner), 1);
           }
           const next = this.charAt(b, c.pos);
           const prev = this.charBefore(b, c.pos);
           const quote = text === closer;
           const ok = (next == null || /\s/.test(next) || CLOSERS.has(next) || next === ",") && !(quote && this.isWord(prev));
-          return ok ? { start: c.pos, end: c.pos, text: text + closer, caret: 1 } : { start: c.pos, end: c.pos, text };
+          return ok ? putWith(c.pos, c.pos, text + closer, 1, null) : put(c.pos, c.pos, text);
         }, typing);
         return done();
       }
     }
     this.replace(pane, (c) => {
       const s = sel(c);
-      return s ? { start: s.start, end: s.end, text } : { start: c.pos, end: c.pos, text };
+      return s ? put(s.start, s.end, text) : put(c.pos, c.pos, text);
     }, typing);
     done();
   }
@@ -607,20 +649,20 @@ export class Editing {
         // Continue a list item.
         const m = /^(\s*)([-*+]|\d+[.)])\s+(\[[ x]\]\s+)?/.exec(before);
         if (m) {
-          if (before.trim() === m[0].trim()) return { start: ln.start, end: s.end, text: "" };
+          if (before.trim() === m[0].trim()) return put(ln.start, s.end, "");
           const bullet = /\d/.test(m[2]) ? `${parseInt(m[2], 10) + 1}${m[2].slice(-1)}` : m[2];
-          return { start: s.start, end: s.end, text: `\n${m[1]}${bullet} ${m[3] ? "[ ] " : ""}` };
+          return put(s.start, s.end, `\n${m[1]}${bullet} ${m[3] ? "[ ] " : ""}`);
         }
-        return { start: s.start, end: s.end, text: "\n" + indent };
+        return put(s.start, s.end, "\n" + indent);
       }
       const t = before.trimEnd();
       const opens = /[{([]$/.test(t) || (lang === "python" && t.endsWith(":"));
       const next = this.charAt(b, s.end);
       if (opens && next != null && CLOSERS.has(next) && PAIRS[t.slice(-1)] === next) {
         const inner = "\n" + indent + INDENT;
-        return { start: s.start, end: s.end, text: inner + "\n" + indent, caret: byteLen(inner) };
+        return putWith(s.start, s.end, inner + "\n" + indent, byteLen(inner), null);
       }
-      return { start: s.start, end: s.end, text: "\n" + indent + (opens ? INDENT : "") };
+      return put(s.start, s.end, "\n" + indent + (opens ? INDENT : ""));
     });
   }
 
@@ -628,19 +670,19 @@ export class Editing {
     const b = pane.view.buf;
     this.replace(pane, (c) => {
       const s = sel(c);
-      if (s) return { start: s.start, end: s.end, text: "" };
-      if (c.pos === 0) return null;
-      if (word) return { start: this.wordEdge(b, c.pos, -1), end: c.pos, text: "" };
+      if (s) return put(s.start, s.end, "");
+      if (c.pos === 0) return KEEP;
+      if (word) return put(this.wordEdge(b, c.pos, -1), c.pos, "");
       const ln = this.lineAt(b, c.pos);
       const before = ln.text.slice(0, byteToIdx(ln.text, c.pos - ln.start));
       // In leading whitespace, remove one indent level.
       if (before.length && /^ +$/.test(before)) {
         const n = before.length % 4 || 4;
-        return { start: c.pos - n, end: c.pos, text: "" };
+        return put(c.pos - n, c.pos, "");
       }
       const prev = this.charBefore(b, c.pos), next = this.charAt(b, c.pos);
-      if (prev && PAIRS[prev] === next && this.app().settings.auto_close) return { start: c.pos - 1, end: c.pos + 1, text: "" };
-      return { start: c.pos - byteLen(prev), end: c.pos, text: "" };
+      if (prev && PAIRS[prev] === next && this.app().settings.auto_close) return put(c.pos - 1, c.pos + 1, "");
+      return put(c.pos - byteLen(prev), c.pos, "");
     });
   }
 
@@ -648,10 +690,10 @@ export class Editing {
     const b = pane.view.buf;
     this.replace(pane, (c) => {
       const s = sel(c);
-      if (s) return { start: s.start, end: s.end, text: "" };
+      if (s) return put(s.start, s.end, "");
       const next = this.charAt(b, c.pos);
-      if (next == null) return null;
-      return { start: c.pos, end: word ? this.wordEdge(b, c.pos, 1) : c.pos + byteLen(next), text: "", caret: 0 };
+      if (next == null) return KEEP;
+      return putWith(c.pos, word ? this.wordEdge(b, c.pos, 1) : c.pos + byteLen(next), "", 0, null);
     });
   }
 
@@ -704,7 +746,7 @@ export class Editing {
       const [a, z] = this.lineSpan(b, c);
       const end = z + 1 < L.count ? L.starts[z + 1] : L.lineEnd(z);
       const start = z + 1 < L.count || a === 0 ? L.starts[a] : L.starts[a] - 1;
-      return { start, end, text: "", caret: 0 };
+      return putWith(start, end, "", 0, null);
     });
   }
 
@@ -715,7 +757,7 @@ export class Editing {
       const [a, z] = this.lineSpan(b, c);
       const text = L.lines.slice(a, z + 1).join("\n");
       const col = c.pos - L.starts[a];
-      return { start: L.lineEnd(z), end: L.lineEnd(z), text: "\n" + text, caret: 1 + col };
+      return putWith(L.lineEnd(z), L.lineEnd(z), "\n" + text, 1 + col, null);
     });
   }
 
@@ -727,9 +769,9 @@ export class Editing {
     const b = pane.view.buf;
     this.replace(pane, (c) => {
       const s = sel(c) || this.wordAt(b, c.pos);
-      if (!s) return null;
+      if (!s) return KEEP;
       const text = f(b.textRange(s.start, s.end));
-      return { start: s.start, end: s.end, text, anchor: 0, caret: byteLen(text) };
+      return putWith(s.start, s.end, text, byteLen(text), 0);
     });
   }
 
@@ -740,9 +782,9 @@ export class Editing {
     const L = b.text;
     this.replace(pane, (c) => {
       const [a, z] = this.lineSpan(b, c);
-      if (z <= a) return null;
+      if (z <= a) return KEEP;
       const text = L.lines.slice(a, z + 1).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0)).join("\n");
-      return { start: L.starts[a], end: L.lineEnd(z), text, anchor: 0, caret: byteLen(text) };
+      return putWith(L.starts[a], L.lineEnd(z), text, byteLen(text), 0);
     });
   }
 
@@ -771,7 +813,8 @@ export class Editing {
     if ((dir < 0 && a === 0) || (dir > 0 && z >= L.count - 1)) return;
     const block = L.lines.slice(a, z + 1).join("\n");
     const off = c.pos - L.starts[a];
-    const anchorOff = c.anchor != null ? c.anchor - L.starts[a] : null;
+    const anchorAt = c.anchor;
+    const anchorOff = anchorAt !== null ? anchorAt - L.starts[a] : null;
     let start, end, text, newStart;
     if (dir < 0) {
       const prev = L.lines[a - 1];
@@ -836,7 +879,7 @@ export class Editing {
     const j = ln.i + dir;
     if (j < 0 || j >= L.count) return;
     const col = byteToIdx(ln.text, edge.pos - ln.start);
-    v.cursors.push({ pos: L.starts[j] + byteLen(L.lines[j].slice(0, Math.min(col, L.lines[j].length))), anchor: null, goalX: null });
+    v.cursors.push(cursorAt(L.starts[j] + byteLen(L.lines[j].slice(0, Math.min(col, L.lines[j].length)))));
     v.normalize();
     pane.scheduleRender();
   }
@@ -862,7 +905,7 @@ export class Editing {
     if (i < 0) return;
     const start = L.start + byteLen(all.slice(0, i));
     if (v.cursors.some((c) => Math.min(c.pos, c.anchor ?? c.pos) === start)) { this.app().setStatus("All occurrences selected"); return; }
-    v.cursors.push({ pos: start + byteLen(needle), anchor: start, goalX: null });
+    v.cursors.push(selecting(start + byteLen(needle), start));
     v.normalize();
     pane.reveal();
     pane.scheduleRender();
@@ -879,7 +922,7 @@ export class Editing {
     const out = [];
     for (let i = all.indexOf(needle); i >= 0; i = all.indexOf(needle, i + needle.length)) {
       const start = L.start + byteLen(all.slice(0, i));
-      out.push({ pos: start + byteLen(needle), anchor: start, goalX: null });
+      out.push(selecting(start + byteLen(needle), start));
     }
     if (!out.length) return;
     const first = out.findIndex((c) => c.anchor === s.start);

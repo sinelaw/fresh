@@ -12,7 +12,7 @@
 import { Menu } from "./menu.js";
 import { asCommand } from "./app.js";
 
-const $ = (s) => document.querySelector(s);
+import { $ } from "./dom.js";
 
 // A row: a command id; {command, label?, keys?, checked?}; {label, items} (a
 // submenu); null (a separator). `checked(app)` makes the row a toggle.

@@ -510,7 +510,7 @@ export function activate(app) {
       h("row", {}, [
         h("input", {
           key: "q", value: pq.query, placeholder: "Search the workspace", grow: true, list: "results",
-          onInput: (q) => { pq.query = q; clearTimeout(timer); timer = setTimeout(runSearch, 250); },
+          onInput: (q) => { pq.query = q; clearTimeout(timer); timer = setTimeout(() => { runSearch(); }, 250); },
           onEnter: runSearch,
         }),
         ...toggles(() => { update(); runSearch(); }),

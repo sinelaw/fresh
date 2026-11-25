@@ -10,7 +10,7 @@
 
 import { rpc } from "./rpc.js";
 
-const $ = (s) => document.querySelector(s);
+import { $ } from "./dom.js";
 
 export class Palette {
   constructor(app) {

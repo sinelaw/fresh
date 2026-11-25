@@ -86,6 +86,10 @@
 // keyboard where it is (a list previewing what it selects).
 /** type OpenOptions = {line: Number | Null, column: Number, place: String, preview: Boolean | Null, focus: Boolean} */
 
+// A view's cursor: its position, its selection's anchor (null: no
+// selection) and the column vertical motion aims for (null: its own).
+/** type Cursor = {pos: Number, anchor: Number | Null, goalX: Number | Null} */
+
 // A cursor moved (`setCursor`, `select`): `center` scrolls it to the middle.
 /** type CursorOptions = {center: Boolean} */
 

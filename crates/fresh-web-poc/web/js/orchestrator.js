@@ -196,7 +196,7 @@ export class Orchestrator {
     const done = w.status.terminals.some((t) => t.state === "done");
     if (!w.status.attention && !done) return;
     if (w.status.attention) this.app().setStatus(w.status.attention);
-    rpc("workspace.seen").catch(() => {});
+    rpc("workspace.seen", {}).catch(() => {});
   }
 
   renderTitle() {

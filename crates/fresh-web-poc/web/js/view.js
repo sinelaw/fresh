@@ -12,7 +12,6 @@ import { DocView } from "./doc.js";
 
 let nextPaneId = 1;
 
-const OPENERS = { "(": 1, "[": 1, "{": 1 }, CLOSERS = { ")": 1, "]": 1, "}": 1 };
 // What a view draws over the text's own style: a bracket in the colour of
 // its depth, the occurrences of the word at the cursor, the bracket pair at
 // the cursor, the selection.
@@ -22,11 +21,23 @@ const BRACKET = restyler({ fg: "editor.bracket_match_fg", bg: null, bold: true, 
 const SELECTED = restyler({ fg: null, bg: "editor.selection_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
 // Each line's bracket balance by language and text (strings and comments
 // left out), and each buffer's depth at every line start, for its text.
+/** const balanceCache: Map<String, Number> */
 const balanceCache = new Map();
 const depthCache = new WeakMap();
+// A line's bracket balance: openers less closers, outside `skip`'s spans.
+/** function balance(line: String, skip: {s: Number, e: Number}[]) => Number */
+function balance(line, skip) {
+  let n = 0;
+  for (let k = 0; k < line.length; k++) {
+    const c = line[k];
+    const opens = c === "(" || c === "[" || c === "{", closes = c === ")" || c === "]" || c === "}";
+    if ((opens || closes) && !skip.some((x) => k >= x.s && k < x.e)) n += opens ? 1 : -1;
+  }
+  return n;
+}
 function rainbowDepths(buf, lang, synFor) {
   const hit = depthCache.get(buf);
-  if (hit && hit.gen === buf.textGen && hit.lang === lang) return hit.depths;
+  if (hit !== undefined && hit.gen === buf.textGen && hit.lang === lang) return hit.depths;
   const L = buf.text;
   const depths = new Int32Array(L.count + 1);
   let d = 0;
@@ -34,14 +45,9 @@ function rainbowDepths(buf, lang, synFor) {
     depths[i] = d;
     const line = L.lines[i];
     const key = `${lang}\u0000${line}`;
-    let n = balanceCache.get(key);
-    if (n == null) {
-      n = 0;
-      const skip = synFor(i).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
-      for (let k = 0; k < line.length; k++) {
-        const c = line[k];
-        if ((c in OPENERS || c in CLOSERS) && !skip.some((x) => k >= x.s && k < x.e)) n += c in OPENERS ? 1 : -1;
-      }
+    const known = balanceCache.get(key);
+    const n = known ?? balance(line, synFor(i).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]));
+    if (known === undefined) {
       if (balanceCache.size > 100000) balanceCache.clear();
       balanceCache.set(key, n);
     }
@@ -52,7 +58,32 @@ function rainbowDepths(buf, lang, synFor) {
   return depths;
 }
 
-export const sel = (c) => (c.anchor == null || c.anchor === c.pos ? null : { start: Math.min(c.anchor, c.pos), end: Math.max(c.anchor, c.pos) });
+// No draw asked for yet (a pane's `pending` frame).
+/** const NO_FRAME: Number | Null */
+const NO_FRAME = null;
+
+// A <div> of class `cls` holding `kids`.
+function div(cls, kids) {
+  const d = document.createElement("div");
+  d.className = cls;
+  for (const k of kids) d.appendChild(k);
+  return d;
+}
+
+/** function cursorWith(pos: Number, anchor: Number | Null, goalX: Number | Null) => Cursor */
+export function cursorWith(pos, anchor, goalX) { return { pos, anchor, goalX }; }
+/** function cursorAt(pos: Number) => Cursor */
+export function cursorAt(pos) { return { pos, anchor: null, goalX: null }; }
+// A cursor at `pos` selecting from `anchor` (none when they meet).
+/** function selecting(pos: Number, anchor: Number | Null) => Cursor */
+export function selecting(pos, anchor) { return { pos, anchor: anchor === pos ? null : anchor, goalX: null }; }
+
+// A cursor's selection, or null for none.
+/** function sel(c: Cursor) => {start: Number, end: Number} | Null */
+export function sel(c) {
+  const a = c.anchor;
+  return a === null || a === c.pos ? null : { start: Math.min(a, c.pos), end: Math.max(a, c.pos) };
+}
 
 // One buffer as shown in one pane.
 export class View {
@@ -65,7 +96,7 @@ export class View {
     this.topPx = 0;
     // Every cursor: position, selection anchor (or null) and the column
     // vertical motion aims for. The first is the primary.
-    this.cursors = [{ pos: 0, anchor: null, goalX: null }];
+    this.cursors = [cursorAt(0)];
     this.mode = "source"; // or "compose"
     this.opts = { composeWidth: null, wrap: false, lineNumbers: !buf.isVirtual };
     this.folds = []; // [{start, end}] window line indices; start's line stays
@@ -82,10 +113,10 @@ export class View {
       if (p >= op.pos + op.len) return p - op.len;
       return p > op.pos ? op.pos : p;
     };
-    for (const c of this.cursors) {
-      c.pos = sp(c.pos, true);
-      if (c.anchor != null) c.anchor = sp(c.anchor, false);
-    }
+    this.cursors = this.cursors.map((c) => {
+      const a = c.anchor;
+      return cursorWith(sp(c.pos, true), a === null ? null : sp(a, false), c.goalX);
+    });
     this._top = sp(this._top, false);
   }
   selection() { return sel(this.cursors[0]); }
@@ -96,8 +127,8 @@ export class View {
     const lo = (x) => Math.min(x.pos, x.anchor ?? x.pos), hi = (x) => Math.max(x.pos, x.anchor ?? x.pos);
     const out = [];
     for (const c of [...this.cursors].sort((a, b) => lo(a) - lo(b))) {
-      const prev = out[out.length - 1];
-      if (prev && (prev.pos === c.pos || lo(c) < hi(prev))) { if (c === prim) out[out.length - 1] = c; continue; }
+      const last = out.length - 1;
+      if (last >= 0 && (out[last].pos === c.pos || lo(c) < hi(out[last]))) { if (c === prim) out[last] = c; continue; }
       out.push(c);
     }
     const i = out.indexOf(prim);
@@ -113,24 +144,21 @@ export class Pane {
     this.id = nextPaneId++;
     this.views = []; // tabs
     this.view = null;
-    this.el = document.createElement("div");
-    this.el.className = "pane";
-    this.el.innerHTML = `<div class="tabs"></div><div class="surface"><div class="rulers"></div><div class="gutter"></div><div class="text"></div><div class="carets"></div><div class="scrollbar"><div class="marks"></div><div class="thumb"></div></div></div>`;
-    const el = this.el;
-    const part = (k) => el.querySelector("." + k);
-    this.tabsEl = part("tabs");
-    this.surfaceEl = part("surface");
-    this.rulersEl = part("rulers");
-    this.gutterEl = part("gutter");
-    this.textEl = part("text");
-    this.caretsEl = part("carets");
-    this.scrollbarEl = part("scrollbar");
-    this.thumbEl = part("thumb");
-    this.marksEl = part("marks");
-    this.marksSig = "";
+    // The tabs over the surface: rulers, gutter, text and carets, then (in
+    // a compose view) the document, then the scrollbar.
+    this.tabsEl = div("tabs", []);
+    this.rulersEl = div("rulers", []);
+    this.gutterEl = div("gutter", []);
+    this.textEl = div("text", []);
+    this.caretsEl = div("carets", []);
+    this.marksEl = div("marks", []);
+    this.thumbEl = div("thumb", []);
+    this.scrollbarEl = div("scrollbar", [this.marksEl, this.thumbEl]);
     // A view in compose mode is drawn as a document instead of rows.
     this.doc = new DocView();
-    this.surfaceEl.insertBefore(this.doc.el, this.scrollbarEl);
+    this.surfaceEl = div("surface", [this.rulersEl, this.gutterEl, this.textEl, this.caretsEl, this.doc.el, this.scrollbarEl]);
+    this.el = div("pane", [this.tabsEl, this.surfaceEl]);
+    this.marksSig = "";
     this.rows = [];
     this.lastWidth = new Map();
     // Sizes come from a ResizeObserver, never read while drawing: reading
@@ -140,6 +168,7 @@ export class Pane {
     this.bracketKey = ""; // the cursor position and text the bracket pair was found for
     this.bracketPair = null;
     this.maxCols = 0; // the widest row drawn, in columns
+    this.frame = { id: NO_FRAME }; // the frame the next draw is asked for
   }
 
   // Take the surface's resizes and mouse (once, after `new`).
@@ -176,13 +205,13 @@ export class Pane {
   // new tab is the split's preview tab, in the place of the one there was
   // (unless that one holds unsaved changes: it is kept); false: the tab is
   // kept (no longer a preview); null: as it is.
-  show(buf, preview = null) {
+  show(buf, preview) {
     let v = this.views.find((x) => x.buf === buf);
     if (!v) {
       v = new View(this, buf);
       buf.views.add(v);
-      const old = preview ? this.views.find((x) => x.preview) : null;
-      if (old && !old.buf.modified) {
+      const old = preview ? this.views.find((x) => x.preview) : undefined;
+      if (old !== undefined && !old.buf.modified) {
         this.views.splice(this.views.indexOf(old), 1, v);
         old.dispose();
         this.app().dropIfUnshown(old.buf);
@@ -203,7 +232,7 @@ export class Pane {
     if (i < 0) return;
     this.views.splice(i, 1);
     v.dispose();
-    if (this.view === v) this.view = this.views[Math.max(0, i - 1)] || null;
+    if (this.view === v) this.view = this.views.length ? this.views[Math.max(0, i - 1)] : null;
     if (this.view) this.app().onViewShown(this, this.view);
     this.renderTabs();
     this.scheduleRender();
@@ -246,8 +275,10 @@ export class Pane {
     const { cols, rows } = this.metrics();
     const L = v.buf.text;
     const compose = v.mode === "compose";
-    const nums = v.opts.lineNumbers && !compose && L && L.firstLine != null;
-    const digits = nums ? String(L.firstLine + L.count).length : 0;
+    // Line numbers, when the text's place in the file is known.
+    const first = v.opts.lineNumbers && !compose && L !== null ? L.firstLine : null;
+    const nums = first !== null;
+    const digits = first !== null && L !== null ? String(first + L.count).length : 0;
     const gutter = (nums ? digits + 1 : 0) + 2;
     const avail = cols - gutter;
     const width = compose ? Math.min(v.opts.composeWidth || this.app().settings.page_width, avail) : avail;
@@ -256,8 +287,8 @@ export class Pane {
   }
 
   scheduleRender() {
-    if (this.pending) return;
-    this.pending = requestAnimationFrame(() => { this.pending = null; this.render(); });
+    if (this.frame.id !== null) return;
+    this.frame.id = requestAnimationFrame(() => { this.frame.id = null; this.render(); });
   }
 
   // ---------------------------------------------------------------- render
@@ -321,11 +352,12 @@ export class Pane {
         let depth = depths[li];
         for (let k = 0; k < line.length; k++) {
           const c = line[k];
-          if (!(c in OPENERS) && !(c in CLOSERS)) continue;
+          const opens = c === "(" || c === "[" || c === "{", closes = c === ")" || c === "]" || c === "}";
+          if (!opens && !closes) continue;
           if (skip.some((x) => k >= x.s && k < x.e)) continue;
-          if (c in CLOSERS) depth--;
+          if (closes) depth--;
           const f = RAINBOW[((Math.max(0, depth) % 6) + 6) % 6];
-          if (c in OPENERS) depth++;
+          if (opens) depth++;
           const at = L.starts[li] + byteLen(line.slice(0, k));
           out.push({ s: at, e: at + 1, f });
         }
@@ -404,7 +436,8 @@ export class Pane {
 
   // Draw now, not at the next frame (motion that measures what is drawn).
   renderNow() {
-    if (this.pending) { cancelAnimationFrame(this.pending); this.pending = null; }
+    const asked = this.frame.id;
+    if (asked !== null) { cancelAnimationFrame(asked); this.frame.id = null; }
     this.render();
   }
 
@@ -909,7 +942,7 @@ export class Pane {
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
-      if (!dragged && e.button === 0) { v.cursors.push({ pos: p, anchor: null, goalX: null }); v.normalize(); this.scheduleRender(); }
+      if (!dragged && e.button === 0) { v.cursors.push(cursorAt(p)); v.normalize(); this.scheduleRender(); }
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);

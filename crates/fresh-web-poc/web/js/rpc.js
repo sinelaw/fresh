@@ -25,12 +25,13 @@ const ORDERED = new Set([
   "doc.new", "doc.open", "doc.close", "doc.edit", "doc.save", "doc.save_as", "doc.reload", "doc.set",
   "fs.write", "fs.create", "fs.rename", "fs.delete", "fs.copy", "workspace.trust",
 ]);
-let ordered = Promise.resolve();
+// Settles once the last ordered operation is answered (or refused).
+let ordered = Promise.resolve(undefined);
 
-export function rpc(op, args = {}) {
+export function rpc(op, args) {
   if (!ORDERED.has(op)) return send(op, args);
   const p = ordered.then(() => send(op, args));
-  ordered = p.catch(() => {});
+  ordered = p.then(() => undefined).catch(() => undefined);
   return p;
 }
 

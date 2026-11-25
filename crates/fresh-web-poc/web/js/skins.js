@@ -41,7 +41,7 @@ export class Skins {
   // the editor's cell is measured in the skin's font.
   async load() {
     document.getElementById("skin-btn")?.addEventListener("click", () => this.pick());
-    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
     let id = new URLSearchParams(location.search).get("skin");
     if (!id) try { id = localStorage.getItem(KEY); } catch {}
     await this.apply(this.byId(id) ? id : "default");
@@ -147,7 +147,7 @@ export class Skins {
     const names = bound.map((e) => e.dataset.bind || e.dataset.bindVar.split(":")[1]);
     const v = this.localValues();
     if (names.some((n) => HOST_VALUES.has(n))) {
-      try { Object.assign(v, await rpc("host.stats")); } catch {}
+      try { Object.assign(v, await rpc("host.stats", {})); } catch {}
     }
     for (const e of bound) {
       if (e.dataset.bind && v[e.dataset.bind] != null) e.textContent = String(v[e.dataset.bind]);
@@ -184,7 +184,7 @@ export class Skins {
   // the one before back. The list is read again, so a skin just added to
   // the skins folder is there.
   async pick() {
-    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
     const before = this.current?.id || "default";
     this.app().prompt.open({
       title: "Skin",

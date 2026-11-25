@@ -194,7 +194,8 @@ function markdown(text) {
   let m = re.exec(text);
   while (m) {
     const k = m[1] ? "syntax.string" : m[2] ? "syntax.type" : m[3] ? "syntax.link" : "syntax.variable";
-    out.push({ s: m.index, e: m.index + m[0].length, k, bold: !!m[2], italic: !!m[4] });
+    const e = re.lastIndex;
+    out.push({ s: e - m[0].length, e, k, bold: !!m[2], italic: !!m[4] });
     m = re.exec(text);
   }
   return out;

@@ -7,11 +7,12 @@
 import { rpc, session, connectEvents } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { fileBuffer, virtualBuffer, byteToIdx } from "./buffer.js";
-import { Pane, View } from "./view.js";
+import { Pane, View, cursorAt, selecting, sel } from "./view.js";
+import { put, KEEP } from "./editing.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 
-const $ = (s) => document.querySelector(s);
+import { $ } from "./dom.js";
 
 
 // A command's action as the command table holds it: run with its one
@@ -56,7 +57,7 @@ export class App {
     this.watches = new Map();
     this.hoverProviders = [];
     this.history = { back: [], fwd: [] };
-    this.opening = Promise.resolve(); // the file being opened (openFile)
+    this.opening = Promise.resolve(undefined); // the file being opened (openFile)
     this.scrollDriver = null; // the split the pointer scrolled last (syncScroll)
     this.scrollLinks = []; // [{a, b, aToB, bToA}]: buffers scrolled together
     this.killRing = [];
@@ -197,11 +198,11 @@ export class App {
         try { b = t.untitled ? await this.loadUntitled(t.untitled) : await this.loadFile(t.path); } catch { continue; }
         const v = pane.show(b, t.preview ? true : null);
         const pos = Math.max(0, Math.min(t.pos | 0, b.len));
-        v.cursors = [{ pos, anchor: null, goalX: null }];
+        v.cursors = [cursorAt(pos)];
         v.setTop(Math.max(0, Math.min(t.top | 0, pos)));
       }
       const active = pane.views.find((v) => this.tabKey(v.buf) === n.active);
-      if (active) pane.show(active.buf);
+      if (active) pane.show(active.buf, null);
     }
     for (const { pane } of specs) if (!pane.views.length && this.panes().length > 1) await this.closePane(pane);
     if (s.terminal && !this.term.visible) await this.term.toggle();
@@ -342,7 +343,7 @@ export class App {
     };
     this.layoutTree = replace(this.layoutTree);
     const b = buf || old.view?.buf;
-    if (b) np.show(b);
+    if (b) np.show(b, null);
     this.activePane = np;
     this.relayout();
     this.focusPane(np);
@@ -556,7 +557,7 @@ export class App {
       nv.folds = v.folds.map((f) => ({ ...f }));
       to.views.splice(Math.min(index, to.views.length), 0, nv);
     }
-    to.show(v.buf);
+    to.show(v.buf, null);
     from.closeView(v);
     if (!from.views.length && this.panes().length > 1) this.closePane(from);
     this.focusPane(to);
@@ -634,7 +635,7 @@ export class App {
   // A new untitled document, shown: an empty buffer bound to no file,
   // named Untitled-N, until it is saved as one.
   async newUntitled() {
-    const b = await this.adoptDoc(await rpc("doc.new"));
+    const b = await this.adoptDoc(await rpc("doc.new", {}));
     this.showBuffer(b, "tab", { preview: null, focus: true });
     return b;
   }
@@ -803,7 +804,7 @@ export class App {
     if (history) this.pushHistory(v);
     const pane = v.pane;
     await v.buf.ensure(pos, pane.metrics().rows + 10);
-    if (pane.view !== v) pane.show(v.buf);
+    if (pane.view !== v) pane.show(v.buf, null);
     this.editing.place(pane, pos, extend);
     if (center) pane.reveal(true);
     pane.scheduleRender();
@@ -1065,9 +1066,9 @@ export class App {
     // One line per cursor when the counts match, as editors do.
     const parts = text.split("\n");
     if (v.cursors.length > 1 && parts.length === v.cursors.length) {
-      const order = v.cursors.map((c, i) => [c, i]).sort((a, b) => a[0].pos - b[0].pos);
-      const byCursor = new Map(order.map(([c], k) => [c, parts[k]]));
-      this.editing.replace(this.activePane, (c) => { const s = c.anchor != null && c.anchor !== c.pos ? { start: Math.min(c.anchor, c.pos), end: Math.max(c.anchor, c.pos) } : { start: c.pos, end: c.pos }; return { ...s, text: byCursor.get(c) }; });
+      // A line to each cursor, in the order they are in the text.
+      const sorted = [...v.cursors].sort((a, b) => a.pos - b.pos);
+      this.editing.replace(this.activePane, (c) => { const s = sel(c) ?? { start: c.pos, end: c.pos }; return put(s.start, s.end, parts[sorted.indexOf(c)]); });
     } else this.editing.type(this.activePane, text);
   }
 
@@ -1081,7 +1082,7 @@ export class App {
     e.preventDefault();
     e.clipboardData.setData("text/plain", texts.join("\n"));
     if (cut && !v.buf.readOnly) {
-      if (sels.length) this.editing.replace(this.activePane, (c) => { const s = c.anchor != null && c.anchor !== c.pos ? { start: Math.min(c.anchor, c.pos), end: Math.max(c.anchor, c.pos) } : null; return s ? { ...s, text: "" } : null; });
+      if (sels.length) this.editing.replace(this.activePane, (c) => { const s = sel(c); return s ? put(s.start, s.end, "") : KEEP; });
       else this.editing.deleteLine(this.activePane);
     }
   }
@@ -1334,7 +1335,7 @@ export class App {
     cmd("view.focusEditor", "View: Focus Editor", () => this.focusPane(P()), true);
     cmd("workspace.trust", "Workspace: Trust (allow processes, terminals and language servers)", async () => {
       if (this.trusted) { this.setStatus("The workspace is trusted"); return; }
-      await rpc("workspace.trust");
+      await rpc("workspace.trust", {});
     });
     cmd("help.log", "Show Log", () => this.createVirtual({
       name: "*Log*", entries: this.log.map((l) => ({ text: l + "\n", props: {}, style: null })),
@@ -1365,7 +1366,7 @@ export class App {
     vcmd("cursor.matchingBracket", "Go to Matching Bracket", () => ed().matchingBracket(P()));
     vcmd("cursor.addAbove", "Add Cursor Above", () => ed().addCursorVertical(P(), -1));
     vcmd("cursor.addBelow", "Add Cursor Below", () => ed().addCursorVertical(P(), 1));
-    cmd("select.all", "Select All", () => { const v = V(); if (v) { v.cursors = [{ pos: v.buf.len, anchor: 0, goalX: null }]; P().scheduleRender(); } });
+    cmd("select.all", "Select All", () => { const v = V(); if (v) { v.cursors = [selecting(v.buf.len, 0)]; P().scheduleRender(); } });
     vcmd("select.line", "Select Line", () => ed().selectLine(P()));
     vcmd("select.nextOccurrence", "Select Next Occurrence", () => ed().selectNextOccurrence(P()));
     vcmd("select.allOccurrences", "Select All Occurrences", () => ed().selectAllOccurrences(P()));
@@ -1422,7 +1423,7 @@ export class App {
   // A document's language, line ending and encoding, as the server names
   // them (asked once).
   async docFormats() {
-    if (!this.formats) this.formats = await rpc("doc.formats");
+    if (!this.formats) this.formats = await rpc("doc.formats", {});
     return this.formats;
   }
   // Pick one of `choices` ({label, detail, value}) for the active file;
@@ -1487,7 +1488,7 @@ export class App {
     const p = this.activePane;
     if (!p.views.length) return;
     const i = (p.views.indexOf(p.view) + d + p.views.length) % p.views.length;
-    p.show(p.views[i].buf);
+    p.show(p.views[i].buf, null);
   }
 
   // ------------------------------------------------------------- hover and popups

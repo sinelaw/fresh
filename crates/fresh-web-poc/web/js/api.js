@@ -49,8 +49,8 @@ export const keymap = (app) => app.keymap();
 // The user's own bindings (saved in the browser), over the defaults.
 export const userKeys = (app) => ({ ...app.userKeys });
 export const setUserKey = (app, key, command) => {
-  if (command) app.userKeys[key] = command;
-  else delete app.userKeys[key];
+  const others = Object.entries(app.userKeys).filter(([k]) => k !== key);
+  app.userKeys = Object.fromEntries(command ? [...others, [key, command]] : others);
   app.saveKeys();
 };
 // The next key pressed, as the keymap names it.
