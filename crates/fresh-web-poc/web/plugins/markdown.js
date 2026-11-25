@@ -33,6 +33,19 @@ const LINK = { fg: "syntax.link", bg: null, bold: false, italic: false, underlin
 /** const COMPOSE: OverlayOptions */
 const COMPOSE = { when: "compose", mark: false, above: false };
 
+// How long a match is (0: none).
+/** function matchLength(m: String[] | Null) => Number */
+function matchLength(m) { return m ? m[0].length : 0; }
+
+// Run `f` once `ms` after the last call for `key` (`timers` holds each
+// key's pending run).
+/** function later<K>(timers: Map<K, Number>, key: K, ms: Number, f: () => Undefined) => Undefined */
+function later(timers, key, ms, f) {
+  const before = timers.get(key);
+  if (before !== undefined) clearTimeout(before);
+  timers.set(key, setTimeout(() => { timers.delete(key); f(); }, ms));
+}
+
 export function activate(app) {
   const B = fresh.byteLen;
   const W = fresh.textWidth;
@@ -44,8 +57,10 @@ export function activate(app) {
   // offset of UTF-16 index i in the line.
   const inline = (d, text, at, reveal) => {
     const re = /(`+)([^`]+?)\1|\*\*([^*]+)\*\*|__([^_]+)__|(?<![\w*])\*([^*\s][^*]*?)\*(?!\w)|(?<![\w_])_([^_\s][^_]*?)_(?![\w])|~~([^~]+)~~|!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]+)\]\(([^)]*)\)/g;
-    for (let m; (m = re.exec(text)); ) {
-      const s = m.index, e = s + m[0].length;
+    for (;;) {
+      const m = re.exec(text);
+      if (!m) break;
+      const e = re.lastIndex, s = e - m[0].length;
       const show = (a, b, text) => b > a && d.conceal(at(a), at(b), { text, style: PLAIN, reveal, when: "compose" });
       const hide = (a, b) => show(a, b, "");
       if (m[1]) { // code
@@ -136,14 +151,16 @@ export function activate(app) {
           for (let x = 0; x < s.length; x++) if (s[x] === "|" && s[x - 1] !== "\\") pipes.push(x);
           // A cell starts at the line start (when no pipe leads) and at
           // every pipe with text after it; a closing pipe is markup.
-          const bounds = !pipes.length || s.slice(0, pipes[0]).trim() ? [0, ...pipes] : pipes;
-          const close = bounds.length > 1 && !s.slice(bounds[bounds.length - 1] + 1).trim() ? bounds.pop() : s.length;
+          const cuts = !pipes.length || s.slice(0, pipes[0]).trim() !== "" ? [0, ...pipes] : pipes;
+          const closed = cuts.length > 1 && s.slice(cuts[cuts.length - 1] + 1).trim() === "";
+          const close = closed ? cuts[cuts.length - 1] : s.length;
+          const bounds = closed ? cuts.slice(0, -1) : cuts;
           hide(at2(close), lineEnd(k), rv);
           bounds.forEach((a, p) => {
             const last = p + 1 === bounds.length;
             const z = last ? close : bounds[p + 1];
             const raw = s.slice(a, z);
-            const lead = /^\|?\s*/.exec(raw)[0].length;
+            const lead = matchLength(/^\|?\s*/.exec(raw));
             const trail = raw.length - raw.trimEnd().length;
             d.node(at2(a), last ? lineEnd(k) : at2(z), { type: "cell", level: 0, depth: 0, marker: "", lang: "", align: [], header: false, delimiter: false }, "compose");
             hide(at2(a), at2(a + lead), rv);
@@ -186,7 +203,7 @@ export function activate(app) {
         hide(starts[i], at(li[0].length), reveal(i));
       } else if (qd) {
         block = { type: "quote", level: 0, depth: qd, marker: "", lang: "", align: [], header: false, delimiter: false };
-        hide(starts[i], at(QUOTE.exec(t)[0].length), reveal(i));
+        hide(starts[i], at(matchLength(QUOTE.exec(t))), reveal(i));
       } else block = { type: "paragraph", level: 0, depth: 0, marker: "", lang: "", align: [], header: false, delimiter: false };
       inline(d, t, at, reveal(i));
       let j = i;
@@ -202,7 +219,7 @@ export function activate(app) {
         if (hard) d.conceal(pe, pe + 1, { text: "\n", style: PLAIN, reveal: null, when: "compose" });
         j++;
         // The next line's indent (or quote marker) is markup too.
-        const lead = qd ? QUOTE.exec(n)[0].length : n.length - n.trimStart().length;
+        const lead = qd ? matchLength(QUOTE.exec(n)) : n.length - n.trimStart().length;
         hide(starts[j], atOf(j)(lead), reveal(j));
         inline(d, n, atOf(j), reveal(j));
       }
@@ -214,12 +231,11 @@ export function activate(app) {
 
   const timers = new Map();
   const composing = (b) => b.views().some((v) => v.mode === "compose");
-  const schedule = (b, delay = 30) => {
+  const schedule = (b, delay) => {
     if (!isMarkdown(b) || !composing(b)) return;
-    clearTimeout(timers.get(b.id));
-    timers.set(b.id, setTimeout(() => decorate(b), delay));
+    later(timers, b.id, delay, () => decorate(b));
   };
-  fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer));
+  fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer, 30));
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer, 0));
 
   // ---------------------------------------------------------------- commands
@@ -251,8 +267,8 @@ export function activate(app) {
   };
 
   // The contents: headings, in the sidebar; click to go there.
-  let contents = null;
   const renderContents = () => {
+    const contents = fresh.shown(app, "md-contents");
     if (!contents || !contents.open) return;
     const b = fresh.activeBuffer(app);
     const L = b && isMarkdown(b) ? b.lines() : null;
@@ -260,7 +276,7 @@ export function activate(app) {
     if (L) {
       const { region } = classify(L.lines);
       L.lines.forEach((t, i) => {
-        const m = !region[i] && HEADING.exec(t);
+        const m = region[i] ? null : HEADING.exec(t);
         if (m) items.push({ level: m[1].length, text: t.slice(m[0].length).trim(), pos: L.starts[i] });
       });
     }
@@ -275,11 +291,12 @@ export function activate(app) {
       : h("text", { dim: true }, ["No headings"]));
   };
   const showContents = () => {
-    contents = fresh.panel(app, { id: "md-contents", title: "Contents", place: "sidebar", onClose: null });
+    fresh.panel(app, { id: "md-contents", title: "Contents", place: "sidebar", onClose: null });
     renderContents();
   };
   fresh.onBuffer(app, "buffer.activated", renderContents);
-  fresh.onBuffer(app, "buffer.changed", () => { clearTimeout(timers.get("toc")); timers.set("toc", setTimeout(renderContents, 300)); });
+  const tocTimer = new Map();
+  fresh.onBuffer(app, "buffer.changed", () => later(tocTimer, "toc", 300, renderContents));
 
   fresh.register(app, "markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
   fresh.register(app, "markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });

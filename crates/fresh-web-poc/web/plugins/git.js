@@ -13,13 +13,52 @@ import { diffLines, mapLines, unifiedDiff } from "../js/diff.js";
 import * as fresh from "../js/api.js";
 import { h } from "../js/ui.js";
 
+// `path` from `root`, when it is under it.
+/** function relative(root: String, path: String | Null) => String | Null */
+function relative(root, path) {
+  return path !== null && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+}
+
 // A line's blame, at the row's end.
 /** const BLAME: Style */
 const BLAME = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
 
+// A line's blame (git blame --line-porcelain): its commit, its line in the
+// file on disk, and who, when and why.
+/** type Blamed = {hash: String, line: Number, author: String, time: String, summary: String} */
+
+// One porcelain entry's lines (a header, then "key value" lines).
+/** function blameEntry(lines: String[]) => Blamed | Null */
+function blameEntry(lines) {
+  const head = /^([0-9a-f]{40}) \d+ (\d+)/.exec(lines.length ? lines[0] : "");
+  if (!head) return null;
+  const field = (k) => { const l = lines.find((x) => x.startsWith(`${k} `)); return l ? l.slice(k.length + 1) : ""; };
+  const at = Number(field("author-time"));
+  return {
+    hash: head[1], line: Number(head[2]) - 1, author: field("author"),
+    time: at ? new Date(at * 1000).toISOString().slice(0, 10) : "", summary: field("summary"),
+  };
+}
+
+// Each entry ends with its line's text, tab first.
+/** function parseBlame(text: String) => Blamed[] */
+function parseBlame(text) {
+  /** const out: Blamed[] */
+  const out = [];
+  /** let entry: String[] */
+  let entry = [];
+  for (const l of text.split("\n")) {
+    if (!l.startsWith("\t")) { entry.push(l); continue; }
+    const e = blameEntry(entry);
+    if (e) out.push(e);
+    entry = [];
+  }
+  return out;
+}
+
 export function activate(app) {
   const root = fresh.root(app);
-  const rel = (p) => (p && p.startsWith(root + "/") ? p.slice(root.length + 1) : null);
+  const rel = (p) => relative(root, p);
   // A restricted workspace runs no processes: git answers as a failure.
   const git = (args) => fresh.trusted(app)
     ? fresh.runProcess(app, "git", args, { cwd: root })
@@ -35,13 +74,17 @@ export function activate(app) {
     branch.set(r.code === 0 ? `⎇ ${r.stdout.trim()}` : "", { title: "Git branch — click for the log", onClick: () => fresh.run(app, "git.log") });
   };
   // HEAD changes on a checkout; the branch's ref file on a commit.
-  let refWatch = null;
+  // Stops watching the current branch's ref file (none on a detached HEAD).
+  /** let unwatchRef: (() => Undefined) | Null */
+  let unwatchRef = null;
   const watchRefs = async () => {
     const ref = await git(["symbolic-ref", "-q", "HEAD"]);
-    if (refWatch) { refWatch(); refWatch = null; }
+    const before = unwatchRef;
+    unwatchRef = null;
+    if (before) before();
     if (ref.code === 0) {
       const p = await git(["rev-parse", "--git-path", ref.stdout.trim()]);
-      if (p.code === 0) refWatch = await fresh.watch(app, `${root}/${p.stdout.trim()}`, () => { refreshBranch(); const b = fresh.activeBuffer(app); if (b) schedule(b); });
+      if (p.code === 0) unwatchRef = await fresh.watch(app, `${root}/${p.stdout.trim()}`, () => { refreshBranch(); const b = fresh.activeBuffer(app); if (b) schedule(b); });
     }
   };
   const start = async () => {
@@ -90,7 +133,8 @@ export function activate(app) {
     b.render();
   };
   const schedule = (b) => {
-    clearTimeout(timers.get(b.id));
+    const before = timers.get(b.id);
+    if (before !== undefined) clearTimeout(before);
     timers.set(b.id, setTimeout(() => markGutter(b), 300));
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer));
@@ -123,18 +167,10 @@ export function activate(app) {
     // Blame describes the file on disk; the buffer's lines map onto it.
     const disk = (await fresh.read(app, b.path)).replace(/\n$/, "").split("\n");
     const map = mapLines(disk, held(L));
-    const info = [];
-    let cur = null;
-    for (const line of r.stdout.split("\n")) {
-      const head = /^([0-9a-f]{40}) \d+ (\d+)/.exec(line);
-      if (head) { cur = { hash: head[1], line: +head[2] - 1, author: "", time: "", summary: "" }; continue; }
-      if (!cur) continue;
-      if (line.startsWith("author ")) cur.author = line.slice(7);
-      else if (line.startsWith("author-time ")) cur.time = new Date(+line.slice(12) * 1000).toISOString().slice(0, 10);
-      else if (line.startsWith("summary ")) cur.summary = line.slice(8);
-      else if (line.startsWith("\t")) { info.push(cur); cur = null; }
-    }
-    const byLine = new Map(info.map((x) => [x.line, x]));
+    const info = parseBlame(r.stdout);
+    /** const byLine: Map<Number, Blamed> */
+    const byLine = new Map();
+    for (const x of info) byLine.set(x.line, x);
     d.clear();
     held(L).forEach((text, i) => {
       const x = map ? byLine.get(map[i]) : byLine.get(i);
@@ -152,14 +188,14 @@ export function activate(app) {
     mode: null, readOnly: true, language: "diff", keep: false, place: "tab", lineNumbers: false,
   });
 
-  let logPanel = null;
+  // The log of the workspace, or of one file (`path`).
   const log = async (path) => {
-    const args = ["log", "-n", "500", "--format=%H%x1f%h%x1f%an%x1f%ar%x1f%s"];
-    if (path) args.push("--", rel(path));
-    const r = await git(args);
+    const of = path ? rel(path) : null;
+    const format = ["log", "-n", "500", "--format=%H%x1f%h%x1f%an%x1f%ar%x1f%s"];
+    const r = await git(of ? [...format, "--", of] : format);
     if (r.code !== 0) return fresh.message(app, r.stderr.trim() || "git log failed");
     const items = r.stdout.trim().split("\n").filter(Boolean).map((l) => { const [hash, short, author, when, subject] = l.split("\x1f"); return { hash, short, author, when, subject }; });
-    logPanel = fresh.panel(app, { id: "git-log", title: path ? `Log: ${rel(path)}` : "Git Log", place: "bottom", onClose: null });
+    const logPanel = fresh.panel(app, { id: "git-log", title: of ? `Log: ${of}` : "Git Log", place: "bottom", onClose: null });
     logPanel.render(h("list", {
       key: "log",
       items,

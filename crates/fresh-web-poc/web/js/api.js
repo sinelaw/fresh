@@ -73,6 +73,7 @@ export const onLspStatus = (app, f) => app.host.onStatus(f);
 
 export const activeBuffer = (app) => { const v = app.view(); return v ? new BufferHandle(app, v.buf) : null; };
 export const buffers = (app) => [...app.buffers.values()].map((b) => new BufferHandle(app, b));
+export const bufferById = (app, id) => bufferOf(app, app.buffers.get(id));
 export const bufferByPath = (app, path) => bufferOf(app, [...app.buffers.values()].find((b) => b.path === path));
 // `at`: OpenOptions (types/fresh.d.js).
 export const open = async (app, path, at) => { const v = await app.openFile(path, at); return v ? new BufferHandle(app, v.buf) : null; };

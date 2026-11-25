@@ -34,11 +34,50 @@ pub fn list(ws: Option<&Workspace>) -> Value {
 
 /// `theme.get`: one theme, fully resolved, in the theme file format.
 pub fn get(ws: Option<&Workspace>, key: &str) -> Result<Value> {
-    if key.starts_with(skins::THEME_PREFIX) {
-        return skins::theme(ws, key);
+    let file = if key.starts_with(skins::THEME_PREFIX) {
+        skins::theme(ws, key)?
+    } else {
+        let theme = registry()
+            .get_cloned(key)
+            .ok_or_else(|| err(Code::NotFound, format!("no theme {key}")))?;
+        serde_json::to_value(ThemeFile::from(theme))?
+    };
+    Ok(hex_colors(file))
+}
+
+/// The theme file with every `[r, g, b]` colour as `"#rrggbb"`, so a colour
+/// reaches the client in one of two forms: a string (a hex colour, a
+/// colour's name, or "Default") or `{color, …}` holding one.
+fn hex_colors(v: Value) -> Value {
+    match v {
+        Value::Array(a) => match rgb(&a) {
+            Some([r, g, b]) => Value::String(format!("#{r:02x}{g:02x}{b:02x}")),
+            None => Value::Array(a.into_iter().map(hex_colors).collect()),
+        },
+        Value::Object(o) => Value::Object(o.into_iter().map(|(k, x)| (k, hex_colors(x))).collect()),
+        v => v,
     }
-    let theme = registry()
-        .get_cloned(key)
-        .ok_or_else(|| err(Code::NotFound, format!("no theme {key}")))?;
-    Ok(serde_json::to_value(ThemeFile::from(theme))?)
+}
+
+/// Three numbers 0–255: a colour.
+fn rgb(a: &[Value]) -> Option<[u8; 3]> {
+    let [r, g, b] = a else { return None };
+    let c = |x: &Value| x.as_u64().and_then(|n| u8::try_from(n).ok());
+    Some([c(r)?, c(g)?, c(b)?])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colours_arrive_as_strings() {
+        let v = hex_colors(
+            json!({"editor": {"bg": [16, 32, 255], "fg": "White", "sel": {"color": [0, 0, 1]}}, "list": [1, 2]}),
+        );
+        assert_eq!(
+            v,
+            json!({"editor": {"bg": "#1020ff", "fg": "White", "sel": {"color": "#000001"}}, "list": [1, 2]})
+        );
+    }
 }

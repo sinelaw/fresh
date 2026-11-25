@@ -10,42 +10,74 @@ import { h } from "../js/ui.js";
 /** const STEP: Style */
 const STEP = { fg: null, bg: "ui.tour_step_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
 
+// A .tour file (CodeTour): its steps, each at a file's line, a folder,
+// or neither (words only).
+/** type TourStep = {
+ *   file: String | Undefined,
+ *   line: Number | Undefined,
+ *   directory: String | Undefined,
+ *   title: String | Undefined,
+ *   description: String | Undefined,
+ * } */
+/** type Tour = {title: String | Undefined, steps: TourStep[]} */
+// The tour being taken, and the step it is at.
+/** type Taking = {tour: Tour, step: Number} */
+
+/** function label(s: TourStep) => String */
+function label(s) {
+  const where = s.file ? `${s.file}${s.line ? `:${s.line}` : ""}` : s.directory ? `${s.directory}/` : "";
+  return s.title || where;
+}
+
 export function activate(app) {
   const root = fresh.root(app);
-  let tour = null, step = 0, panel = null;
-  let marked = null; // the buffer holding the current step's mark
-  const unmark = () => { if (marked) { marked.decorations("tour").clear(); marked.render(); marked = null; } };
-  const label = (s) => s.title || (s.file ? `${s.file}${s.line ? `:${s.line}` : ""}` : s.directory ? `${s.directory}/` : "");
+  /** let taking: Taking | Null */
+  let taking = null;
+  // The file holding the current step's mark.
+  /** let marked: String | Null */
+  let marked = null;
+  const unmark = () => {
+    const path = marked;
+    marked = null;
+    const b = path ? fresh.bufferByPath(app, path) : null;
+    if (b) { b.decorations("tour").clear(); b.render(); }
+  };
 
   const go = async (i) => {
-    if (!tour) return;
-    step = Math.max(0, Math.min(tour.steps.length - 1, i));
-    const s = tour.steps[step];
+    const now = taking;
+    if (!now) return;
+    const step = Math.max(0, Math.min(now.tour.steps.length - 1, i));
+    taking = { tour: now.tour, step };
+    const s = now.tour.steps[step];
     render();
     unmark();
-    if (!s.file) return;
-    const b = await fresh.open(app, `${root}/${s.file}`, { line: s.line || null, column: 1, place: "tab", preview: null, focus: true });
-    if (b && s.line) {
-      const L = b.lines();
-      const li = s.line - 1 - (L.firstLine ?? 0);
+    const file = s.file, line = s.line;
+    if (!file) return;
+    const path = `${root}/${file}`;
+    const b = await fresh.open(app, path, { line: line || null, column: 1, place: "tab", preview: null, focus: true });
+    const L = b ? b.lines() : null;
+    if (!b || !L || !line) return;
+    marked = path;
+    const li = line - 1 - (L.firstLine ?? 0);
+    if (li >= 0 && li < L.starts.length) {
       const d = b.decorations("tour");
-      marked = b;
-      if (li >= 0 && li < L.starts.length) {
-        d.overlay(L.starts[li], L.starts[li] + fresh.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
-        d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
-      }
-      b.render();
+      d.overlay(L.starts[li], L.starts[li] + fresh.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
+      d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
     }
+    b.render();
   };
   const render = () => {
-    if (!panel || !panel.open || !tour) return;
+    const now = taking;
+    const panel = fresh.shown(app, "tour");
+    if (!now || !panel || !panel.open) return;
+    const { tour, step } = now;
     const s = tour.steps[step];
     panel.render(h("col", {}, [
       h("text", { bold: true }, [tour.title || "Tour"]),
       h("row", {}, [
-        h("button", { onClick: () => go(step - 1), disabled: step === 0 }, ["◀ Previous"]),
+        h("button", { onClick: () => { go(step - 1); }, disabled: step === 0 }, ["◀ Previous"]),
         h("text", { dim: true }, [`${step + 1} / ${tour.steps.length}`]),
-        h("button", { primary: true, onClick: () => go(step + 1), disabled: step >= tour.steps.length - 1 }, ["Next ▶"]),
+        h("button", { primary: true, onClick: () => { go(step + 1); }, disabled: step >= tour.steps.length - 1 }, ["Next ▶"]),
       ]),
       h("text", { bold: true }, [label(s)]),
       h("markdown", { text: s.description || "" }),
@@ -67,13 +99,17 @@ export function activate(app) {
       title: "Code tour",
       items: files.map((f) => ({ label: f.name.replace(/\.tour$/, ""), value: f.path })),
       onAccept: async (it) => {
-        tour = JSON.parse(await fresh.read(app, it.value));
-        panel = fresh.panel(app, { id: "tour", title: "Tour", place: "right", onClose: unmark });
+        /** const tour: Tour */
+        const tour = JSON.parse(await fresh.read(app, it.value));
+        taking = { tour, step: 0 };
+        fresh.panel(app, { id: "tour", title: "Tour", place: "right", onClose: unmark });
         go(0);
       },
     });
   };
   fresh.register(app, "tour.open", { title: "Code Tour: Open…", hidden: false, run: open });
-  fresh.register(app, "tour.next", { title: "Code Tour: Next Step", hidden: false, run: () => go(step + 1) });
-  fresh.register(app, "tour.prev", { title: "Code Tour: Previous Step", hidden: false, run: () => go(step - 1) });
+  // A step `d` on from the current one, when a tour is being taken.
+  const move = (d) => { const now = taking; if (now) go(now.step + d); };
+  fresh.register(app, "tour.next", { title: "Code Tour: Next Step", hidden: false, run: () => move(1) });
+  fresh.register(app, "tour.prev", { title: "Code Tour: Previous Step", hidden: false, run: () => move(-1) });
 }
