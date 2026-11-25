@@ -29,15 +29,43 @@ const termFont = () => {
 
 // How an agent session's tab shows what it is doing (the server reads it
 // from the terminal's stream: `src/terminal.rs`).
-export const STATE_MARK = { working: "* ", waiting: "● ", done: "✓ ", idle: "· ", unknown: "? ", exited: "✕ " };
+export const STATE_MARK = new Map([["working", "* "], ["waiting", "● "], ["done", "✓ "], ["idle", "· "], ["unknown", "? "], ["exited", "✕ "]]);
 
-const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+// Base64 as bytes.
+/** function decode(b64: String) => Uint8Array */
+function decode(b64) {
+  const text = atob(b64);
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
+  return out;
+}
+
+// What a chunk of a terminal's stream (`bytes` from offset `at`) does,
+// given the offset written so far (`end`; null before the replay came):
+// wait in the queue, nothing (it is in the replay already), or write
+// its new part and move the offset on.
+/** type Arrival = {kind: "queue"} | {kind: "skip"} | {kind: "write", bytes: Uint8Array, end: Number} */
+/** function arrival(end: Number | Null, at: Number, bytes: Uint8Array) => Arrival */
+function arrival(end, at, bytes) {
+  if (end === null) return { kind: "queue" };
+  if (at + bytes.length <= end) return { kind: "skip" };
+  return { kind: "write", bytes: at < end ? bytes.subarray(end - at) : bytes, end: at + bytes.length };
+}
+// A terminal's stream written up to `end`.
+/** function streamAt(end: Number | Null) => {end: Number | Null} */
+function streamAt(end) { return { end }; }
+// Nothing written yet (a terminal's stream before its replay).
+/** const NOT_ATTACHED: Number | Null */
+const NOT_ATTACHED = null;
 
 class Term {
-  constructor(panel, id) {
-    this.panel = panel;
+  // `screens` holds it; `app` is the application; `changed()` redraws
+  // the tabs (its name, title or state changed).
+  constructor(id, screens, app, changed) {
+    this.app = app;
+    this.changed = changed;
     this.id = id;
-    this.end = null; // stream offset written so far; null until attached
+    this.stream = streamAt(NOT_ATTACHED); // the stream offset written so far
     this.queue = []; // chunks that arrived before the replay
     // What it is (the server says when it is attached): its name, whether
     // it runs an agent's command, the agent's state; the title its program
@@ -49,7 +77,7 @@ class Term {
     this.done = false;
     this.el = document.createElement("div");
     this.el.className = "xterm-host";
-    panel.screens.appendChild(this.el);
+    screens.appendChild(this.el);
     this.xt = new Terminal({
       ...termFont(),
       cursorBlink: true,
@@ -65,21 +93,21 @@ class Term {
 
   // Wire the terminal to the server and the panel (once, after `new`).
   listen() {
-    const panel = this.panel;
-    this.xt.onData((data) => rpc("term.input", { term: this.id, data }));
-    this.xt.onBinary((data) => rpc("term.input", { term: this.id, data }));
-    this.xt.onResize(({ cols, rows }) => rpc("term.resize", { term: this.id, cols, rows }).catch(() => {}));
+
+    this.xt.onData((data) => { rpc("term.input", { term: this.id, data }); });
+    this.xt.onBinary((data) => { rpc("term.input", { term: this.id, data }); });
+    this.xt.onResize(({ cols, rows }) => { rpc("term.resize", { term: this.id, cols, rows }).catch(() => {}); });
     this.xt.attachCustomKeyEventHandler((e) => {
       // The keys the editor keeps while a terminal has the keyboard (the
       // terminal's toggle, moving between workspaces): `app.terminalKeys`.
-      const app = panel.app();
+      const app = this.app();
       const k = e.type === "keydown" ? app.keyName(e) : null;
       if (!k || !app.terminalKeys.has(k)) return true;
       e.preventDefault();
       app.run(app.keymap()[k]);
       return false;
     });
-    this.xt.onTitleChange((t) => { this.title = t; panel.renderTabs(); });
+    this.xt.onTitleChange((t) => { this.title = t; this.changed(); });
   }
 
   async attach() {
@@ -89,26 +117,24 @@ class Term {
     this.agent = r.agent;
     this.state = r.state;
     this.xt.write(decode(r.data));
-    this.end = r.end;
+    this.stream = streamAt(r.end);
     for (const ev of this.queue) this.data(ev);
     this.queue = [];
     if (r.exited) this.exited();
   }
 
   data(ev) {
-    if (this.end == null) { this.queue.push(ev); return; }
-    let bytes = decode(ev.data);
-    const at = ev.at;
-    if (at + bytes.length <= this.end) return; // already in the replay
-    if (at < this.end) bytes = bytes.subarray(this.end - at);
-    this.xt.write(bytes);
-    this.end = Math.max(this.end, at + decode(ev.data).length);
+    const a = arrival(this.stream.end, ev.at, decode(ev.data));
+    if (a.kind === "queue") this.queue.push(ev);
+    if (a.kind !== "write") return;
+    this.xt.write(a.bytes);
+    this.stream = streamAt(a.end);
   }
 
   exited() {
     this.done = true;
     this.xt.write("\r\n\x1b[2m[process exited]\x1b[0m\r\n");
-    this.panel.renderTabs();
+    this.changed();
   }
 
   show(on) {
@@ -123,11 +149,14 @@ export class TerminalPanel {
     this.el = el;
     this.tabsEl = el.querySelector(".term-tabs");
     this.screens = el.querySelector(".term-screens");
-    this.terms = new Map();
-    this.current = null;
+    this.terms = new Map(); // its terminals, by id
+    this.selected = []; // the terminal shown: a list of at most one id
     this.visible = false;
     this.closed = new Set(); // ids closed here: their last output is not a new terminal
   }
+
+  // The terminal shown, if any.
+  get current() { return this.selected.at(0); }
 
   // Refit the terminals as the panel resizes (once, after `new`).
   listen() {
@@ -146,24 +175,26 @@ export class TerminalPanel {
     let changed = false;
     for (const s of terms) {
       const t = this.terms.get(s.id);
-      if (t && t.state !== s.state) { t.state = s.state; changed = true; }
+      if (t !== undefined && t.state !== s.state) { t.state = s.state; changed = true; }
     }
     if (changed) this.renderTabs();
   }
 
   async add(id) {
-    if (this.terms.has(id)) return this.terms.get(id);
-    const t = new Term(this, id);
+    const had = this.terms.get(id);
+    if (had !== undefined) return had;
+    const t = new Term(id, this.screens, this.app, () => { this.renderTabs(); });
     t.listen();
     this.terms.set(id, t);
     await t.attach();
-    if (!this.current) this.select(id);
+    if (!this.selected.length) this.select(id);
     this.renderTabs();
     return t;
   }
 
-  // A new terminal: the shell, or `command` in it (an agent session).
-  async create({ name, command, resume } = {}) {
+  // A new terminal: the shell, or `command` in it (an agent session;
+  // `resume` takes it up again later), named `name` (null: its own).
+  async create(name, command, resume) {
     const id = (await rpc("term.open", { cols: 100, rows: 24, name, command, resume })).term;
     await this.add(id);
     this.select(id);
@@ -171,7 +202,7 @@ export class TerminalPanel {
   }
 
   select(id) {
-    this.current = id;
+    this.selected = [id];
     for (const [k, t] of this.terms) t.show(k === id && this.visible);
     this.renderTabs();
   }
@@ -180,10 +211,10 @@ export class TerminalPanel {
     this.tabsEl.innerHTML = "";
     for (const [id, t] of this.terms) {
       const b = document.createElement("div");
-      b.className = "tab" + (id === this.current ? " active" : "");
+      b.className = "tab" + (this.selected.includes(id) ? " active" : "");
       const label = document.createElement("span");
       label.className = "label";
-      const mark = t.done ? STATE_MARK.exited : t.agent ? STATE_MARK[t.state] || "" : "";
+      const mark = (t.done ? STATE_MARK.get("exited") : t.agent ? STATE_MARK.get(t.state) : undefined) ?? "";
       label.textContent = `${mark}${t.title || (t.agent ? t.name : `Terminal ${id}`)}`;
       b.title = label.textContent;
       b.appendChild(label);
@@ -199,7 +230,7 @@ export class TerminalPanel {
     plus.className = "tab plus";
     plus.textContent = "+";
     plus.title = "New terminal";
-    plus.onmousedown = (e) => { e.preventDefault(); this.create(); };
+    plus.onmousedown = (e) => { e.preventDefault(); this.create(null, null, null); };
     this.tabsEl.appendChild(plus);
   }
 
@@ -211,8 +242,8 @@ export class TerminalPanel {
     t.xt.dispose();
     t.el.remove();
     this.terms.delete(id);
-    if (this.current === id) this.current = this.terms.keys().next().value ?? null;
-    if (this.current != null) this.select(this.current);
+    if (this.selected.includes(id)) this.selected = [...this.terms.keys()].slice(0, 1);
+    for (const s of this.selected) this.select(s);
     this.renderTabs();
   }
 
@@ -220,12 +251,12 @@ export class TerminalPanel {
     // A first terminal before the panel opens: when the workspace refuses
     // one (restricted), the panel stays closed.
     if (!this.visible && !this.terms.size) {
-      try { await this.create(); } catch (e) { this.app().setStatus(`No terminal: ${e.detail || e.message || e}`); return; }
+      try { await this.create(null, null, null); } catch (e) { this.app().setStatus(`No terminal: ${String(e)}`); return; }
     }
     this.visible = !this.visible;
     setClass(this.el, "hidden", !this.visible);
     if (this.visible) {
-      this.select(this.current);
+      for (const s of this.selected) this.select(s);
     } else this.app().focusPane(this.app().activePane);
     this.app().relayout();
   }
@@ -242,8 +273,10 @@ export class TerminalPanel {
   }
 
   refit() {
-    const t = this.terms.get(this.current);
-    if (t && this.visible) try { t.fit.fit(); } catch {}
+    for (const s of this.selected) {
+      const t = this.terms.get(s);
+      if (t !== undefined && this.visible) try { t.fit.fit(); } catch {}
+    }
   }
 
   onEvent(ev) {

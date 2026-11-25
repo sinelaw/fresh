@@ -603,7 +603,7 @@ export class Orchestrator {
         this.prefs.agent = it.value;
         this.savePrefs();
         const term = this.app().term;
-        const id = await term.create({ command, resume: this.resumeFor(it.value, this.prefs.auto, "") });
+        const id = await term.create(null, command, this.resumeFor(it.value, this.prefs.auto, ""));
         if (!term.visible) await term.toggle();
         term.select(id);
       },

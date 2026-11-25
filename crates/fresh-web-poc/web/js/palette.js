@@ -99,7 +99,7 @@ export class Palette {
     const files = (await rpc("fs.find", { query: m[1] })).files;
     return files.map((f) => ({
       label: f,
-      run: () => app.openFile(f, { line: m[2] ? +m[2] : null, column: m[3] ? +m[3] : 1, place: "tab", preview: null, focus: true }),
+      run: () => app.openFile(f, { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true }),
     }));
   }
 

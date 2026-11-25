@@ -20,8 +20,15 @@
 // recover from a skin that hides the way back.
 
 import { rpc } from "./rpc.js";
+import { $ } from "./dom.js";
 
 const KEY = "fresh-poc:skin";
+
+// The skin chosen last in this browser.
+/** function savedSkin() => String | Null */
+function savedSkin() {
+  try { return localStorage.getItem(KEY); } catch { return null; }
+}
 // What furniture may be built from: decoration, nothing interactive.
 const TAGS = new Set(["div", "span", "i", "b", "em", "strong", "small", "p"]);
 // The live values furniture can show, and how often they are refreshed.
@@ -40,11 +47,10 @@ export class Skins {
   // List the skins and put the chosen one on: before the first paint, so
   // the editor's cell is measured in the skin's font.
   async load() {
-    document.getElementById("skin-btn")?.addEventListener("click", () => this.pick());
-    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
-    let id = new URLSearchParams(location.search).get("skin");
-    if (!id) try { id = localStorage.getItem(KEY); } catch {}
-    await this.apply(this.byId(id) ? id : "default");
+    $("#skin-btn").addEventListener("click", () => { this.pick(); });
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${String(e)}`); }
+    const id = new URLSearchParams(location.search).get("skin") ?? savedSkin();
+    await this.apply(id !== null && this.byId(id) ? id : "default");
   }
 
   byId(id) { return this.all.find((s) => s.id === id) || null; }

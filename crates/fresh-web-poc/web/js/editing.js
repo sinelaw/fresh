@@ -10,7 +10,7 @@ import { sel, cursorAt, selecting } from "./view.js";
 import { rpc } from "./rpc.js";
 import { charWidth } from "./layout.js";
 
-const PAIRS = { "(": ")", "[": "]", "{": "}", '"': '"', "'": "'", "`": "`" };
+const PAIRS = new Map([["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["`", "`"]]);
 const CLOSERS = new Set([")", "]", "}"]);
 const COMMENT = {
   rust: "//", javascript: "//", typescript: "//", go: "//", c: "//", cpp: "//", java: "//", css: "/*",
@@ -18,7 +18,54 @@ const COMMENT = {
 };
 const INDENT = "    ";
 
-const OPEN = { "(": ")", "[": "]", "{": "}" }, CLOSE = { ")": "(", "]": "[", "}": "{" };
+// Each bracket's partner.
+const OPEN = new Map([["(", ")"], ["[", "]"], ["{", "}"]]), CLOSE = new Map([[")", "("], ["]", "["], ["}", "{"]]);
+/** function isBracket(c: String | Null) => Boolean */
+function isBracket(c) { return c !== null && (OPEN.has(c) || CLOSE.has(c)); }
+
+// The unmatched opening bracket before index `k` of line `li` (scanning
+// back at most BRACKET_SCAN lines): its byte offset, or null.
+/** function openerIn(lines: String[], starts: Number[], li: Number, k: Number) => Number | Null */
+function openerIn(lines, starts, li, k) {
+  /** const depth: Map<String, Number> */
+  const depth = new Map();
+  let line = li, i = k;
+  for (let n = 0; n < BRACKET_SCAN && line >= 0; n++) {
+    const text = lines[line];
+    for (; i >= 0; i--) {
+      const c = text[i];
+      const opener = CLOSE.get(c);
+      if (opener !== undefined) depth.set(opener, (depth.get(opener) ?? 0) + 1);
+      else if (OPEN.has(c)) {
+        const d = depth.get(c) ?? 0;
+        if (d === 0) return starts[line] + byteLen(text.slice(0, i));
+        depth.set(c, d - 1);
+      }
+    }
+    line--;
+    if (line >= 0) i = lines[line].length - 1;
+  }
+  return null;
+}
+
+// The partner of bracket `ch` at index `k` of line `li` (byte offset `at`),
+// scanning forward from an opener and back from a closer.
+/** function partnerOf(lines: String[], starts: Number[], li: Number, k: Number, ch: String, at: Number) => {at: Number, match: Number} | Null */
+function partnerOf(lines, starts, li, k, ch, at) {
+  const opener = OPEN.get(ch), closer = CLOSE.get(ch);
+  const fwd = opener !== undefined, want = opener ?? closer ?? ch;
+  let line = li, i = k, depth = 0;
+  for (let n = 0; n < BRACKET_SCAN && line >= 0 && line < lines.length; n++) {
+    const text = lines[line];
+    for (; i >= 0 && i < text.length; i += fwd ? 1 : -1) {
+      if (text[i] === ch) depth++;
+      else if (text[i] === want && --depth === 0) return { at, match: starts[line] + byteLen(text.slice(0, i)) };
+    }
+    line += fwd ? 1 : -1;
+    if (line >= 0 && line < lines.length) i = fwd ? 0 : lines[line].length - 1;
+  }
+  return null;
+}
 // How many lines a bracket's match is looked for in.
 const BRACKET_SCAN = 5000;
 const TAB = 4;
@@ -272,21 +319,9 @@ export class Editing {
   // The unmatched opening bracket before `p` (in the held lines), or null.
   openerBefore(b, p) {
     const L = b.text;
-    let li = L.indexOf(p);
+    const li = L.indexOf(p);
     if (li < 0) return null;
-    let k = byteToIdx(L.lines[li], p - L.starts[li]) - 1;
-    const depth = { "(": 0, "[": 0, "{": 0 };
-    for (let n = 0; n < BRACKET_SCAN && li >= 0; n++) {
-      const line = L.lines[li];
-      for (; k >= 0; k--) {
-        const c = line[k];
-        if (c in CLOSE) depth[CLOSE[c]]++;
-        else if (c in OPEN) { if (depth[c] === 0) return L.starts[li] + byteLen(line.slice(0, k)); depth[c]--; }
-      }
-      li--;
-      if (li >= 0) k = L.lines[li].length - 1;
-    }
-    return null;
+    return openerIn(L.lines, L.starts, li, byteToIdx(L.lines[li], p - L.starts[li]) - 1);
   }
 
   // A language server's selection ranges for each cursor ([[{start,
@@ -567,24 +602,14 @@ export class Editing {
   bracketPair(b, p) {
     const L = b.text;
     if (!L) return null;
-    let at = p, ch = this.charAt(b, p);
-    if (!(ch in OPEN) && !(ch in CLOSE)) { ch = this.charBefore(b, p); at = p - 1; }
-    if (!ch || (!(ch in OPEN) && !(ch in CLOSE))) return null;
-    const fwd = ch in OPEN, want = fwd ? OPEN[ch] : CLOSE[ch];
-    let li = L.indexOf(at);
+    // The bracket at the caret, else the one before it.
+    const here = this.charAt(b, p), before = this.charBefore(b, p);
+    const onHere = isBracket(here);
+    const ch = onHere ? here : before, at = onHere ? p : p - 1;
+    if (ch === null || !isBracket(ch)) return null;
+    const li = L.indexOf(at);
     if (li < 0) return null;
-    let k = byteToIdx(L.lines[li], at - L.starts[li]);
-    let depth = 0;
-    for (let n = 0; n < BRACKET_SCAN && li >= 0 && li < L.count; n++) {
-      const line = L.lines[li];
-      for (; k >= 0 && k < line.length; k += fwd ? 1 : -1) {
-        if (line[k] === ch) depth++;
-        else if (line[k] === want && --depth === 0) return { at, match: L.starts[li] + byteLen(line.slice(0, k)) };
-      }
-      li += fwd ? 1 : -1;
-      if (li >= 0 && li < L.count) k = fwd ? 0 : L.lines[li].length - 1;
-    }
-    return null;
+    return partnerOf(L.lines, L.starts, li, byteToIdx(L.lines[li], at - L.starts[li]), ch, at);
   }
 
   matchingBracket(pane) {
@@ -607,7 +632,7 @@ export class Editing {
     const typing = !run ? null : this.typed && this.typed.v === v && this.typed.carets === carets() ? "continue" : "start";
     const done = () => { this.typed = run ? { v, carets: carets() } : null; };
     if (text.length === 1) {
-      const closer = PAIRS[text];
+      const closer = PAIRS.get(text);
       // Overtype a closer that is already there.
       if ((CLOSERS.has(text) || text === '"' || text === "'" || text === "`") && v.cursors.every((c) => !sel(c) && this.charAt(b, c.pos) === text) && pairsOn) {
         this.move(pane, (c) => c.pos + 1, false);
@@ -658,7 +683,7 @@ export class Editing {
       const t = before.trimEnd();
       const opens = /[{([]$/.test(t) || (lang === "python" && t.endsWith(":"));
       const next = this.charAt(b, s.end);
-      if (opens && next != null && CLOSERS.has(next) && PAIRS[t.slice(-1)] === next) {
+      if (opens && next != null && CLOSERS.has(next) && PAIRS.get(t.slice(-1)) === next) {
         const inner = "\n" + indent + INDENT;
         return putWith(s.start, s.end, inner + "\n" + indent, byteLen(inner), null);
       }
@@ -681,7 +706,7 @@ export class Editing {
         return put(c.pos - n, c.pos, "");
       }
       const prev = this.charBefore(b, c.pos), next = this.charAt(b, c.pos);
-      if (prev && PAIRS[prev] === next && this.app().settings.auto_close) return put(c.pos - 1, c.pos + 1, "");
+      if (prev && PAIRS.get(prev) === next && this.app().settings.auto_close) return put(c.pos - 1, c.pos + 1, "");
       return put(c.pos - byteLen(prev), c.pos, "");
     });
   }

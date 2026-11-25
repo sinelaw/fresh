@@ -1303,13 +1303,13 @@ export class App {
     cmd("palette.line", "Go to Line…", () => this.prompt.palette(":"));
     cmd("palette.open", "Palette with a Prefix", (prefix) => this.prompt.palette(prefix || ""), true);
     cmd("terminal.toggle", "Terminal: Toggle", () => this.term.toggle());
-    cmd("terminal.new", "Terminal: New", async () => { if (!this.term.visible) await this.term.toggle(); await this.term.create(); });
+    cmd("terminal.new", "Terminal: New", async () => { if (!this.term.visible) await this.term.toggle(); await this.term.create(null, null, null); });
     // The current terminal closed and a new one started in its place.
     cmd("terminal.restart", "Terminal: Restart", async () => {
       if (!this.term.visible) await this.term.toggle();
       const id = this.term.current;
-      if (id != null) this.term.close(id);
-      await this.term.create();
+      if (id !== undefined) this.term.close(id);
+      await this.term.create(null, null, null);
     });
     // The selection (or the cursor's line) typed into the current
     // terminal, as if pasted there; the terminal shows (and has the keys).
@@ -1319,8 +1319,8 @@ export class App {
       const sels = v.selections().sort((x, y) => x.start - y.start);
       const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end)).join("\n") : this.editing.lineAt(v.buf, v.primary.pos).text + "\n";
       if (!this.term.visible) await this.term.toggle();
-      if (this.term.current == null) await this.term.create();
-      await rpc("term.input", { term: this.term.current, data: text });
+      const id = this.term.current ?? await this.term.create(null, null, null);
+      await rpc("term.input", { term: id, data: text });
     });
     cmd("skin.select", "Select Skin…", () => this.skins.pick());
     cmd("skin.next", "Next Skin", () => this.skins.cycle(1));

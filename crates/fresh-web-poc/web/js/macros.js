@@ -39,6 +39,13 @@ function describeStep(s, titleOf) {
   return `  ${titleOf(s.command)}${arg !== undefined ? ` ${JSON.stringify(arg)}` : ""}`;
 }
 
+// A step's parts: the command it runs (null: text), or the text typed
+// (`typed`) or pasted.
+/** function stepParts(s: Step) => {command: String | Null, arg: String | Undefined, text: String, typed: Boolean} */
+function stepParts(s) {
+  return s.kind === "command" ? { command: s.command, arg: s.arg, text: "", typed: false } : { command: null, arg: undefined, text: s.text, typed: s.typed };
+}
+
 /** function plural(n: Number, word: String) => String */
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
@@ -98,10 +105,12 @@ export class Macros {
       for (const s of steps) {
         const pane = this.app().activePane;
         const v = pane.view;
-        if (s.kind === "command") await this.app().run(s.command, s.arg);
+        const a = stepParts(s);
+        const command = a.command;
+        if (command !== null) await this.app().run(command, a.arg);
         else if (v !== undefined && !v.buf.readOnly) {
-          if (s.typed) this.app().editing.type(pane, s.text, true);
-          else this.app().paste(s.text);
+          if (a.typed) this.app().editing.type(pane, a.text, true);
+          else this.app().paste(a.text);
         }
       }
     } finally {
@@ -113,8 +122,7 @@ export class Macros {
   // Ask for a register: resolves with it, or null.
   pick(title) {
     return this.app().choose(title, REGISTERS.map((r) => {
-      const steps = this.registers.get(r);
-      return { label: r, detail: steps ? plural(steps.length, "step") : "empty", value: r };
+      return { label: r, detail: this.registers.has(r) ? plural((this.registers.get(r) ?? []).length, "step") : "empty", value: r };
     }));
   }
 

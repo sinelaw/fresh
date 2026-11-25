@@ -17,6 +17,12 @@ const DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const NO_ROLE = undefined;
 /** const NO_ROW: TableRow | Undefined */
 const NO_ROW = undefined;
+// A fence's lines.
+/** function role(r: FenceRole) => FenceRole | Undefined */
+function role(r) { return r; }
+// A table's line: its header (`k` 0), its delimiter (1) or a row.
+/** function tableRow(k: Number, firstRow: Boolean, last: Boolean) => TableRow | Undefined */
+function tableRow(k, firstRow, last) { return { role: k === 0 ? "header" : k === 1 ? "delimiter" : "row", first_row: firstRow, last }; }
 
 /** function classify(lines: String[]) => {region: (FenceRole | Undefined)[], table: (TableRow | Undefined)[]} */
 export function classify(lines) {
@@ -30,13 +36,13 @@ export function classify(lines) {
     const open = fence;
     if (open) {
       if (m && m[2][0] === open.ch && m[2].length >= open.n && m[3].trim() === "") {
-        region[i] = "close";
+        region[i] = role("close");
         fence = null;
-      } else region[i] = "body";
+      } else region[i] = role("body");
       continue;
     }
     if (m && !(m[2][0] === "`" && m[3].includes("`"))) {
-      region[i] = "open";
+      region[i] = role("open");
       fence = { ch: m[2][0], n: m[2].length };
       continue;
     }
@@ -45,7 +51,7 @@ export function classify(lines) {
       let j = i + 2;
       while (j < lines.length && lines[j].includes("|") && lines[j].trim() !== "" && !FENCE.test(lines[j])) j++;
       for (let k = i; k < j; k++) {
-        table[k] = { role: k === i ? "header" : k === i + 1 ? "delimiter" : "row", first_row: k === i + 2, last: k === j - 1 };
+        table[k] = tableRow(k - i, k === i + 2, k === j - 1);
       }
       i = j - 1;
     }
