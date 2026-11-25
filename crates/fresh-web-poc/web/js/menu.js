@@ -188,7 +188,7 @@ export class Menu {
     window.removeEventListener("mousedown", this.away, true);
     window.removeEventListener("blur", this.away);
     this.el.remove();
-    const app = this.o.app;
+    const app = this.o.app();
     if (app && (!document.activeElement || document.activeElement === document.body || document.activeElement === this.el)) app.focusPane(app.activePane);
     if (this.o.onClose) this.o.onClose();
   }

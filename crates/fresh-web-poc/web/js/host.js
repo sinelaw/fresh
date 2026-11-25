@@ -151,11 +151,11 @@ export class Host {
     }
   }
 
-  buffer(b, name) { return b ? new BufferHandle(this.app, b, name) : null; }
-  view(v, name) { return v ? new ViewHandle(this.app, v, name) : null; }
+  buffer(b, name) { return b ? new BufferHandle(this.app(), b, name) : null; }
+  view(v, name) { return v ? new ViewHandle(this.app(), v, name) : null; }
 
   api(name) {
-    const app = this.app;
+    const app = this.app();
     const host = this;
     const wrapEvent = (data) => {
       const out = { ...data };

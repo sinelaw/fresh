@@ -72,7 +72,7 @@ export class UIKit {
     for (const x of this.panels.values()) if (x.place === "bottom") x.el.style.display = x === p ? "flex" : "none";
     this.dock.classList.toggle("hidden", ![...this.panels.values()].some((x) => x.place === "bottom"));
     this.renderDockTabs();
-    this.app.renderAll();
+    this.app().renderAll();
   }
   renderDockTabs() {
     this.dockTabs.innerHTML = "";
@@ -139,7 +139,7 @@ class Panel {
       e.preventDefault();
       e.stopPropagation();
       if (this.place === "dialog" || this.place === "bar") this.close();
-      else this.kit.app.focusPane(this.kit.app.activePane);
+      else this.kit.app().focusPane(this.kit.app().activePane);
     });
     const backdrop = this.backdrop;
     if (backdrop) backdrop.onmousedown = (e) => { if (e.target === backdrop) this.close(); };
@@ -150,7 +150,7 @@ class Panel {
     if (this.place === "left") this.kit.left.classList.remove("hidden");
     if (this.place === "right") this.kit.right.classList.remove("hidden");
     if (this.place === "bar") this.kit.bar.classList.remove("hidden");
-    this.kit.app.renderAll();
+    this.kit.app().renderAll();
   }
 
   close() {
@@ -165,8 +165,8 @@ class Panel {
     if (this.place === "right" && !this.kit.right.children.length) this.kit.right.classList.add("hidden");
     if (this.place === "bar" && !this.kit.bar.children.length) this.kit.bar.classList.add("hidden");
     this.onClose?.();
-    this.kit.app.focusPane(this.kit.app.activePane);
-    this.kit.app.renderAll();
+    this.kit.app().focusPane(this.kit.app().activePane);
+    this.kit.app().renderAll();
   }
 
   get open() { return this.kit.panels.get(this.id) === this; }

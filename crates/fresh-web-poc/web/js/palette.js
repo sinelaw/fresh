@@ -43,7 +43,7 @@ export class Palette {
 
   // The palette, in the mode `prefix` selects.
   palette(prefix) {
-    const v = this.app.view();
+    const v = this.app().view();
     const origin = v ? { v, pos: v.primary.pos, top: v.top } : null;
     let previewed = false;
     this.show({
@@ -54,22 +54,22 @@ export class Palette {
       onChange: (q) => {
         // Preview a `:N` jump; Escape puts the view back.
         const m = /^:(\d+)/.exec(q);
-        if (m && origin) this.app.gotoLine(parseInt(m[1], 10) - 1, 0, { history: false });
+        if (m && origin) this.app().gotoLine(parseInt(m[1], 10) - 1, 0, { history: false });
       },
       onAccept: (it, q) => {
         // The jump is remembered from where the palette opened, not from
         // the preview.
-        if (/^:\d/.test(q) && origin) this.app.pushHistory(origin.v, origin.pos);
+        if (/^:\d/.test(q) && origin) this.app().pushHistory(origin.v, origin.pos);
         it?.run ? it.run() : this.openTyped(q);
       },
       // A provider's item previews where it goes.
       onSelect: (it) => { if (it?.preview) { previewed = true; it.preview(); } },
-      onCancel: () => { if (origin && (previewed || /^:\d/.test(this.input.value))) { origin.v.setTop(origin.top); this.app.editing.place(origin.v.pane, origin.pos, false); } },
+      onCancel: () => { if (origin && (previewed || /^:\d/.test(this.input.value))) { origin.v.setTop(origin.top); this.app().editing.place(origin.v.pane, origin.pos, false); } },
     });
   }
 
   async paletteItems(q) {
-    const app = this.app;
+    const app = this.app();
     if (q.startsWith(">")) {
       const terms = q.slice(1).toLowerCase().split(/\s+/).filter(Boolean);
       return [...app.commands]
@@ -104,7 +104,7 @@ export class Palette {
 
   openTyped(q) {
     const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
-    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app.openFile(m[1], { line: m[2] ? +m[2] : null, column: m[3] ? +m[3] : 1, place: "tab", preview: null, focus: true });
+    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app().openFile(m[1], { line: m[2] ? +m[2] : null, column: m[3] ? +m[3] : 1, place: "tab", preview: null, focus: true });
   }
 
   // Pick from a list: {title, items: [{label, detail, value}], onAccept(item), onChange(item)}
@@ -213,7 +213,7 @@ export class Palette {
   close() {
     this.spec = null;
     this.el.classList.add("hidden");
-    this.app.focusPane(this.app.activePane);
+    this.app().focusPane(this.app().activePane);
   }
 
   accept() {

@@ -8,19 +8,8 @@ import { rpc, session, connectEvents } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { fileBuffer, virtualBuffer, byteToIdx } from "./buffer.js";
 import { Pane, View } from "./view.js";
-import { Editing } from "./editing.js";
-import { TerminalPanel } from "./terminal.js";
-import { UIKit } from "./ui.js";
-import { Host } from "./host.js";
-import { Palette } from "./palette.js";
-import { Skins } from "./skins.js";
-import { Orchestrator } from "./orchestrator.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
-import { Session } from "./session.js";
-import { MenuBar } from "./menubar.js";
-import { Macros } from "./macros.js";
-import { PLUGINS } from "../plugins/index.js";
 
 const $ = (s) => document.querySelector(s);
 
@@ -29,13 +18,28 @@ const $ = (s) => document.querySelector(s);
 // show them.
 const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.paste": "Ctrl+V" };
 
-const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
   show_whitespace: false, show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rainbow_brackets: true, scroll_sync: false, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
 };
 
-class App {
-  constructor() {
+// The settings and the user's own key bindings this browser remembers.
+export function loadSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("fresh-poc:settings") || "{}"); } catch {}
+  return { ...DEFAULT_SETTINGS, ...saved };
+}
+export function loadUserKeys() {
+  let keys = {};
+  try { keys = JSON.parse(localStorage.getItem("fresh-poc:keys") || "{}"); } catch {}
+  return keys;
+}
+
+// The application: built by main.js from its parts (each made before it,
+// holding a getter for it), with the workspace the server said this page
+// views. Its constructor only sets fields; start() wires it up.
+export class App {
+  constructor(c) {
     this.buffers = new Map();
     this.docs = new Map();
     this.commands = new Map(); // id -> {title, run, source, hidden}
@@ -58,87 +62,65 @@ class App {
     this.formats = null; // the server's languages, encodings and line endings
     this.maximized = null; // the split filling the editor area, if one does
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
+    this.composing = false; // an input method is composing text
     this.log = [];
-    let saved = {};
-    try { saved = JSON.parse(localStorage.getItem("fresh-poc:settings") || "{}"); } catch {}
-    this.settings = { ...DEFAULT_SETTINGS, ...saved };
-    let userKeys = {};
-    try { userKeys = JSON.parse(localStorage.getItem("fresh-poc:keys") || "{}"); } catch {}
-    this.userKeys = userKeys;
+    this.settings = c.settings;
+    this.userKeys = c.userKeys;
     // What this browser remembers of the workspace (session.js).
-    this.session = new Session();
+    this.session = c.session;
+    // The workspace this page views (null: none is open, the page is the
+    // orchestrator's dock alone), and the URL's parameters.
+    this.workspace = c.workspace;
+    this.params = c.params;
+    this.root = c.workspace ? c.workspace.root : "";
+    this.hostName = c.workspace ? c.workspace.host : "";
+    this.trusted = c.workspace ? c.workspace.trusted : false;
+    this.lspLanguages = new Set(c.workspace ? c.workspace.lsp : []);
+    this.lspStatus = {}; // {language: running}, as `lsp.status` events say
+    this.orchestrator = c.orchestrator;
+    this.skins = c.skins;
+    this.editing = c.editing;
+    this.ui = c.ui;
+    this.prompt = c.prompt;
+    this.term = c.term;
+    this.host = c.host;
+    this.macros = c.macros;
+    this.menubar = c.menubar;
+    this.input = c.input;
+    this.layoutTree = { pane: c.pane };
+    this.activePane = c.pane;
   }
 
-  async start() {
-    // The workspace this page views: `?ws=<id>`, or the server's first.
-    // None when it was closed (or none is open): the page is then the
-    // orchestrator's dock alone.
-    const params = new URLSearchParams(location.search);
-    const hello = await rpc("hello", params.has("ws") ? { workspace: Number(params.get("ws")) } : {});
-    session.client = hello.client;
-    const ws = (this.workspace = hello.workspace);
-    if (ws && params.get("ws") !== String(ws.id)) {
-      params.set("ws", String(ws.id));
-      history.replaceState(null, "", `?${params}`);
-    }
-    this.orchestrator = new Orchestrator(this, hello.workspaces, hello.folders);
+  // Wire the parts up, load the plugins and put the workspace's layout back.
+  async start(plugins) {
+    const ws = this.workspace;
     // The skin first: the editor's cell is measured in its fonts.
-    this.skins = new Skins(this);
     await this.skins.load();
     document.body.style.setProperty("--editor-zoom", String(this.settings.zoom));
     this.measure();
-    this.root = ws?.root ?? "";
-    this.host = null;
-    this.hostName = ws?.host ?? "";
-    this.trusted = !!ws?.trusted;
-    this.lspLanguages = new Set(ws?.lsp ?? []);
-    this.lspStatus = {}; // {language: running}, as `lsp.status` events say
     document.title = ws ? `${ws.name} — Fresh` : "Workspaces — Fresh";
-    $("#ws-name").textContent = ws ? `${ws.name} · ${ws.host}${ws.trusted ? "" : " · restricted"}` : "No workspace";
-    $("#ws-name").title = "Workspaces (Alt+O)";
+    const name = $("#ws-name");
+    name.textContent = ws ? `${ws.name} · ${ws.host}${ws.trusted ? "" : " · restricted"}` : "No workspace";
+    name.title = "Workspaces (Alt+O)";
     connectEvents((ev) => this.onEvent(ev));
     if (ws) this.session.open(ws.host, ws.root);
     this.installSashes();
-    this.editing = new Editing(this);
-    this.ui = new UIKit(this);
-    this.prompt = new Palette(this);
     this.prompt.listen();
-    this.term = new TerminalPanel(this, $("#terminal"));
     this.term.listen();
-    this.host = new Host(this);
-    this.input = $("#input");
-    this.input.addEventListener("keydown", (e) => this.onKey(e));
-    // A key pressed with nothing focused (after a click on the status bar,
-    // say) goes to the editor.
-    window.addEventListener("keydown", (e) => {
-      if (e.target !== document.body) return;
-      this.focusPane(this.activePane);
-      this.onKey(e);
-    });
-    this.input.addEventListener("compositionstart", () => { this.composing = true; });
-    this.input.addEventListener("compositionend", () => { this.composing = false; this.onInput(); });
-    this.input.addEventListener("input", () => { if (!this.composing) this.onInput(); });
-    this.input.addEventListener("paste", (e) => { e.preventDefault(); this.paste(e.clipboardData.getData("text")); });
-    this.input.addEventListener("copy", (e) => this.onCopy(e, false));
-    this.input.addEventListener("cut", (e) => this.onCopy(e, true));
-    const first = new Pane(this);
-    first.listen();
-    this.layoutTree = { pane: first };
-    this.activePane = this.layoutTree.pane;
+    this.activePane.listen();
+    this.listenInput();
     this.registerCoreCommands();
-    this.macros = new Macros(this);
     this.macros.register();
-    this.menubar = new MenuBar(this);
     this.menubar.listen();
     this.orchestrator.listen();
     this.relayout();
-    new ResizeObserver(() => this.renderAll()).observe($("#editor-area"));
-    setInterval(() => this.autoSave(), 1000);
+    new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));
+    setInterval(() => { this.autoSave(); }, 1000);
     if (!ws) return;
-    await this.host.load(PLUGINS);
+    await this.host.load(plugins);
     await this.term.adopt(ws.terminals);
     // What was open in this workspace last time, unless a file is named.
-    const open = params.get("open");
+    const open = this.params.get("open");
     if (!open) await this.restoreLayout();
     this.restoring = false;
     this.rememberLayout();
@@ -147,6 +129,24 @@ class App {
     this.host.emit("app.ready", {});
     if (open) await this.openFile(open, { line: null, column: 1, place: "tab", preview: null, focus: true });
     this.focusPane(this.activePane);
+  }
+
+  // The hidden input that takes the keyboard, and keys pressed with nothing
+  // focused (after a click on the status bar, say), which go to the editor.
+  listenInput() {
+    const input = this.input;
+    input.addEventListener("keydown", (e) => { this.onKey(e); });
+    window.addEventListener("keydown", (e) => {
+      if (e.target !== document.body) return;
+      this.focusPane(this.activePane);
+      this.onKey(e);
+    });
+    input.addEventListener("compositionstart", () => { this.composing = true; });
+    input.addEventListener("compositionend", () => { this.composing = false; this.onInput(); });
+    input.addEventListener("input", () => { if (!this.composing) this.onInput(); });
+    input.addEventListener("paste", (e) => { e.preventDefault(); const data = e.clipboardData; if (data) this.paste(data.getData("text")); });
+    input.addEventListener("copy", (e) => { this.onCopy(e, false); });
+    input.addEventListener("cut", (e) => { this.onCopy(e, true); });
   }
 
   // ------------------------------------------------------------- the workspace's layout, remembered
@@ -180,7 +180,7 @@ class App {
     $("#sidebar").classList.toggle("hidden", s.sidebar === false);
     const specs = [];
     const build = (n) => {
-      if (n.tabs) { const pane = new Pane(this); pane.listen(); specs.push({ pane, n }); return { pane }; }
+      if (n.tabs) { const pane = new Pane(() => this); pane.listen(); specs.push({ pane, n }); return { pane }; }
       return { dir: n.dir === "v" ? "v" : "h", ratio: clamp(+n.ratio || 0.5, 0.05, 0.95), a: build(n.a), b: build(n.b) };
     };
     this.layoutTree = build(s.tree);
@@ -328,7 +328,7 @@ class App {
   split(dir, ratio = 0.5, buf = null) {
     const old = this.activePane;
     if (old.view) this.keep(old.view);
-    const np = new Pane(this);
+    const np = new Pane(() => this);
     np.listen();
     const replace = (n) => {
       if (n.pane === old) return { dir, ratio, a: { pane: old }, b: { pane: np } };
@@ -1595,6 +1595,4 @@ class App {
   }
 }
 
-window.app = new App();
-window.app.start();
 export { THEME };

@@ -41,7 +41,7 @@ export class Skins {
   // the editor's cell is measured in the skin's font.
   async load() {
     document.getElementById("skin-btn")?.addEventListener("click", () => this.pick());
-    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app.report(`Skins: ${e.message}`); }
+    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
     let id = new URLSearchParams(location.search).get("skin");
     if (!id) try { id = localStorage.getItem(KEY); } catch {}
     await this.apply(this.byId(id) ? id : "default");
@@ -52,7 +52,7 @@ export class Skins {
   // Where a skin's files are served: a built-in skin's beside the client's
   // own files, a user skin's through the workspace whose host has it.
   base(id) {
-    return this.byId(id)?.source === "user" ? `workspaces/${this.app.workspace.id}/skins/${id}/` : `skins/${id}/`;
+    return this.byId(id)?.source === "user" ? `workspaces/${this.app().workspace.id}/skins/${id}/` : `skins/${id}/`;
   }
 
   // A skin with what it extends folded in: the chain base first; the last
@@ -103,7 +103,7 @@ export class Skins {
     if (btn) btn.textContent = sk.name;
     // Fonts the skin brings change the cell only once they are in.
     await document.fonts.ready;
-    this.app.remeasure?.();
+    this.app().remeasure?.();
     this.refresh();
   }
 
@@ -160,7 +160,7 @@ export class Skins {
   }
 
   localValues() {
-    const bufs = [...this.app.buffers.values()];
+    const bufs = [...this.app().buffers.values()];
     const diags = bufs.flatMap((b) => b.decor?.diags || []);
     const d = new Date();
     return {
@@ -176,17 +176,17 @@ export class Skins {
     if (!this.byId(id)) return;
     try { localStorage.setItem(KEY, id); } catch {}
     await this.apply(id);
-    if (this.current.theme && this.app.commands.has("theme.use")) await this.app.run("theme.use", this.current.theme);
-    this.app.setStatus(`Skin: ${this.current.name}`);
+    if (this.current.theme && this.app().commands.has("theme.use")) await this.app().run("theme.use", this.current.theme);
+    this.app().setStatus(`Skin: ${this.current.name}`);
   }
 
   // The picker: moving through the list tries each skin on; Escape puts
   // the one before back. The list is read again, so a skin just added to
   // the skins folder is there.
   async pick() {
-    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app.report(`Skins: ${e.message}`); }
+    try { this.all = (await rpc("skin.list")).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
     const before = this.current?.id || "default";
-    this.app.prompt.open({
+    this.app().prompt.open({
       title: "Skin",
       items: this.all.map((s) => ({
         label: s.name,

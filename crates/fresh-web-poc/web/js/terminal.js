@@ -71,7 +71,7 @@ class Term {
     this.xt.attachCustomKeyEventHandler((e) => {
       // The keys the editor keeps while a terminal has the keyboard (the
       // terminal's toggle, moving between workspaces): `app.terminalKeys`.
-      const app = panel.app;
+      const app = panel.app();
       const k = e.type === "keydown" ? app.keyName(e) : null;
       if (!k || !app.terminalKeys.has(k)) return true;
       e.preventDefault();
@@ -219,14 +219,14 @@ export class TerminalPanel {
     // A first terminal before the panel opens: when the workspace refuses
     // one (restricted), the panel stays closed.
     if (!this.visible && !this.terms.size) {
-      try { await this.create(); } catch (e) { this.app.setStatus(`No terminal: ${e.detail || e.message || e}`); return; }
+      try { await this.create(); } catch (e) { this.app().setStatus(`No terminal: ${e.detail || e.message || e}`); return; }
     }
     this.visible = !this.visible;
     this.el.classList.toggle("hidden", !this.visible);
     if (this.visible) {
       this.select(this.current);
-    } else this.app.focusPane(this.app.activePane);
-    this.app.relayout();
+    } else this.app().focusPane(this.app().activePane);
+    this.app().relayout();
   }
 
   applyTheme() {

@@ -93,13 +93,13 @@ export class Orchestrator {
   }
 
   // The workspace this page views (null: none).
-  get current() { return this.app.workspace?.id ?? null; }
+  get current() { return this.app().workspace?.id ?? null; }
 
   // Commands, keys, and seeing attention when this page is looked at
   // (once, after `new`).
   listen() {
     try { Object.assign(this.prefs, JSON.parse(localStorage.getItem(STORE) || "{}") || {}); } catch {}
-    const cmd = (id, title, run) => this.app.commands.set(id, { title, run, source: "core", hidden: false });
+    const cmd = (id, title, run) => this.app().commands.set(id, { title, run, source: "core", hidden: false });
     cmd("orchestrator.dock", "Orchestrator: Toggle Dock", () => this.toggleDock());
     cmd("orchestrator.focus", "Orchestrator: Focus Dock", () => this.focusDock());
     cmd("orchestrator.switch", "Orchestrator: Switch Workspace…", () => this.quickSwitch());
@@ -116,10 +116,10 @@ export class Orchestrator {
     cmd("orchestrator.group", "Orchestrator: Group by Folders / by Date", () => this.setGroup(this.prefs.group === "folders" ? "date" : "folders"));
     cmd("orchestrator.jump", "Orchestrator: Jump to Attention", () => this.jump());
     cmd("orchestrator.jumpBack", "Orchestrator: Jump Back", () => this.jumpBack());
-    this.app.bindKey("M-o", "orchestrator.focus");
-    this.app.bindKey("C-M-o", "orchestrator.switch");
+    this.app().bindKey("M-o", "orchestrator.focus");
+    this.app().bindKey("C-M-o", "orchestrator.switch");
     // From an agent's terminal too.
-    this.app.terminalKeys.add("M-o").add("C-M-o");
+    this.app().terminalKeys.add("M-o").add("C-M-o");
     document.querySelector("#ws-name")?.addEventListener("click", () => this.toggleDock());
     const look = () => this.seeIfLooked();
     window.addEventListener("focus", look);
@@ -153,8 +153,8 @@ export class Orchestrator {
         this.list = this.list.filter((w) => w.id !== ev.workspace);
         if (ev.workspace === this.current) {
           // Nothing more can be done here: say so, and offer the others.
-          this.app.workspace = null;
-          this.app.setStatus("This workspace was closed");
+          this.app().workspace = null;
+          this.app().setStatus("This workspace was closed");
           document.querySelector("#ws-name").textContent = "Closed workspace";
           this.openDock();
         }
@@ -164,7 +164,7 @@ export class Orchestrator {
         if (!w) break;
         w.status = ev.status;
         if (w.id === this.current) {
-          this.app.term?.states(ev.status.terminals);
+          this.app().term?.states(ev.status.terminals);
           this.renderTitle();
           this.seeIfLooked();
         }
@@ -190,7 +190,7 @@ export class Orchestrator {
     if (!w?.status || !this.looked()) return;
     const done = w.status.terminals.some((t) => t.state === "done");
     if (!w.status.attention && !done) return;
-    if (w.status.attention) this.app.setStatus(w.status.attention);
+    if (w.status.attention) this.app().setStatus(w.status.attention);
     rpc("workspace.seen").catch(() => {});
   }
 
@@ -206,7 +206,7 @@ export class Orchestrator {
   // View another workspace: this page loads it (its own tabs and splits
   // come back with it).
   switchTo(id) {
-    if (id === this.current) { this.app.focusPane(this.app.activePane); return; }
+    if (id === this.current) { this.app().focusPane(this.app().activePane); return; }
     const url = new URL(location.href);
     url.searchParams.set("ws", String(id));
     url.searchParams.delete("open");
@@ -222,7 +222,7 @@ export class Orchestrator {
 
   jump() {
     const w = this.needing()[0];
-    if (!w) { this.app.setStatus("Nothing needs you"); return; }
+    if (!w) { this.app().setStatus("Nothing needs you"); return; }
     try { sessionStorage.setItem(JUMPED, String(this.current)); } catch {}
     this.switchTo(w.id);
   }
@@ -230,7 +230,7 @@ export class Orchestrator {
   jumpBack() {
     let id = null;
     try { id = Number(sessionStorage.getItem(JUMPED)); } catch {}
-    if (!id || !this.byId(id) || id === this.current) { this.app.setStatus("No workspace to jump back to"); return; }
+    if (!id || !this.byId(id) || id === this.current) { this.app().setStatus("No workspace to jump back to"); return; }
     try { sessionStorage.setItem(JUMPED, String(this.current)); } catch {}
     this.switchTo(id);
   }
@@ -239,14 +239,14 @@ export class Orchestrator {
     const n = this.needing();
     const waiting = n.filter((w) => stateOf(w) === "waiting").length, done = n.length - waiting;
     const text = [waiting ? `● ${waiting} need${waiting === 1 ? "s" : ""} you` : "", done ? `✓ ${done} done` : ""].filter(Boolean).join("  ");
-    this.app.statusItem("orchestrator").set(text, {
+    this.app().statusItem("orchestrator").set(text, {
       title: n.map((w) => `${displayName(w)}: ${w.status.attention || "finished"}`).join("\n") + "\n(click: Jump to Attention)",
       onClick: () => this.jump(),
     });
   }
 
   quickSwitch() {
-    this.app.prompt.open({
+    this.app().prompt.open({
       title: "Switch workspace",
       items: this.list.filter((w) => w.status).map((w) => ({
         label: `${MARKS[stateOf(w)]} ${displayName(w)}${w.id === this.current ? " (this one)" : ""}`,
@@ -260,7 +260,7 @@ export class Orchestrator {
   // ----------------------------------------------------------- the dock
 
   openDock() {
-    this.panel = this.app.ui.panel({ id: "orchestrator", title: "Orchestrator", place: "left", onClose: () => this.dockClosed() });
+    this.panel = this.app().ui.panel({ id: "orchestrator", title: "Orchestrator", place: "left", onClose: () => this.dockClosed() });
     if (!this.prefs.dock) { this.prefs.dock = true; this.savePrefs(); }
     this.renderDock();
   }
@@ -278,7 +278,7 @@ export class Orchestrator {
 
   // Alt+O: the keyboard to the dock (opening it), and back to the editor.
   focusDock() {
-    if (this.panel?.open && this.panel.el.contains(document.activeElement)) { this.app.focusPane(this.app.activePane); return; }
+    if (this.panel?.open && this.panel.el.contains(document.activeElement)) { this.app().focusPane(this.app().activePane); return; }
     if (!this.panel?.open) this.openDock();
     this.panel.focus("dock");
   }
@@ -419,7 +419,7 @@ export class Orchestrator {
     ]));
   }
 
-  ui() { return this.app.ui; }
+  ui() { return this.app().ui; }
 
   // Where a menu opened from the keyboard goes: by the dock's head.
   menuAt() {
@@ -480,19 +480,19 @@ export class Orchestrator {
   // ----------------------------------------------------------- acting
 
   async set(w, change) {
-    try { await rpc("workspace.set", { workspace: w.id, ...change }); } catch (e) { this.app.setStatus(`Not changed: ${e.detail || e}`); }
+    try { await rpc("workspace.set", { workspace: w.id, ...change }); } catch (e) { this.app().setStatus(`Not changed: ${e.detail || e}`); }
   }
 
   async rename(w) {
     if (!w) return;
-    const name = await this.app.prompt.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder" });
+    const name = await this.app().prompt.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder" });
     if (name !== null) await this.set(w, { name });
   }
 
   move(w) {
     if (!w) return;
     const items = [{ label: "Top level", value: "" }, ...this.folders.map((f) => ({ label: f, value: f })), { label: "New folder…", value: null }];
-    this.app.prompt.open({
+    this.app().prompt.open({
       title: `Move ${displayName(w)} to`,
       items,
       onAccept: async (it) => {
@@ -507,32 +507,32 @@ export class Orchestrator {
 
   // A new folder under `parent`; resolves with its path (null: cancelled).
   async newFolder(parent) {
-    const name = await this.app.prompt.ask({ title: parent ? `New folder in ${parent}` : "New folder", value: "" });
+    const name = await this.app().prompt.ask({ title: parent ? `New folder in ${parent}` : "New folder", value: "" });
     if (!name || !name.trim()) return null;
     const path = parent ? `${parent}/${name.trim()}` : name.trim();
-    try { await rpc("folder.create", { path }); return path; } catch (e) { this.app.setStatus(`No folder: ${e.detail || e}`); return null; }
+    try { await rpc("folder.create", { path }); return path; } catch (e) { this.app().setStatus(`No folder: ${e.detail || e}`); return null; }
   }
 
   async renameFolder(path) {
-    const name = await this.app.prompt.ask({ title: `Rename folder ${path}`, value: leaf(path) });
+    const name = await this.app().prompt.ask({ title: `Rename folder ${path}`, value: leaf(path) });
     if (!name || !name.trim()) return;
     const to = parentOf(path) ? `${parentOf(path)}/${name.trim()}` : name.trim();
-    try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.app.setStatus(`Not renamed: ${e.detail || e}`); }
+    try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.app().setStatus(`Not renamed: ${e.detail || e}`); }
   }
 
   async deleteFolder(path) {
-    if (!(await this.app.confirm(`Delete folder ${path}? What is in it moves up a level.`, "Delete Folder"))) return;
-    try { await rpc("folder.delete", { path }); } catch (e) { this.app.setStatus(`Not deleted: ${e.detail || e}`); }
+    if (!(await this.app().confirm(`Delete folder ${path}? What is in it moves up a level.`, "Delete Folder"))) return;
+    try { await rpc("folder.delete", { path }); } catch (e) { this.app().setStatus(`Not deleted: ${e.detail || e}`); }
   }
 
   async retry(w) {
-    this.app.setStatus(`Opening ${displayName(w)}…`);
-    try { await rpc("workspace.retry", { workspace: w.id }); this.app.setStatus(`Opened ${displayName(w)}`); } catch (e) { this.app.setStatus(`Not opened: ${e.detail || e}`); }
+    this.app().setStatus(`Opening ${displayName(w)}…`);
+    try { await rpc("workspace.retry", { workspace: w.id }); this.app().setStatus(`Opened ${displayName(w)}`); } catch (e) { this.app().setStatus(`Not opened: ${e.detail || e}`); }
   }
 
   async dismiss(w) {
-    if (!(await this.app.confirm(`Forget ${displayName(w)}? Its folder stays where it is.`, "Dismiss"))) return;
-    await rpc("workspace.close", { workspace: w.id }).catch((e) => this.app.setStatus(String(e.detail || e)));
+    if (!(await this.app().confirm(`Forget ${displayName(w)}? Its folder stays where it is.`, "Dismiss"))) return;
+    await rpc("workspace.close", { workspace: w.id }).catch((e) => this.app().setStatus(String(e.detail || e)));
   }
 
   // Close a workspace: its terminals and agents stop. Unsaved documents
@@ -544,16 +544,16 @@ export class Orchestrator {
     const running = w.status.terminals.filter((t) => t.state !== "exited").length;
     const what = running ? ` Its ${plural(running, "terminal")} stop${running === 1 ? "s" : ""}.` : "";
     const wt = worktree ? ` Its worktree ${w.root} is deleted, with any uncommitted changes; the branch ${w.worktree.branch} stays.` : "";
-    if (!(await this.app.confirm(`Close ${displayName(w)}?${what}${wt}`, worktree ? "Close and Delete Worktree" : "Close"))) return;
+    if (!(await this.app().confirm(`Close ${displayName(w)}?${what}${wt}`, worktree ? "Close and Delete Worktree" : "Close"))) return;
     const args = { workspace: w.id, remove_worktree: worktree };
     try {
       await rpc("workspace.close", args);
     } catch (e) {
-      if (e.code !== "unsaved") { this.app.setStatus(`Not closed: ${e.detail}`); return; }
-      if (!(await this.app.confirm(`${e.detail}. Close it and discard them?`, "Discard and Close"))) return;
-      await rpc("workspace.close", { ...args, discard: true }).catch((e2) => this.app.setStatus(`Not closed: ${e2.detail}`));
+      if (e.code !== "unsaved") { this.app().setStatus(`Not closed: ${e.detail}`); return; }
+      if (!(await this.app().confirm(`${e.detail}. Close it and discard them?`, "Discard and Close"))) return;
+      await rpc("workspace.close", { ...args, discard: true }).catch((e2) => this.app().setStatus(`Not closed: ${e2.detail}`));
     }
-    this.app.setStatus(`Closed ${displayName(w)}`);
+    this.app().setStatus(`Closed ${displayName(w)}`);
   }
 
   // The command line for an agent choice: the registry's agent with its
@@ -576,23 +576,23 @@ export class Orchestrator {
 
   // Run Agent here: pick the agent, give it a task; a terminal running it.
   startAgent() {
-    if (!this.app.workspace) return;
-    if (!this.app.trusted) { this.app.setStatus("Trust the workspace to run an agent (Workspace: Trust)"); return; }
-    this.app.prompt.open({
+    if (!this.app().workspace) return;
+    if (!this.app().trusted) { this.app().setStatus("Trust the workspace to run an agent (Workspace: Trust)"); return; }
+    this.app().prompt.open({
       title: "Run agent",
       items: AGENT_CHOICES.filter((c) => c.value !== "terminal").map((c) => ({ label: c.label, value: c.value })),
       onAccept: async (it) => {
         const agent = agentById(it.value);
-        const custom = it.value === "custom" ? await this.app.prompt.ask({ title: "Command", value: this.prefs.custom, hint: "Runs in a terminal in the workspace's root, in your login shell" }) : "";
+        const custom = it.value === "custom" ? await this.app().prompt.ask({ title: "Command", value: this.prefs.custom, hint: "Runs in a terminal in the workspace's root, in your login shell" }) : "";
         if (custom === null) return;
-        const prompt = agent ? await this.app.prompt.ask({ title: `${agent.label}: the task (optional)`, value: "" }) : "";
+        const prompt = agent ? await this.app().prompt.ask({ title: `${agent.label}: the task (optional)`, value: "" }) : "";
         if (prompt === null) return;
         const command = this.commandFor(it.value, this.prefs.auto, prompt, custom);
         if (!command) return;
         if (it.value === "custom") this.prefs.custom = custom;
         this.prefs.agent = it.value;
         this.savePrefs();
-        const term = this.app.term;
+        const term = this.app().term;
         const id = await term.create({ command, resume: this.resumeFor(it.value, this.prefs.auto, "") });
         if (!term.visible) await term.toggle();
         term.select(id);
@@ -607,7 +607,7 @@ export class Orchestrator {
   // Working, Parked. Board: Backlog, Needs me, Working, Review. Tab or 1–2
   // switch the lens, Enter opens, n goes to the next one that needs you.
   workboard() {
-    const panel = this.app.ui.panel({ id: "workboard", title: "Workboard", place: "dialog", onClose: null });
+    const panel = this.app().ui.panel({ id: "workboard", title: "Workboard", place: "dialog", onClose: null });
     // Where each workspace goes, from its state; idle with unsaved files
     // is work to review.
     const column = (w) => {
@@ -692,7 +692,7 @@ export class Orchestrator {
   // resume it in its folder.
   importSessions() {
     const st = { host: this.prefs.host || "local", target: this.prefs.target || "", sessions: null, error: "", busy: false };
-    const panel = this.app.ui.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog", onClose: null });
+    const panel = this.app().ui.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog", onClose: null });
     const scan = async () => {
       const host = { kind: st.host };
       if (st.host === "ssh") host.target = st.target.trim();
@@ -767,7 +767,7 @@ export class Orchestrator {
       const r = await rpc("workspace.open", spec);
       if (!this.byId(r.workspace.id)) this.list.push(r.workspace);
       this.dropPending(p);
-      if (background) this.app.setStatus(`Opened ${displayName(r.workspace)} in the background`);
+      if (background) this.app().setStatus(`Opened ${displayName(r.workspace)} in the background`);
       else this.switchTo(r.workspace.id);
       return null;
     } catch (e) {
@@ -791,7 +791,7 @@ export class Orchestrator {
       busy: false, error: "",
       ...(preset || {}),
     };
-    const panel = this.app.ui.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
+    const panel = this.app().ui.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
     const go = async (background) => {
       if (f.busy || !f.root.trim()) return;
       const host = { kind: f.host };

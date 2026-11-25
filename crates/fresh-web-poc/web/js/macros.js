@@ -39,43 +39,43 @@ export class Macros {
   start(register) {
     if (this.recording) this.stop();
     this.recording = { register, steps: [] };
-    this.app.setStatus(`Recording macro ${register}… (${this.app.keyLabel("macro.stop") || "Stop Recording Macro"} stops)`);
-    this.app.updateStatus();
+    this.app().setStatus(`Recording macro ${register}… (${this.app().keyLabel("macro.stop") || "Stop Recording Macro"} stops)`);
+    this.app().updateStatus();
   }
   stop() {
     const r = this.recording;
-    if (!r) { this.app.setStatus("Not recording a macro"); return; }
+    if (!r) { this.app().setStatus("Not recording a macro"); return; }
     this.recording = null;
     this.registers.set(r.register, r.steps);
     this.last = r.register;
-    this.app.setStatus(`Macro ${r.register}: ${r.steps.length} step${r.steps.length === 1 ? "" : "s"} recorded (${this.app.keyLabel("macro.playLast") || "Play Last Macro"} plays it)`);
+    this.app().setStatus(`Macro ${r.register}: ${r.steps.length} step${r.steps.length === 1 ? "" : "s"} recorded (${this.app().keyLabel("macro.playLast") || "Play Last Macro"} plays it)`);
   }
 
   async play(register) {
     const steps = this.registers.get(register);
-    if (!steps) { this.app.setStatus(`No macro in register ${register}`); return; }
+    if (!steps) { this.app().setStatus(`No macro in register ${register}`); return; }
     if (this.playing) return;
-    if (this.recording && this.recording.register === register) { this.app.setStatus(`Macro ${register} is being recorded`); return; }
+    if (this.recording && this.recording.register === register) { this.app().setStatus(`Macro ${register} is being recorded`); return; }
     this.playing = true;
     this.last = register;
     try {
       for (const s of steps) {
-        const pane = this.app.activePane;
-        if (s.command) await this.app.run(s.command, s.arg);
+        const pane = this.app().activePane;
+        if (s.command) await this.app().run(s.command, s.arg);
         else if (pane.view && !pane.view.buf.readOnly) {
-          if (s.typed) this.app.editing.type(pane, s.text, true);
-          else this.app.paste(s.text);
+          if (s.typed) this.app().editing.type(pane, s.text, true);
+          else this.app().paste(s.text);
         }
       }
     } finally {
       this.playing = false;
     }
-    this.app.setStatus(`Played macro ${register} (${steps.length} step${steps.length === 1 ? "" : "s"})`);
+    this.app().setStatus(`Played macro ${register} (${steps.length} step${steps.length === 1 ? "" : "s"})`);
   }
 
   // Ask for a register: resolves with it, or null.
   pick(title) {
-    return this.app.choose(title, REGISTERS.map((r) => ({
+    return this.app().choose(title, REGISTERS.map((r) => ({
       label: r,
       detail: this.registers.has(r) ? `${this.registers.get(r).length} steps` : "empty",
       value: r,
@@ -90,7 +90,7 @@ export class Macros {
       if (!steps) continue;
       out.push(`Macro ${r}${r === this.last ? " (last)" : ""}:`);
       for (const s of steps) {
-        if (s.command) out.push(`  ${this.app.commands.get(s.command)?.title || s.command}${s.arg !== undefined ? ` ${JSON.stringify(s.arg)}` : ""}`);
+        if (s.command) out.push(`  ${this.app().commands.get(s.command)?.title || s.command}${s.arg !== undefined ? ` ${JSON.stringify(s.arg)}` : ""}`);
         else out.push(`  ${s.typed ? "type" : "paste"} ${JSON.stringify(s.text)}`);
       }
       out.push("");
@@ -99,12 +99,12 @@ export class Macros {
   }
 
   register() {
-    const cmd = (id, title, run) => this.app.commands.set(id, { title, run, source: "core", hidden: false });
+    const cmd = (id, title, run) => this.app().commands.set(id, { title, run, source: "core", hidden: false });
     cmd("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r) this.start(r); });
     cmd("macro.stop", "Macro: Stop Recording Macro", () => this.stop());
     cmd("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r) await this.play(r); });
-    cmd("macro.playLast", "Macro: Play Last Macro", () => (this.last ? this.play(this.last) : this.app.setStatus("No macro recorded yet")));
-    cmd("macro.list", "Macro: List Macros", () => this.app.createVirtual({
+    cmd("macro.playLast", "Macro: Play Last Macro", () => (this.last ? this.play(this.last) : this.app().setStatus("No macro recorded yet")));
+    cmd("macro.list", "Macro: List Macros", () => this.app().createVirtual({
       name: "*Macros*", entries: [{ text: this.describe(), props: {}, style: null }],
       mode: null, readOnly: true, language: null, keep: false, place: "tab", lineNumbers: true,
     }));

@@ -241,7 +241,7 @@ export class MenuBar {
       const t = e.target.closest(".mtop");
       if (t && this.open >= 0 && +t.dataset.i !== this.open) this.show(+t.dataset.i, false);
     });
-    const cmd = (id, title, run) => this.app.commands.set(id, { title, run, source: "core", hidden: true });
+    const cmd = (id, title, run) => this.app().commands.set(id, { title, run, source: "core", hidden: true });
     cmd("menu.open", "Open the Menu Bar", () => this.show(0, true));
     for (const [i, m] of this.menus.entries()) cmd(`menu.${m.label.toLowerCase()}`, `Open the ${m.label} Menu`, () => this.show(i, true));
   }
@@ -272,7 +272,7 @@ export class MenuBar {
   // Rows as the Menu component takes them: commands resolved now (title,
   // key, check), unknown ones left out, separators never doubled.
   resolve(rows) {
-    const app = this.app;
+    const app = this.app();
     const out = [];
     for (const r of rows) {
       if (!r) { if (out.length && out[out.length - 1]) out.push(null); continue; }

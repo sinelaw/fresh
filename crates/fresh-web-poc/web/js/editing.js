@@ -96,7 +96,7 @@ export class Editing {
   replace(pane, fn, typing = null) {
     const v = pane.view;
     const b = v.buf;
-    if (b.readOnly) { this.app.setStatus("Read-only buffer"); return false; }
+    if (b.readOnly) { this.app().setStatus("Read-only buffer"); return false; }
     v.normalize();
     const reps = [];
     for (const c of v.cursors) {
@@ -112,7 +112,7 @@ export class Editing {
     }
     const old = v.primary.pos;
     for (const c of v.cursors) c.anchor = null;
-    if (ops.length) this.app.applyEdit(b, ops, typing);
+    if (ops.length) this.app().applyEdit(b, ops, typing);
     // Final place of each replacement: shifted by every one before it.
     const asc = [...reps].sort((x, y) => x.start - y.start);
     let delta = 0;
@@ -126,7 +126,7 @@ export class Editing {
     }
     v.normalize();
     pane.reveal();
-    if (old !== v.primary.pos) this.app.cursorMoved(v, old);
+    if (old !== v.primary.pos) this.app().cursorMoved(v, old);
     pane.scheduleRender();
     return true;
   }
@@ -145,7 +145,7 @@ export class Editing {
     }
     v.normalize();
     pane.reveal();
-    if (old !== v.primary.pos) this.app.cursorMoved(v, old);
+    if (old !== v.primary.pos) this.app().cursorMoved(v, old);
     pane.scheduleRender();
   }
 
@@ -160,7 +160,7 @@ export class Editing {
     c.pos = Math.max(0, Math.min(v.buf.len, p));
     c.goalX = null;
     pane.reveal();
-    if (old !== c.pos) this.app.cursorMoved(v, old);
+    if (old !== c.pos) this.app().cursorMoved(v, old);
     pane.scheduleRender();
   }
 
@@ -251,8 +251,8 @@ export class Editing {
   // answer.
   async lspSelectionRanges(v) {
     const b = v.buf;
-    if (!this.app.lspAvailable(b)) return null;
-    const positions = v.cursors.map((c) => this.app.lspPosition(b, c.pos));
+    if (!this.app().lspAvailable(b)) return null;
+    const positions = v.cursors.map((c) => this.app().lspPosition(b, c.pos));
     if (positions.some((x) => !x)) return null;
     try {
       const r = await rpc("lsp.call", { doc: b.doc, method: "textDocument/selectionRange", params: { positions } });
@@ -260,8 +260,8 @@ export class Editing {
       return r.map((sr) => {
         const out = [];
         for (let x = sr; x; x = x.parent) {
-          const start = this.app.lspOffset(b, x.range.start.line, x.range.start.character);
-          const end = this.app.lspOffset(b, x.range.end.line, x.range.end.character);
+          const start = this.app().lspOffset(b, x.range.start.line, x.range.start.character);
+          const end = this.app().lspOffset(b, x.range.end.line, x.range.end.character);
           if (start != null && end != null) out.push({ start, end });
         }
         return out;
@@ -561,7 +561,7 @@ export class Editing {
     const v = pane.view;
     const b = v.buf;
     const lang = this.lang(b);
-    const pairsOn = this.app.settings.auto_close && lang !== "markdown";
+    const pairsOn = this.app().settings.auto_close && lang !== "markdown";
     const carets = () => v.cursors.map((c) => c.pos).join();
     const run = typed && !text.includes("\n");
     const typing = !run ? null : this.typed && this.typed.v === v && this.typed.carets === carets() ? "continue" : "start";
@@ -641,7 +641,7 @@ export class Editing {
         return { start: c.pos - n, end: c.pos, text: "" };
       }
       const prev = this.charBefore(b, c.pos), next = this.charAt(b, c.pos);
-      if (prev && PAIRS[prev] === next && this.app.settings.auto_close) return { start: c.pos - 1, end: c.pos + 1, text: "" };
+      if (prev && PAIRS[prev] === next && this.app().settings.auto_close) return { start: c.pos - 1, end: c.pos + 1, text: "" };
       return { start: c.pos - byteLen(prev), end: c.pos, text: "" };
     });
   }
@@ -682,7 +682,7 @@ export class Editing {
         if (n) ops.push({ t: "del", pos: L.starts[i], len: n });
       }
     }
-    if (ops.length) this.app.applyEdit(b, ops);
+    if (ops.length) this.app().applyEdit(b, ops);
     pane.scheduleRender();
   }
 
@@ -752,14 +752,14 @@ export class Editing {
   trimTrailing(pane) {
     const b = pane.view.buf;
     const L = b.text;
-    if (!b.full) { this.app.setStatus("Only a file held whole can be trimmed"); return; }
+    if (!b.full) { this.app().setStatus("Only a file held whole can be trimmed"); return; }
     const ops = [];
     for (let i = L.count - 1; i >= 0; i--) {
       const m = /[ \t]+$/.exec(L.lines[i]);
       if (m) ops.push({ t: "del", pos: L.starts[i] + byteLen(L.lines[i].slice(0, m.index)), len: byteLen(m[0]) });
     }
-    if (ops.length) this.app.applyEdit(b, ops);
-    this.app.setStatus(ops.length ? `Trimmed ${ops.length} line${ops.length === 1 ? "" : "s"}` : "No trailing whitespace");
+    if (ops.length) this.app().applyEdit(b, ops);
+    this.app().setStatus(ops.length ? `Trimmed ${ops.length} line${ops.length === 1 ? "" : "s"}` : "No trailing whitespace");
     pane.scheduleRender();
   }
 
@@ -786,7 +786,7 @@ export class Editing {
       text = next + "\n" + block;
       newStart = start + byteLen(next) + 1;
     }
-    this.app.applyEdit(b, [{ t: "del", pos: start, len: end - start }, { t: "ins", pos: start, text }]);
+    this.app().applyEdit(b, [{ t: "del", pos: start, len: end - start }, { t: "ins", pos: start, text }]);
     c.pos = newStart + off;
     c.anchor = anchorOff != null ? newStart + anchorOff : null;
     pane.reveal();
@@ -823,7 +823,7 @@ export class Editing {
       }
     }
     // Ops above are per line, last line first, so each stays valid.
-    this.app.applyEdit(b, ops);
+    this.app().applyEdit(b, ops);
     pane.scheduleRender();
   }
 
@@ -863,7 +863,7 @@ export class Editing {
     if (i < 0) i = all.indexOf(needle);
     if (i < 0) return;
     const start = L.start + byteLen(all.slice(0, i));
-    if (v.cursors.some((c) => Math.min(c.pos, c.anchor ?? c.pos) === start)) { this.app.setStatus("All occurrences selected"); return; }
+    if (v.cursors.some((c) => Math.min(c.pos, c.anchor ?? c.pos) === start)) { this.app().setStatus("All occurrences selected"); return; }
     v.cursors.push({ pos: start + byteLen(needle), anchor: start, goalX: null });
     v.normalize();
     pane.reveal();
@@ -887,7 +887,7 @@ export class Editing {
     const first = out.findIndex((c) => c.anchor === s.start);
     if (first > 0) out.unshift(out.splice(first, 1)[0]);
     v.cursors = out;
-    this.app.setStatus(`${out.length} occurrences selected`);
+    this.app().setStatus(`${out.length} occurrences selected`);
     pane.scheduleRender();
   }
 }
