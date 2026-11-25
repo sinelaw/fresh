@@ -103,6 +103,9 @@ function noModes() { return new Map(); }
 // The plugins' key bindings, typed.
 /** function noKeys() => Map<String, String> */
 function noKeys() { return new Map(); }
+// The keys a text field keeps for its own editing.
+const FIELD_KEYS = new Set(["C-a", "C-c", "C-v", "C-x", "C-z", "C-S-z", "C-y", "C-Left", "C-Right", "C-S-Left", "C-S-Right", "C-Backspace", "C-Delete", "C-Home", "C-End", "C-S-Home", "C-S-End"]);
+
 // How a key's modifiers are written for people.
 const MODIFIERS = new Map([["C", "Ctrl"], ["M", "Alt"], ["S", "Shift"]]);
 /** function modeKey(modes: Map<String, ModeKey[]>, mode: String | Null, k: String) => ModeKey | Undefined */
@@ -226,9 +229,8 @@ export class App {
     input.addEventListener("focus", () => { setClass(area, "keyboard", true); });
     input.addEventListener("blur", () => { setClass(area, "keyboard", false); });
     window.addEventListener("keydown", (e) => {
-      if (e.target !== document.body) return;
-      this.focusPane(this.activePane);
-      this.onKey(e);
+      if (e.target === document.body) { this.focusPane(this.activePane); this.onKey(e); return; }
+      if (!e.defaultPrevented && this.panelKey(e)) e.preventDefault();
     });
     input.addEventListener("compositionstart", () => { this.composing = true; });
     input.addEventListener("compositionend", () => { this.composing = false; this.onInput(); });
@@ -1323,6 +1325,21 @@ export class App {
       if (sels.length) this.editing.replace(this.activePane, (c) => { const s = sel(c); return s ? put(s.start, s.end, "") : KEEP; });
       else this.editing.deleteLine(this.activePane);
     }
+  }
+
+  // A key pressed in a panel (a button, a list, a field) that the control
+  // left alone: the editor runs it if it is bound and a chord (Ctrl, Alt
+  // or an F key), except a field's own editing keys. True: it took it. A
+  // terminal keeps its own (see terminalKey).
+  panelKey(e) {
+    const t = e.target;
+    if (t === this.input || t.closest(".xterm") !== null) return false;
+    const k = this.keyName(e);
+    const cmd = this.keymap().get(k);
+    if (cmd === undefined || !(e.ctrlKey || e.altKey || e.metaKey || /^F\d+$/.test(e.key))) return false;
+    if (t.matches("input, textarea, select, [contenteditable]") && FIELD_KEYS.has(k)) return false;
+    this.run(cmd);
+    return true;
   }
 
   // A key as the keymap names it: "C-S-k", "M-Up", "F12".
