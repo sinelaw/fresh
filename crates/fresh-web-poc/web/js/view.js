@@ -1,6 +1,12 @@
 // A pane and the views in it: one view per buffer tab, each with its own
 // scroll, cursors, options and folds — all of it this client's.
 
+import { listOf, some } from "./maybe.js";
+
+// A caret's place in client pixels (none: not on screen).
+/** type ClientCaret = {x: Number, y: Number, h: Number} */
+/** const NO_CARET: ClientCaret | Null */
+const NO_CARET = null;
 import { setClass } from "./dom.js";
 import { layout, applies, cursorIn } from "./layout.js";
 import { byteLen } from "./ot.js";
@@ -702,14 +708,13 @@ export class Pane {
   // null when it is not on screen.
   caretBox(p) {
     if (this.view?.mode === "compose") {
-      const r = this.doc.caretRect(p);
-      return r ? { x: r.left, y: r.top, h: r.height || this.metrics().lh } : null;
+      return listOf(this.doc.caretRect(p)).map((r) => ({ x: r.left, y: r.top, h: r.height || this.metrics().lh })).at(0) ?? NO_CARET;
     }
     const at = this.caretXY(p);
-    if (!at) return null;
+    if (!at) return NO_CARET;
     const { cw, lh } = this.metrics();
     const rect = this.textEl.getBoundingClientRect();
-    return { x: rect.left + at.x * cw, y: rect.top + at.r * lh, h: lh };
+    return some({ x: rect.left + at.x * cw, y: rect.top + at.r * lh, h: lh });
   }
 
   // The byte drawn at client point (x, y).
@@ -818,7 +823,7 @@ export class Pane {
     if (!v || !v.buf.text) return;
     this.wantX = true;
     // A document keeps the cursor in view as it draws (it measures there).
-    if (v.mode === "compose") { this.doc.want = center ? "center" : this.doc.want || "keep"; this.scheduleRender(); return; }
+    if (v.mode === "compose") { this.doc.want = center ? "center" : this.doc.want === "none" ? "keep" : this.doc.want; this.scheduleRender(); return; }
     const L = v.buf.text;
     const ci = L.indexOf(v.primary.pos);
     if (ci < 0) return;

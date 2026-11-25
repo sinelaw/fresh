@@ -10,6 +10,7 @@ export function $(selector) {
 
 // The element `selector` names inside `el`, which made it (a missing one
 // is a broken page, said at once).
+/** function within(el: El, selector: String) => El */
 export function within(el, selector) {
   const found = el.querySelector(selector);
   if (found === null) throw new Error(`No ${selector} in its element`);

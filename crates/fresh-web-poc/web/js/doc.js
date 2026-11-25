@@ -28,7 +28,8 @@ import { byteToIdx } from "./buffer.js";
 import { applies, cursorIn } from "./layout.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
 import { within } from "./dom.js";
-import { some } from "./maybe.js";
+import { poolOf, take, sameDrawn } from "./pool.js";
+import { some, listOf } from "./maybe.js";
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
@@ -39,6 +40,48 @@ const FOLD_MARGIN = 40;
 
 const PLAIN = styleKey(EMPTY);
 const anchor = (p) => `<span data-a="${p}">​</span>`;
+
+// A table's row nodes and cell nodes by line, typed.
+/** function noNodeAt() => Map<Number, DocNode> */
+function noNodeAt() { return new Map(); }
+/** function noNodesAt() => Map<Number, DocNode[]> */
+function noNodesAt() { return new Map(); }
+
+// A drawn piece of the document: text (`p`, its bytes), an anchor (`a`,
+// a position drawing nothing) or a concealed range drawn as other text
+// (`at`).
+/** type Piece = {el: El, kind: String, start: Number, end: Number} */
+/** function noPieces() => Piece[] */
+function noPieces() { return []; }
+/** const NO_PIECE: Piece | Null */
+const NO_PIECE = null;
+// No byte there.
+/** const NO_POS: Number | Null */
+const NO_POS = null;
+// The DOM point at client (x, y), if the browser finds one.
+function caretAt(x, y) {
+  if (typeof document.caretPositionFromPoint === "function") {
+    const c = document.caretPositionFromPoint(x, y);
+    return c === null ? [] : [{ node: c.offsetNode, off: c.offset }];
+  }
+  const r = document.caretRangeFromPoint(x, y);
+  return r === null ? [] : [{ node: r.startContainer, off: r.startOffset }];
+}
+// A caret's box (none: not drawn).
+/** type CaretBox = {left: Number, top: Number, height: Number} */
+/** const NO_RECT: CaretBox | Null */
+const NO_RECT = null;
+
+// No syntax colours (a line's spans, for text that is not code).
+/** const NO_SYNTAX: (Number) => Span[] */
+const NO_SYNTAX = (_li) => [];
+
+// What was drawn (pool.js); each drawn line's top.
+/** function noDrawn() => {el: El, html: String}[] */
+function noDrawn() { return []; }
+/** type LineTop = {line: Number, y: Number} */
+/** function noLineTops() => LineTop[] */
+function noLineTops() { return []; }
 
 // No fold there; no document node there.
 /** const NO_FOLD: Range | Null */
@@ -69,20 +112,22 @@ export class DocView {
     this.content = within(this.el, ".doc-content");
     this.body = within(this.el, ".doc-body");
     this.caretsEl = within(this.el, ".doc-carets");
-    this.els = []; // the drawn block elements
-    this.map = []; // drawn pieces in byte order: {el, start, end, kind: "p"|"a"|"at"}
-    this.dom = []; // the same, in document order
-    this.lineY = []; // [line, y] for each drawn line, in order, y in document px
+    this.drawn = noDrawn(); // the drawn blocks and rows, with their HTML
+    this.caretsHtml = ""; // the carets drawn
+    this.map = noPieces(); // drawn pieces in byte order
+    this.dom = noPieces(); // the same, in document order
+    this.lineY = noLineTops(); // each drawn line's top, in order, in document px
     this.sy = 0; // the scroll position, in document px
-    this.want = null; // keep the primary cursor in view: "keep" | "center"
+    this.want = "none"; // keep the primary cursor in view: "keep", "center" or "none"
+    this.moved = 0; // how far the last frame went past the asked scroll, in px
     this.range = document.createRange();
   }
 
   clear() {
     this.body.textContent = "";
     this.caretsEl.textContent = "";
-    this.caretsEl._html = "";
-    this.els = [];
+    this.caretsHtml = "";
+    this.drawn = [];
     this.map = [];
     this.dom = [];
     this.lineY = [];
@@ -113,7 +158,7 @@ export class DocView {
     if (pane.app().activePane === pane) {
       for (const c of last.carets) html += `<div class="caret" style="left:${c.x}px;top:${c.y}px;height:${c.h}px"></div>`;
     }
-    if (this.caretsEl._html !== html) { this.caretsEl.innerHTML = html; this.caretsEl._html = html; }
+    if (this.caretsHtml !== html) { this.caretsEl.innerHTML = html; this.caretsHtml = html; }
   }
 
   // What drawing needs for the whole frame: decorations by line, styles.
@@ -155,8 +200,9 @@ export class DocView {
     };
     // The folds hide lines by the blocks they fold, which takes only the
     // view, its text and its decorations (as `hiding` asks).
-    const hidden = this.hider({ v, L, d, mode: v.mode });
-    return { v, L, d, o, cursors, vlines, lineInfo, mode: v.mode, hidden };
+    const base = { v, L, d, mode: v.mode };
+    const hidden = this.hider(base);
+    return { base, v, L, d, o, cursors, vlines, lineInfo, mode: v.mode, hidden };
   }
 
   // hidden(li): the fold hiding line `li` and the last line it keeps
@@ -177,11 +223,11 @@ export class DocView {
   // The fold the block holding line `li` offers: {start, end} lines, or null.
   foldRange(v, li) {
     const ctx = { v, L: v.buf.text, d: v.buf.decor, mode: v.mode };
-    return this.foldOf(ctx, this.blockAt(ctx, li));
+    return this.foldOf(ctx, this.blockAt(ctx, li), false);
   }
 
   // `probe`: only whether there is one (looks no further than needed).
-  foldOf(ctx, blk, probe = false) {
+  foldOf(ctx, blk, probe) {
     const { L } = ctx;
     const n = blk.node;
     if (n === null) return NO_FOLD;
@@ -230,7 +276,7 @@ export class DocView {
   // A height the block surely has at least, from line `from` on: a line
   // draws at least a line height; a code block's fences and a table's
   // delimiter row may draw nothing.
-  low(ctx, blk, lh, from = blk.first) {
+  low(ctx, blk, lh, from) {
     if (!blk.node) return from > blk.last ? 0 : lh;
     let n = 0;
     for (let k = from; k <= blk.last; k++) if (!ctx.hidden(k)) n++;
@@ -247,77 +293,70 @@ export class DocView {
     const ti = L.indexOf(v.top);
     // The blocks to draw: one above the top's block (more when the offset
     // is negative), and down to what surely fills the view.
-    const top = this.blockAt(ctx, ti);
+    const top = this.blockAt(ctx.base, ti);
     const blocks = [top];
     let cur = top, above = 0;
     for (let k; (k = this.shownFrom(ctx, cur.first - 1, -1)) >= 0 && (blocks.length === 1 || above < -v.topPx);) {
-      cur = this.blockAt(ctx, k);
+      cur = this.blockAt(ctx.base, k);
       blocks.unshift(cur);
-      above += this.low(ctx, cur, lh);
+      above += this.low(ctx, cur, lh, cur.first);
     }
     let below = this.low(ctx, top, lh, ti);
     cur = top;
     for (let k; below < h + Math.max(0, v.topPx) + lh && (k = this.shownFrom(ctx, cur.last + 1, 1)) < L.count;) {
-      cur = this.blockAt(ctx, k);
+      cur = this.blockAt(ctx.base, k);
       blocks.push(cur);
-      below += this.low(ctx, cur, lh);
+      below += this.low(ctx, cur, lh, cur.first);
     }
 
     // Write: each block's HTML, its element reused while that is unchanged.
-    const pool = new Map();
-    for (const el of this.els) (pool.get(el._html) || pool.set(el._html, []).get(el._html)).push(el);
-    const take = (html) => {
-      const list = pool.get(html);
-      if (list && list.length) return list.pop();
-      const t = document.createElement("template");
-      t.innerHTML = html;
-      const el = t.content.firstChild;
-      el._html = html;
-      return el;
-    };
-    const els = [];
+    const pool = poolOf(this.drawn);
+    const drawn = [];
+    const blockEls = [];
     for (const blk of blocks) {
-      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) || []) if (x.above) els.push(take(this.vline(x)));
-      blk.el = take(this.blockHTML(ctx, blk));
-      els.push(blk.el);
-      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) || []) if (!x.above) els.push(take(this.vline(x)));
+      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (x.above) drawn.push(take(pool, this.vline(x)));
+      const b = take(pool, this.blockHTML(ctx, blk));
+      blockEls.push(b.el);
+      drawn.push(b);
+      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (!x.above) drawn.push(take(pool, this.vline(x)));
     }
-    if (els.length !== this.els.length || els.some((x, i) => x !== this.els[i])) this.body.replaceChildren(...els);
-    this.els = els;
+    if (!sameDrawn(drawn, this.drawn)) this.body.replaceChildren(...drawn.map((d) => d.el));
+    this.drawn = drawn;
 
     // Read: the pieces, and each line's top (a block's first line: the
     // block's top; others: their first piece; a line drawing nothing: the
     // line before it).
     const cr = this.content.getBoundingClientRect();
     const y0 = cr.top;
-    const dom = [];
+    const dom = noPieces();
     for (const el of this.body.querySelectorAll("[data-p],[data-a],[data-at]")) {
       const ds = el.dataset;
-      if (ds.p != null) { const s = +ds.p; dom.push({ el, kind: "p", start: s, end: s + byteLen(el.textContent) }); }
-      else if (ds.a != null) dom.push({ el, kind: "a", start: +ds.a, end: +ds.a });
-      else dom.push({ el, kind: "at", start: +ds.at, end: +ds.e });
+      const p = ds.p, a = ds.a;
+      if (p !== undefined) { const s = Number(p); dom.push({ el, kind: "p", start: s, end: s + byteLen(el.textContent) }); }
+      else if (a !== undefined) dom.push({ el, kind: "a", start: Number(a), end: Number(a) });
+      else dom.push({ el, kind: "at", start: Number(ds.at), end: Number(ds.e) });
     }
     this.dom = dom;
     this.map = [...dom].sort((a, b) => a.start - b.start);
     const ys = new Map();
-    for (const blk of blocks) ys.set(blk.first, blk.el.getBoundingClientRect().top - y0);
+    blocks.forEach((blk, i) => { ys.set(blk.first, blockEls[i].getBoundingClientRect().top - y0); });
     for (const e of dom) {
       const li = L.indexOf(e.start);
       if (li >= 0 && !ys.has(li)) ys.set(li, e.el.getBoundingClientRect().top - y0);
     }
     const first = blocks[0].first, lastLine = blocks[blocks.length - 1].last;
     // Each drawn line's top (a folded line has none).
-    const lineY = [], yAt = new Map();
-    let prev = ys.get(first);
+    const lineY = noLineTops(), yAt = new Map();
+    let prev = ys.get(first) ?? 0;
     for (let k = first; k <= lastLine; k++) {
-      if (ctx.hidden(k)) continue;
+      if (ctx.hidden(k) !== null) continue;
       const y = Math.max(prev, ys.get(k) ?? prev);
-      lineY.push([k, y]);
+      lineY.push({ line: k, y });
       yAt.set(k, y);
       prev = y;
     }
     this.lineY = lineY;
-    const yOf = (li) => yAt.get(li);
+    const yOf = (li) => yAt.get(li) ?? 0;
     const atEnd = this.shownFrom(ctx, lastLine + 1, 1) >= L.count;
     const bottom = this.body.getBoundingClientRect().bottom - y0;
 
@@ -327,24 +366,28 @@ export class DocView {
     const carets = [];
     for (const c of v.cursors) {
       const r = this.caretRect(c.pos);
-      if (r) carets.push({ x: r.left - cr.left, y: r.top - y0, h: r.height || lh, c });
+      for (const b of listOf(r)) carets.push({ x: b.left - cr.left, y: b.top - y0, h: b.height || lh, c });
     }
-    if (this.want) {
+    if (this.want !== "none") {
       // A cursor in a fold is kept in view at the line before the fold.
       let ci = L.indexOf(v.primary.pos);
       const fh = ctx.hidden(ci);
-      if (fh) ci = fh.keep;
-      const pc = carets.find((x) => x.c === v.primary) || (fh && yAt.has(ci) && { y: yOf(ci), h: lh });
-      if (!pc) {
+      if (fh !== null) ci = fh.keep;
+      // Where the primary caret is drawn (none: not drawn).
+      const drawnCaret = carets.find((x) => x.c === v.primary);
+      const pcs = drawnCaret !== undefined ? [{ y: drawnCaret.y, h: drawnCaret.h }] : fh !== null && yAt.has(ci) ? [{ y: yOf(ci), h: lh }] : [];
+      for (const pc of pcs) {
+        if (this.want === "center") sy = pc.y - h / 2;
+        else if (pc.y < sy) sy = pc.y;
+        else if (pc.y + pc.h > sy + h) sy = pc.y + pc.h - h;
+      }
+      if (!pcs.length) {
         // Not drawn: start again from its line.
         const back = this.want === "center" ? h / 2 : ci < ti ? lh : h - 3 * lh;
         v.setTop(L.starts[ci], -Math.max(0, back));
-        return { again: true };
+        return { again: true, carets: [] };
       }
-      if (this.want === "center") sy = pc.y - h / 2;
-      else if (pc.y < sy) sy = pc.y;
-      else if (pc.y + pc.h > sy + h) sy = pc.y + pc.h - h;
-      this.want = null;
+      this.want = "none";
     }
     // At the document's ends: its end stops at the view's bottom; there is
     // no space above its start.
@@ -352,14 +395,14 @@ export class DocView {
     if (first === 0 && L.bof) sy = Math.max(sy, 0);
     // The new top: the last line starting at or above the scroll position.
     let k = 0;
-    while (k + 1 < lineY.length && lineY[k + 1][1] <= sy) k++;
-    v.setTop(L.starts[lineY[k][0]], sy - lineY[k][1]);
+    while (k + 1 < lineY.length && lineY[k + 1].y <= sy) k++;
+    v.setTop(L.starts[lineY[k].line], sy - lineY[k].y);
     this.sy = sy;
     // How far the view went past what was asked (held at an end, or kept
     // on the cursor), in pixels.
     this.moved += sy - asked;
     // Drawn too little above or below (an offset past what was estimated)?
-    const again = (sy < lineY[0][1] && first > 0) || (sy + h > bottom && !atEnd);
+    const again = (sy < lineY[0].y && first > 0) || (sy + h > bottom && !atEnd);
     return { again, carets };
   }
 
@@ -377,25 +420,25 @@ export class DocView {
     // The fold toggle (shown on hover, or while folded) and, while folded,
     // an ellipsis where the hidden part was.
     const folded = ctx.v.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
-    const tog = folded || this.foldOf(ctx, blk, true) ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
+    const tog = folded || this.foldOf(ctx.base, blk, true) ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
     const more = folded ? `<span class="doc-more" data-fold="${blk.first}">⋯</span>` : "";
-    const joined = () => { const r = this.walk(ctx, ls, le); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
-    if (!n) return `<p class="l">${joined()}</p>`;
-    switch (n.type) {
-      case "heading": {
-        const lv = Math.max(1, Math.min(6, n.level || 1));
-        return `<h${lv} class="l">${joined()}</h${lv}>`;
-      }
-      case "item": {
-        const m = String(n.marker ?? "•");
-        const cls = m === "☑" ? " done" : m === "☐" ? " todo" : /\d/.test(m) ? " num" : "";
-        return `<div class="doc-li" style="--depth:${n.depth || 0}"><div class="l"><span class="mk${cls}">${esc(m)}</span>${joined()}</div></div>`;
-      }
-      case "quote": return `<blockquote class="l" style="--depth:${n.depth || 1}">${joined()}</blockquote>`;
-      case "rule": return `<div class="doc-hr l">${joined()}</div>`;
-      case "code": {
+    const joined = () => { const r = this.walk(ctx, ls, le, NO_SYNTAX); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
+    if (n === null) return `<p class="l">${joined()}</p>`;
+    const type = n.type;
+    if (type === "heading") {
+      const lv = Math.max(1, Math.min(6, n.level || 1));
+      return `<h${lv} class="l">${joined()}</h${lv}>`;
+    }
+    if (type === "item") {
+      const m = n.marker || "•";
+      const cls = m === "☑" ? " done" : m === "☐" ? " todo" : /\d/.test(m) ? " num" : "";
+      return `<div class="doc-li" style="--depth:${n.depth || 0}"><div class="l"><span class="mk${cls}">${esc(m)}</span>${joined()}</div></div>`;
+    }
+    if (type === "quote") return `<blockquote class="l" style="--depth:${n.depth || 1}">${joined()}</blockquote>`;
+    if (type === "rule") return `<div class="doc-hr l">${joined()}</div>`;
+    if (type === "code") {
         const lang = fenceLanguage(n.lang);
-        const syn = lang ? (li) => spansFor(lang, L.lines[li]) : null;
+        const syn = lang ? (li) => spansFor(lang, L.lines[li]) : NO_SYNTAX;
         let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>${tog}`;
         for (let k = blk.first; k <= blk.last; k++) {
           if (ctx.hidden(k)) continue;
@@ -405,21 +448,20 @@ export class DocView {
           html += `<div class="ln l">${r.html}${r.shown ? "" : anchor(L.lineEnd(k))}</div>`;
         }
         return html + (folded ? `<div class="ln">${more}</div>` : "") + "</div>";
-      }
-      case "table": return this.tableHTML(ctx, blk, tog);
-      default: return `<p class="l">${joined()}</p>`;
     }
+    if (type === "table") return this.tableHTML(ctx, blk, n, tog);
+    return `<p class="l">${joined()}</p>`;
   }
 
-  tableHTML(ctx, blk, tog) {
+  // A table block `blk` of node `n`; `tog`: its fold toggle.
+  tableHTML(ctx, blk, n, tog) {
     const { L, d } = ctx;
-    const n = blk.node;
     const parts = d.nodesIn(n.start, n.end + 1).filter((x) => PART.has(x.type) && applies(x, ctx.mode));
-    const rows = new Map(), cells = new Map();
+    const rows = noNodeAt(), cells = noNodesAt();
     for (const x of parts) {
       const li = L.indexOf(x.start);
       if (x.type === "row") rows.set(li, x);
-      else (cells.get(li) || cells.set(li, []).get(li)).push(x);
+      else cells.set(li, [...(cells.get(li) ?? []), x]);
     }
     let ncol = 1;
     for (const list of cells.values()) { list.sort((a, b) => a.start - b.start); ncol = Math.max(ncol, list.length); }
@@ -427,13 +469,13 @@ export class DocView {
     for (let k = blk.first; k <= blk.last; k++) {
       if (ctx.hidden(k)) continue;
       const ls = L.starts[k], le = L.lineEnd(k);
-      const list = cells.get(k);
+      const list = cells.get(k) ?? [];
       // The fold toggle sits in the first cell drawn, placed by the table.
       const t = tog;
       tog = "";
-      if (!list) {
+      if (!list.length) {
         // A row without cells (the delimiter row): its text across the table.
-        const r = this.walk(ctx, ls, le);
+        const r = this.walk(ctx, ls, le, NO_SYNTAX);
         if (!r.shown && L.lines[k] !== "") continue;
         html += `<tr class="raw"><td class="l" colspan="${ncol}">${t}${r.html}${r.shown ? "" : anchor(le)}</td></tr>`;
         continue;
@@ -442,8 +484,8 @@ export class DocView {
       html += "<tr>";
       list.forEach((c, i) => {
         const a = i === 0 ? ls : c.start, z = i + 1 < list.length ? list[i + 1].start : le;
-        const r = this.walk(ctx, a, z);
-        const al = n.align?.[i];
+        const r = this.walk(ctx, a, z, NO_SYNTAX);
+        const al = n.align.at(i) ?? null;
         html += `<${tag} class="l"${al ? ` style="text-align:${al}"` : ""}>${i === 0 ? t : ""}${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
       });
       for (let i = list.length; i < ncol; i++) html += `<${tag}></${tag}>`;
@@ -463,8 +505,8 @@ export class DocView {
     while (li >= 0 && li < L.count && b <= z) {
       const text = L.lines[li], ls = L.starts[li], le = L.lineEnd(li);
       const { act, rev, inl } = ctx.lineInfo(li);
-      const spans = syn ? syn(li) : null;
-      let run = "", at = 0, key = null, style = "";
+      const spans = syn(li);
+      let run = "", at = 0, key = "", style = "";
       const flush = () => {
         if (!run) return;
         out += `<span data-p="${at}"${style ? ` style="${style}"` : ""}>${esc(run)}</span>`;
@@ -484,7 +526,7 @@ export class DocView {
         }
       };
       const styleAt = (p, idx) => {
-        let st = o.decoStyle(p, li, spans ? synAt(spans, idx) : EMPTY);
+        let st = o.decoStyle(p, li, synAt(spans, idx));
         for (const c of rev) if (p >= c.start && p < c.end) { st = asMarkup(st); break; }
         return st;
       };
@@ -554,14 +596,14 @@ export class DocView {
     const m = this.map;
     let lo = 0, hi = m.length;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (m[mid].start <= p) lo = mid + 1; else hi = mid; }
-    let best = null, rank = 9;
+    // The candidates by rank, the first found winning a tie.
+    const ranked = [];
     for (let i = lo - 1; i >= 0 && i >= lo - 8; i--) {
       const e = m[i];
       if (p < e.start || p > e.end) continue;
-      const r = e.kind === "p" ? (p < e.end ? 0 : 1) : e.kind === "a" ? 2 : p === e.start ? 3 : p === e.end ? 4 : 5;
-      if (r < rank) { rank = r; best = e; }
+      ranked.push({ rank: e.kind === "p" ? (p < e.end ? 0 : 1) : e.kind === "a" ? 2 : p === e.start ? 3 : p === e.end ? 4 : 5, e });
     }
-    return best;
+    return ranked.sort((x, y) => x.rank - y.rank).at(0)?.e ?? NO_PIECE;
   }
 
   // Where a caret at byte `p` is drawn, in client coordinates, or null when
@@ -569,67 +611,61 @@ export class DocView {
   // element holding it), centred on the glyphs there.
   caretRect(p) {
     const e = this.find(p);
-    if (!e) return null;
-    let r = null;
-    if (e.kind === "p") {
-      const tn = e.el.firstChild;
-      const idx = byteToIdx(tn.data, p - e.start);
+    if (e === null) return NO_RECT;
+    // Inside text: the range at the byte; else the piece's box.
+    const rects = [];
+    for (const tn of e.kind === "p" ? listOf(e.el.firstChild) : []) {
+      const idx = byteToIdx(tn.textContent, p - e.start);
       this.range.setStart(tn, idx);
       this.range.setEnd(tn, idx);
       const rs = this.range.getClientRects();
-      if (rs.length) r = rs[rs.length > 1 && idx > 0 ? rs.length - 1 : 0];
+      if (rs.length) rects.push(rs[rs.length > 1 && idx > 0 ? rs.length - 1 : 0]);
     }
-    if (!r) {
-      const b = e.el.getBoundingClientRect();
-      r = { left: e.kind === "at" && p > e.start ? b.right : b.left, top: b.top, height: b.height };
-    }
+    const b = e.el.getBoundingClientRect();
+    const r = rects.map((x) => ({ left: x.left, top: x.top, height: x.height })).at(0) ?? { left: e.kind === "at" && p > e.start ? b.right : b.left, top: b.top, height: b.height };
     const box = e.el.closest(".l");
-    const lh = box ? parseFloat(getComputedStyle(box).lineHeight) : NaN;
-    if (!(lh > 0)) return { left: r.left, top: r.top, height: r.height };
-    return { left: r.left, top: r.top + r.height / 2 - lh / 2, height: lh };
+    const lh = box !== null ? parseFloat(getComputedStyle(box).lineHeight) : NaN;
+    return some(lh > 0 ? { left: r.left, top: r.top + r.height / 2 - lh / 2, height: lh } : r);
   }
 
   // The byte at client point (x, y), held to the document's box.
-  posFromPoint(v, x, y) {
+  posFromPoint(v, x0, y0) {
     const cr = this.content.getBoundingClientRect();
     const sr = v.pane.surfaceEl.getBoundingClientRect();
-    x = Math.max(cr.left + 1, Math.min(cr.right - 1, x));
-    y = Math.max(sr.top + 1, Math.min(sr.bottom - 1, y));
+    let x = Math.max(cr.left + 1, Math.min(cr.right - 1, x0));
+    let y = Math.max(sr.top + 1, Math.min(sr.bottom - 1, y0));
     // Off the text (right of a short table, between blocks): into the
     // nearest line box, vertically first.
     const hit = document.elementFromPoint(x, y);
-    if (!hit || !hit.closest(".l") || !this.body.contains(hit)) {
-      const dist = (r) => [y < r.top ? r.top - y : y >= r.bottom ? y - r.bottom + 1 : 0, x < r.left ? r.left - x : x > r.right ? x - r.right : 0];
-      let best = null, bd = [Infinity, Infinity];
-      for (const blk of this.els) {
-        if (dist(blk.getBoundingClientRect())[0] > bd[0]) continue;
-        for (const l of blk.matches(".l") ? [blk] : blk.querySelectorAll(".l")) {
-          const lr = l.getBoundingClientRect();
-          const d = dist(lr);
-          if (d[0] < bd[0] || (d[0] === bd[0] && d[1] < bd[1])) { bd = d; best = lr; }
-        }
-      }
-      if (best) {
-        x = Math.max(best.left + 1, Math.min(best.right - 1, x));
-        y = Math.max(best.top + 1, Math.min(best.bottom - 1, y));
+    if (hit === null || hit.closest(".l") === null || !this.body.contains(hit)) {
+      const lines = this.drawn.flatMap((d) => (d.el.matches(".l") ? [d.el] : [...d.el.querySelectorAll(".l")]));
+      const near = lines.map((l) => {
+        const r = l.getBoundingClientRect();
+        return { r, dy: y < r.top ? r.top - y : y >= r.bottom ? y - r.bottom + 1 : 0, dx: x < r.left ? r.left - x : x > r.right ? x - r.right : 0 };
+      }).sort((a, b) => a.dy - b.dy || a.dx - b.dx);
+      for (const n of near.slice(0, 1)) {
+        x = Math.max(n.r.left + 1, Math.min(n.r.right - 1, x));
+        y = Math.max(n.r.top + 1, Math.min(n.r.bottom - 1, y));
       }
     }
-    let node = null, off = 0;
-    if (document.caretPositionFromPoint) {
-      const c = document.caretPositionFromPoint(x, y);
-      if (c) { node = c.offsetNode; off = c.offset; }
-    } else if (document.caretRangeFromPoint) {
-      const r = document.caretRangeFromPoint(x, y);
-      if (r) { node = r.startContainer; off = r.startOffset; }
+    for (const c of caretAt(x, y)) {
+      if (this.body.contains(c.node)) return this.posAt(c.node, c.off);
     }
-    if (!node || !this.body.contains(node)) return null;
-    const el = node.nodeType === 3 ? node.parentElement : node;
+    return NO_POS;
+  }
+
+  // The byte at DOM point (`node`, `off`) in the body.
+  posAt(node, off) {
+    const text = node.nodeType === 3;
+    const el = text ? node.parentElement : node;
+    if (el === null) return NO_POS;
     const ent = el.closest("[data-p],[data-a],[data-at]");
-    if (ent && this.body.contains(ent) && (ent.dataset.at == null || ent.firstChild)) {
+    if (ent !== null && this.body.contains(ent) && (ent.dataset.at === undefined || ent.firstChild !== null)) {
       const ds = ent.dataset;
-      if (ds.p != null) return +ds.p + byteLen(node.nodeType === 3 ? node.data.slice(0, off) : off ? ent.textContent : "");
-      if (ds.a != null) return +ds.a;
-      return node.nodeType === 3 && off * 2 > node.data.length ? +ds.e : +ds.at;
+      const p = ds.p, a = ds.a;
+      if (p !== undefined) return some(Number(p) + byteLen(text ? node.textContent.slice(0, off) : off ? ent.textContent : ""));
+      if (a !== undefined) return some(Number(a));
+      return some(text && off * 2 > node.textContent.length ? Number(ds.e) : Number(ds.at));
     }
     // Between pieces (a list marker, a cell's padding) or on markup drawn as
     // nothing: the shown piece after the point in its line, else the one
@@ -640,23 +676,23 @@ export class DocView {
     let lo = 0, hi = dom.length;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (this.range.comparePoint(dom[mid].el, 0) < 0) lo = mid + 1; else hi = mid; }
     const box = el.closest(".l");
+    const inBox = (i) => i >= 0 && i < dom.length && (box === null || box.contains(dom[i].el));
+    // From piece `i` on in direction `d`, past empty concealed ranges.
     const near = (i, d) => {
-      const inBox = (e) => e && (!box || box.contains(e.el));
-      if (!inBox(dom[i])) return null;
-      while (dom[i].kind === "at" && !dom[i].el.firstChild && inBox(dom[i + d])) i += d;
-      return dom[i];
+      let k = i;
+      while (dom[k].kind === "at" && dom[k].el.firstChild === null && inBox(k + d)) k += d;
+      return dom[k];
     };
-    const next = near(lo, 1), prev = near(lo - 1, -1);
-    if (next) return next.start;
-    if (prev) return prev.end;
-    return null;
+    if (inBox(lo)) return some(near(lo, 1).start);
+    if (inBox(lo - 1)) return some(near(lo - 1, -1).end);
+    return NO_POS;
   }
 
   // Lines [first, last] drawn on screen.
   visibleLines(v) {
     const h = v.pane.size.h;
-    const on = this.lineY.filter(([, y], i) => y < this.sy + h && (this.lineY[i + 1]?.[1] ?? Infinity) > this.sy);
-    return on.length ? { first: on[0][0], last: on[on.length - 1][0] } : null;
+    const on = this.lineY.filter((t, i) => t.y < this.sy + h && (this.lineY.at(i + 1)?.y ?? Infinity) > this.sy);
+    return on.length ? { first: on[0].line, last: on[on.length - 1].line } : null;
   }
 
   // ---------------------------------------------------------------- motion
@@ -666,8 +702,8 @@ export class DocView {
   // scrolling when the probe leaves the view.
   lineFrom(v, p, dir, goal) {
     const lh = v.pane.metrics().lh;
-    let r = this.caretRect(p);
-    if (!r) return null;
+    const r = listOf(this.caretRect(p)).at(0);
+    if (r === undefined) return NO_POS;
     let top = r.top, bot = r.top + (r.height || lh);
     let y = dir > 0 ? bot : top;
     for (let guard = 0; guard < 2000; guard++) {
@@ -675,16 +711,16 @@ export class DocView {
       const sr = v.pane.surfaceEl.getBoundingClientRect();
       if (y <= sr.top + 1 || y >= sr.bottom - 1) {
         const shift = this.scrollBy(v, dir * Math.max(lh, (v.pane.size.h || sr.height) / 2));
-        if (!shift) return null;
+        if (!shift) return NO_POS;
         y -= shift; top -= shift; bot -= shift;
         continue;
       }
       const q = this.posFromPoint(v, this.content.getBoundingClientRect().left + goal, y);
-      if (q == null) continue;
-      const qr = this.caretRect(q);
-      if (qr && (dir > 0 ? qr.top >= bot - 2 : qr.top + (qr.height || lh) <= top + 2)) return q;
+      if (q === null) continue;
+      const below = listOf(this.caretRect(q)).some((b) => (dir > 0 ? b.top >= bot - 2 : b.top + (b.height || lh) <= top + 2));
+      if (below) return q;
     }
-    return null;
+    return NO_POS;
   }
 
   // Scroll by `dy` pixels and draw: how far the view really moved (less at
@@ -697,8 +733,7 @@ export class DocView {
 
   // The caret's x in document px.
   caretX(p) {
-    const r = this.caretRect(p);
-    return r ? r.left - this.content.getBoundingClientRect().left : null;
+    return listOf(this.caretRect(p)).map((r) => r.left - this.content.getBoundingClientRect().left).at(0) ?? NO_POS;
   }
 }
 
