@@ -1387,6 +1387,46 @@ function renderToolbar(): void {
     ));
 }
 
+/** Whether a file's diff is between two CRLF versions, voted the way the
+ *  editor detects a file's line ending: the old side's rows are context
+ *  and `-`, the new side's context and `+`, and a side is CRLF when more
+ *  of its rows end in `\r` than do not.
+ *
+ *  The stream renders in LF mode, where each `\r` is a stray control
+ *  byte painted `<0D>` — on every row of a file whose blobs are CRLF
+ *  (#3873). Opened in the editor, such a file is CRLF and its `\r\n` is
+ *  the line terminator; dropping each row's `\r` gives the stream that
+ *  view. Both sides have to be CRLF: git has already applied `autocrlf`
+ *  to what it diffs, so a `\r` on one side only is the change itself —
+ *  a file converted between LF and CRLF — and stays visible. */
+function isCrlfDiff(hunks: readonly Hunk[]): boolean {
+    let oldCr = 0, oldLf = 0, newCr = 0, newLf = 0;
+    for (const h of hunks) {
+        for (const line of h.lines) {
+            const c = line[0];
+            if (c !== ' ' && c !== '-' && c !== '+') continue;
+            const cr = line.charCodeAt(line.length - 1) === 13;
+            if (c !== '+') { if (cr) oldCr++; else oldLf++; }
+            if (c !== '-') { if (cr) newCr++; else newLf++; }
+        }
+    }
+    return oldCr > oldLf && newCr > newLf;
+}
+
+/** `text` — newline-terminated diff rows — with the trailing `\r` taken
+ *  off each context, `-` and `+` row. Other rows (`\ No newline at end
+ *  of file`, `@@`) are left as they are. */
+function stripRowCr(text: string): string {
+    const rows = text.split('\n');
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (r.length < 2 || r.charCodeAt(r.length - 1) !== 13) continue;
+        const c = r[0];
+        if (c === ' ' || c === '-' || c === '+') rows[i] = r.slice(0, -1);
+    }
+    return rows.join('\n');
+}
+
 /**
  * Build the unified stream: git's own output, file by file, with the
  * plugin's rows — section headers, note boxes, placeholders — spliced in
@@ -1613,6 +1653,13 @@ function buildStreamContent(): TextPropertyEntry[] {
             continue;
         }
 
+        // A CRLF file's rows drop the `\r` of their `\r\n` (#3873); see
+        // `isCrlfDiff`. Offsets are taken from what is pushed, so the row
+        // maps follow; `hunk.lines`, which patches are built from, keep
+        // git's bytes.
+        const pushBody = isCrlfDiff(fileHunks)
+            ? (text: string) => pushRaw(stripRowCr(text))
+            : pushRaw;
         for (const hunk of fileHunks) {
             const headerRow = row + 1;
             hunkHeaderRows.push(headerRow);
@@ -1622,7 +1669,7 @@ function buildStreamContent(): TextPropertyEntry[] {
             const notes: StreamNote[] = [];
             const hunkComments = commentsByHunk.get(hunk.id);
             if (hunkComments === undefined) {
-                pushRaw(raw.text.slice(hunk.bodyStart, hunk.end));
+                pushBody(raw.text.slice(hunk.bodyStart, hunk.end));
             } else {
                 // Cut the body after each annotated row and splice the
                 // note box in. `from` and `cut` are offsets into
@@ -1637,7 +1684,7 @@ function buildStreamContent(): TextPropertyEntry[] {
                         lineIdx++;
                     }
                     if (cut > from) {
-                        pushRaw(raw.text.slice(from, cut));
+                        pushBody(raw.text.slice(from, cut));
                         from = cut;
                         anchorRow = row;
                     }
@@ -1648,7 +1695,7 @@ function buildStreamContent(): TextPropertyEntry[] {
                     }
                     notes.push({ afterLine, rows: box.length, commentId: comment.id });
                 }
-                if (hunk.end > from) pushRaw(raw.text.slice(from, hunk.end));
+                if (hunk.end > from) pushBody(raw.text.slice(from, hunk.end));
             }
             hunkBodyRange[hunk.id] = { start: bodyStart, end: byte };
             const sh: StreamHunk = { hunk, headerRow, rowCount: row + 1 - headerRow, notes };
