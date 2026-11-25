@@ -16,6 +16,9 @@
 // Server act on the active file's language (Show Status offers them for
 // each).
 
+// An inlay hint.
+const HINT = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
+
 export function activate(fresh) {
   const { h } = fresh;
   const SEV = ["", "error", "warning", "info", "hint"];
@@ -400,7 +403,7 @@ export function activate(fresh) {
       if (pos == null) continue;
       const label = typeof hnt.label === "string" ? hnt.label : asList(hnt.label).map((p) => p.value).join("");
       const text = (hnt.paddingLeft ? " " : "") + label + (hnt.paddingRight ? " " : "");
-      deco.inline(pos, text, { side: "before", style: { fg: "editor.line_number_fg", italic: true } });
+      deco.inline(pos, text, { style: HINT, side: "before", edge: false, when: "always" });
     }
     b.render();
   };

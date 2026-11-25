@@ -11,6 +11,9 @@
 
 import { diffLines, mapLines, unifiedDiff } from "../js/diff.js";
 
+// A line's blame, at the row's end.
+const BLAME = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
+
 export function activate(fresh) {
   const { h } = fresh;
   const root = fresh.workspace.root;
@@ -134,7 +137,7 @@ export function activate(fresh) {
     held(L).forEach((text, i) => {
       const x = map ? byLine.get(map[i]) : byLine.get(i);
       const committed = x && !/^0+$/.test(x.hash);
-      d.inline(L.starts[i] + fresh.text.byteLen(text), committed ? ` ${x.author}, ${x.time} · ${x.summary}` : " (not committed)", { edge: true, style: { fg: "editor.line_number_fg", italic: true } });
+      d.inline(L.starts[i] + fresh.text.byteLen(text), committed ? ` ${x.author}, ${x.time} · ${x.summary}` : " (not committed)", { style: BLAME, side: "before", edge: true, when: "always" });
     });
     blamed.add(b.id);
     b.render();

@@ -12,6 +12,67 @@
 // key.
 /** type Highlight = {s: Number, e: Number, k: String, bold: Boolean, italic: Boolean} */
 
+// A byte range [start, end).
+/** type Range = {start: Number, end: Number} */
+
+// ---------------------------------------------------------------- records
+//
+// A record lists every field, at each place one is made. Only a field that
+// may have no value is nullable (`T | Null`, written `null`); any other has
+// a real default (`bold: false`, `when: "always"`). No spread overrides a
+// field of one.
+
+// ---------------------------------------------------------------- decorations
+// (host.js's DecorationSet). `when` is "always", or the view mode a
+// decoration applies in ("source" or "compose").
+
+// A decoration's style: its colours (none: the text's own) and the
+// attributes it turns on. `mono` is inline code in a compose view;
+// `extendToLineEnd` carries an overlay's background to the row's end.
+/** type Style = {
+ *   fg: Color | Null,
+ *   bg: Color | Null,
+ *   bold: Boolean,
+ *   italic: Boolean,
+ *   underline: Boolean,
+ *   strike: Boolean,
+ *   mono: Boolean,
+ *   extendToLineEnd: Boolean,
+ * } */
+
+// `mark`: the line is marked on the scrollbar in the style's background;
+// `above`: drawn over the selection and the occurrence highlight.
+/** type OverlayOptions = {when: String, mark: Boolean, above: Boolean} */
+
+// `text` is drawn instead of the range; `reveal`: the range shown as source
+// while a cursor is inside it.
+/** type ConcealOptions = {text: String, style: Style, reveal: Range | Null, when: String} */
+
+// `side`: "before" or "after" the character at the position; `edge`: at the
+// row's right edge instead.
+/** type InlineOptions = {style: Style, side: String, edge: Boolean, when: String} */
+
+// A whole row of text above or below a line; rows at one line go by `order`.
+/** type LineOptions = {text: String, style: Style, above: Boolean, order: Number, when: String} */
+
+// Document structure a compose view draws: `type` is "heading" (`level`),
+// "paragraph", "item" (`depth`, `marker`), "quote" (`depth`), "code"
+// (`lang`), "table" (`align`: per column "left", "center", "right" or
+// null), "rule", and inside a table "row" (`header`, `delimiter`) and
+// "cell". A field a type doesn't use is at its default (0, "", [], false).
+/** type Block = {
+ *   type: String,
+ *   level: Number,
+ *   depth: Number,
+ *   marker: String,
+ *   lang: String,
+ *   align: (String | Null)[],
+ *   header: Boolean,
+ *   delimiter: Boolean,
+ * } */
+
+/** type GutterOptions = {glyph: String, color: Color, title: String} */
+
 // ---------------------------------------------------------------- protocol
 
 // A document as the server describes it (`doc.open`, `doc.saved`).

@@ -26,7 +26,7 @@
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { applies, cursorIn } from "./layout.js";
-import { EMPTY, spansFor, synAt, fenceLanguage, esc, css, cssFor, styleKey } from "./paint.js";
+import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup } from "./paint.js";
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
@@ -341,7 +341,7 @@ export class DocView {
   }
 
   vline(x) {
-    const st = x.style ? cssFor(resolve(x.style)) : "";
+    const st = cssFor(drawnOf(x.style));
     return `<div class="vline"${st ? ` style="${st}"` : ""}>${esc(x.text || "")}​</div>`;
   }
 
@@ -456,13 +456,13 @@ export class DocView {
       const inline = (p, side) => {
         for (const t of inl.get(p + side) || []) {
           flush();
-          const st = t.style ? cssFor(resolve(t.style)) : "";
+          const st = cssFor(drawnOf(t.style));
           out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${esc(t.text)}</span>`;
         }
       };
       const styleAt = (p, idx) => {
         let st = o.decoStyle(p, li, spans ? synAt(spans, idx) : EMPTY);
-        for (const c of rev) if (p >= c.start && p < c.end) { st = { ...st, markup: true }; break; }
+        for (const c of rev) if (p >= c.start && p < c.end) { st = asMarkup(st); break; }
         return st;
       };
       let ci = 0;
@@ -518,7 +518,7 @@ export class DocView {
   }
 
   concealHTML(c) {
-    const st = c.style ? cssFor(resolve(c.style)) : "";
+    const st = cssFor(drawnOf(c.style));
     const body = c.text === "\n" ? "<br>" : esc(c.text);
     return `<span class="cc" data-at="${c.start}" data-e="${c.end}"${st ? ` style="${st}"` : ""}>${body}</span>`;
   }
@@ -679,10 +679,3 @@ export class DocView {
   }
 }
 
-// A decoration's style with theme keys resolved.
-function resolve(s) {
-  const out = { ...s };
-  if (s.fg != null) out.fg = css(s.fg);
-  if (s.bg != null) out.bg = css(s.bg);
-  return out;
-}

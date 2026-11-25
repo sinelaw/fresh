@@ -21,8 +21,8 @@ export function activate(fresh) {
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   const markLines = (d, L, first, n, bg, glyph, color) => {
     for (let i = first; i < first + n && i < L.starts.length; i++) {
-      d.overlay(L.starts[i], L.starts[i] + fresh.text.byteLen(L.lines[i]) + 1, { bg, extendToLineEnd: true });
-      d.gutter(L.starts[i], { glyph, color });
+      d.overlay(L.starts[i], L.starts[i] + fresh.text.byteLen(L.lines[i]) + 1, { fg: null, bg, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true }, { when: "always", mark: false, above: false });
+      d.gutter(L.starts[i], { glyph, color, title: "" });
     }
   };
   const mark = () => {

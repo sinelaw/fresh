@@ -14,12 +14,20 @@ import { classify } from "../js/mdstruct.js";
 
 const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path || b.name || "");
 
+// Styles: the markup itself is not restyled; inline spans.
+const PLAIN = { fg: null, bg: null, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+const CODE = { fg: null, bg: null, bold: false, italic: false, underline: false, strike: false, mono: true, extendToLineEnd: false };
+const BOLD = { fg: null, bg: null, bold: true, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+const ITALIC = { fg: null, bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
+const STRIKE = { fg: null, bg: null, bold: false, italic: false, underline: false, strike: true, mono: false, extendToLineEnd: false };
+const LINK = { fg: "syntax.link", bg: null, bold: false, italic: false, underline: true, strike: false, mono: false, extendToLineEnd: false };
+// Every overlay applies in compose views only.
+const COMPOSE = { when: "compose", mark: false, above: false };
+
 export function activate(fresh) {
   const { h } = fresh;
   const B = fresh.text.byteLen;
   const W = fresh.text.width;
-  const C = { when: "compose" };
-  const link = { fg: "syntax.link", underline: true };
 
   // ---------------------------------------------------------------- inline markup
 
@@ -30,25 +38,26 @@ export function activate(fresh) {
     const re = /(`+)([^`]+?)\1|\*\*([^*]+)\*\*|__([^_]+)__|(?<![\w*])\*([^*\s][^*]*?)\*(?!\w)|(?<![\w_])_([^_\s][^_]*?)_(?![\w])|~~([^~]+)~~|!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]+)\]\(([^)]*)\)/g;
     for (let m; (m = re.exec(text)); ) {
       const s = m.index, e = s + m[0].length;
-      const hide = (a, b, repl = "") => b > a && d.conceal(at(a), at(b), { text: repl, reveal, ...C });
+      const show = (a, b, text) => b > a && d.conceal(at(a), at(b), { text, style: PLAIN, reveal, when: "compose" });
+      const hide = (a, b) => show(a, b, "");
       if (m[1]) { // code
         hide(s, s + m[1].length); hide(e - m[1].length, e);
-        d.overlay(at(s + m[1].length), at(e - m[1].length), { mono: true }, C);
+        d.overlay(at(s + m[1].length), at(e - m[1].length), CODE, COMPOSE);
       } else if (m[3] || m[4]) { // bold
         hide(s, s + 2); hide(e - 2, e);
-        d.overlay(at(s), at(e), { bold: true }, C);
+        d.overlay(at(s), at(e), BOLD, COMPOSE);
       } else if (m[5] || m[6]) { // italic
         hide(s, s + 1); hide(e - 1, e);
-        d.overlay(at(s), at(e), { italic: true }, C);
+        d.overlay(at(s), at(e), ITALIC, COMPOSE);
       } else if (m[7]) { // strike
         hide(s, s + 2); hide(e - 2, e);
-        d.overlay(at(s), at(e), { strike: true }, C);
+        d.overlay(at(s), at(e), STRIKE, COMPOSE);
       } else if (m[8] != null) { // image
-        hide(s, e, `🖼 ${m[8] || m[9]}`);
+        show(s, e, `🖼 ${m[8] || m[9]}`);
       } else if (m[10]) { // link: the text, underlined
         hide(s, s + 1);
         hide(s + 1 + m[10].length, e);
-        d.overlay(at(s + 1), at(s + 1 + m[10].length), link, C);
+        d.overlay(at(s + 1), at(s + 1 + m[10].length), LINK, COMPOSE);
       }
     }
   };
@@ -76,8 +85,10 @@ export function activate(fresh) {
       const t = lines[i];
       return (k) => starts[i] + B(t.slice(0, k));
     };
-    const hide = (s, e, rv) => e > s && d.conceal(s, e, { text: "", reveal: rv, ...C });
-    const node = (i, j, type, attrs = {}) => d.node(starts[i], lineEnd(j), { type, ...attrs, ...C });
+    const hide = (s, e, rv) => e > s && d.conceal(s, e, { text: "", style: PLAIN, reveal: rv, when: "compose" });
+    // Lines i..j as a block (a Block: every field, those its type doesn't use
+    // at their defaults).
+    const node = (i, j, block) => d.node(starts[i], lineEnd(j), block, "compose");
     const blank = (i) => lines[i].trim() === "";
     // Indentations of the open list items, outermost first.
     let listStack = [];
@@ -93,7 +104,7 @@ export function activate(fresh) {
         while (j < lines.length && region[j] === "body") j++;
         const last = j < lines.length && region[j] === "close" ? j : j - 1;
         const info = (/^\s*(?:`{3,}|~{3,})\s*([^\s`{]*)/.exec(t) || [])[1] || "";
-        node(i, last, "code", { lang: info.toLowerCase() });
+        node(i, last, { type: "code", level: 0, depth: 0, marker: "", lang: info.toLowerCase(), align: [], header: false, delimiter: false });
         hide(starts[i], lineEnd(i), reveal(i));
         if (region[last] === "close") hide(starts[last], lineEnd(last), reveal(last));
         i = last;
@@ -104,12 +115,13 @@ export function activate(fresh) {
       if (table[i]?.role === "header") {
         let j = i;
         while (j < lines.length && table[j]) j++;
-        node(i, j - 1, "table", { align: lines[i + 1].split("|").map((c) => c.trim()).filter(Boolean).map(alignOf) });
+        const align = lines[i + 1].split("|").map((c) => c.trim()).filter(Boolean).map(alignOf);
+        node(i, j - 1, { type: "table", level: 0, depth: 0, marker: "", lang: "", align, header: false, delimiter: false });
         for (let k = i; k < j; k++) {
           const s = lines[k];
           const rv = reveal(k);
           const role = table[k].role;
-          node(k, k, "row", { header: role === "header", delimiter: role === "delimiter" });
+          node(k, k, { type: "row", level: 0, depth: 0, marker: "", lang: "", align: [], header: role === "header", delimiter: role === "delimiter" });
           if (role === "delimiter") { hide(starts[k], lineEnd(k), rv); continue; }
           const at2 = atOf(k);
           const pipes = [];
@@ -125,7 +137,7 @@ export function activate(fresh) {
             const raw = s.slice(a, z);
             const lead = /^\|?\s*/.exec(raw)[0].length;
             const trail = raw.length - raw.trimEnd().length;
-            d.node(at2(a), last ? lineEnd(k) : at2(z), { type: "cell", ...C });
+            d.node(at2(a), last ? lineEnd(k) : at2(z), { type: "cell", level: 0, depth: 0, marker: "", lang: "", align: [], header: false, delimiter: false }, "compose");
             hide(at2(a), at2(a + lead), rv);
             if (z - trail > a + lead) hide(at2(z - trail), at2(z), rv);
           });
@@ -138,14 +150,14 @@ export function activate(fresh) {
       if (blank(i)) continue;
 
       if (RULE.test(t)) {
-        node(i, i, "rule");
+        node(i, i, { type: "rule", level: 0, depth: 0, marker: "", lang: "", align: [], header: false, delimiter: false });
         hide(starts[i], lineEnd(i), reveal(i));
         continue;
       }
 
       const hm = HEADING.exec(t);
       if (hm) {
-        node(i, i, "heading", { level: hm[1].length });
+        node(i, i, { type: "heading", level: hm[1].length, depth: 0, marker: "", lang: "", align: [], header: false, delimiter: false });
         hide(starts[i], at(hm[0].length), reveal(i));
         inline(d, t, at, reveal(i));
         continue;
@@ -155,18 +167,19 @@ export function activate(fresh) {
       // new item or a different kind of line, are joined.
       const li = LIST.exec(t);
       const qd = li ? 0 : quoteDepth(t);
-      let attrs;
+      let block;
       if (li) {
         const lead = W(li[1].replace(/\t/g, "    "));
         while (listStack.length && listStack[listStack.length - 1] > lead) listStack.pop();
         if (!listStack.length || listStack[listStack.length - 1] < lead) listStack.push(lead);
         const done = li[4] && /x/i.test(li[4]);
-        attrs = { type: "item", depth: listStack.length - 1, marker: li[4] ? (done ? "☑" : "☐") : /\d/.test(li[2]) ? li[2] : "•" };
+        const marker = li[4] ? (done ? "☑" : "☐") : /\d/.test(li[2]) ? li[2] : "•";
+        block = { type: "item", level: 0, depth: listStack.length - 1, marker, lang: "", align: [], header: false, delimiter: false };
         hide(starts[i], at(li[0].length), reveal(i));
       } else if (qd) {
-        attrs = { type: "quote", depth: qd };
+        block = { type: "quote", level: 0, depth: qd, marker: "", lang: "", align: [], header: false, delimiter: false };
         hide(starts[i], at(QUOTE.exec(t)[0].length), reveal(i));
-      } else attrs = { type: "paragraph" };
+      } else block = { type: "paragraph", level: 0, depth: 0, marker: "", lang: "", align: [], header: false, delimiter: false };
       inline(d, t, at, reveal(i));
       let j = i;
       while (j + 1 < lines.length) {
@@ -178,14 +191,14 @@ export function activate(fresh) {
         const hard = HARD.exec(prev);
         const trail = hard ? hard[0].length : prev.length - prev.trimEnd().length;
         if (trail) hide(pe - B(prev.slice(prev.length - trail)), pe, reveal(j));
-        if (hard) d.conceal(pe, pe + 1, { text: "\n", ...C });
+        if (hard) d.conceal(pe, pe + 1, { text: "\n", style: PLAIN, reveal: null, when: "compose" });
         j++;
         // The next line's indent (or quote marker) is markup too.
         const lead = qd ? QUOTE.exec(n)[0].length : n.length - n.trimStart().length;
         hide(starts[j], atOf(j)(lead), reveal(j));
         inline(d, n, atOf(j), reveal(j));
       }
-      d.node(starts[i], lineEnd(j), { ...attrs, ...C });
+      node(i, j, block);
       i = j;
     }
     b.render();

@@ -3,6 +3,9 @@
 // description, title?}]}). A panel beside the editor shows the steps; each
 // step opens its file at its line and marks it.
 
+// The step's line.
+const STEP = { fg: null, bg: "ui.tour_step_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
+
 export function activate(fresh) {
   const { h } = fresh;
   const root = fresh.workspace.root;
@@ -25,7 +28,7 @@ export function activate(fresh) {
       const d = b.decorations("tour");
       marked = b;
       if (li >= 0 && li < L.starts.length) {
-        d.overlay(L.starts[li], L.starts[li] + fresh.text.byteLen(L.lines[li]) + 1, { bg: "ui.tour_step_bg", extendToLineEnd: true });
+        d.overlay(L.starts[li], L.starts[li] + fresh.text.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
         d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
       }
       b.render();

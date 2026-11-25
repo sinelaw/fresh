@@ -1,12 +1,13 @@
-// A buffer's decorations, held by this client. Kinds:
-//   overlays  {start, end, style}                 styling over source text
-//   conceals  {start, end, text, reveal}          source drawn as other text
-//   inlines   {pos, text, side, edge}             text spliced into a row
-//   lines     {pos, above, text}                  whole rows between lines
-//   nodes     {start, end, type, ...attrs}        document structure: what a
-//                                                 compose view draws as
-//                                                 headings, lists, tables...
-//   gutters   {start, glyph, color}               marks in the gutter
+// A buffer's decorations, held by this client. Kinds (each item also has
+// its `ns`; the options are host.js's, typed in types/fresh.d.js):
+//   overlays  {start, end, style, when, mark, above}      styling over source text
+//   conceals  {start, end, text, style, reveal, when}     source drawn as other text
+//   inlines   {pos, text, style, side, edge, when}        text spliced into a row
+//   lines     {pos, above, text, style, order, when}      whole rows between lines
+//   nodes     {start, end, ...block, when}                document structure: what a
+//                                                         compose view draws as
+//                                                         headings, lists, tables...
+//   gutters   {start, end, glyph, color, title}           marks in the gutter
 // plus the language server's diagnostics. Each item belongs to a namespace
 // (plugin and set). Every position moves through every edit the buffer
 // applies, local or remote, in log order, so the decorations always describe
@@ -26,6 +27,7 @@ export class Decor {
     this.gutters = [];
     this.diags = [];
     this.gen = 0;
+    this.ix = new Map(); // kind -> its interval index (`query`)
   }
 
   // The items of `kind` overlapping [start, end): an interval index (sorted
@@ -33,14 +35,14 @@ export class Decor {
   // decorations and searched by bisection, so a lookup costs the items it
   // returns, not the size of the set.
   query(kind, start, end) {
-    let ix = this.ix?.[kind];
+    let ix = this.ix.get(kind);
     if (!ix || ix.gen !== this.gen) {
       const items = [...(kind === "diags" ? this.diags : this[kind])].sort((a, b) => a.start - b.start);
       const maxEnd = new Array(items.length);
       let m = -Infinity;
       items.forEach((d, i) => { m = Math.max(m, Math.max(d.end, d.start + 1)); maxEnd[i] = m; });
       ix = { gen: this.gen, items, maxEnd };
-      (this.ix ||= {})[kind] = ix;
+      this.ix.set(kind, ix);
     }
     const { items, maxEnd } = ix;
     // The last item starting before `end`.

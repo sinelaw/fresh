@@ -6,14 +6,20 @@ import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
-import { EMPTY, NO_SPANS, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey } from "./paint.js";
+import { EMPTY, NO_SPANS, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
 import { DocView } from "./doc.js";
 
 
 let nextPaneId = 1;
 
 const OPENERS = { "(": 1, "[": 1, "{": 1 }, CLOSERS = { ")": 1, "]": 1, "}": 1 };
-const RAINBOW = [1, 2, 3, 4, 5, 6].map((n) => THEME[`editor.bracket_rainbow_${n}`]);
+// What a view draws over the text's own style: a bracket in the colour of
+// its depth, the occurrences of the word at the cursor, the bracket pair at
+// the cursor, the selection.
+const RAINBOW = [1, 2, 3, 4, 5, 6].map((n) => restyler({ fg: `editor.bracket_rainbow_${n}`, bg: null, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false }));
+const OCCURRENCE = restyler({ fg: null, bg: "editor.occurrence_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
+const BRACKET = restyler({ fg: "editor.bracket_match_fg", bg: null, bold: true, italic: false, underline: true, strike: false, mono: false, extendToLineEnd: false });
+const SELECTED = restyler({ fg: null, bg: "editor.selection_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
 // Each line's bracket balance by language and text (strings and comments
 // left out), and each buffer's depth at every line start, for its text.
 const balanceCache = new Map();
@@ -288,7 +294,6 @@ export class Pane {
       const t = w ? buf.textRange(w.start, w.end) : null;
       if (t && t.length >= 2 && !t.includes("\n")) occ = t;
     }
-    const occBg = { bg: THEME["editor.occurrence_bg"] };
     // The bracket at the cursor and its match, drawn bold in the theme's
     // colour for them (found once per cursor position and text).
     let brackets = null;
@@ -297,21 +302,11 @@ export class Pane {
       if (this.bracketKey !== key) { this.bracketKey = key; this.bracketPair = this.app.editing.bracketPair(buf, v.primary.pos); }
       brackets = this.bracketPair;
     }
-    const bracketSt = { fg: THEME["editor.bracket_match_fg"], bold: true, underline: true };
     // Rainbow brackets: each bracket in the colour of its nesting depth,
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
     const depths = s.rainbow_brackets && buf.full ? rainbowDepths(buf, lang, synFor) : null;
-    const selBg = THEME["editor.selection_bg"];
     const DIAG = ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]];
-    const overlayFn = (o) => {
-      const y = o.style || {};
-      const fg = y.fg != null ? color(y.fg) : null, bg = y.bg != null ? color(y.bg) : null;
-      return (st) => ({
-        ...st, ...(fg ? { fg } : {}), ...(bg ? { bg } : {}),
-        ...(y.bold ? { bold: true } : {}), ...(y.italic ? { italic: true } : {}), ...(y.underline ? { underline: true } : {}), ...(y.strike ? { strike: true } : {}), ...(y.mono ? { mono: true } : {}),
-      });
-    };
     const lineCache = new Map();
     const lineDecos = (li) => {
       let out = lineCache.get(li);
@@ -319,7 +314,7 @@ export class Pane {
       out = [];
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
       const above = [];
-      for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: overlayFn(o) });
+      for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
       if (depths) {
         const line = L.lines[li];
         const skip = synFor(li).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
@@ -329,10 +324,10 @@ export class Pane {
           if (!(c in OPENERS) && !(c in CLOSERS)) continue;
           if (skip.some((x) => k >= x.s && k < x.e)) continue;
           if (c in CLOSERS) depth--;
-          const fg = RAINBOW[((Math.max(0, depth) % 6) + 6) % 6];
+          const f = RAINBOW[((Math.max(0, depth) % 6) + 6) % 6];
           if (c in OPENERS) depth++;
           const at = L.starts[li] + byteLen(line.slice(0, k));
-          out.push({ s: at, e: at + 1, f: (st) => ({ ...st, fg }) });
+          out.push({ s: at, e: at + 1, f });
         }
       }
       if (occ) {
@@ -340,13 +335,13 @@ export class Pane {
         for (let k = line.indexOf(occ); k >= 0; k = line.indexOf(occ, k + occ.length)) {
           if ((k === 0 || !/\w/.test(line[k - 1])) && !/\w/.test(line[k + occ.length] || "")) {
             const st0 = ls + byteLen(line.slice(0, k));
-            out.push({ s: st0, e: st0 + byteLen(occ), f: (st) => ({ ...st, ...occBg }) });
+            out.push({ s: st0, e: st0 + byteLen(occ), f: OCCURRENCE });
           }
         }
       }
-      if (brackets) for (const x of [brackets.at, brackets.match]) if (x >= ls && x < le) out.push({ s: x, e: x + 1, f: (st) => ({ ...st, ...bracketSt }) });
-      for (const g of buf.decor.query("diags", ls, le)) { const wavy = DIAG[g.severity] || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => ({ ...st, wavy }) }); }
-      for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: (st) => ({ ...st, bg: selBg }) });
+      if (brackets) for (const x of [brackets.at, brackets.match]) if (x >= ls && x < le) out.push({ s: x, e: x + 1, f: BRACKET });
+      for (const g of buf.decor.query("diags", ls, le)) { const wavy = DIAG[g.severity] || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => withWavy(st, wavy) }); }
+      for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: SELECTED });
       out.push(...above);
       lineCache.set(li, out);
       return out;

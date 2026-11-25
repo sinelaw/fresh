@@ -16,6 +16,11 @@
 // Replace All rewrites them through the documents, so open editors, other
 // clients and undo all see the change.
 
+// The searched range, the matches and the current match.
+const SCOPE = { fg: null, bg: "search.scope_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
+const MATCH = { fg: "search.match_fg", bg: "search.match_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+const CURRENT = { fg: "search.current_fg", bg: "search.current_bg", bold: true, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+
 export function activate(fresh) {
   const { h } = fresh;
   const opts = { case: false, word: false, regex: false };
@@ -44,7 +49,7 @@ export function activate(fresh) {
   const scopeOf = (b) => (b ? scopeDeco(b).overlays()[0] || null : null);
   const setScope = (b, s) => {
     scopeDeco(b).clear();
-    if (s) scopeDeco(b).overlay(s.start, s.end, { bg: "search.scope_bg", extendToLineEnd: true });
+    if (s) scopeDeco(b).overlay(s.start, s.end, SCOPE, { when: "always", mark: false, above: false });
     b.render();
   };
 
@@ -76,7 +81,7 @@ export function activate(fresh) {
     if (!b) return;
     const d = deco(b);
     d.clear();
-    matches.forEach((m, i) => d.overlay(m.pos, m.pos + m.len, i === current ? { bg: "search.current_bg", fg: "search.current_fg", bold: true } : { bg: "search.match_bg", fg: "search.match_fg" }, { mark: true, above: true }));
+    matches.forEach((m, i) => d.overlay(m.pos, m.pos + m.len, i === current ? CURRENT : MATCH, { when: "always", mark: true, above: true }));
     b.render();
   };
 
