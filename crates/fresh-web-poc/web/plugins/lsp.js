@@ -29,15 +29,9 @@ export function activate(fresh) {
     const v = fresh.views.active();
     return v && fresh.lsp.available(v.buffer) ? v : null;
   };
-  const ask = async (v, method, params = {}) => {
-    try {
-      return await fresh.lsp.request(v.buffer, method, params, v.cursor);
-    } catch (e) {
-      // A refused request carries the server's message as `detail`.
-      fresh.ui.message(e.detail ?? String(e.message || e));
-      return null;
-    }
-  };
+  // A request about the cursor's position. A refused one throws; each
+  // command shows the server's reason (see `reg`).
+  const ask = (v, method, params) => fresh.lsp.request(v.buffer, method, params, v.cursor);
   const pathOf = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
   const rel = (p) => (p.startsWith(fresh.workspace.root + "/") ? p.slice(fresh.workspace.root.length + 1) : p);
   const asList = (r) => (r == null ? [] : Array.isArray(r) ? r : [r]);
@@ -53,13 +47,12 @@ export function activate(fresh) {
   const definition = async () => {
     const v = active();
     if (!v) return;
-    const r = asList(await ask(v, "textDocument/definition")).map(loc);
+    const r = asList(await ask(v, "textDocument/definition", {})).map(loc);
     if (!r.length) return fresh.ui.message("No definition found");
     if (r.length === 1) return goto(r[0].path, r[0].range, null);
     fresh.ui.pick({ title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range, null) });
   };
 
-  let refsPanel = null;
   const references = async () => {
     const v = active();
     if (!v) return;
@@ -72,13 +65,13 @@ export function activate(fresh) {
         try { texts.set(l.path, (await fresh.host.read(l.path)).split("\n")); } catch { texts.set(l.path, []); }
       }
     }
-    const items = [];
-    let last = null;
-    for (const l of r) {
-      if (l.path !== last) { items.push({ header: true, path: l.path }); last = l.path; }
-      items.push({ ...l, text: (texts.get(l.path)[l.range.start.line] || "").trim() });
-    }
-    refsPanel = fresh.ui.panel({ id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
+    const lineOf = (l) => ((texts.get(l.path) || [])[l.range.start.line] || "").trim();
+    // A file's header, then its references: one row shape for both.
+    const items = r.flatMap((l, i) => {
+      const row = { header: false, path: l.path, range: l.range, text: lineOf(l) };
+      return i === 0 || r[i - 1].path !== l.path ? [{ header: true, path: l.path, range: l.range, text: "" }, row] : [row];
+    });
+    const refsPanel = fresh.ui.panel({ id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
     refsPanel.render(h("list", {
       key: "refs",
       items,
@@ -93,25 +86,32 @@ export function activate(fresh) {
 
   // The palette's `@`: the active file's symbols, filtered by what is
   // typed, each previewed as it is selected. Asked once per opening.
-  let symCache = null;
-  const KINDS = { 5: "class", 6: "method", 12: "function", 13: "variable", 14: "constant", 23: "struct", 10: "enum", 11: "interface", 8: "field", 2: "module" };
+  // The last file's symbols, by `id:length`.
+  const symCache = new Map();
+  const KINDS = new Map([[5, "class"], [6, "method"], [12, "function"], [13, "variable"], [14, "constant"], [23, "struct"], [10, "enum"], [11, "interface"], [8, "field"], [2, "module"]]);
+  const kindName = (k) => KINDS.get(k) || "";
   fresh.palette.provide("@", {
     hint: "symbols",
     items: async (q) => {
       const v = active();
       if (!v) return [{ label: "No language server for this file" }];
       const key = `${v.buffer.id}:${v.buffer.length}`;
-      if (!symCache || symCache.key !== key) symCache = { key, list: asList(await ask(v, "textDocument/documentSymbol")) };
+      let list = symCache.get(key);
+      if (!list) {
+        try { list = asList(await ask(v, "textDocument/documentSymbol", {})); } catch (e) { return [{ label: String(e) }]; }
+        symCache.clear();
+        symCache.set(key, list);
+      }
       const out = [];
       const walk = (list, path) => {
         for (const s of list) {
           const range = s.selectionRange || s.location?.range || s.range;
           const go = () => { const p = fresh.lsp.offset(v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true }); };
-          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [KINDS[s.kind], path || s.containerName].filter(Boolean).join(" · "), run: go, preview: go });
+          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [kindName(s.kind), path || s.containerName].filter(Boolean).join(" · "), run: go, preview: go });
           if (s.children) walk(s.children, path ? `${path}.${s.name}` : s.name);
         }
       };
-      walk(symCache.list, "");
+      walk(list, "");
       return out.length ? out : [{ label: q ? "No symbol matches" : "No symbols" }];
     },
   });
@@ -119,6 +119,7 @@ export function activate(fresh) {
 
   // The palette's `%`: the workspace's symbols matching what is typed,
   // from every running server.
+  /** let running: Dict<Boolean> */
   let running = {}; // {language: running}, from the server
   const runningLanguages = async () => {
     try { running = await fresh.lsp.status(); } catch { running = {}; }
@@ -140,7 +141,7 @@ export function activate(fresh) {
           const path = pathOf(loc.uri), range = loc.range || { start: { line: 0, character: 0 } };
           out.push({
             label: s.name,
-            detail: [KINDS[s.kind], s.containerName, `${rel(path)}:${range.start.line + 1}`].filter(Boolean).join(" · "),
+            detail: [kindName(s.kind), s.containerName, `${rel(path)}:${range.start.line + 1}`].filter(Boolean).join(" · "),
             run: () => goto(path, range, false),
           });
         }
@@ -166,6 +167,7 @@ export function activate(fresh) {
     return n;
   };
   const applyTextEdits = (b, edits) => {
+    /** const ops: Op[] */
     const ops = [];
     const resolved = edits
       .map((e) => ({ s: fresh.lsp.offset(b, e.range.start.line, e.range.start.character), e: fresh.lsp.offset(b, e.range.end.line, e.range.end.character), text: e.newText }))
@@ -179,12 +181,15 @@ export function activate(fresh) {
     return resolved.length;
   };
 
+  // The identifier characters that end `s`, and that start it.
+  const wordEnd = (s) => s.slice(s.search(/[\w$]*$/));
+  const wordStart = (s) => s.slice(0, s.search(/[^\w$]|$/));
   // The identifier around the cursor.
   const currentWord = (v) => {
     const b = v.buffer;
     const left = b.text(Math.max(0, v.cursor - 100), v.cursor) || "";
     const right = b.text(v.cursor, Math.min(b.length, v.cursor + 100)) || "";
-    return /[\w$]*$/.exec(left)[0] + /^[\w$]*/.exec(right)[0];
+    return wordEnd(left) + wordStart(right);
   };
 
   const rename = async () => {
@@ -232,10 +237,10 @@ export function activate(fresh) {
   const completion = async () => {
     const v = active();
     if (!v) return;
-    const r = await ask(v, "textDocument/completion");
+    const r = await ask(v, "textDocument/completion", {});
     const items = asList(r && r.items ? r.items : r);
     if (!items.length) return fresh.ui.message("No completions");
-    const word = /[\w$]*$/.exec(v.buffer.text(Math.max(0, v.cursor - 100), v.cursor) || "")[0];
+    const word = wordEnd(v.buffer.text(Math.max(0, v.cursor - 100), v.cursor) || "");
     fresh.ui.pick({
       title: "Complete",
       value: word,
@@ -244,7 +249,7 @@ export function activate(fresh) {
         const vv = fresh.views.active();
         const b = vv.buffer;
         const left = b.text(Math.max(0, vv.cursor - 100), vv.cursor) || "";
-        const w = /[\w$]*$/.exec(left)[0];
+        const w = wordEnd(left);
         const text = i.textEdit?.newText ?? i.insertText ?? i.label;
         const start = vv.cursor - fresh.text.byteLen(w);
         b.replace(start, vv.cursor, text);
@@ -273,14 +278,14 @@ export function activate(fresh) {
   const hover = async () => {
     const v = active();
     if (!v) return;
-    const t = hoverText(await ask(v, "textDocument/hover"));
+    const t = hoverText(await ask(v, "textDocument/hover", {}));
     if (t) fresh.ui.popup(t);
   };
 
   const signatureHelp = async () => {
     const v = active();
     if (!v) return;
-    const r = await ask(v, "textDocument/signatureHelp");
+    const r = await ask(v, "textDocument/signatureHelp", {});
     const sig = r?.signatures?.[r.activeSignature ?? 0];
     if (sig) fresh.ui.popup(sig.label + (sig.documentation ? `\n\n${typeof sig.documentation === "string" ? sig.documentation : sig.documentation.value}` : ""));
   };
@@ -297,31 +302,33 @@ export function activate(fresh) {
 
   // ---------------------------------------------------------------- diagnostics
 
-  let diagPanel = null;
+  // The line number (1-based, as text) of byte `pos` in `b`, or "?".
+  const lineLabel = (b, pos) => {
+    const L = b.lines();
+    if (!L) return "?";
+    const i = L.starts.findIndex((s, k) => pos >= s && (k + 1 >= L.starts.length || pos < L.starts[k + 1]));
+    return i >= 0 ? String((L.firstLine ?? 0) + i + 1) : "?";
+  };
   const renderDiagnostics = () => {
-    if (!diagPanel || !diagPanel.open) return;
-    const items = [];
-    for (const b of fresh.buffers.all()) {
-      const ds = fresh.lsp.diagnostics(b);
-      if (!ds.length) continue;
-      items.push({ header: true, b });
-      const L = b.lines();
-      for (const d of ds.sort((x, y) => x.start - y.start)) {
-        const i = L ? L.starts.findIndex((s, k) => d.start >= s && (k + 1 >= L.starts.length || d.start < L.starts[k + 1])) : -1;
-        items.push({ b, d, line: i >= 0 ? (L.firstLine ?? 0) + i + 1 : "?" });
-      }
-    }
+    const diagPanel = fresh.ui.shown("diagnostics");
+    if (!diagPanel) return;
+    // Each file with problems: a header row, then a row per problem.
+    const items = fresh.buffers.all().flatMap((b) => {
+      const ds = fresh.lsp.diagnostics(b).sort((x, y) => x.start - y.start);
+      const rows = ds.map((d) => ({ header: false, b, d, line: lineLabel(b, d.start) }));
+      return ds.length ? [{ header: true, b, d: ds[0], line: "" }, ...rows] : [];
+    });
     diagPanel.render(h("list", {
       key: "diags",
       items,
       render: (it) => it.header
         ? h("text", { bold: true }, [rel(it.b.path)])
-        : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [String(it.line)]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
+        : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [it.line]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
       onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path, { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.views.active().setCursor(it.d.start, { center: true }); },
     }));
   };
   const diagnosticsPanel = () => {
-    diagPanel = fresh.ui.panel({ id: "diagnostics", title: "Diagnostics", place: "bottom", onClose: null });
+    const diagPanel = fresh.ui.panel({ id: "diagnostics", title: "Diagnostics", place: "bottom", onClose: null });
     renderDiagnostics();
     diagPanel.focus("diags");
   };
@@ -339,7 +346,7 @@ export function activate(fresh) {
   // The status bar: the active file's server, or `LSP (off)` when it was
   // stopped.
   const showStatus = (b) => {
-    const installed = b && b.language && fresh.lsp.languages().includes(b.language) && !b.isVirtual;
+    const installed = b != null && b.language != null && fresh.lsp.languages().includes(b.language) && !b.isVirtual;
     const text = !installed ? "" : fresh.lsp.available(b) ? `LSP ${b.language}` : running[b.language] === false ? "LSP (off)" : "";
     status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.commands.run("lsp.status") });
   };
@@ -355,7 +362,7 @@ export function activate(fresh) {
     const state = (l) => (running[l] ? "running" : running[l] === false ? "stopped" : fresh.lsp.languages().includes(l) ? "available (starts with a file)" : "not started");
     fresh.ui.pick({
       title: fresh.workspace.trusted ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
-      items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", value: null }],
+      items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", detail: "", value: "" }],
       onAccept: async (it) => {
         if (!it.value || !fresh.workspace.trusted) return;
         const what = await fresh.ui.choose(`${it.value} language server (${state(it.value)})`, [
@@ -369,12 +376,12 @@ export function activate(fresh) {
   // Restart or stop `language`'s server (the active file's when not given).
   const serverOp = async (what, language) => {
     const b = fresh.buffers.active();
-    const l = language || (b && fresh.lsp.languages().includes(b.language) ? b.language : null);
+    const l = language || (b != null && b.language != null && fresh.lsp.languages().includes(b.language) ? b.language : "");
     if (!l) { lspStatus(); return; }
     try {
       running = await (what === "stop" ? fresh.lsp.stop(l) : fresh.lsp.restart(l));
       fresh.ui.message(what === "stop" ? `Stopped the ${l} language server` : `Restarted the ${l} language server`);
-    } catch (e) { fresh.ui.message(e.detail ?? String(e.message || e)); }
+    } catch (e) { fresh.ui.error(e); }
   };
   fresh.events.on("lsp.status", ({ status: s }) => {
     running = s;
@@ -411,7 +418,8 @@ export function activate(fresh) {
     b.render();
   };
   const hintsSoon = (b) => {
-    clearTimeout(hintTimers.get(b.id));
+    const pending = hintTimers.get(b.id);
+    if (pending !== undefined) clearTimeout(pending);
     hintTimers.set(b.id, setTimeout(() => { hintTimers.delete(b.id); refreshHints(b); }, 500));
   };
   fresh.events.on("buffer.changed", ({ buffer }) => { if (fresh.settings.inlay_hints && fresh.lsp.available(buffer)) hintsSoon(buffer); });
@@ -426,7 +434,11 @@ export function activate(fresh) {
   fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
 
   // A command, and its key ("" for none).
-  const reg = (id, title, run, key) => { fresh.commands.register(id, { title, hidden: false, run }); if (key) fresh.keys.bind(key, id); };
+  // A failure (a refused request) shows the server's reason.
+  const reg = (id, title, run, key) => {
+    fresh.commands.register(id, { title, hidden: false, run: () => { Promise.resolve(run()).catch((e) => fresh.ui.error(e)); } });
+    if (key) fresh.keys.bind(key, id);
+  };
   reg("lsp.definition", "LSP: Go to Definition", definition, "F12");
   reg("lsp.references", "LSP: Find References", references, "S-F12");
   reg("lsp.completion", "LSP: Completion", completion, "C-Space");
@@ -445,7 +457,8 @@ export function activate(fresh) {
     const ds = fresh.lsp.diagnostics(v.buffer).sort((a, b) => a.start - b.start || a.severity - b.severity);
     if (!ds.length) { fresh.ui.message("No problems in this file"); return; }
     const at = v.cursor;
-    const d = dir > 0 ? ds.find((x) => x.start > at) || ds[0] : [...ds].reverse().find((x) => x.start < at) || ds[ds.length - 1];
+    const next = dir > 0 ? ds.find((x) => x.start > at) : [...ds].reverse().find((x) => x.start < at);
+    const d = next !== undefined ? next : dir > 0 ? ds[0] : ds[ds.length - 1];
     await v.setCursor(d.start, { center: true });
     fresh.ui.message(`${SEV[d.severity] || "error"}: ${d.message.split("\n")[0]}`);
   };
@@ -453,7 +466,7 @@ export function activate(fresh) {
   reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
   reg("lsp.status", "LSP: Show Status", lspStatus, "");
   reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", workspaceSymbols, "");
-  reg("lsp.restart", "LSP: Start/Restart Server", () => serverOp("restart"), "");
-  reg("lsp.stop", "LSP: Stop Server", () => serverOp("stop"), "");
+  reg("lsp.restart", "LSP: Start/Restart Server", () => serverOp("restart", ""), "");
+  reg("lsp.stop", "LSP: Stop Server", () => serverOp("stop", ""), "");
   reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", toggleHints, "");
 }

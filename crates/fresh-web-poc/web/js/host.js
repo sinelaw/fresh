@@ -14,7 +14,7 @@
 // local}), "buffer.saved", "buffer.activated", "cursor.moved" ({view}),
 // "view.resized" ({view}), "app.ready".
 
-import { rpc } from "./rpc.js";
+import { rpc, RpcError } from "./rpc.js";
 import { h } from "./ui.js";
 import { byteLen } from "./ot.js";
 import { stringWidth } from "./layout.js";
@@ -238,6 +238,9 @@ export class Host {
         choose: (title, answers) => app.choose(title, answers),
         status: (id) => app.statusItem(id),
         message: (text) => app.setStatus(text),
+        // A failure's text in the status bar: a refused request's detail
+        // (the server's own words), else the error as written.
+        error: (e) => app.setStatus(e instanceof RpcError ? e.detail : String(e)),
         popup: (text, at) => app.popup(text, at),
         // Colours: {"--var": css} for the page's colour variables (see
         // style.css; theme keys resolve to them).
