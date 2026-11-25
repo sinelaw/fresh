@@ -373,7 +373,7 @@ export class Editing {
     if (pane.view !== v) return;
     let grew = false;
     v.cursors.forEach((c, i) => {
-      const s = sel(c) || { start: c.pos, end: c.pos };
+      const s = sel(c) ?? { start: c.pos, end: c.pos };
       const ranges = (lsp && lsp[i] && lsp[i].length ? lsp[i].concat(b.full ? [{ start: 0, end: b.len }] : []) : this.structureAround(b, s))
         .filter((r) => r.start <= s.start && r.end >= s.end && r.end - r.start > s.end - s.start);
       const r = ranges.sort((x, y) => (x.end - x.start) - (y.end - y.start))[0];
@@ -682,7 +682,7 @@ export class Editing {
     const b = pane.view.buf;
     const lang = this.lang(b);
     this.replace(pane, (c) => {
-      const s = sel(c) || { start: c.pos, end: c.pos };
+      const s = sel(c) ?? { start: c.pos, end: c.pos };
       const ln = this.lineAt(b, s.start);
       const before = ln.text.slice(0, byteToIdx(ln.text, s.start - ln.start));
       let indent = /^[ \t]*/.exec(ln.text)[0];
@@ -740,7 +740,7 @@ export class Editing {
 
   // Lines touched by a cursor, its selection included: [first, last] indices.
   lineSpan(b, c) {
-    const s = sel(c) || { start: c.pos, end: c.pos };
+    const s = sel(c) ?? { start: c.pos, end: c.pos };
     const L = b.text;
     let last = L.indexOf(s.end);
     if (s.end > s.start && s.end === L.starts[last] && last > L.indexOf(s.start)) last--;
