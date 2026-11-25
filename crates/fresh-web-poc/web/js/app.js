@@ -309,8 +309,8 @@ export class App {
   remeasure() {
     const { cw, lh } = this.metrics;
     this.measure();
-    this.term?.applyFont();
-    if (!this.editing || (cw === this.metrics.cw && lh === this.metrics.lh)) return;
+    this.term.applyFont();
+    if (cw === this.metrics.cw && lh === this.metrics.lh) return;
     for (const p of this.panes()) p.clearRows();
     this.renderAll();
   }
@@ -1346,7 +1346,7 @@ export class App {
   run(id, arg) {
     const c = this.commands.get(id);
     if (!c) { this.setStatus(`No command “${id}”`); return Promise.resolve(); }
-    this.macros?.command(id, arg);
+    this.macros.command(id, arg);
     if (this.macros) this.macros.depth++;
     try {
       const r = c.run(arg);
