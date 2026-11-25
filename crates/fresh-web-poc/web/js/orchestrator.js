@@ -30,7 +30,7 @@
 // work nobody has seen), idle; its attention says why it needs the user.
 // Viewing it clears that (`workspace.seen`).
 
-import { rpc } from "./rpc.js";
+import { rpc, failure } from "./rpc.js";
 import { h } from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
@@ -181,7 +181,7 @@ export class Orchestrator {
     ];
   }
 
-  byId(id) { return this.list.find((w) => w.id === id) || null; }
+  byId(id) { return this.list.find((w) => w.id === id) ?? null; }
 
   savePrefs() {
     try { localStorage.setItem(STORE, JSON.stringify(this.prefs)); } catch {}
@@ -195,9 +195,7 @@ export class Orchestrator {
     this.redraw();
   }
   changed(w) {
-    const i = this.list.findIndex((x) => x.id === w.id);
-    if (i >= 0) this.list[i] = w;
-    else this.list.push(w);
+    this.list = this.byId(w.id) === null ? [...this.list, w] : this.list.map((x) => (x.id === w.id ? w : x));
     if (w.id === this.current) this.renderTitle();
     this.redraw();
   }
@@ -584,29 +582,29 @@ export class Orchestrator {
     const name = await this.editor.ask({ title: parent ? `New folder in ${parent}` : "New folder", value: "", hint: "", select: true });
     if (!name || !name.trim()) return null;
     const path = parent ? `${parent}/${name.trim()}` : name.trim();
-    try { await rpc("folder.create", { path }); return path; } catch (e) { this.editor.say(`No folder: ${e.detail || e}`); return null; }
+    try { await rpc("folder.create", { path }); return path; } catch (e) { this.editor.say(`No folder: ${failure(e)}`); return null; }
   }
 
   async renameFolder(path) {
     const name = await this.editor.ask({ title: `Rename folder ${path}`, value: leaf(path), hint: "", select: true });
     if (!name || !name.trim()) return;
     const to = parentOf(path) ? `${parentOf(path)}/${name.trim()}` : name.trim();
-    try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.editor.say(`Not renamed: ${e.detail || e}`); }
+    try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.editor.say(`Not renamed: ${failure(e)}`); }
   }
 
   async deleteFolder(path) {
     if (!(await this.editor.confirm(`Delete folder ${path}? What is in it moves up a level.`, "Delete Folder"))) return;
-    try { await rpc("folder.delete", { path }); } catch (e) { this.editor.say(`Not deleted: ${e.detail || e}`); }
+    try { await rpc("folder.delete", { path }); } catch (e) { this.editor.say(`Not deleted: ${failure(e)}`); }
   }
 
   async retry(w) {
     this.editor.say(`Opening ${displayName(w)}…`);
-    try { await rpc("workspace.retry", { workspace: w.id }); this.editor.say(`Opened ${displayName(w)}`); } catch (e) { this.editor.say(`Not opened: ${e.detail || e}`); }
+    try { await rpc("workspace.retry", { workspace: w.id }); this.editor.say(`Opened ${displayName(w)}`); } catch (e) { this.editor.say(`Not opened: ${failure(e)}`); }
   }
 
   async dismiss(w) {
     if (!(await this.editor.confirm(`Forget ${displayName(w)}? Its folder stays where it is.`, "Dismiss"))) return;
-    await rpc("workspace.close", { workspace: w.id }).catch((e) => this.editor.say(String(e.detail || e)));
+    await rpc("workspace.close", { workspace: w.id }).catch((e) => this.editor.say(failure(e)));
   }
 
   // Close a workspace: its terminals and agents stop. Unsaved documents
@@ -625,7 +623,7 @@ export class Orchestrator {
     } catch (e) {
       if (e.code !== "unsaved") { this.editor.say(`Not closed: ${e.detail}`); return; }
       if (!(await this.editor.confirm(`${e.detail}. Close it and discard them?`, "Discard and Close"))) return;
-      await rpc("workspace.close", { ...args, discard: true }).catch((e2) => this.editor.say(`Not closed: ${e2.detail}`));
+      await rpc("workspace.close", { ...args, discard: true }).catch((e2) => this.editor.say(`Not closed: ${failure(e2)}`));
     }
     this.editor.say(`Closed ${displayName(w)}`);
   }
@@ -799,7 +797,7 @@ export class Orchestrator {
       st.busy = true;
       st.error = "";
       render();
-      try { st.sessions = (await rpc("agents.scan", { host })).sessions; } catch (e) { st.error = e.detail || String(e); }
+      try { st.sessions = (await rpc("agents.scan", { host })).sessions; } catch (e) { st.error = failure(e); }
       st.busy = false;
       render();
       panel.focus("sessions");
@@ -870,7 +868,7 @@ export class Orchestrator {
       else this.switchTo(r.workspace.id);
       return null;
     } catch (e) {
-      p.error = e.detail || String(e);
+      p.error = failure(e);
       this.renderDock();
       return p.error;
     }
@@ -971,7 +969,7 @@ export class Orchestrator {
         f.machine = `m:${name}`;
         Object.assign(add, { name: "", target: "", port: "", identity: "", options: "" });
         checkGit();
-      } catch (e) { add.error = e.detail || String(e); }
+      } catch (e) { add.error = failure(e); }
       add.busy = false;
       render();
     };
@@ -983,7 +981,7 @@ export class Orchestrator {
         browse.dirs.set(r.path, r.dirs);
         if (asBase) { browse.base = r.path; browse.sel = r.path; }
         browse.error = "";
-      } catch (e) { browse.error = e.detail || String(e); }
+      } catch (e) { browse.error = failure(e); }
       render();
     };
     const openBrowser = () => {

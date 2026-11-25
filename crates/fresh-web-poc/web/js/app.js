@@ -4,7 +4,7 @@
 // own (explorer, search, git, language-server panels, markdown, tours,
 // keybindings, themes) are plugins in `web/plugins/`.
 
-import { rpc, session, connectEvents } from "./rpc.js";
+import { rpc, session, connectEvents, failure } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { fileBuffer, virtualBuffer, byteToIdx } from "./buffer.js";
 import { Pane, View, cursorAt, selecting, sel } from "./view.js";
@@ -846,7 +846,7 @@ export class App {
       await b.save(b.keepMine);
       b.keepMine = false;
     } catch (e) {
-      if (!ask || e.code !== "changed_on_disk") { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
+      if (!ask || e.code !== "changed_on_disk") { this.setStatus(`Not saved: ${failure(e)}`); return; }
       if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
       await b.save(true);
     }
@@ -883,7 +883,7 @@ export class App {
         await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
         await this.openFile(path, { line: null, column: 1, place: "tab", preview: null, focus: true });
       }
-    } catch (e) { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
+    } catch (e) { this.setStatus(`Not saved: ${failure(e)}`); return; }
     this.setStatus(`Saved as ${name}`);
   }
 
@@ -896,7 +896,7 @@ export class App {
       try {
         await rpc("doc.reload", { doc: b.doc });
         this.setStatus(`Reloaded ${b.name}`);
-      } catch (e) { this.setStatus(`Not reloaded: ${e.detail || e.message || e}`); }
+      } catch (e) { this.setStatus(`Not reloaded: ${failure(e)}`); }
     } else if (pick === "keep") {
       b.keepMine = true;
       this.setStatus(`Keeping your changes to ${b.name}; saving overwrites the file`);
@@ -1389,7 +1389,7 @@ export class App {
       const b = V()?.buf;
       if (!b?.doc) return;
       if (b.modified && !(await this.confirm(`Revert ${b.name}? Its unsaved changes are lost`, "Revert"))) return;
-      try { await rpc("doc.reload", { doc: b.doc }); this.setStatus(`Reverted ${b.name}`); } catch (e) { this.setStatus(`Not reverted: ${e.detail || e.message || e}`); }
+      try { await rpc("doc.reload", { doc: b.doc }); this.setStatus(`Reverted ${b.name}`); } catch (e) { this.setStatus(`Not reverted: ${failure(e)}`); }
     });
     // The clipboard, from a menu: copy and cut go through the browser's own
     // copy (onCopy); paste reads the clipboard where the browser allows it.
@@ -1598,7 +1598,7 @@ export class App {
     return new Promise((resolve) => this.prompt.open({ title, value: "", items: [...items.slice(i), ...items.slice(0, i)], onAccept: (it) => { resolve(it.value); }, onChange: (_it) => {}, onCancel: () => { resolve(null); } }));
   }
   async setFormat(b, change) {
-    try { await rpc("doc.set", { doc: b.doc, ...change }); } catch (e) { this.setStatus(String(e.detail || e.message || e)); }
+    try { await rpc("doc.set", { doc: b.doc, ...change }); } catch (e) { this.setStatus(failure(e)); }
   }
   async pickLanguage() {
     const b = this.view()?.buf;
@@ -1627,7 +1627,7 @@ export class App {
     if (how === "save") await this.setFormat(b, { encoding: enc });
     if (how === "reopen") {
       if (b.modified && !(await this.confirm(`Reopening ${b.name} gives up its unsaved changes`, "Reopen"))) return;
-      try { await rpc("doc.reload", { doc: b.doc, encoding: enc }); this.setStatus(`Reopened ${b.name} with ${enc}`); } catch (e) { this.setStatus(String(e.detail || e.message || e)); }
+      try { await rpc("doc.reload", { doc: b.doc, encoding: enc }); this.setStatus(`Reopened ${b.name} with ${enc}`); } catch (e) { this.setStatus(failure(e)); }
     }
   }
 

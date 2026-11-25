@@ -17,6 +17,14 @@ export class RpcError {
   toString() { return this.detail; }
 }
 
+// What to say of a failure: a refusal's own words, an error's message,
+// or the value thrown.
+export function failure(e) {
+  if (e instanceof RpcError) return e.detail;
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
 // Operations that change documents or files. A client's are sent one at a
 // time, each once the one before it is answered, so the server applies them
 // in the order the client made them (a close and the reopen after it, an

@@ -476,7 +476,7 @@ export class Pane {
     };
   }
 
-  computeRows(v, extra = 1) {
+  computeRows(v, extra) {
     const L = v.buf.text;
     const g = this.geometry(v);
     const r = layout(v.buf, Math.max(0, L.indexOf(v.top)), g.rows + extra, this.layoutOpts(v, g.width));
