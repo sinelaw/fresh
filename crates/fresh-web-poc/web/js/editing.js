@@ -204,9 +204,12 @@ export class Editing {
   // ---------------------------------------------------------------- the core
 
   // `fn(cursor)` gives each cursor's Replacement (`put`, `putWith`), or
-  // KEEP to leave its text alone. One batch, one undo step (`typing`: see
-  // buffer.js); each cursor ends where its replacement puts it.
-  replace(pane, fn, typing) {
+  // KEEP to leave its text alone. One batch, one undo step; each cursor
+  // ends where its replacement puts it.
+  replace(pane, fn) { return this.replaceTyped(pane, fn, "none"); }
+  // The same, typed text (`typing`: "start" or "continue" a run, which is
+  // one undo step, or "none"; see buffer.js).
+  replaceTyped(pane, fn, typing) {
     const v = pane.view;
     const b = v.buf;
     if (b.readOnly) { this.app().setStatus("Read-only buffer"); return false; }
@@ -215,7 +218,7 @@ export class Editing {
     if (!reps.length) return false;
     const old = v.primary.pos;
     const ops = editsOf(reps);
-    if (ops.length) this.app().applyEdit(b, ops, typing);
+    if (ops.length) this.app().applyTyped(b, ops, typing);
     // Each cursor where its replacement put it (the others' selections
     // go), shifted by every replacement before it.
     /** const placed: Map<Cursor, Cursor> */
@@ -637,7 +640,7 @@ export class Editing {
     const pairsOn = this.app().settings.auto_close && lang !== "markdown";
     const carets = () => v.cursors.map((c) => c.pos).join();
     const run = typed && !text.includes("\n");
-    const typing = !run ? null : this.typed && this.typed.v === v && this.typed.carets === carets() ? "continue" : "start";
+    const typing = !run ? "none" : this.typed && this.typed.v === v && this.typed.carets === carets() ? "continue" : "start";
     const done = () => { this.typed = run ? { v, carets: carets() } : null; };
     if (text.length === 1) {
       const closer = PAIRS.get(text);
@@ -647,7 +650,7 @@ export class Editing {
         return done();
       }
       if (closer && pairsOn) {
-        this.replace(pane, (c) => {
+        this.replaceTyped(pane, (c) => {
           const s = sel(c);
           if (s) {
             // Surround the selection.
@@ -663,7 +666,7 @@ export class Editing {
         return done();
       }
     }
-    this.replace(pane, (c) => {
+    this.replaceTyped(pane, (c) => {
       const s = sel(c);
       return s ? put(s.start, s.end, text) : put(c.pos, c.pos, text);
     }, typing);

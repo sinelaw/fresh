@@ -130,7 +130,7 @@ export class DocView {
       const inl = noInlines();
       for (const t of d.inlinesIn(ls, le + 1)) {
         if (!applies(t, v.mode) || t.pos < ls || t.pos > le) continue;
-        const k = t.pos + (t.side === "after" ? "a" : "b");
+        const k = `${t.pos}${t.side === "after" ? "a" : "b"}`;
         inl.set(k, [...(inl.get(k) ?? []), t]);
       }
       x = { act, rev, inl };
@@ -462,7 +462,7 @@ export class DocView {
         run += ch;
       };
       const inline = (p, side) => {
-        for (const t of inl.get(p + side) || []) {
+        for (const t of inl.get(`${p}${side}`) ?? []) {
           flush();
           const st = cssOf(drawnOf(t.style));
           out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${esc(t.text)}</span>`;

@@ -30,7 +30,7 @@ const CURRENT = { fg: "search.current_fg", bg: "search.current_bg", bold: true, 
 
 // The word (letters, digits, _) at byte `pos` of the held lines `L`, if
 // there is one.
-/** function wordIn(L: Lines, pos: Number) => Range | Null */
+/** function wordIn(L: HeldLines, pos: Number) => Range | Null */
 function wordIn(L, pos) {
   const i = L.starts.findIndex((s, k) => pos >= s && (k === L.starts.length - 1 || pos < L.starts[k + 1]));
   if (i < 0) return null;

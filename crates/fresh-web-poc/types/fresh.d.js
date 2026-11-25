@@ -3,6 +3,9 @@
 
 // An edit primitive over byte offsets (ot.js); an edit is a sequence of them.
 /** type Op = {t: "ins", pos: Number, text: String} | {t: "del", pos: Number, len: Number} */
+// An op as a document's log has it: with the newlines it inserted or
+// deleted (`doc.ops`).
+/** type LoggedOp = {t: "ins", pos: Number, text: String, nl: Number} | {t: "del", pos: Number, len: Number, nl: Number} */
 
 // A colour as plugins and themes give it: a theme key ("syntax.keyword"), a
 // CSS colour, a colour name, "Indexed:N", or [r, g, b].
@@ -17,7 +20,7 @@
 
 // A buffer's held lines (a BufferHandle's lines()): their text, their byte
 // starts, and the document line of the first (null without a line index).
-/** type Lines = {lines: String[], starts: Number[], firstLine: Number | Null} */
+/** type HeldLines = {lines: String[], starts: Number[], firstLine: Number | Null} */
 
 // ---------------------------------------------------------------- records
 //
@@ -191,7 +194,7 @@
  *   whole: () => Boolean,
  *   text: (Number, Number) => String | Null,
  *   textAsync: (Number, Number) => Promise<String>,
- *   lines: () => Lines | Null,
+ *   lines: () => HeldLines | Null,
  *   edit: (Op[]) => Undefined,
  *   insert: (Number, String) => Undefined,
  *   delete: (Number, Number) => Undefined,
@@ -230,7 +233,8 @@
 // A document as the server describes it (`doc.open`, `doc.saved`).
 /** type DocInfo = {
  *   doc: Number,
- *   path: String,
+ *   path: String | Null,
+ *   untitled: Number | Null,
  *   len: Number,
  *   version: Number,
  *   lines: Number | Null,
@@ -238,6 +242,7 @@
  *   modified: Boolean,
  *   language: String | Null,
  *   encoding: String,
+ *   line_ending: String,
  *   readonly: Boolean,
  * } */
 
@@ -384,7 +389,7 @@
 
 // What the server pushes over the event stream.
 /** type ServerEvent =
- *   | {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: Op[], len: Number, modified: Boolean}
+ *   | {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: LoggedOp[], len: Number, modified: Boolean}
  *   | {ev: "doc.saved", doc: Number, info: DocInfo}
  *   | {ev: "doc.renamed", doc: Number, info: DocInfo}
  *   | {ev: "doc.info", doc: Number, info: DocInfo}

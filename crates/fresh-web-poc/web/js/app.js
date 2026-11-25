@@ -680,10 +680,10 @@ export class App {
   // ------------------------------------------------------------- buffers
 
   watchBuffer(b) {
-    b.listeners.add((what, data) => {
-      if (what === "edit") this.afterEdit(b, data);
-      if (what === "text") { this.host.emitBuffer("buffer.changed", b, [], false); this.renderBuffer(b.id); }
-      if (what === "error") this.setStatus(String(data));
+    b.listeners.add((news) => {
+      if (news.kind === "edit") this.afterEdit(b, news.op, news.local);
+      if (news.kind === "text") { this.host.emitBuffer("buffer.changed", b, [], false); this.renderBuffer(b.id); }
+      if (news.kind === "error") this.setStatus(news.message);
     });
   }
 
@@ -761,17 +761,18 @@ export class App {
     return b;
   }
 
-  // `typing` groups a run of typed characters into one undo step (see
-  // buffer.js).
-  applyEdit(b, ops, typing = null) {
+  applyEdit(b, ops) { this.applyTyped(b, ops, "none"); }
+  // `typing` ("start", "continue" or "none") groups a run of typed
+  // characters into one undo step (see buffer.js).
+  applyTyped(b, ops, typing) {
     if (b.readOnly) { this.setStatus("Read-only buffer"); return; }
-    b.edit(ops, { typing });
+    b.edit(ops, true, typing);
   }
 
-  afterEdit(b, data) {
+  afterEdit(b, op, local) {
     // Editing a preview tab's file keeps it.
-    if (data.local) for (const v of b.views) this.keep(v);
-    this.host.emitBuffer("buffer.changed", b, [data.op], data.local);
+    if (local) for (const v of b.views) this.keep(v);
+    this.host.emitBuffer("buffer.changed", b, [op], local);
     this.renderBuffer(b.id);
     for (const p of this.panes()) if (p.views.some((v) => v.buf === b)) p.renderTabs();
   }
@@ -786,12 +787,12 @@ export class App {
     try {
       // Keeping one's changes over the file's (`askChangedOnDisk`) was the
       // choice to overwrite it.
-      await b.save({ force: !!b.keepMine });
+      await b.save(b.keepMine);
       b.keepMine = false;
     } catch (e) {
       if (!ask || e.code !== "changed_on_disk") { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
       if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
-      await b.save({ force: true });
+      await b.save(true);
     }
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
@@ -1543,8 +1544,8 @@ export class App {
   }
 
   afterUndo(v, ops) {
-    if (!ops || !ops.length) return;
-    const last = ops[ops.length - 1];
+    const last = ops.at(-1);
+    if (last === undefined) return;
     v.cursors = [v.primary];
     this.editing.place(v.pane, last.t === "ins" ? last.pos + byteLen(last.text) : last.pos, false);
   }

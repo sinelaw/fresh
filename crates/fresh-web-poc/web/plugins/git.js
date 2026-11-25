@@ -101,7 +101,7 @@ export function activate(app) {
   // ---------------------------------------------------------------- gutter
 
   // A whole buffer's lines, without the empty one after a final newline.
-  /** const held: (Lines) => String[] */
+  /** const held: (HeldLines) => String[] */
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   const baseline = async (path) => {
     if (!baselines.has(path)) {
