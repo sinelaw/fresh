@@ -67,6 +67,17 @@ function resolvedSkin(id, chain, base) {
     theme: themes.at(-1) ?? null,
   };
 }
+// Where skin `id`'s files are served: a built-in skin's beside the
+// client's own files, a user skin's through workspace `ws`, whose host has
+// it (none: the page views no workspace).
+/** function skinBase(all: SkinInfo[], ws: Number | Null, id: String) => String */
+function skinBase(all, ws, id) {
+  const s = skinIn(all, id);
+  return s !== null && s.source === "user" && ws !== null ? `workspaces/${ws}/skins/${id}/` : `skins/${id}/`;
+}
+// The id of the workspace a page views, if any.
+/** function workspaceId(w: WorkspaceEntry | Null) => Number | Null */
+function workspaceId(w) { return w === null ? null : w.id; }
 /** function noSkins() => SkinInfo[] */
 function noSkins() { return []; }
 
@@ -92,22 +103,24 @@ export class Skins {
 
   // Where a skin's files are served: a built-in skin's beside the client's
   // own files, a user skin's through the workspace whose host has it.
-  base(id) {
-    const s = skinIn(this.all, id);
-    return s !== null && s.source === "user" ? `workspaces/${this.app().workspace.id}/skins/${id}/` : `skins/${id}/`;
-  }
+  base(id) { return skinBase(this.all, workspaceId(this.app().workspace), id); }
 
   // A skin with what it extends folded in: the chain base first; the last
   // skin to set a frame, scale, furniture or theme wins.
   resolve(id) {
-    return resolvedSkin(id, chainOf(this.all, id, 0), (x) => this.base(x));
+    const all = this.all, ws = workspaceId(this.app().workspace);
+    return resolvedSkin(id, chainOf(all, id, 0), (x) => skinBase(all, ws, x));
   }
 
   // Put a skin on screen. One at a time, in order: a quick run through the
   // picker never ends with an earlier skin's furniture over a later one.
   apply(id) {
-    this.applying = this.applying.then(async () => { await this.put(id); });
+    this.applying = this.putAfter(this.applying, id);
     return this.applying;
+  }
+  async putAfter(before, id) {
+    await before;
+    await this.put(id);
   }
 
   async put(id) {
@@ -120,14 +133,19 @@ export class Skins {
     // The skin's stylesheets replace the last skin's once they have loaded,
     // so the page never shows between two skins.
     const old = [...document.querySelectorAll("link[data-skin]")];
-    const anchor = old[0] || null;
+    // Before the last skin's, so the new one wins once the old goes.
+    const place = (l) => {
+      for (const a of old.slice(0, 1)) { document.head.insertBefore(l, a); return; }
+      document.head.appendChild(l);
+    };
     await Promise.all(sk.chain.map((c) => new Promise((resolve) => {
       const l = document.createElement("link");
-      l.rel = "stylesheet";
-      l.href = `${this.base(c)}skin.css`;
+      l.setAttribute("rel", "stylesheet");
+      l.setAttribute("href", `${this.base(c)}skin.css`);
       l.dataset.skin = c;
-      l.onload = l.onerror = resolve;
-      document.head.insertBefore(l, anchor);
+      l.addEventListener("load", (_e) => { resolve(undefined); });
+      l.addEventListener("error", (_e) => { resolve(undefined); });
+      place(l);
     })));
     for (const l of old) l.remove();
     await this.furnish(sk.furniture);
@@ -143,7 +161,7 @@ export class Skins {
   // Build the furniture inside #device from inert elements: only TAGS,
   // their class, data-bind / data-bind-var, and text.
   async furnish(url) {
-    const host = document.getElementById("device");
+    const host = $("#device");
     host.textContent = "";
     if (!url) return;
     let text = "";
@@ -189,7 +207,7 @@ export class Skins {
         if (v[name] != null) e.style.setProperty(prop, String(v[name]));
       }
     }
-    this.timer = setTimeout(() => this.refresh(), REFRESH_MS);
+    this.timer = setTimeout(() => { this.refresh(); }, REFRESH_MS);
   }
 
   localValues() {
@@ -217,7 +235,7 @@ export class Skins {
   // the one before back. The list is read again, so a skin just added to
   // the skins folder is there.
   async pick() {
-    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${e.message}`); }
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${String(e)}`); }
     const before = this.current?.id || "default";
     this.app().prompt.open({
       title: "Skin",

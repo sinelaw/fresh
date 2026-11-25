@@ -27,7 +27,7 @@ const SELECTED = restyler({ fg: null, bg: "editor.selection_bg", bold: false, it
 const balanceCache = new Map();
 const depthCache = new WeakMap();
 // A line's bracket balance: openers less closers, outside `skip`'s spans.
-/** function balance(line: String, skip: {s: Number, e: Number}[]) => Number */
+/** function balance(line: String, skip: Span[]) => Number */
 function balance(line, skip) {
   let n = 0;
   for (let k = 0; k < line.length; k++) {
@@ -82,6 +82,13 @@ function remember(memo, key, make) {
   memo.set(key, v);
   return v;
 }
+
+// A scrollbar mark: its rank (lower wins a row) and colour.
+/** type Mark = {rank: Number, color: String} */
+/** function noMarks() => Map<Number, Mark> */
+function noMarks() { return new Map(); }
+// A diagnostic's theme key by severity (1 error … 4 hint).
+const DIAG_KEYS = ["", "diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"];
 
 // A row's HTML: its cells in runs of one style, each run a span.
 function rowHtml(cls, fill, cells) {
@@ -375,7 +382,7 @@ export class Pane {
     // of precedence: overlays, occurrences, diagnostics, selection, then
     // the overlays drawn above the selection.
     const w = s.highlight_occurrences ? v.selection() ?? this.app().editing.wordAt(buf, v.primary.pos) : null;
-    const t = w ? buf.textRange(w.start, w.end) : null;
+    const t = w !== null ? buf.textRange(w.start, w.end) : null;
     /** const occ: String | Null */
     const occ = t !== null && t.length >= 2 && !t.includes("\n") ? t : null;
     // The bracket at the cursor and its match, drawn bold in the theme's
@@ -502,8 +509,8 @@ export class Pane {
     if (!this.ready(v)) {
       buf.ensure(v.top, this.metrics().rows + 50).then(() => {
         const L2 = buf.text;
-        if (L2 && L2.indexOf(v.top) < 0) v.setTop(L2.starts[0]);
-        if (this.ready(v) || (L2 && L2.eof)) this.render();
+        if (L2 !== null && L2.indexOf(v.top) < 0) v.setTop(L2.starts[0]);
+        if (this.ready(v) || (L2 !== null && L2.eof)) this.render();
       });
       if (!buf.text || buf.text.indexOf(v.top) < 0) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
     }
@@ -561,7 +568,7 @@ export class Pane {
         const m = marks.get(r.lineIdx);
         const sev = dline.get(r.lineIdx);
         const mark = folded.has(r.lineIdx) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m !== undefined ? m.glyph : " ";
-        const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] : m !== undefined && m.color ? color(m.color) : "";
+        const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] ?? "" : m !== undefined ? color(m.color) ?? "" : "";
         const num = g.nums && L.firstLine !== null ? String(L.firstLine + r.lineIdx + 1).padStart(g.digits) + " " : "";
         const title = m !== undefined && !sev && m.title ? ` title="${esc(m.title)}"` : "";
         ghtml = `<div class="row${current ? " current" : ""}" data-line="${r.lineIdx}"${title}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
@@ -661,26 +668,28 @@ export class Pane {
     this.marksSig = sig;
     if (!sig || !h) { this.marksEl.replaceChildren(); return; }
     const n = Math.max(1, L.count);
-    const lanes = [new Map(), new Map(), new Map()]; // y -> [rank, colour]
+    const lanes = [noMarks(), noMarks(), noMarks()]; // y -> its mark
+    // A mark in `lane` at the row of byte `pos` (one of a lower rank wins).
+    /** const put: (Number, Number, Number, String | Null) => Undefined */
     const put = (lane, pos, rank, col) => {
       const i = L.indexOf(pos);
-      if (i < 0 || !col) return;
+      if (i < 0 || col === null || col === "") return;
       const y = Math.min(h - 2, Math.floor((i / n) * h));
       const at = lanes[lane].get(y);
-      if (!at || at[0] > rank) lanes[lane].set(y, [rank, col]);
+      if (at === undefined || at.rank > rank) lanes[lane].set(y, { rank, color: col });
     };
-    for (const m of d.gutters) put(0, m.start, 1, m.color ? color(m.color) : null);
-    for (const o of d.overlays) if (o.mark && o.style?.bg) put(1, o.start, 1, color(o.style.bg));
-    for (const g of d.diags) put(2, g.start, g.severity, THEME[["", "diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"][g.severity] || "diagnostic.error"]);
+    for (const m of d.gutters) put(0, m.start, 1, color(m.color));
+    for (const o of d.overlays) { const bg = o.style.bg; if (o.mark && bg !== null) put(1, o.start, 1, color(bg)); }
+    for (const g of d.diags) put(2, g.start, g.severity, THEME[DIAG_KEYS.at(g.severity) || "diagnostic.error"] ?? null);
     const els = [];
     lanes.forEach((m, lane) => {
-      for (const [y, [, col]] of m) {
+      m.forEach((mark, y) => {
         const e = document.createElement("div");
         e.className = `mark lane${lane}`;
         e.style.top = `${y}px`;
-        e.style.background = col;
+        e.style.background = mark.color;
         els.push(e);
-      }
+      });
     });
     const c = document.createElement("div");
     c.className = "mark cursor";

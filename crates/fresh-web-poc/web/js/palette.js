@@ -41,6 +41,14 @@ function noSpec() { return []; }
 /** function noItems() => PaletteItem[] */
 function noItems() { return []; }
 
+// A palette mode (`fresh.paletteMode`): its hint, and its rows for the
+// text after its prefix.
+/** type PaletteMode = {hint: String, items: (String) => Promise<PaletteItem[]>} */
+/** function modeList(m: PaletteMode | Undefined) => PaletteMode[] */
+function modeList(m) { return m === undefined ? [] : [m]; }
+/** function noModes() => Map<String, PaletteMode> */
+function noModes() { return new Map(); }
+
 // Run a palette row's action, or its preview: whether it has one.
 /** function ran(it: PaletteItem | Undefined) => Boolean */
 function ran(it) {
@@ -87,7 +95,7 @@ export class Palette {
     this.sel = 0;
     this.specs = noSpec(); // the prompt open: a list of at most one
     this.seq = 0;
-    this.providers = new Map(); // prefix -> {hint, items(query)}
+    this.providers = noModes(); // a palette mode by its prefix
   }
 
   // A mode for prefix `prefix` (one character): `items(query)` resolves
@@ -109,7 +117,10 @@ export class Palette {
     const v = this.app().view();
     const origin = v ? [{ v, pos: v.primary.pos, top: v.top }] : [];
     let moved = false;
-    const hint = ["files · > commands · # buffers · : go to line", ...[...this.providers.keys()].map((k) => `${k} ${this.providers.get(k)?.hint ?? ""}`)].join(" · ");
+    /** const modes: String[] */
+    const modes = [];
+    this.providers.forEach((o, k) => { modes.push(`${k} ${o.hint}`); });
+    const hint = ["files · > commands · # buffers · : go to line", ...modes].join(" · ");
     this.show(promptSpec("", prefix, hint, (q) => this.paletteItems(q),
       (q) => {
         // Preview a `:N` jump; Escape puts the view back.
@@ -146,7 +157,7 @@ export class Palette {
         .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", () => { app.showBuffer(b, "tab", { preview: null, focus: true }); }));
     }
     const pr = this.providers.get(q[0]);
-    if (pr) return pr.items(q.slice(1).trim());
+    for (const m of modeList(pr)) return await m.items(q.slice(1).trim());
     if (q.startsWith(":")) {
       const n = parseInt(q.slice(1), 10);
       return [n > 0 ? paletteItem(`Go to line ${n}`, null, () => { app.gotoLine(n - 1, 0, { history: false }); }) : paletteItem("Type a line number", null, null)];
@@ -245,7 +256,7 @@ export class Palette {
       e.preventDefault();
       const it = this.items[this.sel];
       const q = this.input.value;
-      if (!/^[>#:]/.test(q) && it.label) {
+      if (!/^[>#:]/.test(q) && it.label !== "") {
         const common = commonPrefix(this.items.map((x) => x.label));
         this.input.value = common.length > q.length ? common : it.label;
         this.changed();

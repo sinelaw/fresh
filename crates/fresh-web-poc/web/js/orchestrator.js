@@ -112,6 +112,11 @@ const hostKind = (w) => (w.host.startsWith("ssh ") ? "ssh" : w.host.startsWith("
 const leaf = (path) => path.slice(path.lastIndexOf("/") + 1);
 const parentOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
+// Change a workspace's settings; a refusal is said in the status bar.
+async function changeWorkspace(app, change) {
+  try { await rpc("workspace.set", change); } catch (e) { app.setStatus(`Not changed: ${String(e)}`); }
+}
+
 export class Orchestrator {
   constructor(app, workspaces, folders, machines) {
     this.app = app;
@@ -449,8 +454,8 @@ export class Orchestrator {
         onContext: (d, _nd, at) => this.ui().menu(this.rowMenu(d), at),
         onKey: (e, d) => {
           if (e.key === "/") { e.preventDefault(); panel.focus("q"); }
-          else if (d && (e.key === "F2" || e.key === "ContextMenu")) { e.preventDefault(); this.ui().menu(this.rowMenu(d), this.menuAt()); }
-          else if (d?.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
+          else if (d !== undefined && (e.key === "F2" || e.key === "ContextMenu")) { e.preventDefault(); this.ui().menu(this.rowMenu(d), this.menuAt()); }
+          else if (d !== undefined && d.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
         },
       }),
     ]));
@@ -529,14 +534,11 @@ export class Orchestrator {
 
   // ----------------------------------------------------------- acting
 
-  async set(w, change) {
-    try { await rpc("workspace.set", { workspace: w.id, ...change }); } catch (e) { this.app().setStatus(`Not changed: ${e.detail || e}`); }
-  }
 
   async rename(w) {
     if (!w) return;
     const name = await this.app().prompt.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder", select: true });
-    if (name !== null) await this.set(w, { name });
+    if (name !== null) await changeWorkspace(this.app(), { workspace: w.id, name });
   }
 
   move(w) {
@@ -555,7 +557,7 @@ export class Orchestrator {
       onAccept: (it) => {
         const go = async () => {
           const folder = it.value.create ? await this.newFolder("") : it.value.folder;
-          if (folder !== null) await this.set(w, { folder });
+          if (folder !== null) await changeWorkspace(this.app(), { workspace: w.id, folder });
         };
         go();
       },
@@ -564,7 +566,7 @@ export class Orchestrator {
     });
   }
 
-  pin(w) { if (w) this.set(w, { pinned: !w.pinned }); }
+  pin(w) { if (w) changeWorkspace(this.app(), { workspace: w.id, pinned: !w.pinned }); }
 
   // A new folder under `parent`; resolves with its path (null: cancelled).
   async newFolder(parent) {

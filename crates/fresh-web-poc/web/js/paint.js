@@ -3,25 +3,8 @@
 
 import { color, highlightLine, THEME } from "./highlight.js";
 
-// A style as drawn: CSS colours ("" for none) and attributes. `mono` is
-// inline code in a document; `markup` revealed Markdown source, drawn dim;
-// `wavy` a diagnostic's underline colour ("" for none).
-/** type Drawn = {
- *   fg: String,
- *   bg: String,
- *   bold: Boolean,
- *   italic: Boolean,
- *   underline: Boolean,
- *   strike: Boolean,
- *   mono: Boolean,
- *   markup: Boolean,
- *   wavy: String,
- * } */
-
 /** const EMPTY: Drawn */
 export const EMPTY = Object.freeze({ fg: "", bg: "", bold: false, italic: false, underline: false, strike: false, mono: false, markup: false, wavy: "" });
-// A syntax span of a line: UTF-16 [s, e) and its finished style.
-/** type Span = {s: Number, e: Number, style: Drawn} */
 /** const NO_SPANS: Span[] */
 export const NO_SPANS = [];
 

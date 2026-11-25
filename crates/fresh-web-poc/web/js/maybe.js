@@ -5,3 +5,6 @@
 export function some(x) { return x; }
 /** function none<T>() => T | Null */
 export function none() { return null; }
+// A value or none as a list of at most one (to act on it if it is there).
+/** function listOf<T>(x: T | Null) => T[] */
+export function listOf(x) { return x === null ? [] : [x]; }

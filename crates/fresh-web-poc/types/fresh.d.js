@@ -15,6 +15,24 @@
 // key.
 /** type Highlight = {s: Number, e: Number, k: String, bold: Boolean, italic: Boolean} */
 
+// A style as drawn: CSS colours ("" for none) and attributes. `mono` is
+// inline code in a document; `markup` revealed Markdown source, drawn dim;
+// `wavy` a diagnostic's underline colour ("" for none).
+/** type Drawn = {
+ *   fg: String,
+ *   bg: String,
+ *   bold: Boolean,
+ *   italic: Boolean,
+ *   underline: Boolean,
+ *   strike: Boolean,
+ *   mono: Boolean,
+ *   markup: Boolean,
+ *   wavy: String,
+ * } */
+
+// A syntax span of a line: UTF-16 [s, e) and its finished style.
+/** type Span = {s: Number, e: Number, style: Drawn} */
+
 // A byte range [start, end).
 /** type Range = {start: Number, end: Number} */
 

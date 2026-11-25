@@ -28,6 +28,7 @@ import { byteToIdx } from "./buffer.js";
 import { applies, cursorIn } from "./layout.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
 import { within } from "./dom.js";
+import { some } from "./maybe.js";
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
@@ -39,11 +40,26 @@ const FOLD_MARGIN = 40;
 const PLAIN = styleKey(EMPTY);
 const anchor = (p) => `<span data-a="${p}">​</span>`;
 
+// No fold there; no document node there.
+/** const NO_FOLD: Range | Null */
+const NO_FOLD = null;
+/** const NO_NODE: DocNode | Null */
+const NO_NODE = null;
+
 // Decorations by line, and inline texts by position and side, typed.
 /** function noLines() => Map<Number, VirtualLine[]> */
 function noLines() { return new Map(); }
 /** function noInlines() => Map<String, InlineText[]> */
 function noInlines() { return new Map(); }
+
+// The fold hiding line `li` (of `folds`, keeping lines up to `keeps`
+// each) and the last line it keeps, or none.
+/** type Hidden = {fold: Range, keep: Number} */
+/** function hiddenBy(folds: Range[], keeps: Number[], li: Number) => Hidden | Null */
+function hiddenBy(folds, keeps, li) {
+  const i = folds.findIndex((f, k) => li > keeps[k] && li <= f.end);
+  return i < 0 ? null : { fold: folds[i], keep: keeps[i] };
+}
 
 export class DocView {
   constructor() {
@@ -150,11 +166,7 @@ export class DocView {
       const sb = this.blockAt(ctx, f.start);
       return sb.node && !LINES.has(sb.node.type) ? Math.max(f.start, sb.last) : f.start;
     });
-    return (li) => {
-      const folds = ctx.v.folds;
-      for (let i = 0; i < folds.length; i++) if (li > keeps[i] && li <= folds[i].end) return { fold: folds[i], keep: keeps[i] };
-      return null;
-    };
+    return (li) => hiddenBy(ctx.v.folds, keeps, li);
   }
 
   // The fold hiding line `li` of view `v`, as `hidden` gives it.
@@ -172,15 +184,15 @@ export class DocView {
   foldOf(ctx, blk, probe = false) {
     const { L } = ctx;
     const n = blk.node;
-    if (!n) return null;
-    if (n.type === "code") return blk.last - blk.first >= 3 ? { start: blk.first + 1, end: blk.last } : null;
-    if (n.type === "table") return blk.last - blk.first >= 2 ? { start: blk.first, end: blk.last } : null;
+    if (n === null) return NO_FOLD;
+    if (n.type === "code") return blk.last - blk.first >= 3 ? some({ start: blk.first + 1, end: blk.last }) : NO_FOLD;
+    if (n.type === "table") return blk.last - blk.first >= 2 ? some({ start: blk.first, end: blk.last }) : NO_FOLD;
     // A heading's section runs to the next heading as high; an item or a
     // quote holds the deeper ones after it. Blank lines in between belong.
     const child = (b) => n.type === "heading"
       ? !(b.node?.type === "heading" && b.node.level <= n.level)
       : b.node?.type === n.type && (b.node.depth ?? 0) > (n.depth ?? 0);
-    let end = null;
+    let end = -1;
     for (let k = blk.last + 1; k < L.count;) {
       const b = this.blockAt(ctx, k);
       if (!b.node && L.lines[k].trim() === "") { k++; continue; }
@@ -189,27 +201,30 @@ export class DocView {
       k = b.last + 1;
       if (probe) break;
     }
-    return end == null ? null : { start: blk.first, end };
+    return end < 0 ? NO_FOLD : some({ start: blk.first, end });
   }
 
   // The next line drawn after (dir 1) or before (dir -1) line `k`, past the
   // folds: -1 or L.count at the ends.
   shownFrom(ctx, k, dir) {
-    for (let h; k >= 0 && k < ctx.L.count && (h = ctx.hidden(k));) k = dir > 0 ? h.fold.end + 1 : h.keep;
+    while (k >= 0 && k < ctx.L.count) {
+      const h = ctx.hidden(k);
+      if (h === null) break;
+      k = dir > 0 ? h.fold.end + 1 : h.keep;
+    }
     return k;
   }
 
   // The block holding line `li`: its node (or none) and its lines.
   blockAt(ctx, li) {
     const { L, d } = ctx;
-    let best = null;
-    for (const n of d.nodesIn(L.starts[li], L.lineEnd(li) + 1)) {
-      if (PART.has(n.type) || !applies(n, ctx.mode)) continue;
-      if (!best || n.start < best.start) best = n;
+    const nodes = d.nodesIn(L.starts[li], L.lineEnd(li) + 1).filter((n) => !PART.has(n.type) && applies(n, ctx.mode));
+    // The one starting first (the first of those at one start).
+    for (const best of [...nodes].sort((a, b) => a.start - b.start).slice(0, 1)) {
+      const f = L.indexOf(best.start), l = L.indexOf(best.end);
+      return { node: some(best), first: f < 0 ? 0 : Math.min(f, li), last: l < 0 ? L.count - 1 : Math.max(l, li) };
     }
-    if (!best) return { node: null, first: li, last: li };
-    const f = L.indexOf(best.start), l = L.indexOf(best.end);
-    return { node: best, first: f < 0 ? 0 : Math.min(f, li), last: l < 0 ? L.count - 1 : Math.max(l, li) };
+    return { node: NO_NODE, first: li, last: li };
   }
 
   // A height the block surely has at least, from line `from` on: a line

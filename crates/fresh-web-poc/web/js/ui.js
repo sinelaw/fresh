@@ -15,6 +15,7 @@
 // virtualised (any number of items) and keyboard-navigable.
 
 import { $, setClass, escapeHtml } from "./dom.js";
+import { listOf } from "./maybe.js";
 import { color } from "./highlight.js";
 import { makeMenu, menuSpec } from "./menu.js";
 
@@ -37,7 +38,7 @@ export class UIKit {
     this.right = $("#right-dock");
     this.left = $("#left-dock");
     this.bar = $("#bar");
-    this.activeDock = null;
+    this.activeDock = []; // the dock's panel shown: a list of at most one
     this.contexts = []; // the open context menu: a list of at most one
   }
 
@@ -79,11 +80,10 @@ export class UIKit {
     m.el.classList.add("attached");
     // Under a box, the menu is that box's list of values, drawn as the box
     // is: in its type, each value starting where the box's text does.
-    const box = group.querySelector(".ui-input");
-    const boxStyle = box ? getComputedStyle(box) : null;
-    if (boxStyle) {
+    const boxes = listOf(group.querySelector(".ui-input")).map((el) => ({ el, style: getComputedStyle(el) }));
+    for (const box of boxes) {
       m.el.classList.add("of-field");
-      for (const k of ["fontFamily", "fontSize", "fontWeight", "letterSpacing", "textTransform"]) m.el.style[k] = boxStyle[k];
+      for (const k of ["font-family", "font-size", "font-weight", "letter-spacing", "text-transform"]) m.el.style.setProperty(k, box.style.getPropertyValue(k));
     }
     const r = group.getBoundingClientRect();
     m.el.style.minWidth = `${r.width}px`;
@@ -95,15 +95,16 @@ export class UIKit {
     if (mr.left < r.left - 1) m.el.classList.add("overhang-left");
     if (mr.right > r.right + 1) m.el.classList.add("overhang-right");
     const first = m.el.querySelector(".menu-item");
-    if (box && boxStyle && first) {
-      const textLeft = box.getBoundingClientRect().left + parseFloat(boxStyle.getPropertyValue("border-left-width")) + parseFloat(boxStyle.getPropertyValue("padding-left"));
-      m.el.style.setProperty("--field-text", `${Math.max(0, textLeft - first.getBoundingClientRect().left)}px`);
+    for (const box of boxes) for (const f of listOf(first)) {
+      const textLeft = box.el.getBoundingClientRect().left + parseFloat(box.style.getPropertyValue("border-left-width")) + parseFloat(box.style.getPropertyValue("padding-left"));
+      m.el.style.setProperty("--field-text", `${Math.max(0, textLeft - f.getBoundingClientRect().left)}px`);
     }
   }
 
-  dockShow(p) {
-    this.activeDock = p;
-    for (const x of this.panels.values()) if (x.place === "bottom") x.el.style.display = x === p ? "flex" : "none";
+  // Show `shown` in the dock (a list of at most one panel; none: none).
+  dockShow(shown) {
+    this.activeDock = shown;
+    for (const x of this.panels.values()) if (x.place === "bottom") x.el.style.display = shown.includes(x) ? "flex" : "none";
     setClass(this.dock, "hidden", ![...this.panels.values()].some((x) => x.place === "bottom"));
     this.renderDockTabs();
     this.app().renderAll();
@@ -113,9 +114,9 @@ export class UIKit {
     for (const p of this.panels.values()) {
       if (p.place !== "bottom") continue;
       const t = document.createElement("div");
-      t.className = "tab" + (p === this.activeDock ? " active" : "");
+      t.className = "tab" + (this.activeDock.includes(p) ? " active" : "");
       t.textContent = p.title;
-      t.onmousedown = (e) => { e.preventDefault(); this.dockShow(p); p.focus(); };
+      t.onmousedown = (e) => { e.preventDefault(); this.dockShow([p]); p.focus(); };
       const x = document.createElement("span");
       x.className = "x";
       x.textContent = "×";
@@ -144,8 +145,7 @@ class Panel {
     if (place === "sidebar" || place === "left" || place === "right" || place === "dialog") {
       const head = document.createElement("div");
       head.className = "panel-head";
-      head.innerHTML = `<span class="t"></span><span class="x" title="Close">×</span>`;
-      head.querySelector(".t").textContent = title;
+      head.innerHTML = `<span class="t">${escapeHtml(title)}</span><span class="x" title="Close">×</span>`;
       this.el.appendChild(head);
     }
     this.el.appendChild(this.body);
@@ -180,7 +180,7 @@ class Panel {
   }
 
   show() {
-    if (this.place === "bottom") this.kit.dockShow(this);
+    if (this.place === "bottom") this.kit.dockShow([this]);
     if (this.place === "left") this.kit.left.classList.remove("hidden");
     if (this.place === "right") this.kit.right.classList.remove("hidden");
     if (this.place === "bar") this.kit.bar.classList.remove("hidden");
@@ -192,8 +192,7 @@ class Panel {
     if (this.backdrop) this.backdrop.remove();
     else this.el.remove();
     if (this.place === "bottom") {
-      const next = [...this.kit.panels.values()].find((p) => p.place === "bottom") || null;
-      this.kit.dockShow(next);
+      this.kit.dockShow([...this.kit.panels.values()].filter((p) => p.place === "bottom").slice(0, 1));
     }
     if (this.place === "left" && !this.kit.left.children.length) this.kit.left.classList.add("hidden");
     if (this.place === "right" && !this.kit.right.children.length) this.kit.right.classList.add("hidden");
@@ -232,17 +231,16 @@ class Panel {
 
   render(tree) {
     this.tree = tree;
-    const active = document.activeElement;
-    const key = this.body.contains(active) ? active.dataset.key : null;
-    const sel = key && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null;
+    const had = focusIn(this.body);
     this.body.innerHTML = "";
     this.body.appendChild(this.build(tree));
-    if (key) {
-      const el = this.body.querySelector(`[data-key="${CSS.escape(key)}"]`);
-      if (el) {
-        el.focus({ preventScroll: true });
-        if (sel && el.setSelectionRange) try { el.setSelectionRange(sel[0], sel[1]); } catch {}
-      }
+    // The keyed control that had the keyboard has it again, its selection
+    // as it was.
+    for (const f of had) {
+      const el = this.body.querySelector(`[data-key="${CSS.escape(f.key)}"]`);
+      if (el === null) continue;
+      el.focus({ preventScroll: true });
+      try { el.setSelectionRange(f.start, f.end); } catch {}
     }
   }
 
@@ -568,56 +566,91 @@ class Panel {
 // bold, italic and links. Everything is escaped first; links keep only web,
 // mail and relative targets.
 const esc = escapeHtml;
+// `text` with each match of `re` (a global pattern) replaced by `f` of the
+// match and its groups (`m[0]` the match; a group that took no part is
+// undefined).
+/** function replacing(text: String, re: Regex, f: (String[]) => String) => String */
+function replacing(text, re, f) {
+  let out = "", last = 0;
+  for (;;) {
+    const m = re.exec(text);
+    if (m === null) break;
+    const at = re.lastIndex - m[0].length;
+    out += text.slice(last, at) + f(m);
+    last = re.lastIndex;
+    if (m[0] === "") re.lastIndex = last + 1;
+  }
+  return out + text.slice(last);
+}
+const SAFE_URL = /^(https?:|mailto:|#|\.{0,2}\/|[\w.-]+(\/|$|#))/i;
+/** function inline(t: String) => String */
 function inline(t) {
   return t.split(/(`[^`]+`)/).map((part, i) => {
     if (i % 2) return `<code>${esc(part.slice(1, -1))}</code>`;
-    return esc(part)
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, url) => (/^(https?:|mailto:|#|\.{0,2}\/|[\w.-]+(\/|$|#))/i.test(url) ? `<a href="${url}" target="_blank" rel="noopener">${label}</a>` : label))
-      .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (m, a, b) => `<strong>${a || b}</strong>`)
-      .replace(/(^|[^\w*])\*([^*\s][^*]*)\*|(^|\W)_([^_\s][^_]*)_(?!\w)/g, (m, p1, a, p2, b) => `${p1 ?? p2}<em>${a ?? b}</em>`);
+    const links = replacing(esc(part), /\[([^\]]+)\]\(([^)\s]+)\)/g, (m) => (SAFE_URL.test(m[2]) ? `<a href="${m[2]}" target="_blank" rel="noopener">${m[1]}</a>` : m[1]));
+    const strong = replacing(links, /\*\*([^*]+)\*\*|__([^_]+)__/g, (m) => `<strong>${m[1] || m[2]}</strong>`);
+    return replacing(strong, /(^|[^\w*])\*([^*\s][^*]*)\*|(^|\W)_([^_\s][^_]*)_(?!\w)/g, (m) => `${m[1] ?? m[3]}<em>${m[2] ?? m[4]}</em>`);
   }).join("");
 }
+// A list being read: its tag ("ul", "ol") and its items so far.
+/** type MdList = {tag: String, items: String[]} */
+/** function markdownHtml(text: String) => String */
 export function markdownHtml(text) {
+  /** const out: String[] */
   const out = [];
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  let para = [], list = null;
+  /** let para: String[] */
+  let para = [];
+  /** let list: MdList[] */
+  let list = []; // the list being read: a list of at most one
   const flush = () => {
     if (para.length) out.push(`<p>${inline(para.join(" "))}</p>`);
     para = [];
-    if (list) out.push(`<${list.tag}>${list.items.map((x) => `<li>${inline(x)}</li>`).join("")}</${list.tag}>`);
-    list = null;
+    for (const x of list) out.push(`<${x.tag}>${x.items.map((y) => `<li>${inline(y)}</li>`).join("")}</${x.tag}>`);
+    list = [];
   };
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
-    let m;
-    if ((m = /^\s*(```|~~~)/.exec(l))) {
+    const fence = /^\s*(```|~~~)/.exec(l);
+    const heading = /^(#{1,6})\s+(.*)$/.exec(l);
+    const quote = /^\s*>\s?(.*)$/.exec(l);
+    const item = /^\s*(?:([-*+])|\d+[.)])\s+(.*)$/.exec(l);
+    if (fence !== null) {
       flush();
       const code = [];
-      while (++i < lines.length && !lines[i].trimStart().startsWith(m[1])) code.push(lines[i]);
+      while (++i < lines.length && !lines[i].trimStart().startsWith(fence[1])) code.push(lines[i]);
       out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
-    } else if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) {
+    } else if (heading !== null) {
       flush();
-      out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
+      out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
     } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) {
       flush();
       out.push("<hr>");
-    } else if ((m = /^\s*>\s?(.*)$/.exec(l))) {
+    } else if (quote !== null) {
       flush();
-      out.push(`<blockquote>${inline(m[1])}</blockquote>`);
-    } else if ((m = /^\s*(?:([-*+])|\d+[.)])\s+(.*)$/.exec(l))) {
-      const tag = m[1] ? "ul" : "ol";
-      if (para.length || (list && list.tag !== tag)) flush();
-      list = list || { tag, items: [] };
-      list.items.push(m[2]);
+      out.push(`<blockquote>${inline(quote[1])}</blockquote>`);
+    } else if (item !== null) {
+      const tag = item[1] ? "ul" : "ol";
+      if (para.length || list.some((x) => x.tag !== tag)) flush();
+      list = list.length ? list.map((x) => ({ tag: x.tag, items: [...x.items, item[2]] })) : [{ tag, items: [item[2]] }];
     } else if (!l.trim()) flush();
-    else if (list && /^\s+\S/.test(l)) list.items[list.items.length - 1] += " " + l.trim();
+    else if (list.length && /^\s+\S/.test(l)) list = list.map((x) => ({ tag: x.tag, items: [...x.items.slice(0, -1), `${x.items.at(-1) ?? ""} ${l.trim()}`] }));
     else {
-      if (list) flush();
+      if (list.length) flush();
       para.push(l.trim());
     }
   }
   flush();
   return out.join("");
+}
+
+// The keyed control in `body` that has the keyboard, and its selection: a
+// list of at most one.
+function focusIn(body) {
+  const active = document.activeElement;
+  if (active === null || !body.contains(active)) return [];
+  const key = active.dataset.key;
+  return key === undefined ? [] : [{ key, start: active.selectionStart, end: active.selectionEnd }];
 }
 
 function div(cls) {
