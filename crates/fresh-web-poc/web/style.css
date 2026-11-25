@@ -202,14 +202,17 @@ body {
 .ui-markdown blockquote { border-left: 3px solid var(--border); padding-left: 8px; color: var(--muted); }
 .ui-markdown hr { border: 0; border-top: 1px solid var(--border); }
 .ui-markdown a { color: var(--link); }
-/* Sashes (js/sash.js): no size in the layout; the grip reaches 3px either
+/* Sashes (js/sash.js): no size in the layout; the grip reaches 4px either
    side of the line it sits on, and lights up while pointed at or dragged. */
 .sash { flex: 0 0 auto; position: relative; z-index: 6; }
 .sash::before { content: ""; position: absolute; transition: background-color .1s .15s; }
-.sash.x { cursor: col-resize; } .sash.x::before { top: 0; bottom: 0; left: -3px; right: -3px; }
-.sash.y { cursor: row-resize; } .sash.y::before { left: 0; right: 0; top: -3px; bottom: -3px; }
+.sash.x { cursor: col-resize; } .sash.x::before { top: 0; bottom: 0; left: -4px; right: -4px; }
+.sash.y { cursor: row-resize; } .sash.y::before { left: 0; right: 0; top: -4px; bottom: -4px; }
 .sash:hover::before, .sash.dragging::before { background: color-mix(in srgb, var(--accent) 60%, transparent); }
-.sash:has(+ .hidden), .hidden + .sash { display: none; }
+/* A panel's sash goes with it: each names the panel it resizes. */
+#left-dock.hidden + .sash[data-sash="left"], #sidebar.hidden + .sash[data-sash="sidebar"],
+.sash[data-sash="right"]:has(+ #right-dock.hidden), .sash[data-sash="dock"]:has(+ #dock.hidden),
+.sash[data-sash="terminal"]:has(+ #terminal.hidden) { display: none; }
 .sash-dragging body { user-select: none; }
 #status .click { cursor: pointer; }
 #status .click:hover { background: color-mix(in srgb, var(--status-fg) 16%, transparent); }
