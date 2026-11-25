@@ -253,7 +253,7 @@ class Panel {
         el.className = "ui-button" + (p.primary ? " primary" : "");
         el.disabled = !!p.disabled;
         el.title = p.title || "";
-        el.onclick = () => p.onClick?.();
+        el.onclick = (e) => p.onClick?.(e);
         break;
       case "toggle": {
         // A compact on/off button, as in find bars: [Aa] [ab] [.*]

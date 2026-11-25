@@ -876,7 +876,17 @@ export class Orchestrator {
     };
     const openBrowser = () => {
       Object.assign(browse, { shown: true, text: "", dirs: new Map(), open: new Set(), error: "" });
+      render();
+      panel.focus("browse-q");
       load(f.root.trim() || "~", true);
+    };
+    // The folders used last, in a menu under the ▾ beside the folder box.
+    const recentMenu = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      const items = this.prefs.recent.length
+        ? this.prefs.recent.map((x) => ({ label: x, run: () => { f.root = x; render(); panel.focus("root"); } }))
+        : [{ label: "No recent folders", disabled: true, run: () => {} }];
+      this.app().ui.menu(items, { x: r.left, y: r.bottom });
     };
     // The browser's rows: `base`'s parent, then its folders as a tree.
     const browseRows = () => {
@@ -974,11 +984,14 @@ export class Orchestrator {
         section("WHERE"),
         field("Machine", [h("select", { key: "machine", value: f.machine, options: this.machineOptions(true), onChange: machineChanged })]),
         adding ? addSection() : null,
-        adding ? null : field("Folder", [input("root", "/path/to/project (~ for home)"), h("button", { onClick: () => (browse.shown ? (browse.shown = false, render()) : openBrowser()) }, ["Browse…"])]),
+        adding ? null : field("Folder", [
+          h("row", { class: "orch-combo" }, [
+            input("root", "/path/to/project (~ for home)"),
+            h("button", { class: "orch-combo-button", title: "Recent folders", onClick: recentMenu }, ["▾"]),
+          ]),
+          h("button", { onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, ["Browse…"]),
+        ]),
         !adding && browse.shown ? browser() : null,
-        !adding && this.prefs.recent.length
-          ? field("Recent", [h("row", { class: "orch-recent" }, this.prefs.recent.map((r) => h("button", { onClick: () => { f.root = r; render(); panel.focus("root"); } }, [r])))])
-          : null,
         section("GIT"),
         field("Git", [h("select", { key: "git", value: f.git, options: GIT_MODES, onChange: (v) => { f.git = v; render(); } })]),
         f.git === "worktree"

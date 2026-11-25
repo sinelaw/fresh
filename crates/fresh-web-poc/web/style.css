@@ -306,9 +306,13 @@ body {
 .orch-form > *, .orch-add-machine > *, .orch-browse > * { flex-shrink: 0; }
 .orch-section { color: var(--muted); font-size: var(--ui-font-xs); letter-spacing: .08em; margin-top: 4px; }
 .orch-field { align-items: center; }
+/* An editable box with a ▾ for its recent values, joined to it. */
+.orch-combo { flex: 1; gap: 0; min-width: 0; align-items: stretch; }
+.orch-combo > .ui-input { border-right: 0; }
+.orch-combo > .orch-combo-button { padding: 0 8px; border: 1px solid var(--border); background: var(--control-bg); color: var(--control-fg); }
+.orch-combo:focus-within > .orch-combo-button { border-color: var(--accent); }
 .orch-label { width: 90px; flex-shrink: 0; color: var(--muted); }
 .orch-note { font-size: var(--ui-font-xs); padding-left: 96px; }
-.orch-recent { flex-wrap: wrap; }
 .orch-import .orch-import-list { min-height: 260px; }
 /* New Workspace: a machine being declared, and the folder browser. */
 .orch-add-machine { gap: 6px; padding: 6px 0 6px 10px; border-left: 2px solid var(--accent); }
