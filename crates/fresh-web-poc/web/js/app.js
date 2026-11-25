@@ -170,8 +170,9 @@ export class App {
     this.activePane.listen();
     this.listenInput();
     this.registerCoreCommands();
-    this.macros.register();
+    for (const c of this.macros.commands()) this.commands.set(c.id, { title: c.title, run: asCommand(c.run), source: "core", hidden: false });
     this.menubar.listen();
+    for (const c of this.menubar.commands()) this.commands.set(c.id, { title: c.title, run: asCommand(c.run), source: "core", hidden: true });
     this.orchestrator.listen();
     this.relayout();
     new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));
@@ -779,6 +780,32 @@ export class App {
     b.edit(ops, true, typing);
   }
 
+  // Whether a menu's check is on: a setting, or a piece of the editor's
+  // state by name.
+  isOn(kind, name) { return kind === "setting" ? !!this.settings[name] : this.stateOn(name); }
+  stateOn(name) {
+    const v = this.activePane.view;
+    if (name === "readOnly") return v !== undefined && v.buf.readOnly;
+    if (name === "lineNumbers") return v !== undefined && v.opts.lineNumbers;
+    if (name === "wrap") return v !== undefined && v.opts.wrap;
+    if (name === "compose") return v !== undefined && v.mode === "compose";
+    if (name === "orchestrator") return this.orchestrator.dockOpen();
+    if (name === "explorer") return !$("#sidebar").classList.contains("hidden");
+    if (name === "terminal") return this.term.visible;
+    if (name === "keymapDefault") return this.settings.keymap !== "emacs";
+    if (name === "keymapEmacs") return this.settings.keymap === "emacs";
+    return false;
+  }
+
+  // The open files, and the problems the language servers found in them.
+  counts() {
+    const bufs = [...this.buffers.values()];
+    const diags = bufs.flatMap((b) => b.decor.diags);
+    return { files: bufs.filter((b) => !b.isVirtual).length, errors: diags.filter((x) => x.severity === 1).length, warnings: diags.filter((x) => x.severity === 2).length };
+  }
+  // The editor theme `key`, when a theme plugin is there to put it on.
+  async useTheme(key) { if (this.commands.has("theme.use")) await this.run("theme.use", key); }
+
   // Buffer `b`'s event to the plugins (`ops`: what changed, `local`: made
   // here), and a view's.
   bufferEvent(event, b, ops, local) { this.host.emitBuffer(event, bufferHandle(this, b), { ops, local }); }
@@ -1141,6 +1168,20 @@ export class App {
     if (bound !== undefined) { bound.run(); return; }
     this.macros.text(t, true);
     this.editing.type(this.activePane, t, true);
+  }
+
+  // Text into the active view (unless it is read-only): typed (one undo
+  // run, as typing) or pasted.
+  insertText(text, typed) {
+    const pane = this.activePane;
+    const v = pane.view;
+    if (v === undefined || v.buf.readOnly) return;
+    if (typed) this.editing.type(pane, text, true);
+    else this.paste(text);
+  }
+  // A virtual buffer of `text`, shown in a tab.
+  showText(name, text) {
+    this.createVirtual({ name, entries: [{ text, props: {}, style: null }], mode: null, readOnly: true, language: null, keep: false, place: "tab", lineNumbers: true });
   }
 
   paste(text) {

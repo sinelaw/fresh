@@ -10,7 +10,6 @@
 // the next title's.
 
 import { makeMenu, menuSpec, actionOf, submenu, SEPARATOR } from "./menu.js";
-import { asCommand } from "./commands.js";
 
 import { $ } from "./dom.js";
 
@@ -282,8 +281,9 @@ function readOf(read) { return read !== undefined && read(); }
 function noReaders() { return new Map(); }
 
 export class MenuBar {
-  constructor(app) {
-    this.app = app;
+  // `editor`: what the menu bar asks of the editor (js/main.js).
+  constructor(editor) {
+    this.editor = editor;
     this.host = $("#menubar");
     this.menus = MENUS.map((m) => menuOf(m.label, m.key, [...m.items]));
     // The menu open, and its title's index: a list of at most one.
@@ -292,8 +292,7 @@ export class MenuBar {
   }
 
 
-  // Draw the titles and take their pointer; register the commands that
-  // open the menus (bound to F10 and Alt+letter in the keymap).
+  // Draw the titles and take their pointer.
   listen() {
     this.render();
     // The title under a pointer event, as its menu's index.
@@ -312,9 +311,15 @@ export class MenuBar {
       const i = titleAt(e);
       if (i !== null && this.opened.length > 0 && !this.isOpen(i)) this.show(i, false);
     });
-    const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: true }); };
-    cmd("menu.open", "Open the Menu Bar", () => this.show(0, true));
-    this.menus.forEach((m, i) => { cmd(`menu.${m.label.toLowerCase()}`, `Open the ${m.label} Menu`, () => this.show(i, true)); });
+  }
+
+  // The commands that open the menus (bound to F10 and Alt+letter in the
+  // keymap), for the editor to register.
+  commands() {
+    return [
+      { id: "menu.open", title: "Open the Menu Bar", run: () => { this.show(0, true); } },
+      ...this.menus.map((m, i) => ({ id: `menu.${m.label.toLowerCase()}`, title: `Open the ${m.label} Menu`, run: () => { this.show(i, true); } })),
+    ];
   }
 
   render() {
@@ -347,7 +352,6 @@ export class MenuBar {
   // Rows as the Menu component takes them: commands resolved now (title,
   // key, check), unknown ones left out, separators never doubled.
   resolve(rows) {
-    const app = this.app();
     /** const out: MenuItem[] */
     const out = [];
     const lastIsRow = () => out.length > 0 && out[out.length - 1].kind !== "separator";
@@ -360,39 +364,19 @@ export class MenuBar {
         continue;
       }
       const row = commandRow(r);
-      const c = row === null ? undefined : app.commands.get(row.command);
-      if (row === null || !c) continue;
-      const checked = row.checked;
+      if (row === null) continue;
       const command = row.command;
-      out.push(actionOf(row.label ?? c.title, row.keys ?? app.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => app.run(command)));
+      const title = this.editor.title(command);
+      if (title === null) continue;
+      const checked = row.checked;
+      out.push(actionOf(row.label ?? title, row.keys ?? this.editor.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => { this.editor.run(command); }));
     }
     return lastIsRow() || !out.length ? out : out.slice(0, -1);
   }
 
   // Whether a toggle's check is on now.
   isChecked(c) {
-    if (c.kind === "setting") return !!this.app().settings[c.name];
-    if (c.kind === "state") return this.state(c.name);
-    return readOf(this.readers.get(c.name));
-  }
-
-  // A piece of the editor's state, by name.
-  state(name) {
-    const app = this.app();
-    const v = app.view();
-    const reads = new Map([
-      ["readOnly", () => !!v && v.buf.readOnly],
-      ["lineNumbers", () => !!v && v.opts.lineNumbers],
-      ["wrap", () => !!v && v.opts.wrap],
-      ["compose", () => !!v && v.mode === "compose"],
-      ["orchestrator", () => app.orchestrator.dockOpen()],
-      ["explorer", () => !$("#sidebar").classList.contains("hidden")],
-      ["terminal", () => app.term.visible],
-      ["keymapDefault", () => app.settings.keymap !== "emacs"],
-      ["keymapEmacs", () => app.settings.keymap === "emacs"],
-    ]);
-    const read = reads.get(name);
-    return read ? read() : false;
+    return c.kind === "read" ? readOf(this.readers.get(c.name)) : this.editor.isOn(c.kind, c.name);
   }
 
   isOpen(i) { return this.opened.some((o) => o.i === i); }
@@ -403,7 +387,7 @@ export class MenuBar {
     this.opened = [];
     for (const o of prev) o.menu.close();
     const n = this.menus.length;
-    const menu = makeMenu(this.resolve(rowsOf(this.menus, i)), menuSpec(() => { const app = this.app(); app.focusPane(app.activePane); }, ["#menubar"],
+    const menu = makeMenu(this.resolve(rowsOf(this.menus, i)), menuSpec(() => { this.editor.focus(); }, ["#menubar"],
       (d) => { this.show((i + d + n) % n, true); },
       () => { if (this.opened.some((o) => o.menu === menu)) { this.opened = []; this.render(); } }, null), []);
     this.opened = [{ i, menu }];

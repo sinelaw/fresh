@@ -45,6 +45,39 @@ async function main() {
     relayout: () => { app.relayout(); },
     key: (e) => app.terminalKey(e),
   };
+  // Skins: report a failure, say something, measure the editor's cell
+  // again (a skin's fonts are in), put an editor theme on, pick from a
+  // list, and count the open files and their problems.
+  const skinsEditor = {
+    report: (text) => { app.report(text); },
+    say: (text) => { app.setStatus(text); },
+    remeasure: () => { app.remeasure(); },
+    useTheme: (key) => app.useTheme(key),
+    pick: (o) => { app.prompt.open(o); },
+    counts: () => app.counts(),
+  };
+  // Macros: say something, a command's key and title, refresh the status
+  // bar, run a command, put text in the active view, pick from a list, and
+  // show a text.
+  const macrosEditor = {
+    say: (text) => { app.setStatus(text); },
+    keyLabel: (id) => app.keyLabel(id),
+    updateStatus: () => { app.updateStatus(); },
+    run: (id, arg) => app.run(id, arg),
+    insert: (text, typed) => { app.insertText(text, typed); },
+    pick: (o) => { app.prompt.open(o); },
+    titleOf: (id) => app.commands.get(id)?.title ?? id,
+    showText: (name, text) => { app.showText(name, text); },
+  };
+  // The menu bar: a command's title (none: no such command), its key,
+  // running it, whether a check is on, and giving the keyboard back.
+  const menuEditor = {
+    title: (id) => app.commands.get(id)?.title ?? null,
+    keyLabel: (id) => app.keyLabel(id),
+    run: (id) => { app.run(id, undefined); },
+    isOn: (kind, name) => app.isOn(kind, name),
+    focus: () => { app.focusPane(app.activePane); },
+  };
   const app = new App({
     settings: loadSettings(),
     userKeys: loadUserKeys(),
@@ -52,14 +85,14 @@ async function main() {
     workspace: ws,
     params,
     orchestrator: new Orchestrator(() => app, hello.workspaces, hello.folders, hello.machines),
-    skins: new Skins(() => app),
+    skins: new Skins(skinsEditor, ws === null ? null : ws.id),
     editing: new Editing(() => app),
     ui: new UIKit(() => app),
     prompt: new Palette(() => app),
     term: new TerminalPanel(terminalEditor, $("#terminal")),
     host: new Host((text) => { app.report(text); }),
-    macros: new Macros(() => app),
-    menubar: new MenuBar(() => app),
+    macros: new Macros(macrosEditor),
+    menubar: new MenuBar(menuEditor),
     input: $("#input"),
     pane: new Pane(() => app),
   });

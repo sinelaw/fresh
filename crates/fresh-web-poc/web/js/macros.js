@@ -7,7 +7,6 @@
 // are left out; what is typed into a prompt or a panel is not recorded.
 // Registers last as long as the page.
 
-import { asCommand } from "./commands.js";
 import { some, none } from "./maybe.js";
 
 const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
@@ -58,6 +57,11 @@ function describeMacros(registers, last, titleOf) {
   return out.length ? out.join("\n") : "No macros recorded. Record one with Record Macro… in the command palette.\n";
 }
 
+// A command macros offer: its id, title, and what it does.
+/** type MacroCommand = {id: String, title: String, run: () => Promise<Undefined>} */
+/** function macroCommand(id: String, title: String, run: () => Promise<Undefined>) => MacroCommand */
+function macroCommand(id, title, run) { return { id, title, run }; }
+
 /** function plural(n: Number, word: String) => String */
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
@@ -70,8 +74,9 @@ function noRecording() { return []; }
 function noRegister() { return []; }
 
 export class Macros {
-  constructor(app) {
-    this.app = app;
+  // `editor`: what macros ask of the editor (js/main.js).
+  constructor(editor) {
+    this.editor = editor;
     this.registers = noMacros(); // register -> its steps
     this.recording = noRecording(); // the macro being recorded: a list of at most one
     this.playing = false;
@@ -92,48 +97,43 @@ export class Macros {
   start(register) {
     this.stop();
     this.recording = [{ register, steps: [] }];
-    this.app().setStatus(`Recording macro ${register}… (${this.app().keyLabel("macro.stop") || "Stop Recording Macro"} stops)`);
-    this.app().updateStatus();
+    this.editor.say(`Recording macro ${register}… (${this.editor.keyLabel("macro.stop") || "Stop Recording Macro"} stops)`);
+    this.editor.updateStatus();
   }
   stop() {
     const done = this.recording;
-    if (!done.length) { this.app().setStatus("Not recording a macro"); return; }
+    if (!done.length) { this.editor.say("Not recording a macro"); return; }
     this.recording = [];
     for (const r of done) {
       this.registers.set(r.register, r.steps);
       this.last = [r.register];
-      this.app().setStatus(`Macro ${r.register}: ${plural(r.steps.length, "step")} recorded (${this.app().keyLabel("macro.playLast") || "Play Last Macro"} plays it)`);
+      this.editor.say(`Macro ${r.register}: ${plural(r.steps.length, "step")} recorded (${this.editor.keyLabel("macro.playLast") || "Play Last Macro"} plays it)`);
     }
   }
 
   async play(register) {
-    if (!this.registers.has(register)) { this.app().setStatus(`No macro in register ${register}`); return; }
+    if (!this.registers.has(register)) { this.editor.say(`No macro in register ${register}`); return; }
     const steps = this.registers.get(register) ?? [];
     if (this.playing) return;
-    if (this.recording.some((r) => r.register === register)) { this.app().setStatus(`Macro ${register} is being recorded`); return; }
+    if (this.recording.some((r) => r.register === register)) { this.editor.say(`Macro ${register} is being recorded`); return; }
     this.playing = true;
     this.last = [register];
     try {
       for (const s of steps) {
-        const pane = this.app().activePane;
-        const v = pane.view;
         const a = stepParts(s);
         const command = a.command;
-        if (command !== null) await this.app().run(command, a.arg);
-        else if (v !== undefined && !v.buf.readOnly) {
-          if (a.typed) this.app().editing.type(pane, a.text, true);
-          else this.app().paste(a.text);
-        }
+        if (command !== null) await this.editor.run(command, a.arg);
+        else this.editor.insert(a.text, a.typed);
       }
     } finally {
       this.playing = false;
     }
-    this.app().setStatus(`Played macro ${register} (${plural(steps.length, "step")})`);
+    this.editor.say(`Played macro ${register} (${plural(steps.length, "step")})`);
   }
 
   // Ask for a register: resolves with it, or null.
   pick(title) {
-    return new Promise((resolve) => this.app().prompt.open({
+    return new Promise((resolve) => this.editor.pick({
       title,
       value: "",
       items: REGISTERS.map((r) => ({ label: r, detail: this.registers.has(r) ? plural((this.registers.get(r) ?? []).length, "step") : "empty", value: r })),
@@ -145,21 +145,20 @@ export class Macros {
 
   // Every register's steps, as text.
   describe() {
-    return describeMacros(this.registers, this.last, (id) => { const c = this.app().commands.get(id); return c ? c.title : id; });
+    return describeMacros(this.registers, this.last, this.editor.titleOf);
   }
 
-  register() {
-    const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: false }); };
-    cmd("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r !== null) this.start(r); });
-    cmd("macro.stop", "Macro: Stop Recording Macro", () => this.stop());
-    cmd("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r !== null) await this.play(r); });
-    cmd("macro.playLast", "Macro: Play Last Macro", async () => {
-      if (!this.last.length) { this.app().setStatus("No macro recorded yet"); return; }
-      for (const r of this.last) await this.play(r);
-    });
-    cmd("macro.list", "Macro: List Macros", () => this.app().createVirtual({
-      name: "*Macros*", entries: [{ text: this.describe(), props: {}, style: null }],
-      mode: null, readOnly: true, language: null, keep: false, place: "tab", lineNumbers: true,
-    }));
+  // Its commands, for the editor to register.
+  commands() {
+    return [
+      macroCommand("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r !== null) this.start(r); }),
+      macroCommand("macro.stop", "Macro: Stop Recording Macro", async () => { this.stop(); }),
+      macroCommand("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r !== null) await this.play(r); }),
+      macroCommand("macro.playLast", "Macro: Play Last Macro", async () => {
+        if (!this.last.length) { this.editor.say("No macro recorded yet"); return; }
+        for (const r of this.last) await this.play(r);
+      }),
+      macroCommand("macro.list", "Macro: List Macros", async () => { this.editor.showText("*Macros*", this.describe()); }),
+    ];
   }
 }

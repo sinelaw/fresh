@@ -75,15 +75,16 @@ function skinBase(all, ws, id) {
   const s = skinIn(all, id);
   return s !== null && s.source === "user" && ws !== null ? `workspaces/${ws}/skins/${id}/` : `skins/${id}/`;
 }
-// The id of the workspace a page views, if any.
-/** function workspaceId(w: WorkspaceEntry | Null) => Number | Null */
-function workspaceId(w) { return w === null ? null : w.id; }
+
 /** function noSkins() => SkinInfo[] */
 function noSkins() { return []; }
 
 export class Skins {
-  constructor(app) {
-    this.app = app;
+  // `editor`: what skins ask of the editor (js/main.js); `workspace`: the
+  // id of the workspace the page views (none: the dock alone).
+  constructor(editor, workspace) {
+    this.editor = editor;
+    this.workspace = workspace;
     this.all = noSkins();
     this.current = null; // the resolved skin on screen
     this.timer = 0;
@@ -94,7 +95,7 @@ export class Skins {
   // the editor's cell is measured in the skin's font.
   async load() {
     $("#skin-btn").addEventListener("click", () => { this.pick(); });
-    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${String(e)}`); }
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
     const id = new URLSearchParams(location.search).get("skin") ?? savedSkin();
     await this.apply(id !== null && this.byId(id) !== null ? id : "default");
   }
@@ -103,12 +104,12 @@ export class Skins {
 
   // Where a skin's files are served: a built-in skin's beside the client's
   // own files, a user skin's through the workspace whose host has it.
-  base(id) { return skinBase(this.all, workspaceId(this.app().workspace), id); }
+  base(id) { return skinBase(this.all, this.workspace, id); }
 
   // A skin with what it extends folded in: the chain base first; the last
   // skin to set a frame, scale, furniture or theme wins.
   resolve(id) {
-    const all = this.all, ws = workspaceId(this.app().workspace);
+    const all = this.all, ws = this.workspace;
     return resolvedSkin(id, chainOf(all, id, 0), (x) => skinBase(all, ws, x));
   }
 
@@ -154,7 +155,7 @@ export class Skins {
     if (btn) btn.textContent = sk.name;
     // Fonts the skin brings change the cell only once they are in.
     await document.fonts.ready;
-    this.app().remeasure?.();
+    this.editor.remeasure();
     this.refresh();
   }
 
@@ -211,13 +212,12 @@ export class Skins {
   }
 
   localValues() {
-    const bufs = [...this.app().buffers.values()];
-    const diags = bufs.flatMap((b) => b.decor?.diags || []);
+    const c = this.editor.counts();
     const d = new Date();
     return {
-      buffers: bufs.filter((b) => !b.isVirtual).length,
-      errors: diags.filter((x) => x.severity === 1).length,
-      warnings: diags.filter((x) => x.severity === 2).length,
+      buffers: c.files,
+      errors: c.errors,
+      warnings: c.warnings,
       time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
     };
   }
@@ -227,17 +227,17 @@ export class Skins {
     if (!this.byId(id)) return;
     try { localStorage.setItem(KEY, id); } catch {}
     await this.apply(id);
-    if (this.current.theme && this.app().commands.has("theme.use")) await this.app().run("theme.use", this.current.theme);
-    this.app().setStatus(`Skin: ${this.current.name}`);
+    if (this.current.theme) await this.editor.useTheme(this.current.theme);
+    this.editor.say(`Skin: ${this.current.name}`);
   }
 
   // The picker: moving through the list tries each skin on; Escape puts
   // the one before back. The list is read again, so a skin just added to
   // the skins folder is there.
   async pick() {
-    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${String(e)}`); }
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
     const before = this.current?.id || "default";
-    this.app().prompt.open({
+    this.editor.pick({
       title: "Skin",
       value: "",
       items: this.all.map((s) => ({
