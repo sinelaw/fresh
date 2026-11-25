@@ -274,6 +274,18 @@ impl<'a> Open<'a> {
     }
 }
 
+/// `path` as the user wrote it: `""` and `~` are the home folder, `~/…`
+/// is under it.
+fn under_home(home: &Path, path: &str) -> PathBuf {
+    match path.trim() {
+        "" | "~" => home.to_path_buf(),
+        p => match p.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => PathBuf::from(p),
+        },
+    }
+}
+
 /// Run `git` with `args` in `cwd` on the host; its output, or its last
 /// line of complaint.
 fn git(authority: &dyn Authority, args: &[&str], cwd: &Path) -> Result<String> {
@@ -371,6 +383,28 @@ impl Orchestrator {
         Ok(a)
     }
 
+    /// Whether `path` on `host` is in a git work tree, as git says (a
+    /// repository's folder, a worktree's, or a folder inside one), and its
+    /// top folder when it is.
+    fn git_of(&self, host: &HostSpec, path: &str) -> Result<Value> {
+        let authority = self.reach(host)?;
+        let home = PathBuf::from(authority.fs().home_dir()?);
+        let dir = under_home(&home, path);
+        if !authority
+            .fs()
+            .is_dir(workspace::host(&dir).as_host_path())
+            .unwrap_or(false)
+        {
+            return Ok(json!({ "repo": false, "folder": false }));
+        }
+        Ok(
+            match git(&*authority, &["rev-parse", "--show-toplevel"], &dir) {
+                Ok(top) => json!({ "repo": true, "folder": true, "toplevel": top }),
+                Err(_) => json!({ "repo": false, "folder": true }),
+            },
+        )
+    }
+
     /// Declare a machine (it is reached first, so one that cannot be is
     /// refused), or redeclare one of the same name.
     fn add_machine(&self, mut machine: Machine) -> Result<Vec<Machine>> {
@@ -407,13 +441,7 @@ impl Orchestrator {
     fn browse(&self, host: &HostSpec, path: &str) -> Result<Value> {
         let fs = self.reach(host)?.fs();
         let home = PathBuf::from(fs.home_dir()?);
-        let dir = match path.trim() {
-            "" | "~" => home.clone(),
-            p => match p.strip_prefix("~/") {
-                Some(rest) => home.join(rest),
-                None => PathBuf::from(p),
-            },
-        };
+        let dir = under_home(&home, path);
         let mut dirs: Vec<Value> = fs
             .read_dir(workspace::host(&dir).as_host_path())
             .map_err(|e| anyhow::Error::new(e).context(dir.display().to_string()))?
@@ -861,6 +889,15 @@ impl Orchestrator {
             "machine.remove" => {
                 self.known(client)?;
                 json!({ "machines": self.remove_machine(s(m, "name")?) })
+            }
+            "machine.git" => {
+                self.known(client)?;
+                let host: HostSpec = match m.get("host") {
+                    Some(h) => serde_json::from_value(h.clone())
+                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
+                    None => HostSpec::Local,
+                };
+                self.git_of(&host, m.get("path").and_then(Value::as_str).unwrap_or(""))?
             }
             "machine.browse" => {
                 self.known(client)?;

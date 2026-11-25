@@ -207,7 +207,9 @@ Operations:
   `machine.browse` (`{host, path}`: the folders in `path` on that host,
   through its authority, for choosing a workspace's folder; `""`, `~` and
   `~/…` start at the home folder there; answers `{path, parent, home,
-  dirs: [{name, path}]}`; a host is connected once and kept)
+  dirs: [{name, path}]}`; a host is connected once and kept), and
+  `machine.git` (`{host, path}`: whether git, run there, says the folder
+  is in a work tree: `{repo, folder, toplevel}`)
 - `fs.list`, `fs.stat`, `fs.read`, `fs.write`, `fs.find`, `fs.create`,
   `fs.rename`, `fs.delete`, `fs.copy`, `fs.watch`, `fs.unwatch`,
   `search.project`

@@ -248,6 +248,16 @@ class Panel {
           }
         };
         break;
+      case "textarea":
+        // Text of several lines (Enter is a new line); `rows` tall.
+        el = document.createElement("textarea");
+        el.className = "ui-textarea";
+        el.rows = p.rows || 4;
+        el.value = p.value ?? "";
+        el.placeholder = p.placeholder || "";
+        el.oninput = () => p.onInput?.(el.value);
+        el.onkeydown = (e) => { if (p.onKey && p.onKey(e) === true) e.preventDefault(); };
+        break;
       case "button":
         el = kids(document.createElement("button"));
         el.className = "ui-button" + (p.primary ? " primary" : "");
@@ -269,6 +279,9 @@ class Panel {
         const c = document.createElement("input");
         c.type = "checkbox";
         c.checked = !!p.checked;
+        c.disabled = !!p.disabled;
+        if (p.disabled) el.classList.add("disabled");
+        if (p.title) el.title = p.title;
         c.onchange = () => p.onChange?.(c.checked);
         el.append(c, ...n.children.map((x) => this.build(x)));
         break;
@@ -280,6 +293,7 @@ class Panel {
           const op = document.createElement("option");
           op.value = o.value;
           op.textContent = o.label ?? o.value;
+          op.disabled = !!o.disabled;
           el.appendChild(op);
         }
         el.value = p.value;
