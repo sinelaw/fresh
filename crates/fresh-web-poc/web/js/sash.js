@@ -10,7 +10,7 @@
 /**
  * Make `el` a sash along `axis` ("x": it moves left and right, "y": up and
  * down). `o.begin()` measures and returns the drag's context; `o.drag(ctx, d)`
- * applies a move of `d` pixels from where the drag started; `o.end(ctx)` runs
+ * applies a move of `d` pixels from where the drag started; `o.end()` runs
  * once it is let go; `o.reset()` on a double click.
  */
 export function sash(el, axis, o) {
@@ -37,7 +37,7 @@ export function sash(el, axis, o) {
       if (frame) { cancelAnimationFrame(frame); o.drag(ctx, to - from); }
       el.classList.remove("dragging");
       document.documentElement.classList.remove("sash-dragging");
-      if (o.end) o.end(ctx);
+      o.end();
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);

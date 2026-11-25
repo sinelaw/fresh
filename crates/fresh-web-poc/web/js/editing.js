@@ -501,7 +501,7 @@ export class Editing {
     const b = v.buf;
     const L = b.text;
     const first = L.firstLine ?? 0;
-    const lsp = (b.foldRanges || []).find((r) => r.start === li + first && r.end > r.start);
+    const lsp = (b.foldRanges ?? []).find((r) => r.start === li + first && r.end > r.start);
     if (lsp) return { start: li, end: Math.min(L.count - 1, lsp.end - first) };
     const ind = (t) => t.length - t.trimStart().length;
     if (L.lines[li].trim() === "") return NO_FOLD;

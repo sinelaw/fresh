@@ -47,9 +47,9 @@ export class UIKit {
   // A PanelOptions (types/fresh.d.js): place "bottom" | "sidebar" | "left"
   // (a column before the sidebar) | "right" | "bar" | "dialog".
   panel({ id, title, place, onClose }) {
-    let p = this.panels.get(id);
-    if (p) { p.show(); return p; }
-    p = new Panel(this, id, title, place, onClose);
+    const had = this.panels.get(id);
+    if (had !== undefined) { had.show(); return had; }
+    const p = new Panel(this, id, title, place, onClose);
     p.listen();
     this.panels.set(id, p);
     p.show();
@@ -197,7 +197,8 @@ class Panel {
 
   close() {
     this.kit.panels.delete(this.id);
-    if (this.backdrop) this.backdrop.remove();
+    const backdrop = this.backdrop;
+    if (backdrop !== null) backdrop.remove();
     else this.el.remove();
     if (this.place === "bottom") {
       this.kit.dockShow([...this.kit.panels.values()].filter((p) => p.place === "bottom").slice(0, 1));

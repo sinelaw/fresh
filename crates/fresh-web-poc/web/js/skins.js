@@ -52,6 +52,8 @@ function chainOf(all, id, depth) {
 // What a chain of skins comes to: the last to set each wins (`base(id)`:
 // where skin `id`'s files are served).
 /** type ResolvedSkin = {id: String, name: String, chain: String[], frame: String, scale: Number, furniture: String | Null, theme: String | Null} */
+/** function noShown() => ResolvedSkin[] */
+function noShown() { return []; }
 /** function resolvedSkin(id: String, chain: SkinInfo[], base: (String) => String) => ResolvedSkin */
 function resolvedSkin(id, chain, base) {
   const scales = chain.flatMap((s) => { const x = s.scale; return x === null ? [] : [x]; });
@@ -86,7 +88,7 @@ export class Skins {
     this.editor = editor;
     this.workspace = workspace;
     this.all = noSkins();
-    this.current = null; // the resolved skin on screen
+    this.current = noShown(); // the resolved skin on screen: a list of at most one
     this.timer = 0;
     this.applying = Promise.resolve(undefined); // the skins being put on, in order
   }
@@ -150,7 +152,7 @@ export class Skins {
     })));
     for (const l of old) l.remove();
     await this.furnish(sk.furniture);
-    this.current = sk;
+    this.current = [sk];
     const btn = document.getElementById("skin-btn");
     if (btn) btn.textContent = sk.name;
     // Fonts the skin brings change the cell only once they are in.
@@ -227,8 +229,9 @@ export class Skins {
     if (!this.byId(id)) return;
     try { localStorage.setItem(KEY, id); } catch {}
     await this.apply(id);
-    if (this.current.theme) await this.editor.useTheme(this.current.theme);
-    this.editor.say(`Skin: ${this.current.name}`);
+    const sk = this.resolve(id);
+    if (sk.theme !== null) await this.editor.useTheme(sk.theme);
+    this.editor.say(`Skin: ${sk.name}`);
   }
 
   // The picker: moving through the list tries each skin on; Escape puts
@@ -236,7 +239,7 @@ export class Skins {
   // the skins folder is there.
   async pick() {
     try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
-    const before = this.current?.id || "default";
+    const before = this.current.at(0)?.id ?? "default";
     this.editor.pick({
       title: "Skin",
       value: "",
@@ -252,9 +255,9 @@ export class Skins {
   }
 
   // The next (or previous) skin in the list.
-  cycle(dir = 1) {
+  cycle(dir) {
     if (!this.all.length) return;
-    const i = this.all.findIndex((s) => s.id === this.current?.id);
+    const i = this.all.findIndex((s) => s.id === this.current.at(0)?.id);
     this.choose(this.all[(i + dir + this.all.length) % this.all.length].id);
   }
 }

@@ -282,25 +282,30 @@ export class Pane {
   // (unless that one holds unsaved changes: it is kept); false: the tab is
   // kept (no longer a preview); null: as it is.
   show(buf, preview) {
-    let v = this.views.find((x) => x.buf === buf);
-    if (!v) {
-      v = new View(this, buf);
-      buf.views.add(v);
-      const old = preview ? this.views.find((x) => x.preview) : undefined;
-      if (old !== undefined && !old.buf.modified) {
-        this.views.splice(this.views.indexOf(old), 1, v);
-        old.dispose();
-        this.editor.dropIfUnshown(old.buf);
-      } else {
-        if (old) old.preview = false;
-        this.views.push(v);
-      }
-      v.preview = !!preview;
-    } else if (preview === false) v.preview = false;
+    const had = this.views.find((x) => x.buf === buf);
+    if (had !== undefined && preview === false) had.preview = false;
+    const v = had ?? this.newTab(buf, preview === true);
     this.shown = [v];
     this.editor.shown(this, v);
     this.renderTabs();
     this.scheduleRender();
+    return v;
+  }
+  // A new tab of `buf`: the preview tab (in place of the one there was,
+  // unless that one holds unsaved changes: it is kept), or a kept one.
+  newTab(buf, preview) {
+    const v = new View(this, buf);
+    buf.views.add(v);
+    const old = preview ? this.views.find((x) => x.preview) : undefined;
+    if (old !== undefined && !old.buf.modified) {
+      this.views.splice(this.views.indexOf(old), 1, v);
+      old.dispose();
+      this.editor.dropIfUnshown(old.buf);
+    } else {
+      if (old !== undefined) old.preview = false;
+      this.views.push(v);
+    }
+    v.preview = preview;
     return v;
   }
   closeView(v) {
