@@ -311,6 +311,8 @@ export class MenuBar {
       onClose: () => { if (this.menu === menu) { this.menu = null; this.open = -1; this.render(); } },
     }).build();
     this.menu = menu;
+    // A menu bar's menu: a skin may join it to its title.
+    menu.el.classList.add("of-bar");
     const title = this.host.children[i].getBoundingClientRect();
     menu.openUnder(title, getComputedStyle(this.host).flexDirection.startsWith("column"));
     if (keys) menu.enter();

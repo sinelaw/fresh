@@ -45,7 +45,7 @@
 
 /* ---- palette ------------------------------------------------------------ */
 .skin-bridge body {
-  --br-orange: #ff9c1a; --br-gold: #ffcc66; --br-tan: #ffcc99; --br-peach: #ff9966;
+  --br-orange: #ff9c1a; --br-open: #fff4e2; --br-gold: #ffcc66; --br-tan: #ffcc99; --br-peach: #ff9966;
   --br-lilac: #cc99cc; --br-lav: #9999ee; --br-blue: #99ccff; --br-red: #dd6666;
   --br-text: #ffe2c4; --br-dim: #a99bd8; --br-line: #2a2240;
   --ui-font: "Antonio", "Oswald", "Roboto Condensed", "Arial Narrow", sans-serif;
@@ -125,14 +125,23 @@
 /* The menu bar: a run of coloured segments in the top bar, before the
    title; the open one lights up white. */
 .skin-bridge #menubar { gap: 4px; margin: 0; }
-.skin-bridge.frame-bezel #menubar { pointer-events: auto; align-self: flex-start; height: var(--br-bar); background: #000; padding: 0 4px; }
+/* The top bar sits 4px above the frame's (room for the title's tall
+   type); the titles sit on the frame's bar, level with its segments. */
+.skin-bridge.frame-bezel #menubar { pointer-events: auto; align-self: flex-start; height: var(--br-bar); background: #000; padding: 0 4px;
+  margin-top: 4px; }
 .skin-bridge .mtop { height: var(--br-bar); display: flex; align-items: flex-end; padding: 0 10px 3px 18px; border-radius: 0;
   background: var(--br-lilac); color: #000; font: 600 13px/1 var(--ui-font); letter-spacing: .08em; text-transform: uppercase; }
 .skin-bridge .mtop:nth-child(4n+2) { background: var(--br-peach); }
 .skin-bridge .mtop:nth-child(4n+3) { background: var(--br-tan); }
 .skin-bridge .mtop:nth-child(4n) { background: var(--br-lav); }
 .skin-bridge .mtop:hover { background: var(--br-blue); }
-.skin-bridge .mtop.open { background: #fff4e2; }
+.skin-bridge .mtop.open { background: var(--br-open); }
+/* An open title and its menu are one elbow: the menu's bar runs on down
+   from the title, in its colour, curving into the menu's top edge; no
+   outline crosses the title. */
+.skin-bridge .ctxmenu.of-bar { border-left-color: var(--br-open); border-radius: 0 0 0 18px; box-shadow: 0 18px 50px rgba(0, 0, 0, .8); }
+.skin-bridge .ctxmenu.of-bar::before { content: ""; position: absolute; left: 0; top: 0; width: 14px; height: 14px; pointer-events: none;
+  background: radial-gradient(circle at 100% 100%, transparent 13.5px, var(--br-open) 14px); }
 
 /* ---- the status bar is the bottom bar ----------------------------------- */
 .skin-bridge #status { font: 600 14px/1 var(--ui-font); text-transform: uppercase; letter-spacing: .06em; padding: 0;
