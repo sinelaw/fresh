@@ -126,7 +126,7 @@ export class App {
     this.rememberLayout();
     window.addEventListener("pagehide", () => { this.rememberLayout(); this.session.flush(); });
     document.addEventListener("visibilitychange", () => { if (document.hidden) { this.rememberLayout(); this.session.flush(); } });
-    this.host.emit("app.ready", {});
+    this.host.emit("app.ready");
     if (open) await this.openFile(open, { line: null, column: 1, place: "tab", preview: null, focus: true });
     this.focusPane(this.activePane);
   }
@@ -323,7 +323,7 @@ export class App {
     this.input.focus({ preventScroll: true });
     // A maximized split gives way to the one focused.
     if (this.maximized && this.maximized !== p) { this.maximized = p; this.showMaximized(); }
-    if (changed) { this.renderAll(); if (p.view) this.host?.emit("buffer.activated", { buffer: p.view.buf, view: p.view }); }
+    if (changed) { this.renderAll(); if (p.view) this.host.emitBuffer("buffer.activated", p.view.buf, [], false); }
   }
   split(dir, ratio = 0.5, buf = null) {
     const old = this.activePane;
@@ -410,7 +410,7 @@ export class App {
         else if (r.others) this.setStatus(`${b.name} is open in ${r.others} other window${r.others === 1 ? "" : "s"}; its unsaved changes stay there`);
       }).catch((e) => this.report(String(e.message || e)));
     }
-    this.host.emit("buffer.closed", { buffer: b });
+    this.host.emitBuffer("buffer.closed", b, [], false);
   }
   async closeBuffer(b) {
     for (const p of this.panes()) for (const v of [...p.views]) if (v.buf === b && !(await this.closeTab(p, v))) return false;
@@ -420,7 +420,7 @@ export class App {
   }
   onViewShown(pane, v) {
     this.rememberLayout();
-    if (pane === this.activePane) this.host?.emit("buffer.activated", { buffer: v.buf, view: v });
+    if (pane === this.activePane) this.host.emitBuffer("buffer.activated", v.buf, [], false);
     this.updateStatus();
   }
   // Show a buffer: in the active pane ("tab"), a new split below ("split")
@@ -609,7 +609,7 @@ export class App {
   watchBuffer(b) {
     b.listeners.add((what, data) => {
       if (what === "edit") this.afterEdit(b, data);
-      if (what === "text") { this.host.emit("buffer.changed", { buffer: b, ops: [], local: false }); this.renderBuffer(b.id); }
+      if (what === "text") { this.host.emitBuffer("buffer.changed", b, [], false); this.renderBuffer(b.id); }
       if (what === "error") this.setStatus(String(data));
     });
   }
@@ -642,7 +642,7 @@ export class App {
     this.docs.set(b.doc, b);
     this.watchBuffer(b);
     await b.ensure(0);
-    this.host.emit("buffer.opened", { buffer: b });
+    this.host.emitBuffer("buffer.opened", b, [], false);
     return b;
   }
 
@@ -698,7 +698,7 @@ export class App {
   afterEdit(b, data) {
     // Editing a preview tab's file keeps it.
     if (data.local) for (const v of b.views) this.keep(v);
-    this.host.emit("buffer.changed", { buffer: b, ops: [data.op], local: data.local });
+    this.host.emitBuffer("buffer.changed", b, [data.op], data.local);
     this.renderBuffer(b.id);
     for (const p of this.panes()) if (p.views.some((v) => v.buf === b)) p.renderTabs();
   }
@@ -722,7 +722,7 @@ export class App {
     }
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
-    this.host.emit("buffer.saved", { buffer: b });
+    this.host.emitBuffer("buffer.saved", b, [], false);
   }
 
   // Save As: a document is written to the file asked for and bound to it
@@ -748,7 +748,7 @@ export class App {
         this.noteRecent(b.path);
         this.renderAll();
         this.updateStatus();
-        this.host.emit("buffer.saved", { buffer: b });
+        this.host.emitBuffer("buffer.saved", b, [], false);
       } else {
         await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
         await this.openFile(path, { line: null, column: 1, place: "tab", preview: null, focus: true });
@@ -786,7 +786,7 @@ export class App {
   }
 
   cursorMoved(v, old) {
-    this.host.emit("cursor.moved", { view: v, buffer: v.buf, old });
+    this.host.emitView("cursor.moved", v);
     this.hidePopup();
     this.updateStatus();
   }
@@ -919,7 +919,7 @@ export class App {
         b.setInfo(ev.info);
         this.renderAll();
         this.updateStatus();
-        this.host.emit("buffer.renamed", { buffer: b, from: ev.from });
+        this.host.emitBuffer("buffer.renamed", b, [], false);
         break;
       }
       case "doc.info": {
@@ -929,7 +929,7 @@ export class App {
         b.setInfo(ev.info);
         this.renderAll();
         this.updateStatus();
-        this.host.emit("buffer.info", { buffer: b });
+        this.host.emitBuffer("buffer.info", b, [], false);
         break;
       }
       case "doc.reloaded": {
@@ -955,7 +955,7 @@ export class App {
         b.setInfo(ev.info);
         this.renderAll();
         this.setStatus(`${b.name} was deleted; its text is kept unsaved (save to write it again)`);
-        this.host.emit("buffer.deleted", { buffer: b });
+        this.host.emitBuffer("buffer.deleted", b, [], false);
         break;
       }
       case "lsp.diagnostics": {
@@ -969,7 +969,7 @@ export class App {
         b.decor.diags = items;
         b.decor.gen++;
         this.renderBuffer(b.id);
-        this.host.emit("diagnostics.changed", { buffer: b });
+        this.host.emitBuffer("diagnostics.changed", b, [], false);
         this.updateStatus();
         break;
       }
@@ -985,7 +985,7 @@ export class App {
       case "lsp.status":
         // A language server was stopped or restarted: {language: running}.
         this.lspStatus = ev.status || {};
-        this.host.emit("lsp.status", { status: { ...this.lspStatus } });
+        this.host.emitStatus({ ...this.lspStatus });
         this.updateStatus();
         break;
       case "workspace.trusted":
@@ -993,7 +993,7 @@ export class App {
         this.trusted = true;
         this.lspLanguages = new Set(ev.lsp);
         document.querySelector("#ws-name").textContent = document.querySelector("#ws-name").textContent.replace(" · restricted", "");
-        this.host.emit("workspace.trusted", {});
+        this.host.emit("workspace.trusted");
         break;
       case "fs.changed":
         this.watches.get(ev.watch)?.(ev.path);
@@ -1377,7 +1377,7 @@ export class App {
     mv("edit.deleteWordForward", "Delete Word Forward", mutate(() => ed().del(P(), true)));
     mv("edit.indent", "Indent", mutate(() => ed().indent(P(), 1)));
     mv("edit.dedent", "Dedent", mutate(() => ed().indent(P(), -1)));
-    mv("edit.escape", "Escape", () => { const v = V(); if (!v) return; v.cursors = [v.primary]; v.primary.anchor = null; this.hidePopup(); this.host.emit("escape", {}); P().scheduleRender(); });
+    mv("edit.escape", "Escape", () => { const v = V(); if (!v) return; v.cursors = [v.primary]; v.primary.anchor = null; this.hidePopup(); this.host.emit("escape"); P().scheduleRender(); });
     cmd("edit.deleteLine", "Delete Line", mutate(() => ed().deleteLine(P())));
     cmd("edit.duplicateLine", "Duplicate Line", mutate(() => ed().duplicateLine(P())));
     cmd("edit.moveLineUp", "Move Line Up", mutate(() => ed().moveLines(P(), -1)));

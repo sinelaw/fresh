@@ -3,13 +3,15 @@
 // description, title?}]}). A panel beside the editor shows the steps; each
 // step opens its file at its line and marks it.
 
+import * as fresh from "../js/api.js";
+import { h } from "../js/ui.js";
+
 // The step's line.
 /** const STEP: Style */
 const STEP = { fg: null, bg: "ui.tour_step_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
 
-export function activate(fresh) {
-  const { h } = fresh;
-  const root = fresh.workspace.root;
+export function activate(app) {
+  const root = fresh.root(app);
   let tour = null, step = 0, panel = null;
   let marked = null; // the buffer holding the current step's mark
   const unmark = () => { if (marked) { marked.decorations("tour").clear(); marked.render(); marked = null; } };
@@ -22,14 +24,14 @@ export function activate(fresh) {
     render();
     unmark();
     if (!s.file) return;
-    const b = await fresh.buffers.open(`${root}/${s.file}`, { line: s.line || null, column: 1, place: "tab", preview: null, focus: true });
+    const b = await fresh.open(app, `${root}/${s.file}`, { line: s.line || null, column: 1, place: "tab", preview: null, focus: true });
     if (b && s.line) {
       const L = b.lines();
       const li = s.line - 1 - (L.firstLine ?? 0);
       const d = b.decorations("tour");
       marked = b;
       if (li >= 0 && li < L.starts.length) {
-        d.overlay(L.starts[li], L.starts[li] + fresh.text.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
+        d.overlay(L.starts[li], L.starts[li] + fresh.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
         d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
       }
       b.render();
@@ -59,19 +61,19 @@ export function activate(fresh) {
   };
   const open = async () => {
     let files = [];
-    try { files = (await fresh.host.list(`${root}/.tours`)).filter((e) => e.name.endsWith(".tour")); } catch {}
-    if (!files.length) return fresh.ui.message("No tours: add .tours/*.tour (CodeTour format)");
-    fresh.ui.pick({
+    try { files = (await fresh.list(app, `${root}/.tours`)).filter((e) => e.name.endsWith(".tour")); } catch {}
+    if (!files.length) return fresh.message(app, "No tours: add .tours/*.tour (CodeTour format)");
+    fresh.pick(app, {
       title: "Code tour",
       items: files.map((f) => ({ label: f.name.replace(/\.tour$/, ""), value: f.path })),
       onAccept: async (it) => {
-        tour = JSON.parse(await fresh.host.read(it.value));
-        panel = fresh.ui.panel({ id: "tour", title: "Tour", place: "right", onClose: unmark });
+        tour = JSON.parse(await fresh.read(app, it.value));
+        panel = fresh.panel(app, { id: "tour", title: "Tour", place: "right", onClose: unmark });
         go(0);
       },
     });
   };
-  fresh.commands.register("tour.open", { title: "Code Tour: Open…", hidden: false, run: open });
-  fresh.commands.register("tour.next", { title: "Code Tour: Next Step", hidden: false, run: () => go(step + 1) });
-  fresh.commands.register("tour.prev", { title: "Code Tour: Previous Step", hidden: false, run: () => go(step - 1) });
+  fresh.register(app, "tour.open", { title: "Code Tour: Open…", hidden: false, run: open });
+  fresh.register(app, "tour.next", { title: "Code Tour: Next Step", hidden: false, run: () => go(step + 1) });
+  fresh.register(app, "tour.prev", { title: "Code Tour: Previous Step", hidden: false, run: () => go(step - 1) });
 }

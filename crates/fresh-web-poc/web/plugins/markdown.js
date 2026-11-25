@@ -11,6 +11,8 @@
 // same buffer shows the text as it is.
 
 import { classify } from "../js/mdstruct.js";
+import * as fresh from "../js/api.js";
+import { h } from "../js/ui.js";
 
 const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path || b.name || "");
 
@@ -31,10 +33,9 @@ const LINK = { fg: "syntax.link", bg: null, bold: false, italic: false, underlin
 /** const COMPOSE: OverlayOptions */
 const COMPOSE = { when: "compose", mark: false, above: false };
 
-export function activate(fresh) {
-  const { h } = fresh;
-  const B = fresh.text.byteLen;
-  const W = fresh.text.width;
+export function activate(app) {
+  const B = fresh.byteLen;
+  const W = fresh.textWidth;
 
   // ---------------------------------------------------------------- inline markup
 
@@ -218,33 +219,33 @@ export function activate(fresh) {
     clearTimeout(timers.get(b.id));
     timers.set(b.id, setTimeout(() => decorate(b), delay));
   };
-  fresh.events.on("buffer.changed", ({ buffer }) => schedule(buffer));
-  fresh.events.on("buffer.activated", ({ buffer }) => schedule(buffer, 0));
+  fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer));
+  fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer, 0));
 
   // ---------------------------------------------------------------- commands
 
   const toggle = () => {
-    const v = fresh.views.active();
-    if (!v || !isMarkdown(v.buffer)) return fresh.ui.message("Not a Markdown file");
+    const v = fresh.activeView(app);
+    if (!v || !isMarkdown(v.buffer)) return fresh.message(app, "Not a Markdown file");
     const on = v.mode !== "compose";
     v.setOptions({ mode: on ? "compose" : "source" });
     if (on) decorate(v.buffer);
-    fresh.ui.message(`Markdown compose: ${on ? "on" : "off"}`);
+    fresh.message(app, `Markdown compose: ${on ? "on" : "off"}`);
   };
   const setWidth = async () => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     if (!v) return;
-    const t = await fresh.ui.input({ title: "Compose width (columns, empty for the setting)", value: String(v.options.composeWidth || fresh.settings.page_width) });
+    const t = await fresh.input(app, { title: "Compose width (columns, empty for the setting)", value: String(v.options.composeWidth || fresh.settings(app).page_width) });
     if (t == null) return;
     const n = parseInt(t, 10);
     v.setOptions({ composeWidth: n > 20 ? n : null });
   };
   const dual = () => {
-    const v = fresh.views.active();
-    if (!v || !isMarkdown(v.buffer)) return fresh.ui.message("Not a Markdown file");
+    const v = fresh.activeView(app);
+    if (!v || !isMarkdown(v.buffer)) return fresh.message(app, "Not a Markdown file");
     v.setOptions({ mode: "source" });
-    fresh.commands.run("view.splitRight");
-    const right = fresh.views.active();
+    fresh.run(app, "view.splitRight");
+    const right = fresh.activeView(app);
     right.setOptions({ mode: "compose" });
     decorate(right.buffer);
   };
@@ -253,7 +254,7 @@ export function activate(fresh) {
   let contents = null;
   const renderContents = () => {
     if (!contents || !contents.open) return;
-    const b = fresh.buffers.active();
+    const b = fresh.activeBuffer(app);
     const L = b && isMarkdown(b) ? b.lines() : null;
     const items = [];
     if (L) {
@@ -268,20 +269,20 @@ export function activate(fresh) {
         key: "toc",
         items,
         render: (it) => h("text", { bold: it.level === 1 }, ["  ".repeat(it.level - 1) + it.text]),
-        onActivate: (it) => fresh.views.active()?.setCursor(it.pos, { center: true }),
+        onActivate: (it) => fresh.activeView(app)?.setCursor(it.pos, { center: true }),
         activateOnClick: true,
       })
       : h("text", { dim: true }, ["No headings"]));
   };
   const showContents = () => {
-    contents = fresh.ui.panel({ id: "md-contents", title: "Contents", place: "sidebar", onClose: null });
+    contents = fresh.panel(app, { id: "md-contents", title: "Contents", place: "sidebar", onClose: null });
     renderContents();
   };
-  fresh.events.on("buffer.activated", renderContents);
-  fresh.events.on("buffer.changed", () => { clearTimeout(timers.get("toc")); timers.set("toc", setTimeout(renderContents, 300)); });
+  fresh.onBuffer(app, "buffer.activated", renderContents);
+  fresh.onBuffer(app, "buffer.changed", () => { clearTimeout(timers.get("toc")); timers.set("toc", setTimeout(renderContents, 300)); });
 
-  fresh.commands.register("markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
-  fresh.commands.register("markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });
-  fresh.commands.register("markdown.dual", { title: "Markdown: Source and Compose Side by Side", hidden: false, run: dual });
-  fresh.commands.register("markdown.contents", { title: "Markdown: Contents", hidden: false, run: showContents });
+  fresh.register(app, "markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
+  fresh.register(app, "markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });
+  fresh.register(app, "markdown.dual", { title: "Markdown: Source and Compose Side by Side", hidden: false, run: dual });
+  fresh.register(app, "markdown.contents", { title: "Markdown: Contents", hidden: false, run: showContents });
 }

@@ -4,19 +4,21 @@
 // position moves with every edit, anyone's; when its file was closed, the
 // place it was set at is opened instead. Bookmarks: List picks one.
 
-export function activate(fresh) {
+import * as fresh from "../js/api.js";
+
+export function activate(app) {
   const marks = new Map(); // n -> {path, pos} as set (for a closed file)
   const set = (n) => (b) => b.decorations(`bm${n}`);
   // Where bookmark `n` is now: {buffer, pos}, or null.
   const where = (n) => {
-    for (const b of fresh.buffers.all()) {
+    for (const b of fresh.buffers(app)) {
       const g = set(n)(b).gutters()[0];
       if (g) return { buffer: b, pos: g.pos };
     }
     return null;
   };
   const toggle = (n) => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     if (!v) return;
     const b = v.buffer;
     const now = where(n);
@@ -24,7 +26,7 @@ export function activate(fresh) {
     if (now) {
       set(n)(now.buffer).clear();
       now.buffer.render();
-      if (now.buffer.id === b.id && line(b, now.pos) === line(b, v.cursor)) { marks.delete(n); fresh.ui.message(`Bookmark ${n} cleared`); return; }
+      if (now.buffer.id === b.id && line(b, now.pos) === line(b, v.cursor)) { marks.delete(n); fresh.message(app, `Bookmark ${n} cleared`); return; }
     }
     const L = b.lines();
     const i = line(b, v.cursor);
@@ -32,29 +34,29 @@ export function activate(fresh) {
     set(n)(b).gutter(pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
     b.render();
     marks.set(n, { path: b.path, pos });
-    fresh.ui.message(`Bookmark ${n} set`);
+    fresh.message(app, `Bookmark ${n} set`);
   };
   const jump = async (n) => {
     const at = where(n);
     if (at) {
-      fresh.buffers.show(at.buffer, "tab");
-      await fresh.views.active()?.setCursor(at.pos, { center: true });
+      fresh.show(app, at.buffer, "tab");
+      await fresh.activeView(app)?.setCursor(at.pos, { center: true });
       return;
     }
     const m = marks.get(n);
-    if (!m || !m.path) { fresh.ui.message(`No bookmark ${n}`); return; }
-    const b = await fresh.buffers.open(m.path, { line: null, column: 1, place: "tab", preview: null, focus: true });
+    if (!m || !m.path) { fresh.message(app, `No bookmark ${n}`); return; }
+    const b = await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview: null, focus: true });
     if (!b) return;
     set(n)(b).gutter(m.pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
-    await fresh.views.active()?.setCursor(Math.min(m.pos, b.length), { center: true });
+    await fresh.activeView(app)?.setCursor(Math.min(m.pos, b.length), { center: true });
   };
   for (let n = 0; n <= 9; n++) {
-    fresh.commands.register(`bookmark.set${n}`, { title: `Bookmark: Toggle ${n}`, hidden: true, run: () => toggle(n) });
-    fresh.commands.register(`bookmark.jump${n}`, { title: `Bookmark: Jump to ${n}`, hidden: true, run: () => jump(n) });
-    fresh.keys.bind(`C-S-${n}`, `bookmark.set${n}`);
-    fresh.keys.bind(`M-${n}`, `bookmark.jump${n}`);
+    fresh.register(app, `bookmark.set${n}`, { title: `Bookmark: Toggle ${n}`, hidden: true, run: () => toggle(n) });
+    fresh.register(app, `bookmark.jump${n}`, { title: `Bookmark: Jump to ${n}`, hidden: true, run: () => jump(n) });
+    fresh.bindKey(app, `C-S-${n}`, `bookmark.set${n}`);
+    fresh.bindKey(app, `M-${n}`, `bookmark.jump${n}`);
   }
-  fresh.commands.register("bookmark.list", {
+  fresh.register(app, "bookmark.list", {
     title: "Bookmarks: List…",
     hidden: false,
     run: () => {
@@ -66,9 +68,9 @@ export function activate(fresh) {
         const name = at ? at.buffer.name : m.path.split("/").pop();
         items.push({ label: `${n}  ${name}`, detail: at ? "open" : "closed file", value: n });
       }
-      fresh.ui.pick({ title: "Bookmarks", items: items.length ? items : [{ label: "No bookmarks (Ctrl+Shift+0…9 sets one)", value: null }], onAccept: (it) => it.value != null && jump(it.value) });
+      fresh.pick(app, { title: "Bookmarks", items: items.length ? items : [{ label: "No bookmarks (Ctrl+Shift+0…9 sets one)", value: null }], onAccept: (it) => it.value != null && jump(it.value) });
     },
   });
-  fresh.menus.add("Go", null);
-  fresh.menus.add("Go", { command: "bookmark.list", label: "Bookmarks…" });
+  fresh.addMenuItem(app, "Go", null);
+  fresh.addMenuItem(app, "Go", { command: "bookmark.list", label: "Bookmarks…" });
 }

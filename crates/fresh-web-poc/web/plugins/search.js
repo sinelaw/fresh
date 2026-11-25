@@ -16,6 +16,9 @@
 // Replace All rewrites them through the documents, so open editors, other
 // clients and undo all see the change.
 
+import * as fresh from "../js/api.js";
+import { h } from "../js/ui.js";
+
 // The searched range, the matches and the current match.
 /** const SCOPE: Style */
 const SCOPE = { fg: null, bg: "search.scope_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
@@ -30,8 +33,7 @@ const CURRENT = { fg: "search.current_fg", bg: "search.current_bg", bold: true, 
 /** const match: (Number, Number, String | Null) => Match */
 const match = (pos, len, text) => ({ pos, len, text });
 
-export function activate(fresh) {
-  const { h } = fresh;
+export function activate(app) {
   const opts = { case: false, word: false, regex: false };
   let query = "";
   let replacement = "";
@@ -47,7 +49,7 @@ export function activate(fresh) {
   const asking = new Map();
   const questionIn = (b) => (b ? asking.get(b.id) : undefined);
   // The find bar, if it is on screen.
-  const findBar = () => fresh.ui.shown("find");
+  const findBar = () => fresh.shown(app, "find");
 
   const toRegex = (q, global = true) => {
     let src = opts.regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,7 +57,7 @@ export function activate(fresh) {
     return new RegExp(src, (global ? "g" : "") + (opts.case ? "" : "i") + "u");
   };
 
-  const buffer = () => fresh.buffers.active();
+  const buffer = () => fresh.activeBuffer(app);
   const deco = (b) => b.decorations("search");
   // The range searched (Find in Selection): an overlay, so edits move it.
   const scopeDeco = (b) => b.decorations("search-scope");
@@ -84,7 +86,7 @@ export function activate(fresh) {
     const out = [];
     const scope = scopeOf(b);
     L.lines.forEach((line, i) => {
-      if (scope != null && (L.starts[i] + fresh.text.byteLen(line) < scope.start || L.starts[i] > scope.end)) return;
+      if (scope != null && (L.starts[i] + fresh.byteLen(line) < scope.start || L.starts[i] > scope.end)) return;
       re.lastIndex = 0;
       for (;;) {
         const m = re.exec(line);
@@ -93,8 +95,8 @@ export function activate(fresh) {
         if (found === "") { re.lastIndex++; continue; }
         // A global regex's lastIndex is the end of the match it found.
         const index = re.lastIndex - found.length;
-        const pos = L.starts[i] + fresh.text.byteLen(line.slice(0, index));
-        const len = fresh.text.byteLen(found);
+        const pos = L.starts[i] + fresh.byteLen(line.slice(0, index));
+        const len = fresh.byteLen(found);
         if (scope != null && (pos < scope.start || pos + len > scope.end)) continue;
         out.push(match(pos, len, found));
         if (out.length > 20000) return;
@@ -116,7 +118,7 @@ export function activate(fresh) {
     const b = buffer();
     if (!b) return;
     matches = findAll(b);
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     current = matches.findIndex((m) => m.pos >= (v ? v.cursor : 0));
     if (current < 0 && matches.length) current = 0;
     mark();
@@ -125,18 +127,18 @@ export function activate(fresh) {
 
   const go = async (dir) => {
     const b = buffer();
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     if (!b || !v || !query) return;
     if (!b.whole) {
       // A huge file: the server finds the next match (plain text).
       const sel = v.selection;
       const start = dir > 0 ? (sel ? sel.end : v.cursor) : (sel ? sel.start : v.cursor);
-      const res = await fresh.host.searchDocument(b, query, start, dir < 0);
-      if (res == null) { fresh.ui.message(`Not found: ${query}`); return; }
-      matches = [match(res, fresh.text.byteLen(query), null)];
+      const res = await fresh.searchDocument(app, b, query, start, dir < 0);
+      if (res == null) { fresh.message(app, `Not found: ${query}`); return; }
+      matches = [match(res, fresh.byteLen(query), null)];
       current = 0;
     } else {
-      if (!matches.length) { fresh.ui.message(`Not found: ${query}`); renderBar(); return; }
+      if (!matches.length) { fresh.message(app, `Not found: ${query}`); renderBar(); return; }
       const at = v.cursor;
       if (dir > 0) {
         const sel = v.selection;
@@ -169,7 +171,7 @@ export function activate(fresh) {
   // once, back to where it started), and the answer acts on it.
   const ask = async (from) => {
     const b = buffer();
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     const q = questionIn(b);
     if (!q) return;
     update();
@@ -185,9 +187,9 @@ export function activate(fresh) {
   };
   const startAsking = async () => {
     const b = buffer();
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     if (!b || !v || !query) return;
-    if (!b.whole) { fresh.ui.message("A huge file is searched by the server: Query Replace needs a file held whole"); return; }
+    if (!b.whole) { fresh.message(app, "A huge file is searched by the server: Query Replace needs a file held whole"); return; }
     const sel = v.selection;
     const q = { start: sel ? sel.start : v.cursor, wrapped: false, done: 0, of: 0 };
     asking.set(b.id, q);
@@ -202,7 +204,7 @@ export function activate(fresh) {
     const { done, of } = q;
     asking.delete(b.id);
     renderBar();
-    fresh.ui.message(of ? `Replaced ${done} of ${of} match${of === 1 ? "" : "es"}` : `Not found: ${query}`);
+    fresh.message(app, of ? `Replaced ${done} of ${of} match${of === 1 ? "" : "es"}` : `Not found: ${query}`);
   };
   // An answer to the question: y, n, a (or !), q (or c).
   const answer = async (k) => {
@@ -214,7 +216,7 @@ export function activate(fresh) {
       const text = replacementFor(m);
       b.replace(m.pos, m.pos + m.len, text);
       q.done++; q.of++;
-      await ask(m.pos + fresh.text.byteLen(text));
+      await ask(m.pos + fresh.byteLen(text));
     } else if (k === "n") {
       q.of++;
       await ask(m.pos + Math.max(1, m.len));
@@ -238,12 +240,12 @@ export function activate(fresh) {
   // Replace the current match (marked in the buffer) and go to the next.
   const replaceOne = async () => {
     const b = buffer();
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     const m = matches[current];
     if (!b || !v || !m) { await go(1); return; }
     const text = replacementFor(m);
     b.replace(m.pos, m.pos + m.len, text);
-    await v.setCursor(m.pos + fresh.text.byteLen(text), { center: false });
+    await v.setCursor(m.pos + fresh.byteLen(text), { center: false });
     update();
     go(1);
   };
@@ -264,7 +266,7 @@ export function activate(fresh) {
     const n = matches.length;
     b.edit(ops);
     update();
-    fresh.ui.message(`Replaced ${n} occurrence${n === 1 ? "" : "s"}`);
+    fresh.message(app, `Replaced ${n} occurrence${n === 1 ? "" : "s"}`);
   };
 
   // The match case / whole word / regex toggles; `after` runs on a change.
@@ -280,8 +282,8 @@ export function activate(fresh) {
       key: "scope", on: !!scopeOf(b), title: "Find in selection",
       onChange: (on) => {
         if (!b) return;
-        const sel = fresh.views.active()?.selection;
-        if (on && !sel) { fresh.ui.message("Select the text to search in first"); return; }
+        const sel = fresh.activeView(app)?.selection;
+        if (on && !sel) { fresh.message(app, "Select the text to search in first"); return; }
         if (on && sel != null) setScope(b, sel);
         else clearScope(b);
         update();
@@ -347,7 +349,7 @@ export function activate(fresh) {
   // (or `inSelection`) is the range searched. `ask`: a replacement asks at
   // each match.
   const open = (replace, { inSelection, ask }) => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     const b = buffer();
     const sel = v?.selection;
     const t = sel != null && v.buffer.whole ? v.buffer.text(sel.start, sel.end) : null;
@@ -359,7 +361,7 @@ export function activate(fresh) {
     showReplace = replace;
     confirmEach = ask;
     asking.clear();
-    const bar = fresh.ui.panel({ id: "find", title: "Find", place: "bar", onClose: () => { asking.clear(); const ab = buffer(); if (ab) { deco(ab).clear(); clearScope(ab); } } });
+    const bar = fresh.panel(app, { id: "find", title: "Find", place: "bar", onClose: () => { asking.clear(); const ab = buffer(); if (ab) { deco(ab).clear(); clearScope(ab); } } });
     update();
     bar.focus(replace && query ? "replace" : "find");
   };
@@ -369,7 +371,7 @@ export function activate(fresh) {
   // cursor) is the query, searched as it is written; its matches are
   // marked until Escape.
   const findSelection = async (dir) => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     const b = buffer();
     if (!v || !b) return;
     const sel = v.selection;
@@ -378,7 +380,7 @@ export function activate(fresh) {
     if (!onMatch) {
       const word = sel != null ? sel : wordAt(b, v.cursor);
       const t = word.start < word.end ? b.text(word.start, word.end) : null;
-      if (t == null || t.includes("\n")) { fresh.ui.message("Select the text to find first"); return; }
+      if (t == null || t.includes("\n")) { fresh.message(app, "Select the text to find first"); return; }
       query = opts.regex ? t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : t;
       if (findBar()) clearScope(b);
       if (sel == null) await v.select(word.start, word.end, { center: false });
@@ -395,38 +397,38 @@ export function activate(fresh) {
     if (i < 0) return none;
     const line = L.lines[i];
     let col = 0, bytes = 0;
-    while (col < line.length && bytes < pos - L.starts[i]) { bytes += fresh.text.byteLen(line[col]); col++; }
+    while (col < line.length && bytes < pos - L.starts[i]) { bytes += fresh.byteLen(line[col]); col++; }
     let s = col, e = col;
     while (s > 0 && /[\p{L}\p{N}_]/u.test(line[s - 1])) s--;
     while (e < line.length && /[\p{L}\p{N}_]/u.test(line[e])) e++;
     if (s === e) return none;
-    return { start: L.starts[i] + fresh.text.byteLen(line.slice(0, s)), end: L.starts[i] + fresh.text.byteLen(line.slice(0, e)) };
+    return { start: L.starts[i] + fresh.byteLen(line.slice(0, s)), end: L.starts[i] + fresh.byteLen(line.slice(0, e)) };
   };
 
-  fresh.commands.register("search.find", { title: "Find…", hidden: false, run: () => open(false, { inSelection: false, ask: false }) });
-  fresh.commands.register("search.replace", { title: "Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: false }) });
-  fresh.commands.register("search.findInSelection", { title: "Find in Selection…", hidden: false, run: () => open(false, { inSelection: true, ask: false }) });
-  fresh.commands.register("search.queryReplace", { title: "Query Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: true }) });
-  fresh.commands.register("search.findNext", { title: "Find Next", hidden: false, run: () => go(1) });
-  fresh.commands.register("search.findPrevious", { title: "Find Previous", hidden: false, run: () => go(-1) });
-  fresh.commands.register("search.findSelectionNext", { title: "Find Selection Next", hidden: false, run: () => findSelection(1) });
-  fresh.commands.register("search.findSelectionPrevious", { title: "Find Selection Previous", hidden: false, run: () => findSelection(-1) });
-  fresh.commands.register("search.clear", { title: "Clear Search Highlights", hidden: false, run: () => clearMarks() });
-  fresh.keys.bind("C-M-r", "search.queryReplace");
-  fresh.keys.bind("C-F3", "search.findSelectionNext");
-  fresh.keys.bind("M-n", "search.findSelectionNext");
-  fresh.keys.bind("C-S-F3", "search.findSelectionPrevious");
-  fresh.keys.bind("M-p", "search.findSelectionPrevious");
+  fresh.register(app, "search.find", { title: "Find…", hidden: false, run: () => open(false, { inSelection: false, ask: false }) });
+  fresh.register(app, "search.replace", { title: "Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: false }) });
+  fresh.register(app, "search.findInSelection", { title: "Find in Selection…", hidden: false, run: () => open(false, { inSelection: true, ask: false }) });
+  fresh.register(app, "search.queryReplace", { title: "Query Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: true }) });
+  fresh.register(app, "search.findNext", { title: "Find Next", hidden: false, run: () => go(1) });
+  fresh.register(app, "search.findPrevious", { title: "Find Previous", hidden: false, run: () => go(-1) });
+  fresh.register(app, "search.findSelectionNext", { title: "Find Selection Next", hidden: false, run: () => findSelection(1) });
+  fresh.register(app, "search.findSelectionPrevious", { title: "Find Selection Previous", hidden: false, run: () => findSelection(-1) });
+  fresh.register(app, "search.clear", { title: "Clear Search Highlights", hidden: false, run: () => clearMarks() });
+  fresh.bindKey(app, "C-M-r", "search.queryReplace");
+  fresh.bindKey(app, "C-F3", "search.findSelectionNext");
+  fresh.bindKey(app, "M-n", "search.findSelectionNext");
+  fresh.bindKey(app, "C-S-F3", "search.findSelectionPrevious");
+  fresh.bindKey(app, "M-p", "search.findSelectionPrevious");
   // The marks of a search made without the bar go with Escape.
   const clearMarks = () => { const b = buffer(); matches = []; current = -1; if (b) { deco(b).clear(); b.render(); } };
-  fresh.keys.bind("C-f", "search.find");
-  fresh.keys.bind("C-h", "search.replace");
-  fresh.keys.bind("C-r", "search.replace");
-  fresh.keys.bind("F3", "search.findNext");
-  fresh.keys.bind("S-F3", "search.findPrevious");
-  fresh.events.on("buffer.changed", ({ buffer: b }) => { const a = buffer(); if (findBar() != null && a != null && b.id === a.id) update(); });
-  fresh.events.on("buffer.activated", () => { if (findBar()) update(); });
-  fresh.events.on("escape", () => { if (findBar()) close(); else clearMarks(); });
+  fresh.bindKey(app, "C-f", "search.find");
+  fresh.bindKey(app, "C-h", "search.replace");
+  fresh.bindKey(app, "C-r", "search.replace");
+  fresh.bindKey(app, "F3", "search.findNext");
+  fresh.bindKey(app, "S-F3", "search.findPrevious");
+  fresh.onBuffer(app, "buffer.changed", (b) => { const a = buffer(); if (findBar() != null && a != null && b.id === a.id) update(); });
+  fresh.onBuffer(app, "buffer.activated", () => { if (findBar()) update(); });
+  fresh.on(app, "escape", () => { if (findBar()) close(); else clearMarks(); });
 
   // ---------------------------------------------------------------- the workspace
 
@@ -436,7 +438,7 @@ export function activate(fresh) {
     pq.busy = true;
     renderPanel();
     try {
-      const r = await fresh.host.search(pq.query, { regex: opts.regex, case: opts.case, whole: opts.word, max: 5000 });
+      const r = await fresh.searchWorkspace(app, pq.query, { regex: opts.regex, case: opts.case, whole: opts.word, max: 5000 });
       pq.results = r.matches;
       pq.files = r.files;
       pq.truncated = r.truncated;
@@ -463,8 +465,8 @@ export function activate(fresh) {
   // tab of its own.
   const openMatch = async (m, preview) => {
     if (!m || m.header) return;
-    const b = await fresh.buffers.open(m.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
-    const v = fresh.views.active();
+    const b = await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
+    const v = fresh.activeView(app);
     const L = b?.lines();
     if (!L) return;
     const i = m.line - (L.firstLine ?? 0);
@@ -481,7 +483,7 @@ export function activate(fresh) {
     let n = 0;
     const re = toRegex(pq.query, false);
     for (const [path, list] of byFile) {
-      const b = await fresh.buffers.load(path);
+      const b = await fresh.load(app, path);
       const L = b.lines();
       /** const ops: Op[] */
       const ops = [];
@@ -496,11 +498,11 @@ export function activate(fresh) {
       }
       b.edit(ops);
     }
-    fresh.ui.message(`Replaced ${n} match${n === 1 ? "" : "es"} in ${byFile.size} file(s); not saved yet (Save All)`);
+    fresh.message(app, `Replaced ${n} match${n === 1 ? "" : "es"} in ${byFile.size} file(s); not saved yet (Save All)`);
     runSearch();
   };
   const renderPanel = () => {
-    const panel = fresh.ui.shown("project-search");
+    const panel = fresh.shown(app, "project-search");
     if (!panel) return;
     const status = pq.busy ? "searching…" : pq.error ? pq.error : pq.query ? `${pq.results.length}${pq.truncated ? "+" : ""} matches in ${pq.files} files` : "";
     panel.render(h("col", {}, [
@@ -527,17 +529,17 @@ export function activate(fresh) {
     ]));
   };
   const openPanel = () => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     const sel = v?.selection;
     if (sel != null && v.buffer.whole) {
       const t = v.buffer.text(sel.start, sel.end);
       if (t != null && !t.includes("\n")) pq.query = t;
     }
-    const panel = fresh.ui.panel({ id: "project-search", title: "Search", place: "bottom", onClose: null });
+    const panel = fresh.panel(app, { id: "project-search", title: "Search", place: "bottom", onClose: null });
     renderPanel();
     panel.focus("q");
     if (pq.query) runSearch();
   };
-  fresh.commands.register("search.project", { title: "Search in Workspace…", hidden: false, run: openPanel });
-  fresh.keys.bind("C-S-f", "search.project");
+  fresh.register(app, "search.project", { title: "Search in Workspace…", hidden: false, run: openPanel });
+  fresh.bindKey(app, "C-S-f", "search.project");
 }

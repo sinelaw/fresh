@@ -2,7 +2,7 @@
 // the editor. Its rows are commands from the registry (a row whose command
 // no plugin registered is left out), shown with their keys and, for
 // toggles, a check read when the menu opens. Plugins add rows with
-// `fresh.menus.add(menu, row)`.
+// `fresh.addMenuItem(app, menu, row)` (api.js).
 //
 // The mouse: a title opens its menu, moving onto another title switches to
 // it. The keyboard: F10 opens the first menu, Alt+F / E / V / S / G / X / H

@@ -1,23 +1,7 @@
-// The plugin API. Plugins are ES modules in `web/plugins/`, each exporting
-// `activate(fresh)`; the client's own features (search, git, LSP panels,
-// markdown compose, the explorer...) are written against the same API.
-//
-//   fresh.commands.register("git.blame", { title: "Git: Toggle Blame", hidden: false, run })
-//   fresh.keys.bind("C-S-g", "git.log")
-//   fresh.events.on("buffer.changed", ({ buffer, ops }) => ...)
-//   const deco = buffer.decorations("compose")   // this plugin's set
-//   deco.conceal(s, e, { text: "•", style, reveal: { start, end }, when: "always" })
-//   fresh.ui.panel({ id, title, place: "bottom", onClose: null }).render(h("list", {...}))
-//   await fresh.host.run("git", ["log", "--oneline"])
-//
-// Events: "buffer.opened", "buffer.closed", "buffer.changed" ({buffer, ops,
-// local}), "buffer.saved", "buffer.activated", "cursor.moved" ({view}),
-// "view.resized" ({view}), "app.ready".
-
-import { rpc, RpcError } from "./rpc.js";
-import { h } from "./ui.js";
-import { byteLen } from "./ot.js";
-import { stringWidth } from "./layout.js";
+// What plugins hold of the application (the API itself is api.js): handles
+// on buffers and views, a buffer's decoration sets, and the plugins' event
+// handlers, on four channels: plain events, buffer events (with the ops of a
+// change), view events and the language servers' status.
 
 // A plugin's decorations in one buffer, cleared and replaced as a unit or by
 // range. Positions are byte offsets; every one moves with edits.
@@ -63,11 +47,10 @@ class DecorationSet {
   overlays() { return this.d.overlays.filter((o) => o.ns === this.ns).map((o) => ({ start: o.start, end: o.end })); }
 }
 
-class BufferHandle {
-  constructor(app, buf, plugin) {
+export class BufferHandle {
+  constructor(app, buf) {
     this.app = app;
     this.b = buf;
-    this.plugin = plugin;
   }
   get id() { return this.b.id; }
   get path() { return this.b.path; }
@@ -88,8 +71,9 @@ class BufferHandle {
   delete(start, end) { if (end > start) this.edit([{ t: "del", pos: start, len: end - start }]); }
   replace(start, end, text) { const ops = []; if (end > start) ops.push({ t: "del", pos: start, len: end - start }); if (text) ops.push({ t: "ins", pos: start, text }); this.edit(ops); }
   save() { return this.app.saveBuffer(this.b); }
-  decorations(name) { return new DecorationSet(this.b, `${this.plugin}:${name}`); }
-  views() { return [...this.b.views].map((v) => new ViewHandle(this.app, v, this.plugin)); }
+  // The decoration set `name` of this buffer (each plugin names its own).
+  decorations(name) { return new DecorationSet(this.b, name); }
+  views() { return [...this.b.views].map((v) => new ViewHandle(this.app, v)); }
   setEntries(entries) { this.b.setEntries(entries); this.app.renderBuffer(this.b.id); }
   propsAt(pos) { return this.b.propsAt(pos); }
   // Foldable blocks, as document line ranges [{start, end}] (a language
@@ -98,13 +82,12 @@ class BufferHandle {
   render() { this.app.renderBuffer(this.b.id); }
 }
 
-class ViewHandle {
-  constructor(app, v, plugin) {
+export class ViewHandle {
+  constructor(app, v) {
     this.app = app;
     this.v = v;
-    this.plugin = plugin;
   }
-  get buffer() { return new BufferHandle(this.app, this.v.buf, this.plugin); }
+  get buffer() { return new BufferHandle(this.app, this.v.buf); }
   get cursor() { return this.v.cursors[0].pos; }
   get cursors() { return this.v.cursors.map((c) => ({ pos: c.pos, anchor: c.anchor })); }
   get selection() { return this.v.selection(); }
@@ -128,13 +111,52 @@ class ViewHandle {
 export class Host {
   constructor(app) {
     this.app = app;
-    this.handlers = new Map(); // event -> [fn]
+    this.plain = new Map(); // event -> [() => …]
+    this.bufferEvents = new Map(); // event -> [(buffer, {ops, local}) => …]
+    this.viewEvents = new Map(); // event -> [(view) => …]
+    this.statusHandlers = []; // [(status) => …]
     this.plugins = [];
   }
 
-  emit(event, data) {
-    for (const f of this.handlers.get(event) || []) {
-      try { f(data); } catch (e) { this.app.report(`${event}: ${e.stack || e}`); }
+  // A handler that threw is reported; the others still run.
+  failed(event, e) { this.app().report(`${event}: ${String(e)}`); }
+
+  on(event, f) {
+    const list = this.plain.get(event);
+    if (list) list.push(f);
+    else this.plain.set(event, [f]);
+  }
+  onBuffer(event, f) {
+    const list = this.bufferEvents.get(event);
+    if (list) list.push(f);
+    else this.bufferEvents.set(event, [f]);
+  }
+  onView(event, f) {
+    const list = this.viewEvents.get(event);
+    if (list) list.push(f);
+    else this.viewEvents.set(event, [f]);
+  }
+  onStatus(f) { this.statusHandlers.push(f); }
+
+  emit(event) {
+    for (const f of this.plain.get(event) || []) {
+      try { f(); } catch (e) { this.failed(event, e); }
+    }
+  }
+  // `ops`: what changed ("buffer.changed"), `local`: typed here.
+  emitBuffer(event, b, ops, local) {
+    for (const f of this.bufferEvents.get(event) || []) {
+      try { f(b, { ops, local }); } catch (e) { this.failed(event, e); }
+    }
+  }
+  emitView(event, v) {
+    for (const f of this.viewEvents.get(event) || []) {
+      try { f(v); } catch (e) { this.failed(event, e); }
+    }
+  }
+  emitStatus(status) {
+    for (const f of this.statusHandlers) {
+      try { f(status); } catch (e) { this.failed("lsp.status", e); }
     }
   }
 
@@ -143,151 +165,11 @@ export class Host {
   async load(plugins) {
     for (const { name, activate } of plugins) {
       try {
-        await activate(this.api(name));
+        await activate(this.app());
         this.plugins.push(name);
       } catch (e) {
-        this.app.report(`plugin ${name}: ${e.stack || e}`);
+        this.failed(`plugin ${name}`, e);
       }
     }
-  }
-
-  buffer(b, name) { return b ? new BufferHandle(this.app(), b, name) : null; }
-  view(v, name) { return v ? new ViewHandle(this.app(), v, name) : null; }
-
-  api(name) {
-    const app = this.app();
-    const host = this;
-    const wrapEvent = (data) => {
-      const out = { ...data };
-      if (data.buffer) out.buffer = host.buffer(data.buffer, name);
-      if (data.view) out.view = host.view(data.view, name);
-      return out;
-    };
-    return {
-      h,
-      workspace: { get root() { return app.root; }, get host() { return app.hostName; }, get trusted() { return app.trusted; } },
-      settings: app.settings,
-      // Remember a change a plugin made to `settings` (in the browser) and redraw.
-      saveSettings: () => app.saveSettings(),
-      commands: {
-        // `spec`: {title, hidden, run}; a hidden command is left out of the palette.
-        register: (id, spec) => app.commands.set(id, { title: spec.title, run: spec.run, source: name, hidden: spec.hidden }),
-        run: (id, arg) => app.run(id, arg),
-        all: () => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: c.hidden })),
-      },
-      keys: {
-        bind: (key, command) => app.bindKey(key, command),
-        for: (command) => app.keyFor(command),
-        // The first key for a command as people write it ("Ctrl+Shift+K").
-        label: (command) => app.keyLabel(command),
-        // The effective keymap: {key: command}.
-        all: () => app.keymap(),
-        // The user's own bindings (saved in the browser), over the defaults.
-        user: () => ({ ...app.userKeys }),
-        setUser: (key, command) => { if (command) app.userKeys[key] = command; else delete app.userKeys[key]; app.saveKeys(); },
-        // The next key pressed, as the keymap names it.
-        capture: () => app.captureKey(),
-      },
-      events: {
-        on: (event, f) => {
-          if (!host.handlers.has(event)) host.handlers.set(event, []);
-          host.handlers.get(event).push((d) => f(wrapEvent(d)));
-        },
-      },
-      buffers: {
-        active: () => host.buffer(app.view()?.buf, name),
-        all: () => [...app.buffers.values()].map((b) => host.buffer(b, name)),
-        byPath: (p) => host.buffer([...app.buffers.values()].find((b) => b.path === p), name),
-        // `at`: OpenOptions (types/fresh.d.js).
-        open: async (path, at) => { const v = await app.openFile(path, at); return v ? host.buffer(v.buf, name) : null; },
-        // The buffer for a file, without showing it.
-        load: async (path) => host.buffer(await app.loadFile(path), name),
-        // A VirtualOptions (types/fresh.d.js): {name, entries: [{text, props, style}], mode, readOnly, language, keep, place, lineNumbers}
-        createVirtual: (o) => host.buffer(app.createVirtual(o), name),
-        show: (buffer, place) => app.showBuffer(buffer.b, place, { preview: null, focus: true }),
-        close: (buffer) => app.closeBuffer(buffer.b),
-      },
-      views: {
-        // Scroll two buffers' views together through a line mapping:
-        // aToB(line of a) -> line of b, bToA the other way. Returns the
-        // function that unlinks them.
-        linkScroll: (a, b, aToB, bToA) => app.linkScroll(a.b, b.b, aToB, bToA),
-        active: () => host.view(app.view(), name),
-        all: () => app.panes().flatMap((p) => p.views).map((v) => host.view(v, name)),
-      },
-      // A palette mode for a prefix: fresh.palette.provide("@", {hint, items(q)})
-      palette: { provide: (prefix, o) => app.prompt.provide(prefix, o) },
-      // A row at the end of a menu bar menu: fresh.menus.add("Go", {command, label})
-      menus: { add: (menu, row) => app.menubar.add(menu, row) },
-      // Keys for a buffer kind: fresh.modes.define("git-log", { Enter: fn, q: fn })
-      modes: { define: (mode, keys) => app.modes.set(mode, keys) },
-      ui: {
-        // A PanelOptions (types/fresh.d.js).
-        panel: (o) => app.ui.panel(o),
-        // The panel `id` if it is on screen, else undefined.
-        shown: (id) => app.ui.shown(id),
-        // A context menu: items [{label, run}] (null: separator) at {x, y}.
-        menu: (items, at) => app.ui.menu(items, at),
-        // Pick from a list: {title, items: [{label, detail, value}], onAccept, onChange}
-        pick: (o) => app.prompt.open(o),
-        // Ask for text: {title, value} -> Promise<string|null>
-        input: (o) => app.prompt.ask(o),
-        // Ask yes or no: (title, yes label) -> Promise<boolean>
-        confirm: (title, yes) => app.confirm(title, yes),
-        // Ask with a few answers: (title, [{label, value}]) -> Promise<value|null>
-        choose: (title, answers) => app.choose(title, answers),
-        status: (id) => app.statusItem(id),
-        message: (text) => app.setStatus(text),
-        // A failure's text in the status bar: a refused request's detail
-        // (the server's own words), else the error as written.
-        error: (e) => app.setStatus(e instanceof RpcError ? e.detail : String(e)),
-        popup: (text, at) => app.popup(text, at),
-        // Colours: {"--var": css} for the page's colour variables (see
-        // style.css; theme keys resolve to them).
-        theme: (vars) => app.applyTheme(vars),
-      },
-      host: {
-        run: (program, args = [], opts = {}) => app.runProcess(program, args, opts),
-        watch: (path, f) => app.watch(path, f),
-        read: async (path) => (await rpc("fs.read", { path })).text,
-        write: (path, text) => rpc("fs.write", { path, text }),
-        list: async (path) => (await rpc("fs.list", { path })).entries,
-        stat: (path) => rpc("fs.stat", { path }),
-        create: (path, dir) => rpc("fs.create", { path, dir }),
-        rename: (from, to) => rpc("fs.rename", { from, to }),
-        remove: (path) => rpc("fs.delete", { path }),
-        copy: (from, to) => rpc("fs.copy", { from, to }),
-        find: async (query) => (await rpc("fs.find", { query })).files,
-        search: (query, o = {}) => rpc("search.project", { query, ...o }),
-        // The next (or previous) occurrence of `query` in a document, found by
-        // the server: how a huge file is searched.
-        searchDocument: async (buffer, query, from, backward) => (await rpc("doc.search", { doc: buffer.b.doc, query, from, backward })).pos,
-        // The editor's themes: [{key, name}], and one fully resolved.
-        themes: async () => (await rpc("theme.list", {})).themes,
-        theme: (key) => rpc("theme.get", { key }),
-      },
-      lsp: {
-        available: (buffer) => app.lspAvailable(buffer.b),
-        request: (buffer, method, params = {}, pos) => rpc("lsp.call", { doc: buffer.b.doc, method, params, pos }),
-        // LSP (line, character) to a byte offset in a held buffer.
-        offset: (buffer, line, character) => app.lspOffset(buffer.b, line, character),
-        // A byte offset in a held buffer as an LSP {line, character} (UTF-16).
-        position: (buffer, pos) => app.lspPosition(buffer.b, pos),
-        diagnostics: (buffer) => buffer.b.decor.diags.map((d) => ({ ...d })),
-        // The languages with a server on the host, and which servers run: {language: running}.
-        languages: () => [...(app.lspLanguages || [])],
-        status: () => rpc("lsp.status", {}),
-        // A request about the workspace (`workspace/symbol`) to `language`'s
-        // running server.
-        requestWorkspace: (language, method, params = {}) => rpc("lsp.call", { language, method, params }),
-        // Stop a language's server (until restarted), or start it again;
-        // both resolve with {language: running}.
-        stop: (language) => rpc("lsp.stop", { language }),
-        restart: (language) => rpc("lsp.restart", { language }),
-      },
-      // Text shown when the pointer rests on a position: f(buffer, pos) -> string|null.
-      hover: { provide: (f) => app.hoverProvide((b, p) => f(host.buffer(b, name), p)) },
-      text: { byteLen, width: stringWidth },
-    };
   }
 }

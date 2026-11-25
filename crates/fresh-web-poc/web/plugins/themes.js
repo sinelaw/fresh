@@ -5,6 +5,7 @@
 // picker previews live; the choice is remembered in the browser.
 
 import { NAMED } from "../js/highlight.js";
+import * as fresh from "../js/api.js";
 
 // A theme colour ([r, g, b], a colour name, "#rrggbb", or {color, modifier})
 // as [r, g, b], or null for "Default" (the terminal's own colour).
@@ -112,41 +113,41 @@ export function themeVars(theme) {
 
 const STORE = "fresh-poc:theme";
 
-export function activate(fresh) {
+export function activate(app) {
   const cache = new Map();
   const load = (key) => {
-    if (!cache.has(key)) cache.set(key, fresh.host.theme(key).then(themeVars));
+    if (!cache.has(key)) cache.set(key, fresh.theme(app, key).then(themeVars));
     return cache.get(key);
   };
   let current = "dark";
   // The theme's name at the end of the status bar opens the picker.
-  const item = fresh.ui.status("theme");
+  const item = fresh.statusItem(app, "theme");
   // Applying in order: a slow fetch for an earlier preview never lands
   // after a later one.
   let shown = Promise.resolve();
-  const show = (key) => (shown = shown.then(() => load(key)).then((vars) => fresh.ui.theme(vars)).catch((e) => fresh.ui.message(`Theme ${key}: ${e.message || e}`)));
+  const show = (key) => (shown = shown.then(() => load(key)).then((vars) => fresh.setTheme(app, vars)).catch((e) => fresh.message(app, `Theme ${key}: ${e.message || e}`)));
   const choose = (key) => {
     current = key;
-    fresh.settings.theme = key;
+    fresh.settings(app).theme = key;
     try { localStorage.setItem(STORE, key); } catch {}
-    item.set(key.replace(/^skin\//, ""), { title: "Theme: Select Theme…", onClick: () => fresh.commands.run("theme.select") });
+    item.set(key.replace(/^skin\//, ""), { title: "Theme: Select Theme…", onClick: () => fresh.run(app, "theme.select") });
     return show(key);
   };
-  fresh.events.on("app.ready", () => {
+  fresh.on(app, "app.ready", () => {
     let saved = null;
     try { saved = localStorage.getItem(STORE); } catch {}
     choose(saved || "dark");
   });
   // A theme chosen by another part of the client: a skin's editor theme
   // comes with the skin when it is picked.
-  fresh.commands.register("theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key) });
-  fresh.commands.register("theme.select", {
+  fresh.register(app, "theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key) });
+  fresh.register(app, "theme.select", {
     title: "Select Theme…",
     hidden: false,
     run: async () => {
-      const themes = await fresh.host.themes();
+      const themes = await fresh.themes(app);
       const before = current;
-      fresh.ui.pick({
+      fresh.pick(app, {
         title: "Theme",
         items: themes.map((t) => ({ label: t.name, detail: t.key === current ? "current" : "", value: t.key })),
         onChange: (it) => it && show(it.value),

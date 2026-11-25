@@ -7,9 +7,11 @@
 // and Shift+click (Shift+Up/Down) select several; deleting, copying,
 // cutting, dragging and the right-click menu act on all of them.
 
-export function activate(fresh) {
-  const { h } = fresh;
-  const root = fresh.workspace.root;
+import * as fresh from "../js/api.js";
+import { h } from "../js/ui.js";
+
+export function activate(app) {
+  const root = fresh.root(app);
   const open = new Set();
   const children = new Map(); // dir -> entries
   let rows = [];
@@ -21,10 +23,10 @@ export function activate(fresh) {
   let show = { hidden: false, ignored: false };
   try { show = { ...show, ...JSON.parse(localStorage.getItem(SHOW) || "{}") }; } catch {}
   const visible = (e) => (show.hidden || !e.name.startsWith(".")) && (show.ignored || !e.ignored);
-  const panel = fresh.ui.panel({ id: "explorer", title: "Explorer", place: "sidebar", onClose: null });
+  const panel = fresh.panel(app, { id: "explorer", title: "Explorer", place: "sidebar", onClose: null });
 
   const load = async (dir) => {
-    try { children.set(dir, await fresh.host.list(dir)); } catch (e) { children.set(dir, []); }
+    try { children.set(dir, await fresh.list(app, dir)); } catch (e) { children.set(dir, []); }
   };
   // Every shown folder is watched, so files made or removed outside the
   // editor (a terminal, git, another client) appear.
@@ -34,7 +36,7 @@ export function activate(fresh) {
     await load(dir);
     if (watching.has(dir)) return;
     watching.set(dir, null);
-    const stop = await fresh.host.watch(dir, async () => { await load(dir); render(); });
+    const stop = await fresh.watch(app, dir, async () => { await load(dir); render(); });
     if (watching.has(dir)) watching.set(dir, stop); else stop();
   };
   const collapse = (dir) => {
@@ -156,7 +158,7 @@ export function activate(fresh) {
       render();
     } else showFile(r, how === "click");
   };
-  const showFile = (r, preview) => fresh.buffers.open(r.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
+  const showFile = (r, preview) => fresh.open(app, r.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
   const dirOf = (r) => (r ? (r.dir ? r.path : r.path.replace(/\/[^/]*$/, "")) : root);
   const parentOf = (p) => p.replace(/\/[^/]*$/, "");
   const rel = (p) => (p === root ? "the workspace's root" : p.slice(root.length + 1));
@@ -167,33 +169,33 @@ export function activate(fresh) {
     for (const x of list) {
       try { await f(x); } catch (e) { failed.push(`${x.name}: ${e.detail || e.message || e}`); }
     }
-    if (failed.length) fresh.ui.message(`Not done: ${failed.join("; ")}`);
+    if (failed.length) fresh.message(app, `Not done: ${failed.join("; ")}`);
     return list.length - failed.length;
   };
   const ops = {
     newFile: async (r) => {
-      const name = await fresh.ui.input({ title: "New file" });
+      const name = await fresh.input(app, { title: "New file" });
       if (!name) return;
       const p = `${dirOf(r)}/${name}`;
-      await fresh.host.create(p, false);
+      await fresh.create(app, p, false);
       await expand(dirOf(r));
       selected = p;
       await refresh();
-      fresh.buffers.open(p, { line: null, column: 1, place: "tab", preview: null, focus: true });
+      fresh.open(app, p, { line: null, column: 1, place: "tab", preview: null, focus: true });
     },
     newFolder: async (r) => {
-      const name = await fresh.ui.input({ title: "New folder" });
+      const name = await fresh.input(app, { title: "New folder" });
       if (!name) return;
-      await fresh.host.create(`${dirOf(r)}/${name}`, true);
+      await fresh.create(app, `${dirOf(r)}/${name}`, true);
       await expand(dirOf(r));
       await refresh();
     },
     rename: async (r) => {
       if (!r) return;
-      const name = await fresh.ui.input({ title: "Rename to", value: r.name });
+      const name = await fresh.input(app, { title: "Rename to", value: r.name });
       if (!name || name === r.name) return;
       const to = r.path.replace(/[^/]*$/, name);
-      await fresh.host.rename(r.path, to);
+      await fresh.rename(app, r.path, to);
       selected = to;
       marks = new Set([to]);
       await refresh();
@@ -201,14 +203,14 @@ export function activate(fresh) {
     remove: async (list) => {
       if (!list.length) return;
       const folders = list.some((x) => x.dir);
-      if (!(await fresh.ui.confirm(`Delete ${named(list)}${folders ? " and everything in them" : ""}?`, "Delete"))) return;
-      const n = await each(list, async (x) => { await fresh.host.remove(x.path); forget(x.path); });
+      if (!(await fresh.confirm(app, `Delete ${named(list)}${folders ? " and everything in them" : ""}?`, "Delete"))) return;
+      const n = await each(list, async (x) => { await fresh.remove(app, x.path); forget(x.path); });
       marks = new Set();
       await refresh();
-      if (n) fresh.ui.message(`Deleted ${n === list.length ? named(list) : `${n} of ${list.length} items`}`);
+      if (n) fresh.message(app, `Deleted ${n === list.length ? named(list) : `${n} of ${list.length} items`}`);
     },
-    copy: (list) => { if (list.length) { clip = { paths: list.map((x) => x.path), cut: false }; render(); fresh.ui.message(`Copied ${named(list)}`); } },
-    cut: (list) => { if (list.length) { clip = { paths: list.map((x) => x.path), cut: true }; render(); fresh.ui.message(`Cut ${named(list)}`); } },
+    copy: (list) => { if (list.length) { clip = { paths: list.map((x) => x.path), cut: false }; render(); fresh.message(app, `Copied ${named(list)}`); } },
+    cut: (list) => { if (list.length) { clip = { paths: list.map((x) => x.path), cut: true }; render(); fresh.message(app, `Cut ${named(list)}`); } },
     // Paste into the folder of `r`: copies get a free name there; a cut
     // moves (back into its own folder: the cut is given up).
     paste: async (r) => {
@@ -216,29 +218,29 @@ export function activate(fresh) {
       const dest = dirOf(r);
       const list = clip.paths.map((p) => ({ path: p, name: p.split("/").pop() }));
       if (clip.cut) {
-        await each(list.filter((x) => parentOf(x.path) !== dest), async (x) => { await fresh.host.rename(x.path, `${dest}/${x.name}`); forget(x.path); });
+        await each(list.filter((x) => parentOf(x.path) !== dest), async (x) => { await fresh.rename(app, x.path, `${dest}/${x.name}`); forget(x.path); });
         clip = null;
-      } else await each(list, (x) => fresh.host.copy(x.path, dest));
+      } else await each(list, (x) => fresh.copy(app, x.path, dest));
       await expand(dest);
       await refresh();
     },
     copyPath: (list) => list.length && navigator.clipboard?.writeText(list.map((x) => x.path).join("\n")),
     // Move into folder `to`, once confirmed (open files follow, as a rename).
     move: async (list, to) => {
-      if (!(await fresh.ui.confirm(`Move ${named(list)} into ${rel(to)}?`, "Move"))) return;
-      const n = await each(list, async (x) => { await fresh.host.rename(x.path, `${to}/${x.name}`); forget(x.path); });
+      if (!(await fresh.confirm(app, `Move ${named(list)} into ${rel(to)}?`, "Move"))) return;
+      const n = await each(list, async (x) => { await fresh.rename(app, x.path, `${to}/${x.name}`); forget(x.path); });
       await expand(to);
       if (list.length === 1) selected = `${to}/${list[0].name}`;
       marks = new Set(list.map((x) => `${to}/${x.name}`));
       await refresh();
-      if (n) fresh.ui.message(`Moved ${n === list.length ? named(list) : `${n} of ${list.length} items`} into ${rel(to)}`);
+      if (n) fresh.message(app, `Moved ${n === list.length ? named(list) : `${n} of ${list.length} items`} into ${rel(to)}`);
     },
   };
   // A row's menu acts on the selection when the row is in it.
   const menu = (r, at) => {
     const list = targets(r);
     const many = list.length > 1 ? ` (${list.length})` : "";
-    fresh.ui.menu([
+    fresh.menu(app, [
       { label: "New File…", run: () => ops.newFile(r) },
       { label: "New Folder…", run: () => ops.newFolder(r) },
       null,
@@ -279,21 +281,21 @@ export function activate(fresh) {
     render();
   };
 
-  fresh.events.on("buffer.activated", ({ buffer }) => reveal(buffer.path));
-  fresh.events.on("buffer.saved", refresh);
-  fresh.commands.register("explorer.focus", { title: "Explorer: Focus", hidden: false, run: () => panel.focus("tree") });
-  fresh.commands.register("explorer.toggle", { title: "View: Toggle File Explorer", hidden: false, run: () => fresh.commands.run("view.toggleSidebar") });
-  fresh.commands.register("explorer.newFile", { title: "Explorer: New File…", hidden: false, run: () => ops.newFile(null) });
-  fresh.commands.register("explorer.refresh", { title: "Explorer: Refresh", hidden: false, run: refresh });
+  fresh.onBuffer(app, "buffer.activated", (buffer) => reveal(buffer.path));
+  fresh.onBuffer(app, "buffer.saved", refresh);
+  fresh.register(app, "explorer.focus", { title: "Explorer: Focus", hidden: false, run: () => panel.focus("tree") });
+  fresh.register(app, "explorer.toggle", { title: "View: Toggle File Explorer", hidden: false, run: () => fresh.run(app, "view.toggleSidebar") });
+  fresh.register(app, "explorer.newFile", { title: "Explorer: New File…", hidden: false, run: () => ops.newFile(null) });
+  fresh.register(app, "explorer.refresh", { title: "Explorer: Refresh", hidden: false, run: refresh });
   // The same on the explorer's selected row (the menu bar's Explorer menu).
   const current = () => rows.find((r) => r.path === selected) || null;
-  fresh.commands.register("explorer.newFolder", { title: "Explorer: New Folder…", hidden: false, run: () => ops.newFolder(current()) });
-  fresh.commands.register("explorer.rename", { title: "Explorer: Rename…", hidden: false, run: () => ops.rename(current()) });
-  fresh.commands.register("explorer.delete", { title: "Explorer: Delete", hidden: false, run: () => ops.remove(targets(current())) });
-  fresh.commands.register("explorer.selectAll", { title: "Explorer: Select All", hidden: false, run: () => { selectAll(); panel.focus("tree"); } });
-  fresh.commands.register("explorer.reveal", { title: "Explorer: Reveal Active File", hidden: false, run: async () => {
+  fresh.register(app, "explorer.newFolder", { title: "Explorer: New Folder…", hidden: false, run: () => ops.newFolder(current()) });
+  fresh.register(app, "explorer.rename", { title: "Explorer: Rename…", hidden: false, run: () => ops.rename(current()) });
+  fresh.register(app, "explorer.delete", { title: "Explorer: Delete", hidden: false, run: () => ops.remove(targets(current())) });
+  fresh.register(app, "explorer.selectAll", { title: "Explorer: Select All", hidden: false, run: () => { selectAll(); panel.focus("tree"); } });
+  fresh.register(app, "explorer.reveal", { title: "Explorer: Reveal Active File", hidden: false, run: async () => {
     document.querySelector("#sidebar").classList.remove("hidden");
-    await reveal(fresh.buffers.active()?.path);
+    await reveal(fresh.activeBuffer(app)?.path);
     panel.focus("tree");
   } });
   const toggleShow = (k) => {
@@ -301,19 +303,19 @@ export function activate(fresh) {
     try { localStorage.setItem(SHOW, JSON.stringify(show)); } catch {}
     render();
   };
-  fresh.commands.register("explorer.toggleHidden", { title: "Explorer: Toggle Hidden Files", hidden: false, run: () => toggleShow("hidden") });
-  fresh.commands.register("explorer.toggleIgnored", { title: "Explorer: Toggle Gitignored Files", hidden: false, run: () => toggleShow("ignored") });
-  fresh.menus.add("Explorer", null);
-  fresh.menus.add("Explorer", { command: "explorer.toggleHidden", label: "Show Hidden Files", checked: () => show.hidden });
-  fresh.menus.add("Explorer", { command: "explorer.toggleIgnored", label: "Show Gitignored Files", checked: () => show.ignored });
+  fresh.register(app, "explorer.toggleHidden", { title: "Explorer: Toggle Hidden Files", hidden: false, run: () => toggleShow("hidden") });
+  fresh.register(app, "explorer.toggleIgnored", { title: "Explorer: Toggle Gitignored Files", hidden: false, run: () => toggleShow("ignored") });
+  fresh.addMenuItem(app, "Explorer", null);
+  fresh.addMenuItem(app, "Explorer", { command: "explorer.toggleHidden", label: "Show Hidden Files", checked: () => show.hidden });
+  fresh.addMenuItem(app, "Explorer", { command: "explorer.toggleIgnored", label: "Show Gitignored Files", checked: () => show.ignored });
   panel.actions([
     { icon: "+", title: "New File…", run: () => ops.newFile(current()) },
     { icon: "⊞", title: "New Folder…", run: () => ops.newFolder(current()) },
     { icon: "⟳", title: "Refresh", run: refresh },
-    { icon: "⊟", title: "Collapse All", run: () => fresh.commands.run("explorer.collapseAll") },
+    { icon: "⊟", title: "Collapse All", run: () => fresh.run(app, "explorer.collapseAll") },
   ]);
-  fresh.commands.register("explorer.collapseAll", { title: "Explorer: Collapse All", hidden: false, run: () => { for (const d of [...open]) if (d !== root) collapse(d); render(); } });
-  fresh.keys.bind("C-e", "explorer.focus");
-  fresh.keys.bind("C-b", "explorer.toggle");
+  fresh.register(app, "explorer.collapseAll", { title: "Explorer: Collapse All", hidden: false, run: () => { for (const d of [...open]) if (d !== root) collapse(d); render(); } });
+  fresh.bindKey(app, "C-e", "explorer.focus");
+  fresh.bindKey(app, "C-b", "explorer.toggle");
   expand(root).then(render);
 }

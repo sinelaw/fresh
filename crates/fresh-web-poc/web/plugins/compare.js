@@ -3,8 +3,9 @@
 // commit.
 
 import { changeBlocks } from "../js/diff.js";
+import * as fresh from "../js/api.js";
 
-export function activate(fresh) {
+export function activate(app) {
   let pair = null; // {a, b, blocks, unlink}
   // A line of one side to the other's, past the changed blocks before it
   // (a line in a changed block goes to the start of its counterpart).
@@ -21,7 +22,7 @@ export function activate(fresh) {
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   const markLines = (d, L, first, n, bg, glyph, color) => {
     for (let i = first; i < first + n && i < L.starts.length; i++) {
-      d.overlay(L.starts[i], L.starts[i] + fresh.text.byteLen(L.lines[i]) + 1, { fg: null, bg, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true }, { when: "always", mark: false, above: false });
+      d.overlay(L.starts[i], L.starts[i] + fresh.byteLen(L.lines[i]) + 1, { fg: null, bg, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true }, { when: "always", mark: false, above: false });
       d.gutter(L.starts[i], { glyph, color, title: "" });
     }
   };
@@ -40,36 +41,36 @@ export function activate(fresh) {
     }
     a.render(); b.render();
     const n = pair.blocks.length;
-    fresh.ui.message(blocks ? `${n} difference${n === 1 ? "" : "s"}` : "Too many differences to compare");
+    fresh.message(app, blocks ? `${n} difference${n === 1 ? "" : "s"}` : "Too many differences to compare");
   };
   const open = async (pathA, bufB) => {
-    const a = typeof pathA === "string" ? await fresh.buffers.load(pathA) : pathA;
-    const b = typeof bufB === "string" ? await fresh.buffers.load(bufB) : bufB;
-    fresh.buffers.show(a, "tab");
-    fresh.buffers.show(b, "right");
+    const a = typeof pathA === "string" ? await fresh.load(app, pathA) : pathA;
+    const b = typeof bufB === "string" ? await fresh.load(app, bufB) : bufB;
+    fresh.show(app, a, "tab");
+    fresh.show(app, b, "right");
     pair?.unlink();
     // The two sides scroll together, line for line past the differences.
-    const unlink = fresh.views.linkScroll(a, b,
+    const unlink = fresh.linkScroll(app, a, b,
       (line) => across(line, "a", "b", { from: "del", to: "ins" }),
       (line) => across(line, "b", "a", { from: "ins", to: "del" }));
     pair = { a, b, blocks: [], unlink };
     mark();
   };
   const compareFiles = async () => {
-    const files = await fresh.host.find("");
-    const pick = (title) => new Promise((resolve) => fresh.ui.pick({ title, items: files.map((f) => ({ label: f, value: f })), onAccept: (it) => resolve(it.value), onCancel: () => resolve(null) }));
+    const files = await fresh.findFiles(app, "");
+    const pick = (title) => new Promise((resolve) => fresh.pick(app, { title, items: files.map((f) => ({ label: f, value: f })), onAccept: (it) => resolve(it.value), onCancel: () => resolve(null) }));
     const a = await pick("Compare: first file");
     if (!a) return;
     const b = await pick("Compare: second file");
     if (b) open(a, b);
   };
   const compareHead = async () => {
-    const cur = fresh.buffers.active();
+    const cur = fresh.activeBuffer(app);
     if (!cur?.path) return;
-    const rel = cur.path.slice(fresh.workspace.root.length + 1);
-    const r = await fresh.host.run("git", ["show", `HEAD:./${rel}`], { cwd: fresh.workspace.root });
-    if (r.code !== 0) return fresh.ui.message("Not in the last commit");
-    const head = fresh.buffers.createVirtual({
+    const rel = cur.path.slice(fresh.root(app).length + 1);
+    const r = await fresh.runProcess(app, "git", ["show", `HEAD:./${rel}`], { cwd: fresh.root(app) });
+    if (r.code !== 0) return fresh.message(app, "Not in the last commit");
+    const head = fresh.createVirtual(app, {
       name: `${cur.name} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
       mode: null, readOnly: true, language: cur.language, keep: false, place: null, lineNumbers: true,
     });
@@ -77,11 +78,11 @@ export function activate(fresh) {
   };
   // The next (or previous) changed block, on whichever side is active.
   const next = (dir) => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     if (!pair || !v) return;
     const side = v.buffer.id === pair.a.id ? "a" : v.buffer.id === pair.b.id ? "b" : null;
-    if (!side) return fresh.ui.message("Not a compared file");
-    if (!pair.blocks.length) return fresh.ui.message("No differences");
+    if (!side) return fresh.message(app, "Not a compared file");
+    if (!pair.blocks.length) return fresh.message(app, "No differences");
     const L = v.buffer.lines();
     const cur = L.starts.findIndex((s, k) => v.cursor >= s && (k + 1 >= L.starts.length || v.cursor < L.starts[k + 1]));
     const lines = pair.blocks.map((k) => k[side]);
@@ -89,13 +90,13 @@ export function activate(fresh) {
     v.setCursor(L.starts[Math.min(line, L.starts.length - 1)], { center: true });
   };
   let t = null;
-  fresh.events.on("buffer.changed", ({ buffer }) => {
+  fresh.onBuffer(app, "buffer.changed", (buffer) => {
     if (pair && (buffer.id === pair.a.id || buffer.id === pair.b.id)) { clearTimeout(t); t = setTimeout(mark, 200); }
   });
-  fresh.commands.register("compare.files", { title: "Compare Files…", hidden: false, run: compareFiles });
-  fresh.commands.register("compare.head", { title: "Compare with Last Commit", hidden: false, run: compareHead });
-  fresh.commands.register("compare.next", { title: "Compare: Next Difference", hidden: false, run: () => next(1) });
-  fresh.commands.register("compare.prev", { title: "Compare: Previous Difference", hidden: false, run: () => next(-1) });
-  fresh.keys.bind("F7", "compare.next");
-  fresh.keys.bind("S-F7", "compare.prev");
+  fresh.register(app, "compare.files", { title: "Compare Files…", hidden: false, run: compareFiles });
+  fresh.register(app, "compare.head", { title: "Compare with Last Commit", hidden: false, run: compareHead });
+  fresh.register(app, "compare.next", { title: "Compare: Next Difference", hidden: false, run: () => next(1) });
+  fresh.register(app, "compare.prev", { title: "Compare: Previous Difference", hidden: false, run: () => next(-1) });
+  fresh.bindKey(app, "F7", "compare.next");
+  fresh.bindKey(app, "S-F7", "compare.prev");
 }

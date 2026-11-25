@@ -16,31 +16,33 @@
 // Server act on the active file's language (Show Status offers them for
 // each).
 
+import * as fresh from "../js/api.js";
+import { h } from "../js/ui.js";
+
 // An inlay hint.
 /** const HINT: Style */
 const HINT = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
 
-export function activate(fresh) {
-  const { h } = fresh;
+export function activate(app) {
   const SEV = ["", "error", "warning", "info", "hint"];
-  const status = fresh.ui.status("lsp");
+  const status = fresh.statusItem(app, "lsp");
 
   const active = () => {
-    const v = fresh.views.active();
-    return v && fresh.lsp.available(v.buffer) ? v : null;
+    const v = fresh.activeView(app);
+    return v && fresh.lspAvailable(app, v.buffer) ? v : null;
   };
   // A request about the cursor's position. A refused one throws; each
   // command shows the server's reason (see `reg`).
-  const ask = (v, method, params) => fresh.lsp.request(v.buffer, method, params, v.cursor);
+  const ask = (v, method, params) => fresh.lspRequest(app, v.buffer, method, params, v.cursor);
   const pathOf = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
-  const rel = (p) => (p.startsWith(fresh.workspace.root + "/") ? p.slice(fresh.workspace.root.length + 1) : p);
+  const rel = (p) => (p.startsWith(fresh.root(app) + "/") ? p.slice(fresh.root(app).length + 1) : p);
   const asList = (r) => (r == null ? [] : Array.isArray(r) ? r : [r]);
   const loc = (l) => ({ path: pathOf(l.uri || l.targetUri), range: l.range || l.targetSelectionRange });
 
-  // `how` as for `fresh.buffers.open` ({preview, focus}).
+  // `how` as for `fresh.open` ({preview, focus}).
   // Open a location: `preview` as for OpenOptions (a list's selection
   // previews it, the keyboard staying in the list).
-  const goto = (path, range, preview) => fresh.buffers.open(path, { line: range.start.line + 1, column: range.start.character + 1, place: "tab", preview, focus: preview !== true });
+  const goto = (path, range, preview) => fresh.open(app, path, { line: range.start.line + 1, column: range.start.character + 1, place: "tab", preview, focus: preview !== true });
 
   // ---------------------------------------------------------------- navigation
 
@@ -48,21 +50,21 @@ export function activate(fresh) {
     const v = active();
     if (!v) return;
     const r = asList(await ask(v, "textDocument/definition", {})).map(loc);
-    if (!r.length) return fresh.ui.message("No definition found");
+    if (!r.length) return fresh.message(app, "No definition found");
     if (r.length === 1) return goto(r[0].path, r[0].range, null);
-    fresh.ui.pick({ title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range, null) });
+    fresh.pick(app, { title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range, null) });
   };
 
   const references = async () => {
     const v = active();
     if (!v) return;
     const r = asList(await ask(v, "textDocument/references", { context: { includeDeclaration: true } })).map(loc);
-    if (!r.length) return fresh.ui.message("No references found");
+    if (!r.length) return fresh.message(app, "No references found");
     // Show each reference's line: read it from the file through the server.
     const texts = new Map();
     for (const l of r) {
       if (!texts.has(l.path)) {
-        try { texts.set(l.path, (await fresh.host.read(l.path)).split("\n")); } catch { texts.set(l.path, []); }
+        try { texts.set(l.path, (await fresh.read(app, l.path)).split("\n")); } catch { texts.set(l.path, []); }
       }
     }
     const lineOf = (l) => ((texts.get(l.path) || [])[l.range.start.line] || "").trim();
@@ -71,7 +73,7 @@ export function activate(fresh) {
       const row = { header: false, path: l.path, range: l.range, text: lineOf(l) };
       return i === 0 || r[i - 1].path !== l.path ? [{ header: true, path: l.path, range: l.range, text: "" }, row] : [row];
     });
-    const refsPanel = fresh.ui.panel({ id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
+    const refsPanel = fresh.panel(app, { id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
     refsPanel.render(h("list", {
       key: "refs",
       items,
@@ -90,7 +92,7 @@ export function activate(fresh) {
   const symCache = new Map();
   const KINDS = new Map([[5, "class"], [6, "method"], [12, "function"], [13, "variable"], [14, "constant"], [23, "struct"], [10, "enum"], [11, "interface"], [8, "field"], [2, "module"]]);
   const kindName = (k) => KINDS.get(k) || "";
-  fresh.palette.provide("@", {
+  fresh.paletteMode(app, "@", {
     hint: "symbols",
     items: async (q) => {
       const v = active();
@@ -106,7 +108,7 @@ export function activate(fresh) {
       const walk = (list, path) => {
         for (const s of list) {
           const range = s.selectionRange || s.location?.range || s.range;
-          const go = () => { const p = fresh.lsp.offset(v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true }); };
+          const go = () => { const p = fresh.lspOffset(app, v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true }); };
           if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [kindName(s.kind), path || s.containerName].filter(Boolean).join(" · "), run: go, preview: go });
           if (s.children) walk(s.children, path ? `${path}.${s.name}` : s.name);
         }
@@ -115,17 +117,17 @@ export function activate(fresh) {
       return out.length ? out : [{ label: q ? "No symbol matches" : "No symbols" }];
     },
   });
-  const symbols = () => fresh.commands.run("palette.open", "@");
+  const symbols = () => fresh.run(app, "palette.open", "@");
 
   // The palette's `%`: the workspace's symbols matching what is typed,
   // from every running server.
   /** let running: Dict<Boolean> */
   let running = {}; // {language: running}, from the server
   const runningLanguages = async () => {
-    try { running = await fresh.lsp.status(); } catch { running = {}; }
+    try { running = await fresh.lspStatus(app); } catch { running = {}; }
     return Object.keys(running).filter((l) => running[l]).sort();
   };
-  fresh.palette.provide("%", {
+  fresh.paletteMode(app, "%", {
     hint: "workspace symbols",
     items: async (q) => {
       if (!q) return [{ label: "Type a symbol's name" }];
@@ -134,7 +136,7 @@ export function activate(fresh) {
       const out = [];
       for (const l of langs) {
         let r = null;
-        try { r = await fresh.lsp.requestWorkspace(l, "workspace/symbol", { query: q }); } catch { continue; }
+        try { r = await fresh.lspWorkspaceRequest(app, l, "workspace/symbol", { query: q }); } catch { continue; }
         for (const s of asList(r)) {
           const loc = s.location;
           if (!loc || !loc.uri || !loc.uri.startsWith("file://")) continue;
@@ -149,7 +151,7 @@ export function activate(fresh) {
       return out.length ? out : [{ label: "No symbol matches" }];
     },
   });
-  const workspaceSymbols = () => fresh.commands.run("palette.open", "%");
+  const workspaceSymbols = () => fresh.run(app, "palette.open", "%");
 
   // ---------------------------------------------------------------- edits
 
@@ -161,7 +163,7 @@ export function activate(fresh) {
     for (const dc of edit.documentChanges || []) if (dc.textDocument) byUri.set(dc.textDocument.uri, dc.edits);
     let n = 0;
     for (const [uri, edits] of byUri) {
-      const b = await fresh.buffers.load(pathOf(uri));
+      const b = await fresh.load(app, pathOf(uri));
       n += applyTextEdits(b, edits);
     }
     return n;
@@ -170,7 +172,7 @@ export function activate(fresh) {
     /** const ops: Op[] */
     const ops = [];
     const resolved = edits
-      .map((e) => ({ s: fresh.lsp.offset(b, e.range.start.line, e.range.start.character), e: fresh.lsp.offset(b, e.range.end.line, e.range.end.character), text: e.newText }))
+      .map((e) => ({ s: fresh.lspOffset(app, b, e.range.start.line, e.range.start.character), e: fresh.lspOffset(app, b, e.range.end.line, e.range.end.character), text: e.newText }))
       .filter((e) => e.s != null && e.e != null)
       .sort((x, y) => y.s - x.s);
     for (const e of resolved) {
@@ -195,25 +197,25 @@ export function activate(fresh) {
   const rename = async () => {
     const v = active();
     if (!v) return;
-    const name = await fresh.ui.input({ title: "Rename to", value: currentWord(v) });
+    const name = await fresh.input(app, { title: "Rename to", value: currentWord(v) });
     if (!name) return;
     const r = await ask(v, "textDocument/rename", { newName: name });
-    if (!r) return fresh.ui.message("Nothing to rename here");
-    fresh.ui.message(`Renamed: ${await applyWorkspaceEdit(r)} edit(s)`);
+    if (!r) return fresh.message(app, "Nothing to rename here");
+    fresh.message(app, `Renamed: ${await applyWorkspaceEdit(r)} edit(s)`);
   };
 
   const codeActions = async () => {
     const v = active();
     if (!v) return;
     const sel = v.selection || { start: v.cursor, end: v.cursor };
-    const toPos = (p) => fresh.lsp.position(v.buffer, p);
-    const diags = fresh.lsp.diagnostics(v.buffer).filter((d) => d.start <= sel.end && d.end >= sel.start);
+    const toPos = (p) => fresh.lspPosition(app, v.buffer, p);
+    const diags = fresh.diagnostics(app, v.buffer).filter((d) => d.start <= sel.end && d.end >= sel.start);
     const r = asList(await ask(v, "textDocument/codeAction", {
       range: { start: toPos(sel.start), end: toPos(sel.end) },
       context: { diagnostics: diags.map((d) => ({ message: d.message, severity: d.severity, range: { start: toPos(d.start), end: toPos(d.end) } })) },
     }));
-    if (!r.length) return fresh.ui.message("No code actions here");
-    fresh.ui.pick({
+    if (!r.length) return fresh.message(app, "No code actions here");
+    fresh.pick(app, {
       title: "Code actions",
       items: r.map((a) => ({ label: a.title, detail: a.kind || "", value: a })),
       onAccept: async ({ value: a }) => {
@@ -228,8 +230,8 @@ export function activate(fresh) {
     const v = active();
     if (!v) return;
     const r = asList(await ask(v, "textDocument/formatting", { options: { tabSize: 4, insertSpaces: true } }));
-    if (!r.length) return fresh.ui.message("Already formatted (or the server does not format)");
-    fresh.ui.message(`Formatted: ${applyTextEdits(v.buffer, r)} edit(s)`);
+    if (!r.length) return fresh.message(app, "Already formatted (or the server does not format)");
+    fresh.message(app, `Formatted: ${applyTextEdits(v.buffer, r)} edit(s)`);
   };
 
   // ---------------------------------------------------------------- completion, hover, signatures
@@ -239,21 +241,21 @@ export function activate(fresh) {
     if (!v) return;
     const r = await ask(v, "textDocument/completion", {});
     const items = asList(r && r.items ? r.items : r);
-    if (!items.length) return fresh.ui.message("No completions");
+    if (!items.length) return fresh.message(app, "No completions");
     const word = wordEnd(v.buffer.text(Math.max(0, v.cursor - 100), v.cursor) || "");
-    fresh.ui.pick({
+    fresh.pick(app, {
       title: "Complete",
       value: word,
       items: items.slice(0, 500).map((i) => ({ label: i.label, detail: i.detail || "", value: i })),
       onAccept: ({ value: i }) => {
-        const vv = fresh.views.active();
+        const vv = fresh.activeView(app);
         const b = vv.buffer;
         const left = b.text(Math.max(0, vv.cursor - 100), vv.cursor) || "";
         const w = wordEnd(left);
         const text = i.textEdit?.newText ?? i.insertText ?? i.label;
-        const start = vv.cursor - fresh.text.byteLen(w);
+        const start = vv.cursor - fresh.byteLen(w);
         b.replace(start, vv.cursor, text);
-        vv.setCursor(start + fresh.text.byteLen(text), { center: false });
+        vv.setCursor(start + fresh.byteLen(text), { center: false });
       },
     });
   };
@@ -267,11 +269,11 @@ export function activate(fresh) {
     if (!md) return null;
     return md.split("\n").filter((l) => !/^\s*```/.test(l)).map((l) => (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l) ? "───" : l)).join("\n").trim() || null;
   };
-  fresh.hover.provide(async (b, pos) => {
-    const diags = fresh.lsp.diagnostics(b).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
+  fresh.hoverProvider(app, async (b, pos) => {
+    const diags = fresh.diagnostics(app, b).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
     let text = diags.map((d) => `${SEV[d.severity] || "error"}: ${d.message}`).join("\n");
-    if (fresh.lsp.available(b)) {
-      try { const t = hoverText(await fresh.lsp.request(b, "textDocument/hover", {}, pos)); if (t) text = text ? `${text}\n\n${t}` : t; } catch {}
+    if (fresh.lspAvailable(app, b)) {
+      try { const t = hoverText(await fresh.lspRequest(app, b, "textDocument/hover", {}, pos)); if (t) text = text ? `${text}\n\n${t}` : t; } catch {}
     }
     return text || null;
   });
@@ -279,7 +281,7 @@ export function activate(fresh) {
     const v = active();
     if (!v) return;
     const t = hoverText(await ask(v, "textDocument/hover", {}));
-    if (t) fresh.ui.popup(t);
+    if (t) fresh.popup(app, t);
   };
 
   const signatureHelp = async () => {
@@ -287,11 +289,11 @@ export function activate(fresh) {
     if (!v) return;
     const r = await ask(v, "textDocument/signatureHelp", {});
     const sig = r?.signatures?.[r.activeSignature ?? 0];
-    if (sig) fresh.ui.popup(sig.label + (sig.documentation ? `\n\n${typeof sig.documentation === "string" ? sig.documentation : sig.documentation.value}` : ""));
+    if (sig) fresh.popup(app, sig.label + (sig.documentation ? `\n\n${typeof sig.documentation === "string" ? sig.documentation : sig.documentation.value}` : ""));
   };
 
-  fresh.events.on("buffer.changed", ({ buffer, ops, local }) => {
-    if (!local || !fresh.lsp.available(buffer)) return;
+  fresh.onBuffer(app, "buffer.changed", (buffer, { ops, local }) => {
+    if (!local || !fresh.lspAvailable(app, buffer)) return;
     const op = ops[0];
     if (op?.t !== "ins") return;
     // The inserted text's first character: typing "(" inserts "()".
@@ -310,11 +312,11 @@ export function activate(fresh) {
     return i >= 0 ? String((L.firstLine ?? 0) + i + 1) : "?";
   };
   const renderDiagnostics = () => {
-    const diagPanel = fresh.ui.shown("diagnostics");
+    const diagPanel = fresh.shown(app, "diagnostics");
     if (!diagPanel) return;
     // Each file with problems: a header row, then a row per problem.
-    const items = fresh.buffers.all().flatMap((b) => {
-      const ds = fresh.lsp.diagnostics(b).sort((x, y) => x.start - y.start);
+    const items = fresh.buffers(app).flatMap((b) => {
+      const ds = fresh.diagnostics(app, b).sort((x, y) => x.start - y.start);
       const rows = ds.map((d) => ({ header: false, b, d, line: lineLabel(b, d.start) }));
       return ds.length ? [{ header: true, b, d: ds[0], line: "" }, ...rows] : [];
     });
@@ -324,48 +326,48 @@ export function activate(fresh) {
       render: (it) => it.header
         ? h("text", { bold: true }, [rel(it.b.path)])
         : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [it.line]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
-      onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path, { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.views.active().setCursor(it.d.start, { center: true }); },
+      onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path, { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.activeView(app).setCursor(it.d.start, { center: true }); },
     }));
   };
   const diagnosticsPanel = () => {
-    const diagPanel = fresh.ui.panel({ id: "diagnostics", title: "Diagnostics", place: "bottom", onClose: null });
+    const diagPanel = fresh.panel(app, { id: "diagnostics", title: "Diagnostics", place: "bottom", onClose: null });
     renderDiagnostics();
     diagPanel.focus("diags");
   };
-  fresh.events.on("diagnostics.changed", renderDiagnostics);
+  fresh.onBuffer(app, "diagnostics.changed", renderDiagnostics);
 
   // ---------------------------------------------------------------- folding and status
 
   const refreshFolds = async (b) => {
-    if (!fresh.lsp.available(b)) return;
+    if (!fresh.lspAvailable(app, b)) return;
     try {
-      const r = await fresh.lsp.request(b, "textDocument/foldingRange", {});
+      const r = await fresh.lspRequest(app, b, "textDocument/foldingRange", {});
       b.setFoldRanges(asList(r).map((f) => ({ start: f.startLine, end: f.endLine })));
     } catch {}
   };
   // The status bar: the active file's server, or `LSP (off)` when it was
   // stopped.
   const showStatus = (b) => {
-    const installed = b != null && b.language != null && fresh.lsp.languages().includes(b.language) && !b.isVirtual;
-    const text = !installed ? "" : fresh.lsp.available(b) ? `LSP ${b.language}` : running[b.language] === false ? "LSP (off)" : "";
-    status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.commands.run("lsp.status") });
+    const installed = b != null && b.language != null && fresh.lspLanguages(app).includes(b.language) && !b.isVirtual;
+    const text = !installed ? "" : fresh.lspAvailable(app, b) ? `LSP ${b.language}` : running[b.language] === false ? "LSP (off)" : "";
+    status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.run(app, "lsp.status") });
   };
-  fresh.events.on("buffer.activated", ({ buffer }) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
+  fresh.onBuffer(app, "buffer.activated", (buffer) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
   // Its language changed: another server, or none.
-  fresh.events.on("buffer.info", ({ buffer }) => { if (buffer.id === fresh.buffers.active()?.id) showStatus(buffer); });
+  fresh.onBuffer(app, "buffer.info", (buffer) => { if (buffer.id === fresh.activeBuffer(app)?.id) showStatus(buffer); });
   // Each language's server: running, available (started with its first
   // file), or none found on the host.
   // Picking one offers to restart or stop it.
   const lspStatus = async () => {
     await runningLanguages();
-    const langs = [...new Set([...fresh.lsp.languages(), ...Object.keys(running)])].sort();
-    const state = (l) => (running[l] ? "running" : running[l] === false ? "stopped" : fresh.lsp.languages().includes(l) ? "available (starts with a file)" : "not started");
-    fresh.ui.pick({
-      title: fresh.workspace.trusted ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
+    const langs = [...new Set([...fresh.lspLanguages(app), ...Object.keys(running)])].sort();
+    const state = (l) => (running[l] ? "running" : running[l] === false ? "stopped" : fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started");
+    fresh.pick(app, {
+      title: fresh.trusted(app) ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
       items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", detail: "", value: "" }],
       onAccept: async (it) => {
-        if (!it.value || !fresh.workspace.trusted) return;
-        const what = await fresh.ui.choose(`${it.value} language server (${state(it.value)})`, [
+        if (!it.value || !fresh.trusted(app)) return;
+        const what = await fresh.choose(app, `${it.value} language server (${state(it.value)})`, [
           { label: running[it.value] ? "Restart" : "Start", value: "restart" },
           ...(running[it.value] ? [{ label: "Stop", value: "stop" }] : []),
         ]);
@@ -375,19 +377,19 @@ export function activate(fresh) {
   };
   // Restart or stop `language`'s server (the active file's when not given).
   const serverOp = async (what, language) => {
-    const b = fresh.buffers.active();
-    const l = language || (b != null && b.language != null && fresh.lsp.languages().includes(b.language) ? b.language : "");
+    const b = fresh.activeBuffer(app);
+    const l = language || (b != null && b.language != null && fresh.lspLanguages(app).includes(b.language) ? b.language : "");
     if (!l) { lspStatus(); return; }
     try {
-      running = await (what === "stop" ? fresh.lsp.stop(l) : fresh.lsp.restart(l));
-      fresh.ui.message(what === "stop" ? `Stopped the ${l} language server` : `Restarted the ${l} language server`);
-    } catch (e) { fresh.ui.error(e); }
+      running = await (what === "stop" ? fresh.lspStop(app, l) : fresh.lspRestart(app, l));
+      fresh.message(app, what === "stop" ? `Stopped the ${l} language server` : `Restarted the ${l} language server`);
+    } catch (e) { fresh.showError(app, e); }
   };
-  fresh.events.on("lsp.status", ({ status: s }) => {
+  fresh.onLspStatus(app, (s) => {
     running = s;
-    const b = fresh.buffers.active();
+    const b = fresh.activeBuffer(app);
     showStatus(b);
-    for (const x of fresh.buffers.all()) refreshHints(x);
+    for (const x of fresh.buffers(app)) refreshHints(x);
   });
 
   // ---------------------------------------------------------------- inlay hints
@@ -398,18 +400,18 @@ export function activate(fresh) {
   const hintTimers = new Map();
   const refreshHints = async (b) => {
     const deco = b.decorations("inlay");
-    if (!fresh.settings.inlay_hints || !fresh.lsp.available(b) || !b.whole) { deco.clear(); b.render(); return; }
+    if (!fresh.settings(app).inlay_hints || !fresh.lspAvailable(app, b) || !b.whole) { deco.clear(); b.render(); return; }
     const L = b.lines();
     if (!L) return;
     const len = b.length, text0 = b.text(0, Math.min(len, 64));
     let r = null;
     try {
-      r = await fresh.lsp.request(b, "textDocument/inlayHint", { range: { start: { line: 0, character: 0 }, end: { line: L.lines.length, character: 0 } } });
+      r = await fresh.lspRequest(app, b, "textDocument/inlayHint", { range: { start: { line: 0, character: 0 }, end: { line: L.lines.length, character: 0 } } });
     } catch { return; }
     if (b.length !== len || b.text(0, Math.min(len, 64)) !== text0) return;
     deco.clear();
     for (const hnt of asList(r)) {
-      const pos = fresh.lsp.offset(b, hnt.position.line, hnt.position.character);
+      const pos = fresh.lspOffset(app, b, hnt.position.line, hnt.position.character);
       if (pos == null) continue;
       const label = typeof hnt.label === "string" ? hnt.label : asList(hnt.label).map((p) => p.value).join("");
       const text = (hnt.paddingLeft ? " " : "") + label + (hnt.paddingRight ? " " : "");
@@ -422,22 +424,22 @@ export function activate(fresh) {
     if (pending !== undefined) clearTimeout(pending);
     hintTimers.set(b.id, setTimeout(() => { hintTimers.delete(b.id); refreshHints(b); }, 500));
   };
-  fresh.events.on("buffer.changed", ({ buffer }) => { if (fresh.settings.inlay_hints && fresh.lsp.available(buffer)) hintsSoon(buffer); });
+  fresh.onBuffer(app, "buffer.changed", (buffer) => { if (fresh.settings(app).inlay_hints && fresh.lspAvailable(app, buffer)) hintsSoon(buffer); });
   const toggleHints = () => {
-    fresh.settings.inlay_hints = !fresh.settings.inlay_hints;
-    fresh.saveSettings();
-    for (const b of fresh.buffers.all()) refreshHints(b);
-    fresh.ui.message(`Inlay hints: ${fresh.settings.inlay_hints ? "on" : "off"}`);
+    fresh.settings(app).inlay_hints = !fresh.settings(app).inlay_hints;
+    fresh.saveSettings(app);
+    for (const b of fresh.buffers(app)) refreshHints(b);
+    fresh.message(app, `Inlay hints: ${fresh.settings(app).inlay_hints ? "on" : "off"}`);
   };
   // Trusting the workspace starts its language servers.
-  fresh.events.on("workspace.trusted", () => { const b = fresh.buffers.active(); showStatus(b); if (b) { refreshFolds(b); refreshHints(b); } });
-  fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
+  fresh.on(app, "workspace.trusted", () => { const b = fresh.activeBuffer(app); showStatus(b); if (b) { refreshFolds(b); refreshHints(b); } });
+  fresh.onBuffer(app, "buffer.saved", (buffer) => refreshFolds(buffer));
 
   // A command, and its key ("" for none).
   // A failure (a refused request) shows the server's reason.
   const reg = (id, title, run, key) => {
-    fresh.commands.register(id, { title, hidden: false, run: () => { Promise.resolve(run()).catch((e) => fresh.ui.error(e)); } });
-    if (key) fresh.keys.bind(key, id);
+    fresh.register(app, id, { title, hidden: false, run: () => { Promise.resolve(run()).catch((e) => fresh.showError(app, e)); } });
+    if (key) fresh.bindKey(app, key, id);
   };
   reg("lsp.definition", "LSP: Go to Definition", definition, "F12");
   reg("lsp.references", "LSP: Find References", references, "S-F12");
@@ -452,15 +454,15 @@ export function activate(fresh) {
   // The next (previous) diagnostic after (before) the cursor, round the
   // end of the file; its message in the status bar.
   const stepDiagnostic = async (dir) => {
-    const v = fresh.views.active();
+    const v = fresh.activeView(app);
     if (!v) return;
-    const ds = fresh.lsp.diagnostics(v.buffer).sort((a, b) => a.start - b.start || a.severity - b.severity);
-    if (!ds.length) { fresh.ui.message("No problems in this file"); return; }
+    const ds = fresh.diagnostics(app, v.buffer).sort((a, b) => a.start - b.start || a.severity - b.severity);
+    if (!ds.length) { fresh.message(app, "No problems in this file"); return; }
     const at = v.cursor;
     const next = dir > 0 ? ds.find((x) => x.start > at) : [...ds].reverse().find((x) => x.start < at);
     const d = next !== undefined ? next : dir > 0 ? ds[0] : ds[ds.length - 1];
     await v.setCursor(d.start, { center: true });
-    fresh.ui.message(`${SEV[d.severity] || "error"}: ${d.message.split("\n")[0]}`);
+    fresh.message(app, `${SEV[d.severity] || "error"}: ${d.message.split("\n")[0]}`);
   };
   reg("lsp.nextDiagnostic", "Go to Next Problem", () => stepDiagnostic(1), "F8");
   reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
