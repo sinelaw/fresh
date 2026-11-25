@@ -64,21 +64,24 @@ export class UIKit {
   // A context menu of MenuItems (menu.js) at {x, y}; it has the keyboard
   // until it closes. One is open at a time.
   menu(items, at) {
-    this.contextMenu(items, () => {}).openAt(at.x, at.y);
+    this.contextMenu(items, () => {}, []).openAt(at.x, at.y);
   }
-  // A context menu of `items`, the one open (`closed()` when it closes).
-  contextMenu(items, closed) {
+  // A context menu of `items`, the one open (`closed()` when it closes);
+  // presses on `ignore` leave it open.
+  contextMenu(items, closed, ignore) {
     for (const open of this.contexts) open.close();
-    const m = makeMenu(items, menuSpec(() => { this.editor.focus(); }, [], null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
+    const m = makeMenu(items, menuSpec(() => { this.editor.focus(); }, ignore, null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
     this.contexts = [m];
     return m;
   }
 
   // A menu dropping from `anchor` (a ▾, or the joined group it is in):
   // under it, at least as wide, and drawn as one shape with it while open.
+  // Pressing the anchor again closes it.
   dropdown(items, anchor) {
-    const group = anchor.closest(".ui-joined") || anchor;
-    const m = this.contextMenu(items, () => { group.classList.remove("open"); });
+    const group = anchor.closest(".ui-joined") ?? anchor;
+    if (group.classList.contains("open")) { for (const open of this.contexts) open.close(); return; }
+    const m = this.contextMenu(items, () => { group.classList.remove("open"); }, [group]);
     m.el.classList.add("attached");
     // Under a box, the menu is that box's list of values, drawn as the box
     // is: in its type, each value starting where the box's text does.
@@ -96,6 +99,9 @@ export class UIKit {
     const mr = m.el.getBoundingClientRect();
     if (mr.left < r.left - 1) m.el.classList.add("overhang-left");
     if (mr.right > r.right + 1) m.el.classList.add("overhang-right");
+    // Its top edge opens where the group sits on it, so the two are one outline.
+    m.el.style.setProperty("--joint-left", `${r.left - mr.left}px`);
+    m.el.style.setProperty("--joint-width", `${r.width}px`);
     const first = m.el.querySelector(".menu-item");
     for (const box of boxes) for (const f of listOf(first)) {
       const textLeft = box.el.getBoundingClientRect().left + parseFloat(box.style.getPropertyValue("border-left-width")) + parseFloat(box.style.getPropertyValue("padding-left"));

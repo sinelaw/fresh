@@ -25,8 +25,10 @@
    It moves the client's own controls into the frame instead of drawing
    pictures of them: the top bar's workspace name is the big lettering at the
    end of the top bar and its skin button the pill after it; the status bar
-   is the bar along the bottom, its facts the bar's segments. Everything else
-   is pills on black: tabs, buttons, highlighted rows. */
+   is the bar along the bottom, its facts the bar's segments. Its bars end
+   in pills (tabs, panel heads, highlighted rows); controls and boxes
+   (buttons, fields, menus) share one radius, so a button and the menu it
+   opens meet as one shape. */
 
 /* ---- geometry ---------------------------------------------------------- */
 :root.skin-bridge {
@@ -38,6 +40,7 @@
   --br-top-h: 92px;     /* how far the top elbow reaches down the column   */
   --br-bot-h: 76px;     /* how far the bottom elbow reaches up it          */
   --br-pill: 118px;     /* the skin button, at the top bar's end           */
+  --br-r: 10px;         /* every control's and box's corners               */
   --bezel-top: calc(var(--br-bar) + 10px);
   --bezel-bot: calc(var(--br-foot) + 10px);
   --bezel-side: 8px;
@@ -190,7 +193,7 @@
 
 /* ---- floating panels: black, framed by an elbow -------------------------- */
 .skin-bridge #popup, .skin-bridge .ctxmenu { background: #000; color: var(--br-text); border: 0; border-left: 10px solid var(--br-orange);
-  border-radius: 18px 0 0 18px; box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, .8); }
+  border-radius: var(--br-r) 0 0 var(--br-r); box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, .8); }
 .skin-bridge .ctxmenu .menu-item { border-radius: 0 999px 999px 0; padding: 4px 14px 4px 10px; text-transform: uppercase; letter-spacing: .05em; }
 .skin-bridge .ctxmenu .menu-item.hi { background: var(--br-orange); color: #000; }
 .skin-bridge .ctxmenu .menu-item.hi * { color: #000; }
@@ -213,12 +216,12 @@
 .skin-bridge #prompt .hint { color: var(--br-dim); border-top: 0; text-transform: uppercase; letter-spacing: .06em; }
 
 /* Buttons: pills with black lettering. */
-.skin-bridge .ui-button { border: 0; border-radius: 999px; background: var(--br-lilac); color: #000;
+.skin-bridge .ui-button { border: 0; border-radius: var(--br-r); background: var(--br-lilac); color: #000;
   font: 600 .9em var(--ui-font); text-transform: uppercase; letter-spacing: .06em; padding: 4px 16px; }
 .skin-bridge .ui-button:hover { filter: brightness(1.12); }
 .skin-bridge .ui-button.primary { background: var(--br-orange); color: #000; }
 .skin-bridge :is(.ui-input, .ui-select) { background: #000; color: var(--br-text); border: 2px solid var(--br-lav); border-left-width: 6px;
-  border-radius: 0 10px 10px 0; }
+  border-radius: 0 var(--br-r) var(--br-r) 0; }
 /* A box's ▾ continues its frame; a dropdown under a box or a button is
    framed as it is, the frame going round both. */
 .skin-bridge .ui-field-button { background: #000; color: var(--br-lav); border: 2px solid var(--br-lav); border-left: 0; padding: 0 10px; }
@@ -228,10 +231,14 @@
 .skin-bridge .ui-joined.open > .ui-input { padding-bottom: 4px; }
 .skin-bridge .ui-joined.open > .ui-field-button { padding-bottom: 1px; }
 .skin-bridge :is(#popup, .ctxmenu).attached { border: 2px solid var(--br-lav); border-left-width: 6px; border-top: 0;
-  border-radius: 0 0 10px 10px; padding: 2px 0 6px; }
-.skin-bridge .ctxmenu.attached { --attached-radius: 10px; }
-.skin-bridge .ctxmenu.attached.overhang-left { border-top: 2px solid var(--br-lav); }
-.skin-bridge .ui-toggle.on { color: #000; background: var(--br-orange); border-color: var(--br-orange); border-radius: 999px; }
+  border-radius: 0 0 var(--br-r) var(--br-r); padding: 2px 0 6px; }
+.skin-bridge .ctxmenu.attached { --attached-radius: var(--br-r); }
+.skin-bridge :is(#popup, .ctxmenu).attached:is(.overhang-left, .overhang-right) { border-top: 2px solid var(--br-lav); }
+/* A button with its menu open stays a pill on top, its bottom square: the
+   menu's frame runs on down from it. */
+.skin-bridge .ui-button.open { background: var(--br-lilac); color: #000; border: 0; border-radius: var(--br-r) var(--br-r) 0 0; }
+.skin-bridge .ctxmenu.attached:not(.of-field)::before { top: -2px; left: calc(var(--joint-left) - 6px); height: 2px; background: var(--br-lilac); }
+.skin-bridge .ui-toggle.on { color: #000; background: var(--br-orange); border-color: var(--br-orange); border-radius: var(--br-r); }
 .skin-bridge .ui-badge { background: var(--br-lav); color: #000; }
 
 /* ---- scrollbars: a tan pill on a thin rail ------------------------------- */
@@ -248,4 +255,4 @@
 .skin-bridge .doc-body h1 { color: var(--br-orange); }
 .skin-bridge .doc-body h2 { color: var(--br-gold); }
 .skin-bridge .doc-body h3 { color: var(--br-tan); }
-.skin-bridge .doc-code { border-left: 8px solid var(--br-lilac); border-radius: 0 12px 12px 0; }
+.skin-bridge .doc-code { border-left: 8px solid var(--br-lilac); border-radius: 0 var(--br-r) var(--br-r) 0; }

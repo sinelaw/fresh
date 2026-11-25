@@ -387,7 +387,7 @@ export class MenuBar {
     this.opened = [];
     for (const o of prev) o.menu.close();
     const n = this.menus.length;
-    const menu = makeMenu(this.resolve(rowsOf(this.menus, i)), menuSpec(() => { this.editor.focus(); }, ["#menubar"],
+    const menu = makeMenu(this.resolve(rowsOf(this.menus, i)), menuSpec(() => { this.editor.focus(); }, [$("#menubar")],
       (d) => { this.show((i + d + n) % n, true); },
       () => { if (this.opened.some((o) => o.menu === menu)) { this.opened = []; this.render(); } }, null), []);
     this.opened = [{ i, menu }];

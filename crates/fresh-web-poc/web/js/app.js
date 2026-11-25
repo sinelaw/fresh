@@ -207,6 +207,11 @@ export class App {
   listenInput() {
     const input = this.input;
     input.addEventListener("keydown", (e) => { this.onKey(e); });
+    // The carets show only while the editor has the keyboard (not while a
+    // terminal, a panel or the palette has it).
+    const area = $("#editor-area");
+    input.addEventListener("focus", () => { setClass(area, "keyboard", true); });
+    input.addEventListener("blur", () => { setClass(area, "keyboard", false); });
     window.addEventListener("keydown", (e) => {
       if (e.target !== document.body) return;
       this.focusPane(this.activePane);

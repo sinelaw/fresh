@@ -120,6 +120,13 @@ async function changeWorkspace(say, change) {
 // A command the orchestrator adds, its action as the command table holds it.
 function orchestratorCommand(id, title, run) { return { id, title, run: asCommand(run) }; }
 
+// Where a menu opened from the keyboard on `list` goes: under its
+// selected row.
+function belowSelected(list) {
+  const r = (list.querySelector(".ui-list-row.sel") ?? list).getBoundingClientRect();
+  return { x: r.left + 12, y: r.bottom };
+}
+
 export class Orchestrator {
   // `editor` (main.js): the workspace this page views (its id, root and
   // trust, and that it was closed); saying, asking and confirming; the
@@ -443,7 +450,7 @@ export class Orchestrator {
       h("row", { class: "orch-dock-head" }, [
         h("button", { primary: true, title: "New Workspace…", onClick: () => this.newWorkspace() }, ["+ New"]),
         h("spacer", {}),
-        h("button", { title: "View, group, folders", onClick: () => this.dockMenu() }, ["Menu ▾"]),
+        h("button", { title: "View, group, folders", onClick: (e) => this.dockMenu(e.currentTarget) }, ["Menu ▾"]),
       ]),
       h("row", {}, [h("input", {
         key: "q", value: this.filter, placeholder: "/ search workspaces", list: "dock",
@@ -465,19 +472,11 @@ export class Orchestrator {
         onContext: (d, _nd, at) => this.editor.menu(this.rowMenu(d), at),
         onKey: (e, d) => {
           if (e.key === "/") { e.preventDefault(); panel.focus("q"); }
-          else if (d !== undefined && (e.key === "F2" || e.key === "ContextMenu")) { e.preventDefault(); this.editor.menu(this.rowMenu(d), this.menuAt()); }
+          else if (d !== undefined && (e.key === "F2" || e.key === "ContextMenu")) { e.preventDefault(); this.editor.menu(this.rowMenu(d), belowSelected(e.currentTarget)); }
           else if (d !== undefined && d.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
         },
       }),
     ]));
-  }
-
-  // Where a menu opened from the keyboard goes: by the dock's head (by
-  // the window's corner while it is closed).
-  menuAt() {
-    const p = this.editor.shown("orchestrator");
-    const r = p === undefined ? { left: 0, top: 0 } : p.el.getBoundingClientRect();
-    return { x: r.left + 12, y: r.top + 56 };
   }
 
   activate(d) {
@@ -525,9 +524,10 @@ export class Orchestrator {
     ];
   }
 
-  dockMenu() {
+  // The dock's menu, dropping from its button.
+  dockMenu(button) {
     const g = this.prefs.group;
-    this.editor.menu([
+    this.editor.dropdown([
       actionOf("Group: Folders", null, g === "folders", false, () => this.setGroup("folders")),
       actionOf("Group: By Date", null, g === "date", false, () => this.setGroup("date")),
       SEPARATOR,
@@ -538,7 +538,7 @@ export class Orchestrator {
       SEPARATOR,
       action("Jump to Attention", null, () => this.jump()),
       action("Jump Back", null, () => this.jumpBack()),
-    ], this.menuAt());
+    ], button);
   }
 
   // ----------------------------------------------------------- acting

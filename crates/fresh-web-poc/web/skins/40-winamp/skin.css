@@ -213,6 +213,9 @@
 .skin-winamp *::-webkit-scrollbar-thumb { background: var(--wa-plate-brush); border-radius: 0; box-shadow: var(--wa-out); }
 .skin-winamp *::-webkit-scrollbar-corner { background: #140c07; }
 .skin-winamp .ctxmenu.attached { --attached-radius: 3px; }
+/* A button with its menu open stays pressed in, square where it meets it. */
+.skin-winamp .ui-button.open { box-shadow: var(--wa-ctl-press); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.skin-winamp .ctxmenu.attached::before { display: none; }
 /* A box's list of values: the box's LCD, continued below it past a
    faint line, in a raised brushed-metal frame (as the skin's windows)
    on its other three sides. */

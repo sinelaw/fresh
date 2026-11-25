@@ -80,12 +80,12 @@ const NO_ROW = null;
 // its edge; `onClose()`; `from`, a submenu's row in its parent.
 /** type MenuSpec = {
  *   refocus: () => Undefined,
- *   ignore: String[],
+ *   ignore: El[],
  *   onSide: ((Number) => Undefined) | Null,
  *   onClose: (() => Undefined) | Null,
  *   from: Number | Null,
  * } */
-/** function menuSpec(refocus: () => Undefined, ignore: String[], onSide: ((Number) => Undefined) | Null, onClose: (() => Undefined) | Null, from: Number | Null) => MenuSpec */
+/** function menuSpec(refocus: () => Undefined, ignore: El[], onSide: ((Number) => Undefined) | Null, onClose: (() => Undefined) | Null, from: Number | Null) => MenuSpec */
 export function menuSpec(refocus, ignore, onSide, onClose, from) { return { refocus, ignore, onSide, onClose, from }; }
 
 
@@ -116,7 +116,7 @@ export function makeMenu(all, o, up) {
   const away = (e) => {
     const t = e.target;
     if (contains(t)) return;
-    for (const sel of o.ignore) if (t.closest(sel) !== null) return;
+    if (o.ignore.some((x) => x.contains(t))) return;
     close();
   };
   // Close it and its submenus; the keyboard goes back to the editor.
