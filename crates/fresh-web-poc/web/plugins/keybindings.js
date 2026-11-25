@@ -47,6 +47,7 @@ export function activate(fresh) {
         h("text", { dim: true }, [recording ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"]),
         h("button", { onClick: () => record(rows()[selected]) }, ["Add Key"]),
         h("button", { onClick: () => remove(rows()[selected]) }, ["Remove Mine"]),
+        h("button", { onClick: () => panel.close() }, ["Close"]),
       ]),
       h("list", {
         key: "keys",

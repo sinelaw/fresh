@@ -176,7 +176,8 @@ Operations:
 - `hello`, `workspace.trust`, `workspace.seen` (the user has seen what
   needed attention)
 - `workspace.list` (`{workspaces, folders}`), `workspace.open` (`{root, host, trusted, agent, worktree, name, folder}`; `host`
-  is `{kind: "local"}`, `{kind: "ssh", target}`, `{kind: "container", id}`
+  is `{kind: "local"}`, `{kind: "ssh", target, identity, options}` (an
+  identity file and more `ssh` arguments, both optional), `{kind: "container", id}`
   or `{kind: "agent"}`; `~` is the home folder on that host; a folder
   already open on the same host answers that workspace as it is; `agent`, a
   command, starts an agent session in it, which needs `trusted`;
@@ -194,6 +195,15 @@ Operations:
   subfolders and workspaces follow, a deleted one's move up),
   `agents.scan` (`{host}`: Claude Code and Codex sessions on the host, each
   `{agent, id, cwd, branch, title, mtime, resume}`)
+- Machines the user declared (kept with the registry; this machine is
+  always there and never declared): `machine.list` (`{machines}`, each
+  `{name, host}`; `hello` answers them too), `machine.add` (`{name, host}`:
+  the host is reached first, so one that cannot be is refused; a name
+  already declared is redeclared), `machine.remove` (`{name}`), and
+  `machine.browse` (`{host, path}`: the folders in `path` on that host,
+  through its authority, for choosing a workspace's folder; `""`, `~` and
+  `~/…` start at the home folder there; answers `{path, parent, home,
+  dirs: [{name, path}]}`; a host is connected once and kept)
 - `fs.list`, `fs.stat`, `fs.read`, `fs.write`, `fs.find`, `fs.create`,
   `fs.rename`, `fs.delete`, `fs.copy`, `fs.watch`, `fs.unwatch`,
   `search.project`

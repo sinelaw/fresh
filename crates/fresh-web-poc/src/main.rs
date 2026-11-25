@@ -124,7 +124,11 @@ fn main() -> Result<()> {
                 let target = args
                     .next()
                     .ok_or_else(|| anyhow!("--ssh [user@]host[:port]"))?;
-                host = HostSpec::Ssh { target };
+                host = HostSpec::Ssh {
+                    target,
+                    identity: None,
+                    options: Vec::new(),
+                };
                 hosts += 1;
             }
             "--container" => {

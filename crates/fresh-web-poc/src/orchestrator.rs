@@ -88,11 +88,21 @@ pub struct Record {
     pub meta: Meta,
 }
 
+/// A machine the user declared: a name and how to reach it. This machine
+/// is always there, undeclared.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Machine {
+    pub name: String,
+    pub host: HostSpec,
+}
+
 /// The registry's file.
 #[derive(Default, Serialize, Deserialize)]
 struct Saved {
     #[serde(default)]
     folders: Vec<String>,
+    #[serde(default)]
+    machines: Vec<Machine>,
     #[serde(default)]
     workspaces: Vec<Record>,
 }
@@ -133,7 +143,8 @@ impl Store {
             self.fs.write_file(
                 workspace::host(&self.path).as_host_path(),
                 &serde_json::to_vec_pretty(&json!({
-                    "folders": saved.folders, "workspaces": saved.workspaces,
+                    "folders": saved.folders, "machines": saved.machines,
+                    "workspaces": saved.workspaces,
                 }))?,
             )?;
             Ok(())
@@ -151,6 +162,11 @@ pub struct Orchestrator {
     failed: Mutex<BTreeMap<u64, (Record, String)>>,
     /// The dock's folders, in order.
     folders: Mutex<Vec<String>>,
+    /// The machines the user declared, in order.
+    machines: Mutex<Vec<Machine>>,
+    /// Hosts reached to browse their folders, by label: a connection is
+    /// made once and kept.
+    reached: Mutex<BTreeMap<String, Arc<dyn Authority>>>,
     next: AtomicU64,
     /// Network-like delays on every workspace's filesystem.
     slow: bool,
@@ -231,6 +247,8 @@ impl Orchestrator {
             sessions: Mutex::default(),
             failed: Mutex::default(),
             folders: Mutex::default(),
+            machines: Mutex::default(),
+            reached: Mutex::default(),
             next: AtomicU64::new(0),
             slow,
             store,
@@ -257,6 +275,88 @@ impl Orchestrator {
         self.folders.lock().unwrap().clone()
     }
 
+    pub fn machines(&self) -> Vec<Machine> {
+        self.machines.lock().unwrap().clone()
+    }
+
+    /// `host`'s authority: this machine's, or a connection made once and
+    /// kept.
+    fn reach(&self, host: &HostSpec) -> Result<Arc<dyn Authority>> {
+        if *host == HostSpec::Local {
+            return Ok(Arc::new(authority::Local::new()));
+        }
+        let key = host.label();
+        if let Some(a) = self.reached.lock().unwrap().get(&key) {
+            return Ok(a.clone());
+        }
+        let a = authority::connect(host, self.slow)
+            .map_err(|e| err(Code::Failed, format!("cannot reach {key}: {e}")))?;
+        self.reached.lock().unwrap().insert(key, a.clone());
+        Ok(a)
+    }
+
+    /// Declare a machine (it is reached first, so one that cannot be is
+    /// refused), or redeclare one of the same name.
+    fn add_machine(&self, machine: Machine) -> Result<Vec<Machine>> {
+        if machine.name.trim().is_empty() {
+            fail!(BadRequest, "a machine needs a name");
+        }
+        if machine.host == HostSpec::Local {
+            fail!(BadRequest, "this machine is always there");
+        }
+        self.reached.lock().unwrap().remove(&machine.host.label());
+        self.reach(&machine.host)?;
+        {
+            let mut ms = self.machines.lock().unwrap();
+            ms.retain(|m| m.name != machine.name);
+            ms.push(machine);
+        }
+        self.save();
+        Ok(self.machines())
+    }
+
+    fn remove_machine(&self, name: &str) -> Vec<Machine> {
+        self.machines.lock().unwrap().retain(|m| m.name != name);
+        self.save();
+        self.machines()
+    }
+
+    /// The folders in `path` on `host` (`~` and a path under it start at
+    /// the home folder there), for choosing a workspace's root.
+    fn browse(&self, host: &HostSpec, path: &str) -> Result<Value> {
+        let fs = self.reach(host)?.fs();
+        let home = PathBuf::from(fs.home_dir()?);
+        let dir = match path.trim() {
+            "" | "~" => home.clone(),
+            p => match p.strip_prefix("~/") {
+                Some(rest) => home.join(rest),
+                None => PathBuf::from(p),
+            },
+        };
+        let mut dirs: Vec<Value> = fs
+            .read_dir(workspace::host(&dir).as_host_path())
+            .map_err(|e| anyhow::Error::new(e).context(dir.display().to_string()))?
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    e.entry_type,
+                    fresh_editor_core::model::filesystem::EntryType::Directory
+                ) || e.symlink_target_is_dir
+            })
+            .map(|e| json!({ "name": e.name, "path": dir.join(&e.name).to_string_lossy() }))
+            .collect();
+        dirs.sort_by(|a, b| {
+            let key = |v: &Value| v["name"].as_str().unwrap_or("").to_lowercase();
+            key(a).cmp(&key(b))
+        });
+        Ok(json!({
+            "path": dir.to_string_lossy(),
+            "parent": dir.parent().map(|p| p.to_string_lossy().into_owned()),
+            "home": home.to_string_lossy(),
+            "dirs": dirs,
+        }))
+    }
+
     /// Write the registry down (when there is a store).
     fn save(&self) {
         let Some(store) = &self.store else { return };
@@ -266,6 +366,7 @@ impl Orchestrator {
         workspaces.sort_by_key(|r| r.id);
         store.write(&Saved {
             folders: self.folders(),
+            machines: self.machines(),
             workspaces,
         });
     }
@@ -276,6 +377,7 @@ impl Orchestrator {
         let Some(store) = &self.store else { return };
         let saved = store.read();
         *self.folders.lock().unwrap() = saved.folders;
+        *self.machines.lock().unwrap() = saved.machines;
         for r in saved.workspaces {
             self.next.fetch_max(r.id, Ordering::SeqCst);
             if let Err(e) = self.start(r.clone()) {
@@ -664,9 +766,30 @@ impl Orchestrator {
                     "workspace": session.map(|s| s.hello()),
                     "workspaces": self.list(),
                     "folders": self.folders(),
+                    "machines": self.machines(),
                 })
             }
             "workspace.list" => json!({ "workspaces": self.list(), "folders": self.folders() }),
+            "machine.list" => json!({ "machines": self.machines() }),
+            "machine.add" => {
+                self.known(client)?;
+                let machine: Machine = serde_json::from_value(m.clone())
+                    .map_err(|e| err(Code::BadRequest, format!("machine: {e}")))?;
+                json!({ "machines": self.add_machine(machine)? })
+            }
+            "machine.remove" => {
+                self.known(client)?;
+                json!({ "machines": self.remove_machine(s(m, "name")?) })
+            }
+            "machine.browse" => {
+                self.known(client)?;
+                let host: HostSpec = match m.get("host") {
+                    Some(h) => serde_json::from_value(h.clone())
+                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
+                    None => HostSpec::Local,
+                };
+                self.browse(&host, m.get("path").and_then(Value::as_str).unwrap_or(""))?
+            }
             "workspace.open" => {
                 self.known(client)?;
                 let host: HostSpec = match m.get("host") {

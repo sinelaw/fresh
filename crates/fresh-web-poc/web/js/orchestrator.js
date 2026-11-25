@@ -36,12 +36,8 @@ import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
-const HOSTS = [
-  { value: "local", label: "This machine" },
-  { value: "ssh", label: "SSH host" },
-  { value: "container", label: "Container" },
-  { value: "agent", label: "Remote agent (here)" },
-];
+// A host as people read it: an SSH target, a container, the agent.
+const hostText = (host) => (host.kind === "ssh" ? host.target : host.kind === "container" ? `container ${host.id}` : host.kind);
 const GIT_MODES = [
   { value: "worktree", label: "New worktree, on a new branch" },
   { value: "folder", label: "Work in the folder as it is" },
@@ -79,15 +75,17 @@ const leaf = (path) => path.split("/").pop();
 const parentOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
 export class Orchestrator {
-  constructor(app, workspaces, folders) {
+  constructor(app, workspaces, folders, machines) {
     this.app = app;
     this.list = workspaces;
     this.folders = folders;
+    // The machines the user declared (this machine is always there).
+    this.machines = machines;
     this.panel = null;
     this.filter = "";
     this.pending = []; // workspaces being made in the background: {key, spec, name, error}
     this.nextPending = 0;
-    this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [] };
+    this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [], machine: "local" };
     this.formGo = null; // the open New Workspace form's launch
     this.renderBoard = null; // the open Workboard's redraw
   }
@@ -649,6 +647,7 @@ export class Orchestrator {
         h("toggle", { on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, ["2 Board"]),
         h("spacer", {}),
         h("text", { dim: true }, ["Tab: lens · Enter: open · n: next that needs you · Esc: close"]),
+        h("button", { onClick: () => panel.close() }, ["Close"]),
       ]);
       if (lens === "inbox") {
         const items = [];
@@ -685,18 +684,37 @@ export class Orchestrator {
     panel.focus(this.prefs.lens === "board" ? "" : "cards");
   }
 
+  // ----------------------------------------------------------- machines
+
+  // The machine choices: this machine, the declared ones and (`withAdd`)
+  // "Add…", which declares another.
+  machineOptions(withAdd) {
+    return [
+      { value: "local", label: "This machine" },
+      ...this.machines.map((m) => ({ value: `m:${m.name}`, label: `${m.name} (${hostText(m.host)})` })),
+      ...(withAdd ? [{ value: "add", label: "Add…" }] : []),
+    ];
+  }
+  // A remembered choice, while its machine is still declared.
+  machineChoice(choice) {
+    return choice && this.machines.some((m) => `m:${m.name}` === choice) ? choice : "local";
+  }
+  // The host a choice names.
+  hostOf(choice) {
+    const m = this.machines.find((x) => `m:${x.name}` === choice);
+    return m ? m.host : { kind: "local" };
+  }
+
   // ----------------------------------------------------------- import
 
   // Agent sessions run outside the editor (Claude Code and Codex
   // transcripts on a host): pick one, and New Workspace opens filled in to
   // resume it in its folder.
   importSessions() {
-    const st = { host: this.prefs.host || "local", target: this.prefs.target || "", sessions: null, error: "", busy: false };
+    const st = { machine: this.machineChoice(this.prefs.machine), sessions: null, error: "", busy: false };
     const panel = this.app().ui.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog", onClose: null });
     const scan = async () => {
-      const host = { kind: st.host };
-      if (st.host === "ssh") host.target = st.target.trim();
-      if (st.host === "container") host.id = st.target.trim();
+      const host = this.hostOf(st.machine);
       st.busy = true;
       st.error = "";
       render();
@@ -709,7 +727,7 @@ export class Orchestrator {
       if (!x) return;
       panel.close();
       this.newWorkspace({
-        root: x.cwd, host: st.host, target: st.target, git: "folder", agent: "custom", custom: x.resume, resume: x.resume,
+        root: x.cwd, machine: st.machine, git: "folder", agent: "custom", custom: x.resume, resume: x.resume,
         name: x.title ? x.title.slice(0, 40) : "",
       });
     };
@@ -725,14 +743,14 @@ export class Orchestrator {
       ]);
     };
     const render = () => {
-      const remote = st.host === "ssh" || st.host === "container";
       const list = st.sessions || [];
       panel.render(h("col", { class: "orch-import" }, [
         h("row", {}, [
           h("text", { class: "orch-label" }, ["Machine"]),
-          h("select", { key: "host", value: st.host, options: HOSTS, onChange: (v) => { st.host = v; render(); } }),
-          remote ? h("input", { key: "target", value: st.target, placeholder: st.host === "ssh" ? "[user@]host[:port]" : "container", onInput: (v) => { st.target = v; }, onEnter: scan }) : null,
+          h("select", { key: "machine", value: st.machine, options: this.machineOptions(false), onChange: (v) => { st.machine = v; render(); } }),
           h("button", { primary: true, disabled: st.busy, onClick: scan }, [st.busy ? "Scanning…" : "Scan"]),
+          h("spacer", {}),
+          h("button", { onClick: () => panel.close() }, ["Cancel"]),
         ]),
         st.error ? h("text", { class: "orch-error" }, [st.error]) : null,
         st.sessions
@@ -785,18 +803,23 @@ export class Orchestrator {
   newWorkspace(preset) {
     const f = {
       agent: this.prefs.agent, custom: this.prefs.custom, auto: this.prefs.auto, prompt: "",
-      host: this.prefs.host || "local", target: this.prefs.target || "", root: this.prefs.recent[0] || "",
+      machine: this.machineChoice(this.prefs.machine), root: this.prefs.recent[0] || "",
       git: this.prefs.git || "worktree", branch: "", base: "", trusted: true, name: "", folder: "",
       resume: "", // an imported session's: taken up again after a restart
       busy: false, error: "",
       ...(preset || {}),
     };
+    // Declaring a machine (the choice "Add…"): its SSH details, and the
+    // choice to go back to on Cancel.
+    const add = { back: f.machine, name: "", target: "", port: "", identity: "", options: "", busy: false, error: "" };
+    // The folder browser: the folders under `base` on the chosen machine,
+    // loaded as they are opened; the text box filters them by name, or (a
+    // path, absolute or from ~) moves `base` there.
+    const browse = { shown: false, base: "", text: "", dirs: new Map(), open: new Set(), sel: "", error: "", timer: 0 };
     const panel = this.app().ui.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
     const go = async (background) => {
-      if (f.busy || !f.root.trim()) return;
-      const host = { kind: f.host };
-      if (f.host === "ssh") host.target = f.target.trim();
-      if (f.host === "container") host.id = f.target.trim();
+      if (f.busy || f.machine === "add" || !f.root.trim()) return;
+      const host = this.hostOf(f.machine);
       const agent = f.agent === "terminal" ? null : this.commandFor(f.agent, f.auto, f.prompt, f.custom);
       const spec = {
         root: f.root.trim(), host, trusted: f.trusted, agent,
@@ -806,7 +829,7 @@ export class Orchestrator {
       };
       const root = f.root.trim();
       Object.assign(this.prefs, {
-        agent: f.agent, custom: f.custom, auto: f.auto, host: f.host, target: f.target, git: f.git,
+        agent: f.agent, custom: f.custom, auto: f.auto, machine: f.machine, git: f.git,
         recent: [root, ...this.prefs.recent.filter((x) => x !== root)].slice(0, 8),
       });
       this.savePrefs();
@@ -817,6 +840,63 @@ export class Orchestrator {
       const error = await this.launch(spec, false, null);
       if (error) { f.busy = false; f.error = error; render(); }
     };
+    const addMachine = async () => {
+      const name = add.name.trim(), target = add.target.trim();
+      if (!name || !target) { add.error = "A name and a host are needed"; render(); return; }
+      const host = {
+        kind: "ssh",
+        target: add.port.trim() ? `${target}:${add.port.trim()}` : target,
+        identity: add.identity.trim() || null,
+        options: add.options.trim() ? add.options.trim().split(/\s+/) : [],
+      };
+      add.busy = true;
+      add.error = "";
+      render();
+      try {
+        this.machines = (await rpc("machine.add", { name, host })).machines;
+        f.machine = `m:${name}`;
+        Object.assign(add, { name: "", target: "", port: "", identity: "", options: "" });
+      } catch (e) { add.error = e.detail || String(e); }
+      add.busy = false;
+      render();
+    };
+    // Load the folders in `path` on the chosen machine; with `asBase`, the
+    // browser starts there.
+    const load = async (path, asBase) => {
+      try {
+        const r = await rpc("machine.browse", { host: this.hostOf(f.machine), path });
+        browse.dirs.set(r.path, r.dirs);
+        if (asBase) { browse.base = r.path; browse.sel = r.path; }
+        browse.error = "";
+      } catch (e) { browse.error = e.detail || String(e); }
+      render();
+    };
+    const openBrowser = () => {
+      Object.assign(browse, { shown: true, text: "", dirs: new Map(), open: new Set(), error: "" });
+      load(f.root.trim() || "~", true);
+    };
+    // The browser's rows: `base`'s parent, then its folders as a tree.
+    const browseRows = () => {
+      const rows = [];
+      const walk = (path, depth) => {
+        for (const d of browse.dirs.get(path) || []) {
+          rows.push({ name: d.name, path: d.path, depth, open: browse.open.has(d.path) });
+          if (browse.open.has(d.path)) walk(d.path, depth + 1);
+        }
+      };
+      walk(browse.base, 0);
+      const q = browse.text.trim().toLowerCase();
+      const isPath = q.startsWith("/") || q.startsWith("~");
+      return q && !isPath ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
+    };
+    const toggle = (row) => {
+      browse.sel = row.path;
+      if (browse.open.has(row.path)) browse.open.delete(row.path);
+      else { browse.open.add(row.path); if (!browse.dirs.has(row.path)) { load(row.path, false); return; } }
+      render();
+    };
+    const parentOf = (path) => (path === "/" ? "/" : path.slice(0, path.lastIndexOf("/")) || "/");
+    const choose = () => { f.root = browse.sel || browse.base; browse.shown = false; render(); panel.focus("root"); };
     // Ctrl+Enter / Alt+Enter anywhere in the form: an input leaves them to
     // the form.
     const launchKey = (e) => e.key === "Enter" && (e.ctrlKey || e.altKey);
@@ -828,9 +908,60 @@ export class Orchestrator {
     const field = (label, controls) => h("row", { class: "orch-field" }, [h("text", { class: "orch-label" }, [label]), ...controls]);
     const section = (title) => h("text", { class: "orch-section" }, [title]);
     const input = (key, placeholder) => h("input", { key, value: f[key], placeholder, onInput: (v) => { f[key] = v; }, onEnter: () => go(false), onKey: launchKey });
+    const addInput = (key, placeholder) => h("input", { key: `add-${key}`, value: add[key], placeholder, onInput: (v) => { add[key] = v; }, onEnter: addMachine });
+    const machineChanged = (v) => {
+      if (v === "add") add.back = f.machine;
+      f.machine = v;
+      browse.shown = false;
+      render();
+      if (v === "add") panel.focus("add-name");
+    };
+    const addSection = () => h("col", { class: "orch-add-machine" }, [
+      field("Name", [addInput("name", "how the machine is called here")]),
+      field("SSH host", [addInput("target", "[user@]host"), addInput("port", "port (22)")]),
+      field("Identity", [addInput("identity", "identity file (optional)")]),
+      field("Options", [addInput("options", "more ssh options, e.g. -J jump (optional)")]),
+      add.error ? h("text", { class: "orch-error" }, [add.error]) : null,
+      field("", [
+        h("button", { primary: true, disabled: add.busy, onClick: addMachine }, [add.busy ? "Connecting…" : "Add"]),
+        h("button", { disabled: add.busy, onClick: () => { f.machine = add.back; add.error = ""; render(); } }, ["Cancel"]),
+      ]),
+    ]);
+    const browser = () => h("col", { class: "orch-browse" }, [
+      h("input", {
+        key: "browse-q", value: browse.text, placeholder: `filter, or a path (/… or ~/…) on ${hostText(this.hostOf(f.machine))}`,
+        onInput: (v) => {
+          browse.text = v;
+          clearTimeout(browse.timer);
+          const t = v.trim();
+          if (t.startsWith("/") || t.startsWith("~")) browse.timer = setTimeout(() => { load(t, true); }, 300);
+          else render();
+        },
+        onEnter: choose,
+      }),
+      h("text", { dim: true }, [browse.error || browse.base]),
+      h("list", {
+        key: "browse-tree", class: "orch-browse-list",
+        items: [{ name: "..", path: parentOf(browse.base), depth: 0, open: false, up: true }, ...browseRows()],
+        render: (r) => h("text", { mono: true }, [r.up ? "↑ .." : `${"  ".repeat(r.depth)}${r.open ? "▾" : "▸"} ${r.name}`]),
+        onSelect: (r) => { browse.sel = r.up ? browse.base : r.path; },
+        onActivate: (r, _i, how) => {
+          if (r.up) { load(r.path, true); return; }
+          if (how === "double") { browse.sel = r.path; choose(); return; }
+          toggle(r);
+        },
+        activateOnClick: true,
+      }),
+      h("row", {}, [
+        h("text", { dim: true }, [`Selected: ${browse.sel || browse.base}`]),
+        h("spacer", {}),
+        h("button", { onClick: () => { browse.shown = false; render(); } }, ["Cancel"]),
+        h("button", { primary: true, onClick: choose }, ["Choose"]),
+      ]),
+    ]);
     const render = () => {
       const agent = agentById(f.agent);
-      const remote = f.host === "ssh" || f.host === "container";
+      const adding = f.machine === "add";
       panel.render(h("col", { class: "orch-form" }, [
         section("AGENT"),
         field("Agent", [h("select", { key: "agent", value: f.agent, options: AGENT_CHOICES, onChange: (v) => { f.agent = v; render(); } })]),
@@ -838,10 +969,11 @@ export class Orchestrator {
         agent && agent.auto.length ? field("", [h("checkbox", { key: "auto", checked: f.auto, onChange: (v) => { f.auto = v; } }, ["Auto mode (fewer approval prompts)"])]) : null,
         agent ? field("Prompt", [input("prompt", `the task for ${agent.label} (optional)`)]) : null,
         section("WHERE"),
-        field("Host", [h("select", { key: "host", value: f.host, options: HOSTS, onChange: (v) => { f.host = v; render(); } })]),
-        remote ? field(f.host === "ssh" ? "Target" : "Container", [input("target", f.host === "ssh" ? "[user@]host[:port]" : "name or id")]) : null,
-        field("Folder", [input("root", "/path/to/project (~ for home)")]),
-        this.prefs.recent.length
+        field("Machine", [h("select", { key: "machine", value: f.machine, options: this.machineOptions(true), onChange: machineChanged })]),
+        adding ? addSection() : null,
+        adding ? null : field("Folder", [input("root", "/path/to/project (~ for home)"), h("button", { onClick: () => (browse.shown ? (browse.shown = false, render()) : openBrowser()) }, ["Browse…"])]),
+        !adding && browse.shown ? browser() : null,
+        !adding && this.prefs.recent.length
           ? field("Recent", [h("row", { class: "orch-recent" }, this.prefs.recent.map((r) => h("button", { onClick: () => { f.root = r; render(); panel.focus("root"); } }, [r])))])
           : null,
         section("GIT"),
@@ -858,13 +990,14 @@ export class Orchestrator {
         h("row", {}, [
           h("text", { dim: true }, [f.busy ? "Opening…" : "Ctrl+Enter launches · Alt+Enter in the background"]),
           h("spacer", {}),
-          h("button", { disabled: f.busy, onClick: () => go(true) }, ["Launch in Background"]),
-          h("button", { primary: true, disabled: f.busy, onClick: () => go(false) }, ["Launch"]),
+          h("button", { onClick: () => panel.close() }, ["Cancel"]),
+          h("button", { disabled: f.busy || adding, onClick: () => go(true) }, ["Launch in Background"]),
+          h("button", { primary: true, disabled: f.busy || adding, onClick: () => go(false) }, ["Launch"]),
         ]),
       ]));
     };
     render();
-    panel.focus("root");
+    panel.focus(f.machine === "add" ? "add-name" : "root");
   }
 }
 

@@ -38,7 +38,7 @@ async function main() {
     session: new Session(),
     workspace: ws,
     params,
-    orchestrator: new Orchestrator(getApp, hello.workspaces, hello.folders),
+    orchestrator: new Orchestrator(getApp, hello.workspaces, hello.folders, hello.machines),
     skins: new Skins(getApp),
     editing: new Editing(getApp),
     ui: new UIKit(getApp),

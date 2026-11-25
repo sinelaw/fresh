@@ -329,8 +329,15 @@ pub enum HostSpec {
     /// This machine.
     Local,
     /// Another machine, `[user@]host[:port]`, through the editor's remote
-    /// agent over `ssh`.
-    Ssh { target: String },
+    /// agent over `ssh`; with an identity file and further `ssh` options
+    /// (`-J jump`, `-o Name=value`) when given.
+    Ssh {
+        target: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        identity: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        options: Vec<String>,
+    },
     /// A running container: files here, processes through `docker exec`.
     Container { id: String },
     /// The remote agent on this machine, without `ssh`.
@@ -342,7 +349,7 @@ impl HostSpec {
     pub fn label(&self) -> String {
         match self {
             HostSpec::Local => "local".into(),
-            HostSpec::Ssh { target } => format!("ssh {target}"),
+            HostSpec::Ssh { target, .. } => format!("ssh {target}"),
             HostSpec::Container { id } => format!("container {id}"),
             HostSpec::Agent => "agent".into(),
         }
@@ -354,9 +361,15 @@ impl HostSpec {
 pub fn connect(spec: &HostSpec, slow: bool) -> anyhow::Result<Arc<dyn Authority>> {
     use anyhow::anyhow;
     Ok(match spec {
-        HostSpec::Ssh { target } => {
-            let params = ConnectionParams::parse(target)
+        HostSpec::Ssh {
+            target,
+            identity,
+            options,
+        } => {
+            let mut params = ConnectionParams::parse(target)
                 .ok_or_else(|| anyhow!("bad ssh target {target}"))?;
+            params.identity_file = identity.as_ref().map(std::path::PathBuf::from);
+            params.extra_args = options.clone();
             let runtime = tokio::runtime::Runtime::new()?;
             let conn = runtime.block_on(fresh::services::remote::SshConnection::connect(
                 params.clone(),

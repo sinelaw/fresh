@@ -302,12 +302,18 @@ body {
 .orch-attention-line { gap: 12px; padding: 0 4px; }
 .orch-error { color: var(--error); white-space: pre-wrap; }
 .orch-form { gap: 6px; padding: 4px 2px; overflow: auto; }
+/* Its rows keep their height: a long form scrolls instead. */
+.orch-form > *, .orch-add-machine > *, .orch-browse > * { flex-shrink: 0; }
 .orch-section { color: var(--muted); font-size: var(--ui-font-xs); letter-spacing: .08em; margin-top: 4px; }
 .orch-field { align-items: center; }
 .orch-label { width: 90px; flex-shrink: 0; color: var(--muted); }
 .orch-note { font-size: var(--ui-font-xs); padding-left: 96px; }
 .orch-recent { flex-wrap: wrap; }
 .orch-import .orch-import-list { min-height: 260px; }
+/* New Workspace: a machine being declared, and the folder browser. */
+.orch-add-machine { gap: 6px; padding: 6px 0 6px 10px; border-left: 2px solid var(--accent); }
+.orch-browse { gap: 4px; padding: 6px 0 6px 10px; border-left: 2px solid var(--accent); }
+.orch-browse .orch-browse-list { height: 240px; flex: none; }
 .wb { gap: 6px; }
 .wb .wb-list { min-height: 320px; }
 .wb-why { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
