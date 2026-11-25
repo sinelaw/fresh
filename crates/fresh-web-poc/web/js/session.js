@@ -3,35 +3,57 @@
 // them. Kept in localStorage under the workspace's host and root, so two
 // workspaces (or one served from two hosts) keep their own.
 
-const PREFIX = "fresh-poc:workspace:";
+// The shape it is kept in names the key: data kept in another shape is
+// left alone (not read).
+const PREFIX = "fresh-poc:session:";
+
+/** function emptySession() => SessionData */
+function emptySession() { return { layout: null, recent: [], sizes: {} }; }
+// What was kept under `key`, or nothing kept.
+/** function readSession(key: String) => SessionData */
+function readSession(key) {
+  try {
+    const text = localStorage.getItem(key);
+    if (text === null) return emptySession();
+    /** const kept: SessionData */
+    const kept = JSON.parse(text);
+    return kept;
+  } catch { return emptySession(); }
+}
 
 export class Session {
   constructor() {
-    this.key = "";
-    this.data = {};
+    this.keys = []; // the workspace's key, once opened: a list of at most one
+    this.data = emptySession();
     this.timer = 0;
   }
 
   // Start remembering for the workspace `root` on `host`; reads what was
   // remembered last time.
   open(host, root) {
-    this.key = `${PREFIX}${host}:${root}`;
-    try { this.data = JSON.parse(localStorage.getItem(this.key) || "{}") || {}; } catch { this.data = {}; }
+    const key = `${PREFIX}${host}:${root}`;
+    this.keys = [key];
+    this.data = readSession(key);
   }
 
-  get(k) { return this.data[k]; }
+  get layout() { return this.data.layout; }
+  get recent() { return this.data.recent; }
+  get sizes() { return this.data.sizes; }
+  // Remember the layout, the recent files or the parts' sizes; written
+  // shortly after (a drag or a burst of tab changes writes once).
+  setLayout(layout) { this.data = { layout, recent: this.data.recent, sizes: this.data.sizes }; this.later(); }
+  setRecent(recent) { this.data = { layout: this.data.layout, recent, sizes: this.data.sizes }; this.later(); }
+  setSizes(sizes) { this.data = { layout: this.data.layout, recent: this.data.recent, sizes }; this.later(); }
 
-  // Remember `v` under `k`; written shortly after (a drag or a burst of tab
-  // changes writes once).
-  set(k, v) {
-    this.data[k] = v;
+  later() {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), 300);
+    this.timer = setTimeout(() => { this.flush(); }, 300);
   }
 
   flush() {
     clearTimeout(this.timer);
-    if (!this.key) return;
-    try { localStorage.setItem(this.key, JSON.stringify(this.data)); } catch {}
+    for (const key of this.keys) {
+      try { localStorage.setItem(key, JSON.stringify(this.data)); } catch {}
+    }
   }
 }

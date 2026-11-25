@@ -94,19 +94,20 @@ export function styleKey(s) {
 
 // The inline CSS for a style, cached by its key. `mono` is inline code in a
 // document; `markup` is revealed Markdown source, drawn dim.
-export function cssFor(st, key = styleKey(st)) {
-  let c = cssCache.get(key);
-  if (c == null) {
-    c = "";
-    if (st.markup) c += "color:var(--faint);";
-    else if (st.fg) c += `color:${css(st.fg)};`;
-    if (st.mono) c += "font-family:var(--mono);font-size:.88em;background:var(--code-bg);border-radius:3px;";
-    if (st.bg) c += `background:${css(st.bg)};`;
-    if (st.bold) c += "font-weight:bold;";
-    if (st.italic) c += "font-style:italic;";
-    if (st.wavy) c += `text-decoration:underline wavy ${st.wavy};`;
-    else if (st.underline || st.strike) c += `text-decoration:${[st.underline && "underline", st.strike && "line-through"].filter(Boolean).join(" ")};`;
-    cssCache.set(key, c);
-  }
+// The inline CSS for a style.
+export function cssOf(st) { return cssFor(st, styleKey(st)); }
+export function cssFor(st, key) {
+  const hit = cssCache.get(key);
+  if (hit !== undefined) return hit;
+  const lines = [st.underline ? "underline" : "", st.strike ? "line-through" : ""].filter((x) => x !== "");
+  const c = [
+    st.markup ? "color:var(--faint);" : st.fg ? `color:${css(st.fg)};` : "",
+    st.mono ? "font-family:var(--mono);font-size:.88em;background:var(--code-bg);border-radius:3px;" : "",
+    st.bg ? `background:${css(st.bg)};` : "",
+    st.bold ? "font-weight:bold;" : "",
+    st.italic ? "font-style:italic;" : "",
+    st.wavy ? `text-decoration:underline wavy ${st.wavy};` : lines.length ? `text-decoration:${lines.join(" ")};` : "",
+  ].join("");
+  cssCache.set(key, c);
   return c;
 }

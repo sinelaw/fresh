@@ -26,7 +26,7 @@
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { applies, cursorIn } from "./layout.js";
-import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup } from "./paint.js";
+import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
@@ -342,7 +342,7 @@ export class DocView {
   }
 
   vline(x) {
-    const st = cssFor(drawnOf(x.style));
+    const st = cssOf(drawnOf(x.style));
     return `<div class="vline"${st ? ` style="${st}"` : ""}>${esc(x.text || "")}​</div>`;
   }
 
@@ -457,7 +457,7 @@ export class DocView {
       const inline = (p, side) => {
         for (const t of inl.get(p + side) || []) {
           flush();
-          const st = cssFor(drawnOf(t.style));
+          const st = cssOf(drawnOf(t.style));
           out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${esc(t.text)}</span>`;
         }
       };
@@ -519,7 +519,7 @@ export class DocView {
   }
 
   concealHTML(c) {
-    const st = cssFor(drawnOf(c.style));
+    const st = cssOf(drawnOf(c.style));
     const body = c.text === "\n" ? "<br>" : esc(c.text);
     return `<span class="cc" data-at="${c.start}" data-e="${c.end}"${st ? ` style="${st}"` : ""}>${body}</span>`;
   }

@@ -90,6 +90,17 @@
 // selection) and the column vertical motion aims for (null: its own).
 /** type Cursor = {pos: Number, anchor: Number | Null, goalX: Number | Null} */
 
+// The layout a workspace's page remembers (session.js): each split's
+// tabs (a file by its path, an untitled document by its number) with
+// their cursor and scroll and the one shown, the splits' directions and
+// ratios, the active split, and whether the sidebar and terminal show.
+/** type SavedTab = {path: String | Null, untitled: Number | Null, pos: Number, top: Number, preview: Boolean} */
+/** type SavedNode =
+ *   | {kind: "pane", tabs: SavedTab[], active: String | Null}
+ *   | {kind: "split", dir: String, ratio: Number, a: SavedNode, b: SavedNode} */
+/** type SavedLayout = {tree: SavedNode, active: Number, sidebar: Boolean, terminal: Boolean} */
+/** type SessionData = {layout: SavedLayout | Null, recent: String[], sizes: Dict<Number>} */
+
 // A cursor moved (`setCursor`, `select`): `center` scrolls it to the middle.
 /** type CursorOptions = {center: Boolean} */
 

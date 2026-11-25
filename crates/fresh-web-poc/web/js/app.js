@@ -43,6 +43,14 @@ export function loadUserKeys() {
 // The application: built by main.js from its parts (each made before it,
 // holding a getter for it), with the workspace the server said this page
 // views. Its constructor only sets fields; start() wires it up.
+// The remembered layout's parts (types/fresh.d.js).
+/** function savedTab(path: String | Null, untitled: Number | Null, pos: Number, top: Number, preview: Boolean) => SavedTab */
+function savedTab(path, untitled, pos, top, preview) { return { path, untitled, pos, top, preview }; }
+/** function savedPane(tabs: SavedTab[], active: String | Null) => SavedNode */
+function savedPane(tabs, active) { return { kind: "pane", tabs, active }; }
+/** function savedSplit(dir: String, ratio: Number, a: SavedNode, b: SavedNode) => SavedNode */
+function savedSplit(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
+
 export class App {
   constructor(c) {
     this.buffers = new Map();
@@ -161,15 +169,17 @@ export class App {
   // document by its number) with their cursor and scroll, the active split
   // and tab, and whether the sidebar and the terminal show.
   layoutSnapshot() {
-    const tab = (v) => (this.tabKey(v.buf) ? { path: v.buf.path || null, untitled: v.buf.untitled, pos: v.primary.pos, top: v.top, preview: v.preview } : null);
-    const node = (n) => (n.pane
-      ? { tabs: n.pane.views.map(tab).filter(Boolean), active: n.pane.view ? this.tabKey(n.pane.view.buf) : null }
-      : { dir: n.dir, ratio: n.ratio, a: node(n.a), b: node(n.b) });
-    return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden"), terminal: !!this.term?.visible };
+    const tabs = (views) => views.flatMap((v) => (this.tabKey(v.buf) ? [savedTab(v.buf.path, v.buf.untitled, v.primary.pos, v.top, v.preview)] : []));
+    const node = (n) => {
+      const pane = n.pane;
+      if (pane) { const shown = pane.view; return savedPane(tabs(pane.views), shown ? this.tabKey(shown.buf) : null); }
+      return savedSplit(n.dir, n.ratio, node(n.a), node(n.b));
+    };
+    return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden"), terminal: this.term.visible };
   }
   rememberLayout() {
     if (this.restoring || !this.layoutTree) return;
-    this.session.set("layout", this.layoutSnapshot());
+    this.session.setLayout(this.layoutSnapshot());
   }
   // A document buffer as the remembered layout names it: its path, or
   // `untitled:N`; null for any other buffer.
@@ -180,27 +190,29 @@ export class App {
   // text — and a split left with none closes). Resolves false when there
   // was nothing to restore.
   async restoreLayout() {
-    const s = this.session.get("layout");
-    if (!s || !s.tree) return false;
-    $("#sidebar").classList.toggle("hidden", s.sidebar === false);
+    const s = this.session.layout;
+    if (s === null) return false;
+    if (s.sidebar) $("#sidebar").classList.remove("hidden"); else $("#sidebar").classList.add("hidden");
     const specs = [];
     const build = (n) => {
-      if (n.tabs) { const pane = new Pane(() => this); pane.listen(); specs.push({ pane, n }); return { pane }; }
-      return { dir: n.dir === "v" ? "v" : "h", ratio: clamp(+n.ratio || 0.5, 0.05, 0.95), a: build(n.a), b: build(n.b) };
+      if (n.kind === "pane") { const pane = new Pane(() => this); pane.listen(); specs.push({ pane, tabs: n.tabs, active: n.active }); return { pane }; }
+      return { dir: n.dir === "v" ? "v" : "h", ratio: clamp(n.ratio || 0.5, 0.05, 0.95), a: build(n.a), b: build(n.b) };
     };
     this.layoutTree = build(s.tree);
     this.activePane = specs[Math.max(0, Math.min(specs.length - 1, s.active | 0))].pane;
     this.relayout();
-    for (const { pane, n } of specs) {
-      for (const t of n.tabs) {
+    for (const { pane, tabs, active: shown } of specs) {
+      for (const t of tabs) {
+        const untitled = t.untitled, path = t.path;
         let b;
-        try { b = t.untitled ? await this.loadUntitled(t.untitled) : await this.loadFile(t.path); } catch { continue; }
+        try { b = untitled !== null ? await this.loadUntitled(untitled) : path !== null ? await this.loadFile(path) : null; } catch { continue; }
+        if (!b) continue;
         const v = pane.show(b, t.preview ? true : null);
         const pos = Math.max(0, Math.min(t.pos | 0, b.len));
         v.cursors = [cursorAt(pos)];
         v.setTop(Math.max(0, Math.min(t.top | 0, pos)));
       }
-      const active = pane.views.find((v) => this.tabKey(v.buf) === n.active);
+      const active = pane.views.find((v) => this.tabKey(v.buf) === shown);
       if (active) pane.show(active.buf, null);
     }
     for (const { pane } of specs) if (!pane.views.length && this.panes().length > 1) await this.closePane(pane);
@@ -212,11 +224,9 @@ export class App {
 
   // Files opened lately in this workspace, the latest first.
   noteRecent(path) {
-    const list = (this.session.get("recent") || []).filter((p) => p !== path);
-    list.unshift(path);
-    this.session.set("recent", list.slice(0, 30));
+    this.session.setRecent([path, ...this.session.recent.filter((p) => p !== path)].slice(0, 30));
   }
-  recentFiles() { return this.session.get("recent") || []; }
+  recentFiles() { return this.session.recent; }
 
   measure() {
     const s = document.createElement("span");
@@ -300,19 +310,24 @@ export class App {
       dock: { el: $("#dock"), axis: "y", dir: -1, min: 80, most: 0.8 },
       terminal: { el: $("#terminal"), axis: "y", dir: -1, min: 80, most: 0.8 },
     };
-    const sizes = { ...(this.session.get("sizes") || {}) };
+    const sizeOf = (name) => this.session.sizes[name];
+    const setSize = (name, px) => { this.session.setSizes({ ...this.session.sizes, [name]: px }); };
     const prop = (p) => (p.axis === "x" ? "width" : "height");
     for (const [name, p] of Object.entries(parts)) {
-      if (sizes[name]) p.el.style[prop(p)] = `${sizes[name]}px`;
+      const kept = sizeOf(name);
+      if (kept) p.el.style[prop(p)] = `${kept}px`;
       sash(document.querySelector(`.sash[data-sash="${name}"]`), p.axis, {
         // The most a part takes is a share of its container.
         begin: () => {
           const r = p.el.getBoundingClientRect(), box = p.el.parentElement.getBoundingClientRect();
           return { at: p.axis === "x" ? r.width : r.height, max: (p.axis === "x" ? box.width : box.height) * p.most };
         },
-        drag: (c, d) => { sizes[name] = Math.round(clamp(c.at + p.dir * d, p.min, Math.max(p.min, c.max))); p.el.style[prop(p)] = `${sizes[name]}px`; },
-        end: () => this.session.set("sizes", sizes),
-        reset: () => { delete sizes[name]; p.el.style[prop(p)] = ""; this.session.set("sizes", sizes); },
+        drag: (c, d) => { const px = Math.round(clamp(c.at + p.dir * d, p.min, Math.max(p.min, c.max))); p.el.style[prop(p)] = `${px}px`; setSize(name, px); },
+        end: () => {},
+        reset: () => {
+          p.el.style[prop(p)] = "";
+          this.session.setSizes(Object.fromEntries(Object.entries(this.session.sizes).filter(([k]) => k !== name)));
+        },
       });
     }
   }
