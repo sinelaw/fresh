@@ -7,8 +7,9 @@
 // replays the server's buffer, which ends at a known offset, and then takes
 // only the bytes after it, so nothing is lost or written twice.
 
-import { setClass } from "./dom.js";
+import { setClass, escapeHtml } from "./dom.js";
 import { rpc } from "./rpc.js";
+import { found } from "./maybe.js";
 
 // The terminal's colours, from the theme's variables (xterm draws on a
 // canvas, so it takes values, not variables). Its ANSI colours are kept
@@ -161,6 +162,7 @@ export class TerminalPanel {
   // Refit the terminals as the panel resizes (once, after `new`).
   listen() {
     new ResizeObserver(() => this.refit()).observe(this.screens);
+    this.tabsEl.addEventListener("mousedown", (e) => { this.tabPress(e); });
   }
 
   // Terminals the server already runs (from another client, or before a
@@ -174,16 +176,14 @@ export class TerminalPanel {
   states(terms) {
     let changed = false;
     for (const s of terms) {
-      const t = this.terms.get(s.id);
-      if (t !== undefined && t.state !== s.state) { t.state = s.state; changed = true; }
+      for (const t of found(this.terms.get(s.id))) if (t.state !== s.state) { t.state = s.state; changed = true; }
     }
     if (changed) this.renderTabs();
   }
 
   async add(id) {
-    const had = this.terms.get(id);
-    if (had !== undefined) return had;
-    const t = new Term(id, this.screens, this.app, () => { this.renderTabs(); });
+    for (const had of found(this.terms.get(id))) return had;
+    const t = new Term(id, this.screens, () => this.app(), () => { this.renderTabs(); });
     t.listen();
     this.terms.set(id, t);
     await t.attach();
@@ -203,45 +203,40 @@ export class TerminalPanel {
 
   select(id) {
     this.selected = [id];
-    for (const [k, t] of this.terms) t.show(k === id && this.visible);
+    this.terms.forEach((t, k) => { t.show(k === id && this.visible); });
     this.renderTabs();
   }
 
   renderTabs() {
-    this.tabsEl.innerHTML = "";
-    for (const [id, t] of this.terms) {
-      const b = document.createElement("div");
-      b.className = "tab" + (this.selected.includes(id) ? " active" : "");
-      const label = document.createElement("span");
-      label.className = "label";
+    const html = [];
+    this.terms.forEach((t, id) => {
       const mark = (t.done ? STATE_MARK.get("exited") : t.agent ? STATE_MARK.get(t.state) : undefined) ?? "";
-      label.textContent = `${mark}${t.title || (t.agent ? t.name : `Terminal ${id}`)}`;
-      b.title = label.textContent;
-      b.appendChild(label);
-      b.onmousedown = (e) => { e.preventDefault(); this.select(id); };
-      const x = document.createElement("span");
-      x.className = "x";
-      x.textContent = "×";
-      x.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); this.close(id); };
-      b.appendChild(x);
-      this.tabsEl.appendChild(b);
-    }
-    const plus = document.createElement("div");
-    plus.className = "tab plus";
-    plus.textContent = "+";
-    plus.title = "New terminal";
-    plus.onmousedown = (e) => { e.preventDefault(); this.create(null, null, null); };
-    this.tabsEl.appendChild(plus);
+      const label = escapeHtml(`${mark}${t.title || (t.agent ? t.name : `Terminal ${id}`)}`);
+      html.push(`<div class="tab${this.selected.includes(id) ? " active" : ""}" data-term="${id}" title="${label}"><span class="label">${label}</span><span class="x">×</span></div>`);
+    });
+    html.push(`<div class="tab plus" title="New terminal">+</div>`);
+    this.tabsEl.innerHTML = html.join("");
+  }
+
+  // A press on the tabs: a tab shows its terminal, its × closes it, + makes
+  // a new one.
+  tabPress(e) {
+    const tab = e.target.closest(".tab");
+    if (tab === null) return;
+    e.preventDefault();
+    const term = tab.dataset.term;
+    if (term === undefined) { this.create(null, null, null); return; }
+    if (e.target.closest(".x") !== null) { e.stopPropagation(); this.close(Number(term)); } else this.select(Number(term));
   }
 
   close(id) {
-    const t = this.terms.get(id);
-    if (!t) return;
-    this.closed.add(id);
-    rpc("term.close", { term: id }).catch(() => {});
-    t.xt.dispose();
-    t.el.remove();
-    this.terms.delete(id);
+    for (const t of found(this.terms.get(id))) {
+      this.closed.add(id);
+      rpc("term.close", { term: id }).catch((_e) => {});
+      t.xt.dispose();
+      t.el.remove();
+      this.terms.delete(id);
+    }
     if (this.selected.includes(id)) this.selected = [...this.terms.keys()].slice(0, 1);
     for (const s of this.selected) this.select(s);
     this.renderTabs();
@@ -274,18 +269,17 @@ export class TerminalPanel {
 
   refit() {
     for (const s of this.selected) {
-      const t = this.terms.get(s);
-      if (t !== undefined && this.visible) try { t.fit.fit(); } catch {}
+      if (this.visible) for (const t of found(this.terms.get(s))) try { t.fit.fit(); } catch {}
     }
   }
 
   onEvent(ev) {
     if (ev.ev === "term.data") {
-      const t = this.terms.get(ev.term);
-      if (t) t.data(ev);
-      else if (!this.closed.has(ev.term)) this.add(ev.term); // another client opened it: show it here too
+      const t = found(this.terms.get(ev.term));
+      for (const x of t) x.data(ev);
+      if (!t.length && !this.closed.has(ev.term)) this.add(ev.term); // another client opened it: show it here too
     } else if (ev.ev === "term.exit") {
-      this.terms.get(ev.term)?.exited();
+      for (const x of found(this.terms.get(ev.term))) x.exited();
     }
   }
 }

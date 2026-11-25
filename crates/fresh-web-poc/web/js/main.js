@@ -32,24 +32,26 @@ async function main() {
     params.set("ws", String(ws.id));
     history.replaceState(null, "", `?${params}`);
   }
-  const getApp = () => app;
+  // Each part gets its own getter for the application (made below): one
+  // function shared by all of them would make the checker take their
+  // classes for one type (each calls it as its method, `this.app()`).
   const app = new App({
     settings: loadSettings(),
     userKeys: loadUserKeys(),
     session: new Session(),
     workspace: ws,
     params,
-    orchestrator: new Orchestrator(getApp, hello.workspaces, hello.folders, hello.machines),
-    skins: new Skins(getApp),
-    editing: new Editing(getApp),
-    ui: new UIKit(getApp),
-    prompt: new Palette(getApp),
-    term: new TerminalPanel(getApp, $("#terminal")),
-    host: new Host(getApp),
-    macros: new Macros(getApp),
-    menubar: new MenuBar(getApp),
+    orchestrator: new Orchestrator(() => app, hello.workspaces, hello.folders, hello.machines),
+    skins: new Skins(() => app),
+    editing: new Editing(() => app),
+    ui: new UIKit(() => app),
+    prompt: new Palette(() => app),
+    term: new TerminalPanel(() => app, $("#terminal")),
+    host: new Host(() => app),
+    macros: new Macros(() => app),
+    menubar: new MenuBar(() => app),
     input: $("#input"),
-    pane: new Pane(getApp),
+    pane: new Pane(() => app),
   });
   await app.start(PLUGINS);
 }
