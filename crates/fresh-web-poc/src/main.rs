@@ -19,6 +19,7 @@ mod error;
 mod docs;
 mod hub;
 mod lsp;
+mod lsp_shapes;
 mod orchestrator;
 mod ot;
 mod process;

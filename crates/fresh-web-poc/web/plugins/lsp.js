@@ -23,6 +23,10 @@ import { h } from "../js/ui.js";
 /** const HINT: Style */
 const HINT = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
 
+// A palette row that only says something.
+/** function note(label: String) => PaletteItem */
+function note(label) { return { label, detail: null, run: null, preview: null }; }
+
 export function activate(app) {
   const SEV = ["", "error", "warning", "info", "hint"];
   const status = fresh.statusItem(app, "lsp");
@@ -34,40 +38,46 @@ export function activate(app) {
   // A request about the cursor's position. A refused one throws; each
   // command shows the server's reason (see `reg`).
   const ask = (v, method, params) => fresh.lspRequest(app, v.buffer, method, params, v.cursor);
-  const pathOf = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
   const rel = (p) => (p.startsWith(fresh.root(app) + "/") ? p.slice(fresh.root(app).length + 1) : p);
-  const asList = (r) => (r == null ? [] : Array.isArray(r) ? r : [r]);
-  const loc = (l) => ({ path: pathOf(l.uri || l.targetUri), range: l.range || l.targetSelectionRange });
 
-  // `how` as for `fresh.open` ({preview, focus}).
   // Open a location: `preview` as for OpenOptions (a list's selection
   // previews it, the keyboard staying in the list).
-  const goto = (path, range, preview) => fresh.open(app, path, { line: range.start.line + 1, column: range.start.character + 1, place: "tab", preview, focus: preview !== true });
+  /** const goto: (String, LspRange, Boolean | Null) => Promise<Undefined> */
+  const goto = async (path, range, preview) => {
+    await fresh.open(app, path, { line: range.start.line + 1, column: range.start.character + 1, place: "tab", preview, focus: preview !== true });
+  };
 
   // ---------------------------------------------------------------- navigation
 
   const definition = async () => {
     const v = active();
     if (!v) return;
-    const r = asList(await ask(v, "textDocument/definition", {})).map(loc);
+    /** const r: LspLocation[] */
+    const r = await ask(v, "textDocument/definition", {});
     if (!r.length) return fresh.message(app, "No definition found");
-    if (r.length === 1) return goto(r[0].path, r[0].range, null);
-    fresh.pick(app, { title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range, null) });
+    if (r.length === 1) { await goto(r[0].path, r[0].range, null); return; }
+    fresh.pick(app, { title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => { goto(it.value.path, it.value.range, null); } });
   };
 
   const references = async () => {
     const v = active();
     if (!v) return;
-    const r = asList(await ask(v, "textDocument/references", { context: { includeDeclaration: true } })).map(loc);
+    /** const r: LspLocation[] */
+    const r = await ask(v, "textDocument/references", { context: { includeDeclaration: true } });
     if (!r.length) return fresh.message(app, "No references found");
     // Show each reference's line: read it from the file through the server.
+    /** const texts: Map<String, String[]> */
     const texts = new Map();
     for (const l of r) {
       if (!texts.has(l.path)) {
         try { texts.set(l.path, (await fresh.read(app, l.path)).split("\n")); } catch { texts.set(l.path, []); }
       }
     }
-    const lineOf = (l) => ((texts.get(l.path) || [])[l.range.start.line] || "").trim();
+    const lineOf = (l) => {
+      const lines = texts.get(l.path) ?? [];
+      const i = l.range.start.line;
+      return i < lines.length ? lines[i].trim() : "";
+    };
     // A file's header, then its references: one row shape for both.
     const items = r.flatMap((l, i) => {
       const row = { header: false, path: l.path, range: l.range, text: lineOf(l) };
@@ -80,8 +90,8 @@ export function activate(app) {
       render: (it) => it.header ? h("text", { bold: true }, [rel(it.path)]) : h("row", {}, [h("text", { dim: true }, [`  ${it.range.start.line + 1}:${it.range.start.character + 1}`]), h("text", { mono: true }, [it.text])]),
       // Selected, a reference shows in the preview tab (the keyboard stays
       // in the list); Enter or a double-click opens it for good.
-      onSelect: (it) => !it.header && goto(it.path, it.range, true),
-      onActivate: (it) => !it.header && goto(it.path, it.range, false),
+      onSelect: (it) => { if (!it.header) goto(it.path, it.range, true); },
+      onActivate: (it) => { if (!it.header) goto(it.path, it.range, false); },
     }));
     refsPanel.focus("refs");
   };
@@ -89,6 +99,7 @@ export function activate(app) {
   // The palette's `@`: the active file's symbols, filtered by what is
   // typed, each previewed as it is selected. Asked once per opening.
   // The last file's symbols, by `id:length`.
+  /** const symCache: Map<String, LspSymbol[]> */
   const symCache = new Map();
   const KINDS = new Map([[5, "class"], [6, "method"], [12, "function"], [13, "variable"], [14, "constant"], [23, "struct"], [10, "enum"], [11, "interface"], [8, "field"], [2, "module"]]);
   const kindName = (k) => KINDS.get(k) || "";
@@ -96,59 +107,71 @@ export function activate(app) {
     hint: "symbols",
     items: async (q) => {
       const v = active();
-      if (!v) return [{ label: "No language server for this file" }];
+      if (!v) return [note("No language server for this file")];
       const key = `${v.buffer.id}:${v.buffer.length}`;
-      let list = symCache.get(key);
-      if (!list) {
-        try { list = asList(await ask(v, "textDocument/documentSymbol", {})); } catch (e) { return [{ label: String(e) }]; }
+      const cached = symCache.get(key);
+      /** let list: LspSymbol[] */
+      let list = [];
+      if (cached) list = cached;
+      else {
+        try { list = await ask(v, "textDocument/documentSymbol", {}); } catch (e) { return [note(fresh.errorText(e))]; }
         symCache.clear();
         symCache.set(key, list);
       }
+      /** const out: PaletteItem[] */
       const out = [];
-      const walk = (list, path) => {
-        for (const s of list) {
-          const range = s.selectionRange || s.location?.range || s.range;
+      // `path`: the symbols it is inside, dotted (null at the top).
+      /** const walk: (LspSymbol[], String | Null) => Undefined */
+      const walk = (symbols, path) => {
+        for (const s of symbols) {
+          const range = s.range;
           const go = () => { const p = fresh.lspOffset(app, v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true }); };
-          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [kindName(s.kind), path || s.containerName].filter(Boolean).join(" · "), run: go, preview: go });
-          if (s.children) walk(s.children, path ? `${path}.${s.name}` : s.name);
+          const inside = path ?? s.container;
+          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [kindName(s.kind), inside ?? ""].filter(Boolean).join(" · "), run: go, preview: go });
+          walk(s.children, path === null ? s.name : `${path}.${s.name}`);
         }
       };
-      walk(list, "");
-      return out.length ? out : [{ label: q ? "No symbol matches" : "No symbols" }];
+      walk(list, null);
+      return out.length ? out : [note(q ? "No symbol matches" : "No symbols")];
     },
   });
   const symbols = () => fresh.run(app, "palette.open", "@");
 
   // The palette's `%`: the workspace's symbols matching what is typed,
   // from every running server.
-  /** let running: Dict<Boolean> */
-  let running = {}; // {language: running}, from the server
+  // Each language's server: running (true) or stopped (false), from the
+  // server; a language not in it has none started.
+  /** let running: Map<String, Boolean> */
+  let running = new Map();
+  /** const statusOf: (Dict<Boolean>) => Map<String, Boolean> */
+  const statusOf = (d) => new Map(Object.entries(d));
   const runningLanguages = async () => {
-    try { running = await fresh.lspStatus(app); } catch { running = {}; }
-    return Object.keys(running).filter((l) => running[l]).sort();
+    try { running = statusOf(await fresh.lspStatus(app)); } catch { running = new Map(); }
+    return [...running].filter(([, on]) => on).map(([l]) => l).sort();
   };
   fresh.paletteMode(app, "%", {
     hint: "workspace symbols",
     items: async (q) => {
-      if (!q) return [{ label: "Type a symbol's name" }];
+      if (!q) return [note("Type a symbol's name")];
       const langs = await runningLanguages();
-      if (!langs.length) return [{ label: "No language server is running (open a file of its language)" }];
+      if (!langs.length) return [note("No language server is running (open a file of its language)")];
+      /** const out: PaletteItem[] */
       const out = [];
       for (const l of langs) {
-        let r = null;
-        try { r = await fresh.lspWorkspaceRequest(app, l, "workspace/symbol", { query: q }); } catch { continue; }
-        for (const s of asList(r)) {
-          const loc = s.location;
-          if (!loc || !loc.uri || !loc.uri.startsWith("file://")) continue;
-          const path = pathOf(loc.uri), range = loc.range || { start: { line: 0, character: 0 } };
+        /** let found: LspWorkspaceSymbol[] */
+        let found = [];
+        try { found = await fresh.lspWorkspaceRequest(app, l, "workspace/symbol", { query: q }); } catch { continue; }
+        for (const s of found) {
+          const go = () => { goto(s.path, s.range, false); };
           out.push({
             label: s.name,
-            detail: [kindName(s.kind), s.containerName, `${rel(path)}:${range.start.line + 1}`].filter(Boolean).join(" · "),
-            run: () => goto(path, range, false),
+            detail: [kindName(s.kind), s.container ?? "", `${rel(s.path)}:${s.range.start.line + 1}`].filter(Boolean).join(" · "),
+            run: go,
+            preview: null,
           });
         }
       }
-      return out.length ? out : [{ label: "No symbol matches" }];
+      return out.length ? out : [note("No symbol matches")];
     },
   });
   const workspaceSymbols = () => fresh.run(app, "palette.open", "%");
@@ -157,14 +180,12 @@ export function activate(app) {
 
   // Apply a WorkspaceEdit through the documents (open or not), so every
   // client and every undo sees it.
-  const applyWorkspaceEdit = async (edit) => {
-    const byUri = new Map();
-    for (const [uri, edits] of Object.entries(edit.changes || {})) byUri.set(uri, edits);
-    for (const dc of edit.documentChanges || []) if (dc.textDocument) byUri.set(dc.textDocument.uri, dc.edits);
+  /** const applyWorkspaceEdit: (LspFileEdit[]) => Promise<Number> */
+  const applyWorkspaceEdit = async (files) => {
     let n = 0;
-    for (const [uri, edits] of byUri) {
-      const b = await fresh.load(app, pathOf(uri));
-      n += applyTextEdits(b, edits);
+    for (const f of files) {
+      const b = await fresh.load(app, f.path);
+      if (b) n += applyTextEdits(b, f.edits);
     }
     return n;
   };
@@ -199,8 +220,9 @@ export function activate(app) {
     if (!v) return;
     const name = await fresh.input(app, { title: "Rename to", value: currentWord(v) });
     if (!name) return;
+    /** const r: LspFileEdit[] */
     const r = await ask(v, "textDocument/rename", { newName: name });
-    if (!r) return fresh.message(app, "Nothing to rename here");
+    if (!r.length) return fresh.message(app, "Nothing to rename here");
     fresh.message(app, `Renamed: ${await applyWorkspaceEdit(r)} edit(s)`);
   };
 
@@ -210,18 +232,19 @@ export function activate(app) {
     const sel = v.selection || { start: v.cursor, end: v.cursor };
     const toPos = (p) => fresh.lspPosition(app, v.buffer, p);
     const diags = fresh.diagnostics(app, v.buffer).filter((d) => d.start <= sel.end && d.end >= sel.start);
-    const r = asList(await ask(v, "textDocument/codeAction", {
+    /** const r: LspAction[] */
+    const r = await ask(v, "textDocument/codeAction", {
       range: { start: toPos(sel.start), end: toPos(sel.end) },
       context: { diagnostics: diags.map((d) => ({ message: d.message, severity: d.severity, range: { start: toPos(d.start), end: toPos(d.end) } })) },
-    }));
+    });
     if (!r.length) return fresh.message(app, "No code actions here");
     fresh.pick(app, {
       title: "Code actions",
-      items: r.map((a) => ({ label: a.title, detail: a.kind || "", value: a })),
+      items: r.map((a) => ({ label: a.title, detail: a.kind ?? "", value: a })),
       onAccept: async ({ value: a }) => {
-        if (a.edit) await applyWorkspaceEdit(a.edit);
-        const cmd = a.command && typeof a.command === "object" ? a.command : a.command ? a : null;
-        if (cmd && cmd.command) await ask(v, "workspace/executeCommand", { command: cmd.command, arguments: cmd.arguments || [] });
+        const edit = a.edit, cmd = a.command;
+        if (edit) await applyWorkspaceEdit(edit);
+        if (cmd) await ask(v, "workspace/executeCommand", { command: cmd.command, arguments: JSON.parse(cmd.arguments) });
       },
     });
   };
@@ -229,7 +252,8 @@ export function activate(app) {
   const format = async () => {
     const v = active();
     if (!v) return;
-    const r = asList(await ask(v, "textDocument/formatting", { options: { tabSize: 4, insertSpaces: true } }));
+    /** const r: LspTextEdit[] */
+    const r = await ask(v, "textDocument/formatting", { options: { tabSize: 4, insertSpaces: true } });
     if (!r.length) return fresh.message(app, "Already formatted (or the server does not format)");
     fresh.message(app, `Formatted: ${applyTextEdits(v.buffer, r)} edit(s)`);
   };
@@ -239,20 +263,21 @@ export function activate(app) {
   const completion = async () => {
     const v = active();
     if (!v) return;
-    const r = await ask(v, "textDocument/completion", {});
-    const items = asList(r && r.items ? r.items : r);
+    /** const items: LspCompletion[] */
+    const items = await ask(v, "textDocument/completion", {});
     if (!items.length) return fresh.message(app, "No completions");
     const word = wordEnd(v.buffer.text(Math.max(0, v.cursor - 100), v.cursor) || "");
     fresh.pick(app, {
       title: "Complete",
       value: word,
-      items: items.slice(0, 500).map((i) => ({ label: i.label, detail: i.detail || "", value: i })),
+      items: items.slice(0, 500).map((i) => ({ label: i.label, detail: i.detail ?? "", value: i })),
       onAccept: ({ value: i }) => {
         const vv = fresh.activeView(app);
+        if (!vv) return;
         const b = vv.buffer;
         const left = b.text(Math.max(0, vv.cursor - 100), vv.cursor) || "";
         const w = wordEnd(left);
-        const text = i.textEdit?.newText ?? i.insertText ?? i.label;
+        const text = i.insert;
         const start = vv.cursor - fresh.byteLen(w);
         b.replace(start, vv.cursor, text);
         vv.setCursor(start + fresh.byteLen(text), { center: false });
@@ -262,20 +287,22 @@ export function activate(app) {
 
   // Hover contents as text: markdown's code fences dropped (the popup is
   // monospace already) and its rules shortened.
-  const hoverText = (r) => {
-    const c = r?.contents;
-    if (!c) return null;
-    const md = typeof c === "string" ? c : Array.isArray(c) ? c.map((x) => (typeof x === "string" ? x : x.value)).join("\n\n") : c.value;
-    if (!md) return null;
-    return md.split("\n").filter((l) => !/^\s*```/.test(l)).map((l) => (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l) ? "───" : l)).join("\n").trim() || null;
+  /** const hoverText: (String | Null) => String | Null */
+  const hoverText = (md) => {
+    if (md === null) return null;
+    const text = md.split("\n").filter((l) => !/^\s*```/.test(l)).map((l) => (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l) ? "───" : l)).join("\n").trim();
+    return text === "" ? null : text;
   };
   fresh.hoverProvider(app, async (b, pos) => {
     const diags = fresh.diagnostics(app, b).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
-    let text = diags.map((d) => `${SEV[d.severity] || "error"}: ${d.message}`).join("\n");
+    const problems = diags.map((d) => `${SEV[d.severity] || "error"}: ${d.message}`);
+    /** let about: String | Null */
+    let about = null;
     if (fresh.lspAvailable(app, b)) {
-      try { const t = hoverText(await fresh.lspRequest(app, b, "textDocument/hover", {}, pos)); if (t) text = text ? `${text}\n\n${t}` : t; } catch {}
+      try { about = hoverText(await fresh.lspRequest(app, b, "textDocument/hover", {}, pos)); } catch {}
     }
-    return text || null;
+    const parts = about === null ? problems : [...problems, about];
+    return parts.length ? parts.join("\n\n") : null;
   });
   const hover = async () => {
     const v = active();
@@ -287,9 +314,11 @@ export function activate(app) {
   const signatureHelp = async () => {
     const v = active();
     if (!v) return;
-    const r = await ask(v, "textDocument/signatureHelp", {});
-    const sig = r?.signatures?.[r.activeSignature ?? 0];
-    if (sig) fresh.popup(app, sig.label + (sig.documentation ? `\n\n${typeof sig.documentation === "string" ? sig.documentation : sig.documentation.value}` : ""));
+    /** const sig: LspSignature | Null */
+    const sig = await ask(v, "textDocument/signatureHelp", {});
+    if (!sig) return;
+    const doc = sig.documentation;
+    fresh.popup(app, doc ? `${sig.label}\n\n${doc}` : sig.label);
   };
 
   fresh.onBuffer(app, "buffer.changed", (buffer, { ops, local }) => {
@@ -298,8 +327,8 @@ export function activate(app) {
     if (op?.t !== "ins") return;
     // The inserted text's first character: typing "(" inserts "()".
     const ch = op.text[0];
-    if (ch === "(" || ch === ",") setTimeout(signatureHelp, 50);
-    else if (ch === "." && op.text.length === 1) setTimeout(completion, 50);
+    if (ch === "(" || ch === ",") setTimeout(() => { signatureHelp(); }, 50);
+    else if (ch === "." && op.text.length === 1) setTimeout(() => { completion(); }, 50);
   });
 
   // ---------------------------------------------------------------- diagnostics
@@ -341,15 +370,16 @@ export function activate(app) {
   const refreshFolds = async (b) => {
     if (!fresh.lspAvailable(app, b)) return;
     try {
-      const r = await fresh.lspRequest(app, b, "textDocument/foldingRange", {});
-      b.setFoldRanges(asList(r).map((f) => ({ start: f.startLine, end: f.endLine })));
+      /** const folds: LspFold[] */
+      const folds = await fresh.lspRequest(app, b, "textDocument/foldingRange", {});
+      b.setFoldRanges(folds);
     } catch {}
   };
   // The status bar: the active file's server, or `LSP (off)` when it was
   // stopped.
   const showStatus = (b) => {
     const installed = b != null && b.language != null && fresh.lspLanguages(app).includes(b.language) && !b.isVirtual;
-    const text = !installed ? "" : fresh.lspAvailable(app, b) ? `LSP ${b.language}` : running[b.language] === false ? "LSP (off)" : "";
+    const text = !installed ? "" : fresh.lspAvailable(app, b) ? `LSP ${b.language}` : running.get(b.language) === false ? "LSP (off)" : "";
     status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.run(app, "lsp.status") });
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
@@ -360,16 +390,16 @@ export function activate(app) {
   // Picking one offers to restart or stop it.
   const lspStatus = async () => {
     await runningLanguages();
-    const langs = [...new Set([...fresh.lspLanguages(app), ...Object.keys(running)])].sort();
-    const state = (l) => (running[l] ? "running" : running[l] === false ? "stopped" : fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started");
+    const langs = [...new Set([...fresh.lspLanguages(app), ...running.keys()])].sort();
+    const state = (l) => { const on = running.get(l); return on === true ? "running" : on === false ? "stopped" : fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started"; };
     fresh.pick(app, {
       title: fresh.trusted(app) ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
       items: langs.length ? langs.map((l) => ({ label: l, detail: state(l), value: l })) : [{ label: "No language server found on the host", detail: "", value: "" }],
       onAccept: async (it) => {
         if (!it.value || !fresh.trusted(app)) return;
         const what = await fresh.choose(app, `${it.value} language server (${state(it.value)})`, [
-          { label: running[it.value] ? "Restart" : "Start", value: "restart" },
-          ...(running[it.value] ? [{ label: "Stop", value: "stop" }] : []),
+          { label: running.get(it.value) ? "Restart" : "Start", value: "restart" },
+          ...(running.get(it.value) ? [{ label: "Stop", value: "stop" }] : []),
         ]);
         if (what) await serverOp(what, it.value);
       },
@@ -391,12 +421,12 @@ export function activate(app) {
   // Restart or stop language `l`'s server.
   const serverOp = async (what, l) => {
     try {
-      running = await (what === "stop" ? fresh.lspStop(app, l) : fresh.lspRestart(app, l));
+      running = statusOf(await (what === "stop" ? fresh.lspStop(app, l) : fresh.lspRestart(app, l)));
       fresh.message(app, what === "stop" ? `Stopped the ${l} language server` : `Restarted the ${l} language server`);
     } catch (e) { fresh.showError(app, e); }
   };
   fresh.onLspStatus(app, (s) => {
-    running = s;
+    running = statusOf(s);
     const b = fresh.activeBuffer(app);
     showStatus(b);
     for (const x of fresh.buffers(app)) refreshHints(x);
@@ -414,17 +444,17 @@ export function activate(app) {
     const L = b.lines();
     if (!L) return;
     const len = b.length, text0 = b.text(0, Math.min(len, 64));
-    let r = null;
+    /** let hints: LspHint[] */
+    let hints = [];
     try {
-      r = await fresh.lspRequest(app, b, "textDocument/inlayHint", { range: { start: { line: 0, character: 0 }, end: { line: L.lines.length, character: 0 } } });
+      hints = await fresh.lspRequest(app, b, "textDocument/inlayHint", { range: { start: { line: 0, character: 0 }, end: { line: L.lines.length, character: 0 } } });
     } catch { return; }
     if (b.length !== len || b.text(0, Math.min(len, 64)) !== text0) return;
     deco.clear();
-    for (const hnt of asList(r)) {
+    for (const hnt of hints) {
       const pos = fresh.lspOffset(app, b, hnt.position.line, hnt.position.character);
       if (pos == null) continue;
-      const label = typeof hnt.label === "string" ? hnt.label : asList(hnt.label).map((p) => p.value).join("");
-      const text = (hnt.paddingLeft ? " " : "") + label + (hnt.paddingRight ? " " : "");
+      const text = (hnt.paddingLeft ? " " : "") + hnt.label + (hnt.paddingRight ? " " : "");
       deco.inline(pos, text, { style: HINT, side: "before", edge: false, when: "always" });
     }
     b.render();

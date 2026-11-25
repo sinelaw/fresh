@@ -20,7 +20,7 @@ use crate::error::{err, Code};
 use crate::hub::{Hub, Room};
 use crate::orchestrator::{now_ms, Meta, Record};
 use crate::workspace::{self, Workspace};
-use crate::{lsp, ot, process, terminal};
+use crate::{lsp, lsp_shapes, ot, process, terminal};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -1110,7 +1110,8 @@ impl Session {
                     format!("no running {language} language server"),
                 )
             })?;
-            return server.request(&method, params, Duration::from_secs(20));
+            let r = server.request(&method, params, Duration::from_secs(20))?;
+            return Ok(lsp_shapes::plain(&method, r));
         }
         let server = {
             let mut docs = self.docs.lock().unwrap();
@@ -1132,7 +1133,8 @@ impl Session {
             }
             server
         };
-        server.request(&method, params, Duration::from_secs(20))
+        let r = server.request(&method, params, Duration::from_secs(20))?;
+        Ok(lsp_shapes::plain(&method, r))
     }
 
     fn lsp_request(&self, op: &str, m: &Value) -> Result<Value> {

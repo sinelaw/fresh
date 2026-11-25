@@ -255,17 +255,15 @@ export class Editing {
     const positions = v.cursors.map((c) => this.app().lspPosition(b, c.pos));
     if (positions.some((x) => !x)) return null;
     try {
+      // Each position's ranges, innermost first (src/lsp_shapes.rs).
+      /** const r: LspRange[][] */
       const r = await rpc("lsp.call", { doc: b.doc, method: "textDocument/selectionRange", params: { positions } });
-      if (!Array.isArray(r) || r.length !== v.cursors.length) return null;
-      return r.map((sr) => {
-        const out = [];
-        for (let x = sr; x; x = x.parent) {
-          const start = this.app().lspOffset(b, x.range.start.line, x.range.start.character);
-          const end = this.app().lspOffset(b, x.range.end.line, x.range.end.character);
-          if (start != null && end != null) out.push({ start, end });
-        }
-        return out;
-      });
+      if (r.length !== v.cursors.length) return null;
+      return r.map((ranges) => ranges.flatMap((x) => {
+        const start = this.app().lspOffset(b, x.start.line, x.start.character);
+        const end = this.app().lspOffset(b, x.end.line, x.end.character);
+        return start != null && end != null ? [{ start, end }] : [];
+      }));
     } catch { return null; }
   }
 

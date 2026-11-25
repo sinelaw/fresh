@@ -135,6 +135,44 @@
 // A language server's diagnostic, at byte offsets.
 /** type Diagnostic = {start: Number, end: Number, severity: Number, message: String, source: String | Null} */
 
+// ---------------------------------------------------------------- language servers
+
+// What `fresh.lspRequest` answers, one shape per method (src/lsp_shapes.rs).
+// Positions are the protocol's: lines and UTF-16 columns.
+/** type LspPos = {line: Number, character: Number} */
+/** type LspRange = {start: LspPos, end: LspPos} */
+// definition, declaration, typeDefinition, implementation, references:
+/** type LspLocation = {path: String, range: LspRange} */
+// documentSymbol (the range is the name's):
+/** type LspSymbol = {name: String, kind: Number, container: String | Null, range: LspRange, children: LspSymbol[]} */
+// workspace/symbol:
+/** type LspWorkspaceSymbol = {name: String, kind: Number, container: String | Null, path: String, range: LspRange} */
+// formatting, and each file's edits in a rename or a code action:
+/** type LspTextEdit = {range: LspRange, newText: String} */
+/** type LspFileEdit = {path: String, edits: LspTextEdit[]} */
+// A command, its arguments as JSON text: the server's own, sent back as
+// they came (workspace/executeCommand).
+/** type LspCommand = {command: String, arguments: String} */
+// codeAction:
+/** type LspAction = {title: String, kind: String | Null, edit: LspFileEdit[] | Null, command: LspCommand | Null} */
+// completion:
+/** type LspCompletion = {label: String, detail: String | Null, insert: String} */
+// signatureHelp (the active signature; null for none):
+/** type LspSignature = {label: String, documentation: String | Null} */
+// inlayHint:
+/** type LspHint = {position: LspPos, label: String, paddingLeft: Boolean, paddingRight: Boolean} */
+// foldingRange (document lines):
+/** type LspFold = {start: Number, end: Number} */
+
+// A row a palette mode lists (`fresh.paletteMode`): `run` when it is
+// chosen, `preview` when it is selected; a row with neither is a note.
+/** type PaletteItem = {
+ *   label: String,
+ *   detail: String | Null,
+ *   run: (() => Undefined) | Null,
+ *   preview: (() => Undefined) | Null,
+ * } */
+
 // What the server pushes over the event stream.
 /** type ServerEvent =
  *   | {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: Op[], len: Number, modified: Boolean}
