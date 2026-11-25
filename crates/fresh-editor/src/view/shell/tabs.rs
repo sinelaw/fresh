@@ -264,8 +264,8 @@ fn elided_title(pieces: &[TitlePiece], cap: usize, modified_glyph: &str) -> Stri
 /// scrollbar's track gives — would skip past every tab you were looking for.
 pub const TAB_SCROLL_STEP_COLUMNS: u16 = 10;
 
-/// A tab's close button: the theme's glyph and a cell of air after it.
-/// A tab's `×` and the space after it — what `close_node` draws, as runs.
+/// A tab's close button: the theme's glyph and a cell of air after it. Used
+/// for the tab's width; `close_node` draws the two as separate runs.
 fn close_text(g: &Glyphs) -> String {
     format!("{} ", g.tab_close)
 }
