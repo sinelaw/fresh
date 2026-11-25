@@ -30,7 +30,7 @@ export function sash(el, axis, o) {
       to = at(ev);
       if (!frame) frame = requestAnimationFrame(() => { frame = 0; o.drag(ctx, to - from); });
     };
-    const up = () => {
+    const up = (_e) => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);

@@ -170,18 +170,22 @@ export class Palette {
     const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
     // Nothing typed: the files opened lately.
     if (!q.trim()) {
-      return ed.recent().map((p) => paletteItem(relative(ed.root(), p), "recent", () => { ed.open(p, null, 1); }));
+      return ed.recent().map((p) => paletteItem(relative(ed.root(), p), "recent", () => { ed.open(p); }));
     }
     if (!m) return [];
     const files = (await rpc("fs.find", { query: m[1] })).files;
-    return files.map((f) => paletteItem(f, null, () => {
-      ed.open(f, m[2] ? Number(m[2]) : null, m[3] ? Number(m[3]) : 1);
-    }));
+    return files.map((f) => paletteItem(f, null, () => { this.openAt(f, m[2], m[3]); }));
   }
 
   openTyped(q) {
     const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
-    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.editor.open(m[1], m[2] ? Number(m[2]) : null, m[3] ? Number(m[3]) : 1);
+    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.openAt(m[1], m[2], m[3]);
+  }
+  // Open `path` at `line` and `column` as typed after it (`path:line:col`;
+  // either may be missing).
+  openAt(path, line, column) {
+    if (line) this.editor.openAt(path, Number(line), column ? Number(column) : 1);
+    else this.editor.open(path);
   }
 
   // Pick from a list (`o`: a PickOptions, types/fresh.d.js). Enter with

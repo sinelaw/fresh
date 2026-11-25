@@ -741,14 +741,14 @@ export class Orchestrator {
             card(it.w),
             h("text", { dim: true }, [[it.w.folder, it.w.status?.branch].filter(Boolean).join(" · ")]),
           ])),
-          onActivate: (it) => it && !it.header && this.switchTo(it.w.id),
+          onActivate: (it) => { if (it !== undefined && !it.header) this.switchTo(it.w.id); },
         })]));
       } else {
         panel.render(h("col", { class: "wb" }, [tabs, h("row", { class: "wb-board" }, lenses.board.map(([key, label]) => {
           const group = ws.filter((w) => column(w) === key);
           return h("col", { class: "wb-column" }, [
             h("text", { bold: true }, [`${label}  ${group.length}`]),
-            h("list", { key: `column-${key}`, items: group, render: card, onActivate: (w) => w && this.switchTo(w.id) }),
+            h("list", { key: `column-${key}`, items: group, render: card, onActivate: (w) => { if (w !== undefined) this.switchTo(w.id); } }),
           ]);
         }))]));
       }

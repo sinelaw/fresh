@@ -164,6 +164,12 @@ export class View {
     this.folds = []; // [{start, end}] window line indices; start's line stays
     this.left = 0; // columns scrolled sideways (no wrap)
     this.preview = false; // the split's preview tab: the next preview replaces it
+    // The selections Expand Selection grew from (Shrink goes back), while
+    // the cursors are as it left them (`key`): none at first.
+    this.expansions = { stack: [], key: "" };
+    // The rectangle the cursors are (Alt+Shift+arrows grow it), while they
+    // are as it left them: a list of at most one.
+    this.block = [];
   }
   get primary() { return this.cursors[0]; }
   get top() { return this._top; }
@@ -321,12 +327,12 @@ export class Pane {
   renderTabs() {
     this.tabsEl.innerHTML = "";
     const names = this.views.map((v) => v.buf.name);
-    for (const [i, v] of this.views.entries()) {
+    this.views.forEach((v, i) => {
       const t = document.createElement("div");
       t.className = "tab" + (v === this.view ? " active" : "") + (v.preview ? " preview" : "");
       t.dataset.i = String(i);
       // Tabs of files with one name show their parent folder.
-      const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path;
+      const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path !== "";
       const label = dup ? v.buf.path.split("/").slice(-2).join("/") : v.buf.name;
       t.textContent = (v.buf.modified ? "● " : "") + label + (v.buf.readOnly && !v.buf.isVirtual ? " [RO]" : "");
       t.title = (v.buf.path || v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
@@ -340,7 +346,7 @@ export class Pane {
       x.onmousedown = (e) => { e.stopPropagation(); e.preventDefault(); this.editor.closeTab(this, v); };
       t.appendChild(x);
       this.tabsEl.appendChild(t);
-    }
+    });
   }
 
   // ---------------------------------------------------------------- geometry
@@ -753,8 +759,10 @@ export class Pane {
   // caret at `p` shows).
   settle(v, p, dir) {
     const L = v.buf.text;
-    const h = L && this.foldHiding(v, L.indexOf(p));
-    if (h) p = dir < 0 || h.fold.end + 1 >= L.count ? L.lineEnd(h.keep) : L.starts[h.fold.end + 1];
+    if (L !== null) {
+      const h = this.foldHiding(v, L.indexOf(p));
+      if (h !== null) p = dir < 0 || h.fold.end + 1 >= L.count ? L.lineEnd(h.keep) : L.starts[h.fold.end + 1];
+    }
     for (let guard = 0; guard < 64; guard++) {
       const c = v.buf.decor.concealsIn(p, p + 1).find((c) => c.start < p && p < c.end && applies(c, v.mode) && !(c.reveal && cursorIn([p], c.reveal)));
       if (!c) return p;
@@ -797,8 +805,8 @@ export class Pane {
     }
     if (row.eol != null) return row.eol;
     const next = this.rows[r + 1];
-    const first = next && next.cells.find((c) => c.src != null);
-    return first ? first.src : last;
+    const first = next === undefined ? undefined : next.cells.find((c) => c.src != null);
+    return first !== undefined ? first.src : last;
   }
 
   // ---------------------------------------------------------------- motion

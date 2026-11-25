@@ -14,7 +14,7 @@
 // focus and the caret back on the control with the same key. Lists are
 // virtualised (any number of items) and keyboard-navigable.
 
-import { $, setClass, escapeHtml } from "./dom.js";
+import { $, setClass, escapeHtml, within } from "./dom.js";
 import { listOf } from "./maybe.js";
 import { color } from "./highlight.js";
 import { makeMenu, menuSpec } from "./menu.js";
@@ -230,7 +230,7 @@ class Panel {
       b.onclick = () => a.run();
       box.appendChild(b);
     }
-    head.insertBefore(box, head.querySelector(".x"));
+    within(head, ".x").before(box);
   }
 
   focus(key) {

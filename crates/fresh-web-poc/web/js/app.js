@@ -425,7 +425,7 @@ export class App {
   }
   renderAll() { for (const p of this.panes()) { p.renderTabs(); p.scheduleRender(); } }
   renderBuffer(id) { for (const p of this.panes()) if (p.view?.buf.id === id) p.scheduleRender(); }
-  view() { return this.activePane?.view || null; }
+  view() { return this.activePane.view ?? null; }
   // Where the active view is, to go back to (a list of at most one):
   // remembered for Go Back, or restored.
   here() {
@@ -823,7 +823,7 @@ export class App {
   // The buffer for an untitled document the server keeps (the page was
   // reloaded with its unsaved text).
   async loadUntitled(n) {
-    return [...this.buffers.values()].find((x) => x.untitled === n) || this.adoptDoc(await rpc("doc.open", { untitled: n }));
+    return [...this.buffers.values()].find((x) => x.untitled === n) ?? this.adoptDoc(await rpc("doc.open", { untitled: n }));
   }
   // A new untitled document, shown: an empty buffer bound to no file,
   // named Untitled-N, until it is saved as one.
@@ -1487,7 +1487,7 @@ export class App {
     const page = (dir, extend) => () => P().page(dir, extend);
     const mutate = (f) => () => { if (!ro()) f(); };
 
-    cmd("file.save", "File: Save", () => V()?.buf.doc && this.saveBuffer(V().buf));
+    cmd("file.save", "File: Save", () => { for (const v of listOf(V())) if (v.buf.doc !== null) this.saveBuffer(v.buf); });
     cmd("file.saveAll", "File: Save All", async () => {
       const mod = [...this.buffers.values()].filter((b) => b.doc && b.modified);
       for (const b of mod) await this.saveBuffer(b);
@@ -1496,7 +1496,7 @@ export class App {
     cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b.readOnly = !b.readOnly; this.renderAll(); } });
     // Save As: the text written to another file (through the server's
     // file operations), which then opens; the original stays as it is.
-    cmd("file.saveAs", "File: Save As…", () => V() && this.saveBufferAs(V().buf));
+    cmd("file.saveAs", "File: Save As…", () => { for (const v of listOf(V())) this.saveBufferAs(v.buf); });
     cmd("file.new", "File: New File", () => this.newUntitled());
     cmd("file.language", "Set Language…", () => this.pickLanguage());
     cmd("file.encoding", "Set Encoding… (reopen or save with)", () => this.pickEncoding());

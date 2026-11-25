@@ -82,7 +82,8 @@ async function main() {
     buffers: () => [...app.buffers.values()].map((b) => ({ name: b.name, path: b.path, modified: b.modified, stored: b.doc !== null, show: () => { app.showBuffer(b, "tab", { preview: null, focus: true }); } })),
     root: () => app.root,
     recent: () => app.recentFiles(),
-    open: (path, line, column) => { app.openFile(path, { line, column, place: "tab", preview: null, focus: true }); },
+    open: (path) => { app.openFile(path, { line: null, column: 1, place: "tab", preview: null, focus: true }); },
+    openAt: (path, line, column) => { app.openFile(path, { line, column, place: "tab", preview: null, focus: true }); },
     focus: () => { app.focusPane(app.activePane); },
   };
   // The panel kit: give the keyboard back, and redraw the panes when the

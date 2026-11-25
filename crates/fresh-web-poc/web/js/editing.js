@@ -161,7 +161,12 @@ export class Editing {
   // `editor` (main.js): say something in the status bar, apply an edit
   // (as typed, or not), tell it a cursor moved, the auto-close setting, and
   // a buffer's language server positions.
-  constructor(editor) { this.editor = editor; }
+  constructor(editor) {
+    this.editor = editor;
+    // The view and carets a run of typing left (the next keystroke there
+    // continues it, for undo): a list of at most one.
+    this.typed = [];
+  }
 
   // ---------------------------------------------------------------- text queries
 
@@ -374,7 +379,8 @@ export class Editing {
     let grew = false;
     v.cursors.forEach((c, i) => {
       const s = sel(c) ?? { start: c.pos, end: c.pos };
-      const ranges = (lsp && lsp[i] && lsp[i].length ? lsp[i].concat(b.full ? [{ start: 0, end: b.len }] : []) : this.structureAround(b, s))
+      const mine = lsp === null ? [] : lsp.at(i) ?? [];
+      const ranges = (mine.length > 0 ? mine.concat(b.full ? [{ start: 0, end: b.len }] : []) : this.structureAround(b, s))
         .filter((r) => r.start <= s.start && r.end >= s.end && r.end - r.start > s.end - s.start);
       const r = ranges.sort((x, y) => (x.end - x.start) - (y.end - y.start))[0];
       if (!r) return;
@@ -385,7 +391,7 @@ export class Editing {
     });
     if (!grew) return;
     const key = (cs) => cs.map((c) => `${c.anchor}:${c.pos}`).join();
-    if (!v.expansions || v.expansions.key !== key(before)) v.expansions = { stack: [], key: "" };
+    if (v.expansions.key !== key(before)) v.expansions = { stack: [], key: "" };
     v.expansions.stack.push(before);
     v.expansions.key = key(v.cursors);
     v.normalize();
@@ -395,8 +401,8 @@ export class Editing {
   shrinkSelection(pane) {
     const v = pane.view;
     const key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
-    const prev = v.expansions && v.expansions.key === key ? v.expansions.stack.pop() : null;
-    if (prev) {
+    const prev = v.expansions.key === key ? v.expansions.stack.pop() : undefined;
+    if (prev !== undefined) {
       v.cursors = prev.map((c) => selecting(c.pos, c.anchor));
       v.expansions.key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
     } else for (const c of v.cursors) c.anchor = null;
@@ -458,7 +464,7 @@ export class Editing {
       const at = (col) => L.starts[k] + byteLen(line.slice(0, idxAt(line, col)));
       return selecting(at(head.col), at(anchor.col));
     });
-    v.block = { anchor, head, key: this.blockKey(v) };
+    v.block = [{ anchor, head, key: this.blockKey(v) }];
     pane.reveal();
     pane.scheduleRender();
   }
@@ -475,9 +481,9 @@ export class Editing {
     const v = pane.view;
     const L = v.buf.text;
     if (!L) return;
-    const go = v.block && v.block.key === this.blockKey(v);
-    const anchor = go ? v.block.anchor : this.cornerAt(v.buf, v.primary.pos);
-    const head = go ? { ...v.block.head } : { ...anchor };
+    const kept = v.block.find((b) => b.key === this.blockKey(v));
+    const anchor = kept === undefined ? this.cornerAt(v.buf, v.primary.pos) : kept.anchor;
+    const head = kept === undefined ? { ...anchor } : { ...kept.head };
     head.line = Math.max(0, Math.min(L.count - 1, head.line + dl));
     head.col = Math.max(0, head.col + dc);
     this.setBlock(pane, anchor, head);
@@ -518,7 +524,9 @@ export class Editing {
   toggleFoldAt(pane, li) {
     const v = pane.view;
     const r = this.foldRangeAt(v, li);
-    const i = v.folds.findIndex((f) => f.start === li || (r !== null && f.start === r.start));
+    // The fold starting on the line, or the one this line's range starts.
+    const starts = r === null ? [li] : [li, r.start];
+    const i = v.folds.findIndex((f) => starts.includes(f.start));
     if (i >= 0) v.folds.splice(i, 1);
     else {
       if (r === null) return;
@@ -645,8 +653,9 @@ export class Editing {
     const pairsOn = this.editor.autoClose() && lang !== "markdown";
     const carets = () => v.cursors.map((c) => c.pos).join();
     const run = typed && !text.includes("\n");
-    const typing = !run ? "none" : this.typed && this.typed.v === v && this.typed.carets === carets() ? "continue" : "start";
-    const done = () => { this.typed = run ? { v, carets: carets() } : null; };
+    const last = this.typed.at(0);
+    const typing = !run ? "none" : last !== undefined && last.v === v && last.carets === carets() ? "continue" : "start";
+    const done = () => { this.typed = run ? [{ v, carets: carets() }] : []; };
     if (text.length === 1) {
       const closer = PAIRS.get(text);
       // Overtype a closer that is already there.
@@ -809,7 +818,7 @@ export class Editing {
   transform(pane, f) {
     const b = pane.view.buf;
     this.replace(pane, (c) => {
-      const s = sel(c) || this.wordAt(b, c.pos);
+      const s = sel(c) ?? this.wordAt(b, c.pos);
       if (!s) return KEEP;
       const text = f(b.textRange(s.start, s.end));
       return putWith(s.start, s.end, text, byteLen(text), 0);

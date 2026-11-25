@@ -420,7 +420,7 @@ export class DocView {
     // The fold toggle (shown on hover, or while folded) and, while folded,
     // an ellipsis where the hidden part was.
     const folded = ctx.v.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
-    const tog = folded || this.foldOf(ctx.base, blk, true) ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
+    const tog = folded || this.foldOf(ctx.base, blk, true) !== null ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
     const more = folded ? `<span class="doc-more" data-fold="${blk.first}">⋯</span>` : "";
     const joined = () => { const r = this.walk(ctx, ls, le, NO_SYNTAX); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
     if (n === null) return `<p class="l">${joined()}</p>`;
