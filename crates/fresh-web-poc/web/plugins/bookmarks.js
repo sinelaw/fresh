@@ -29,7 +29,9 @@ export function activate(app) {
     if (!v) return;
     const b = v.buffer;
     const now = where(n);
-    const line = (buf, p) => { const L = buf.lines(); return L ? L.starts.findLastIndex((s) => s <= p) : -1; };
+    // The line of `p` in a buffer's held lines (-1: not held).
+    /** const line: (BufferHandle, Number) => Number */
+    const line = (buf, p) => { const L = buf.lines(); return L !== null ? L.starts.filter((s) => s <= p).length - 1 : -1; };
     const was = now ? fresh.bufferById(app, now.buffer) : null;
     if (now && was) {
       set(n)(was).clear();

@@ -14,6 +14,7 @@ import { classify } from "../js/mdstruct.js";
 import * as fresh from "../js/api.js";
 import { h } from "../js/ui.js";
 
+/** const isMarkdown: (BufferHandle) => Boolean */
 const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path() || b.name());
 
 // Styles: the markup itself is not restyled; inline spans.
@@ -55,13 +56,14 @@ export function activate(app) {
   // Conceal the markup of one line's inline spans: **bold**, *italic*,
   // `code`, ~~strike~~, [link](url), ![image](src). `at(i)` is the byte
   // offset of UTF-16 index i in the line.
+  /** const inline: (DecorationSet, String, (Number) => Number, Range | Null) => Undefined */
   const inline = (d, text, at, reveal) => {
     const re = /(`+)([^`]+?)\1|\*\*([^*]+)\*\*|__([^_]+)__|(?<![\w*])\*([^*\s][^*]*?)\*(?!\w)|(?<![\w_])_([^_\s][^_]*?)_(?![\w])|~~([^~]+)~~|!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]+)\]\(([^)]*)\)/g;
     for (;;) {
       const m = re.exec(text);
       if (!m) break;
       const e = re.lastIndex, s = e - m[0].length;
-      const show = (a, b, text) => b > a && d.conceal(at(a), at(b), { text, style: PLAIN, reveal, when: "compose" });
+      const show = (a, b, text) => { if (b > a) d.conceal(at(a), at(b), { text, style: PLAIN, reveal, when: "compose" }); };
       const hide = (a, b) => show(a, b, "");
       if (m[1]) { // code
         hide(s, s + m[1].length); hide(e - m[1].length, e);
@@ -95,6 +97,7 @@ export function activate(app) {
   const quoteDepth = (t) => { const m = QUOTE.exec(t); return m ? (m[0].match(/>/g) || []).length : 0; };
   const alignOf = (c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : null);
 
+  /** const decorate: (BufferHandle) => Undefined */
   const decorate = (b) => {
     const d = b.decorations("compose");
     d.clear();
@@ -103,12 +106,14 @@ export function activate(app) {
     const { lines, starts } = L;
     const { region, table } = classify(lines);
     const lineEnd = (i) => starts[i] + B(lines[i]);
+    /** const reveal: (Number) => Range | Null */
     const reveal = (i) => ({ start: starts[i], end: lineEnd(i) + 1 });
     const atOf = (i) => {
       const t = lines[i];
       return (k) => starts[i] + B(t.slice(0, k));
     };
-    const hide = (s, e, rv) => e > s && d.conceal(s, e, { text: "", style: PLAIN, reveal: rv, when: "compose" });
+    /** const hide: (Number, Number, Range | Null) => Undefined */
+    const hide = (s, e, rv) => { if (e > s) d.conceal(s, e, { text: "", style: PLAIN, reveal: rv, when: "compose" }); };
     // Lines i..j as a block (a Block: every field, those its type doesn't use
     // at their defaults).
     const node = (i, j, block) => d.node(starts[i], lineEnd(j), block, "compose");
@@ -263,6 +268,7 @@ export function activate(app) {
     v.setMode("source");
     fresh.run(app, "view.splitRight");
     const right = fresh.activeView(app);
+    if (right === null) return;
     right.setMode("compose");
     decorate(right.buffer);
   };
@@ -295,9 +301,9 @@ export function activate(app) {
     fresh.panel(app, { id: "md-contents", title: "Contents", place: "sidebar", onClose: null });
     renderContents();
   };
-  fresh.onBuffer(app, "buffer.activated", renderContents);
+  fresh.onBuffer(app, "buffer.activated", (_b) => { renderContents(); });
   const tocTimer = new Map();
-  fresh.onBuffer(app, "buffer.changed", () => { later(tocTimer, "toc", 300, renderContents); });
+  fresh.onBuffer(app, "buffer.changed", (_b) => { later(tocTimer, "toc", 300, renderContents); });
 
   fresh.register(app, "markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
   fresh.register(app, "markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });

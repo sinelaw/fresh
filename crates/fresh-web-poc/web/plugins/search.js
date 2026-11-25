@@ -47,6 +47,9 @@ function wordIn(L, pos) {
 // A match: its bytes, and its text (null until held, for a match the
 // server found in a huge file).
 /** type Match = {pos: Number, len: Number, text: String | Null} */
+// A query replace's question in a buffer: where it started, whether it
+// went round the end, how many were replaced, of how many asked.
+/** type Question = {start: Number, wrapped: Boolean, done: Number, of: Number} */
 /** const match: (Number, Number, String | Null) => Match */
 const match = (pos, len, text) => ({ pos, len, text });
 
@@ -63,8 +66,10 @@ export function activate(app) {
   // question being asked in a buffer ({start, wrapped, done, of}), by
   // buffer id.
   let confirmEach = false;
+  /** const asking: Map<Number, Question> */
   const asking = new Map();
-  const questionIn = (b) => (b ? asking.get(b.id) : undefined);
+  /** const questionIn: (BufferHandle | Null) => Question | Undefined */
+  const questionIn = (b) => (b === null ? undefined : asking.get(b.id));
   // The find bar, if it is on screen.
   const findBar = () => fresh.shown(app, "find");
 
@@ -94,9 +99,10 @@ export function activate(app) {
   };
 
   // All matches in a buffer held whole, as byte ranges.
+  /** const findAll: (BufferHandle) => Match[] */
   const findAll = (b) => {
     const L = b.lines();
-    if (!L || !b.whole() || !query) return [];
+    if (L === null || !b.whole() || !query) return [];
     let re;
     try { re = toRegex(query, true); error = ""; } catch (e) { error = "invalid regex"; return []; }
     /** const out: Match[] */
@@ -299,7 +305,8 @@ export function activate(app) {
       key: "scope", on: !!scopeOf(b), title: "Find in selection",
       onChange: (on) => {
         if (!b) return;
-        const sel = fresh.activeView(app)?.selection() ?? null;
+        const av = fresh.activeView(app);
+        const sel = av === null ? null : av.selection();
         if (on && !sel) { fresh.message(app, "Select the text to search in first"); return; }
         if (on && sel != null) setScope(b, sel);
         else clearScope(b);
@@ -428,7 +435,7 @@ export function activate(app) {
   fresh.bindKey(app, "F3", "search.findNext");
   fresh.bindKey(app, "S-F3", "search.findPrevious");
   fresh.onBuffer(app, "buffer.changed", (b) => { const a = buffer(); if (findBar() != null && a != null && b.id === a.id) update(); });
-  fresh.onBuffer(app, "buffer.activated", () => { if (findBar()) update(); });
+  fresh.onBuffer(app, "buffer.activated", (_b) => { if (findBar()) update(); });
   fresh.on(app, "escape", () => { if (findBar()) close(); else clearMarks(); });
 
   // ---------------------------------------------------------------- the workspace
@@ -468,8 +475,9 @@ export function activate(app) {
     if (!m || m.header) return;
     const b = await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
     const v = fresh.activeView(app);
-    const L = b?.lines();
-    if (!L) return;
+    if (b === null || v === null) return;
+    const L = b.lines();
+    if (L === null) return;
     const i = m.line - (L.firstLine ?? 0);
     const start = L.starts[i] + m.col;
     await v.select(start, start + m.len, { center: true });
@@ -486,6 +494,7 @@ export function activate(app) {
     for (const [path, list] of byFile) {
       const b = await fresh.load(app, path);
       const L = b.lines();
+      if (L === null) continue;
       /** const ops: Op[] */
       const ops = [];
       for (const m of [...list].reverse()) {

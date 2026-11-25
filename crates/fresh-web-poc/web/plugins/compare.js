@@ -39,6 +39,9 @@ function held(L) { return L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, 
 export function activate(app) {
   /** let pair: Pair | Null */
   let pair = null;
+  // Mark lines [first, first + n) of a side: background `bg`, gutter
+  // `glyph` in `color` (theme keys).
+  /** const markLines: (DecorationSet, Lines, Number, Number, String, String, String) => Undefined */
   const markLines = (d, L, first, n, bg, glyph, color) => {
     for (let i = first; i < first + n && i < L.starts.length; i++) {
       d.overlay(L.starts[i], L.starts[i] + fresh.byteLen(L.lines[i]) + 1, { fg: null, bg, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true }, { when: "always", mark: false, above: false });

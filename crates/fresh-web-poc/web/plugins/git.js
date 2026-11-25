@@ -101,6 +101,7 @@ export function activate(app) {
   // ---------------------------------------------------------------- gutter
 
   // A whole buffer's lines, without the empty one after a final newline.
+  /** const held: (Lines) => String[] */
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   const baseline = async (path) => {
     if (!baselines.has(path)) {
@@ -112,13 +113,14 @@ export function activate(app) {
 
   const timers = new Map();
   const changes = new Map(); // buffer id -> changed window line indices
+  /** const markGutter: (BufferHandle) => Promise<Undefined> */
   const markGutter = async (b) => {
-    if (!b || b.isVirtual || !b.whole() || !rel(b.path())) return;
+    if (b.isVirtual || !b.whole() || rel(b.path()) === null) return;
     const base = await baseline(b.path());
     const L = b.lines();
     const d = b.decorations("gutter");
     d.clear();
-    if (!base || !L) { b.render(); return; }
+    if (!base || L === null) { b.render(); return; }
     const edits = diffLines(base, held(L));
     if (!edits) { b.render(); return; }
     // An inserted line where a line was also deleted is a modified line.
@@ -132,21 +134,24 @@ export function activate(app) {
     changes.set(b.id, [...new Set([...added, ...deletedAt])].sort((x, y) => x - y));
     b.render();
   };
+  /** const schedule: (BufferHandle) => Undefined */
   const schedule = (b) => {
     const before = timers.get(b.id);
     if (before !== undefined) clearTimeout(before);
-    timers.set(b.id, setTimeout(() => markGutter(b), 300));
+    timers.set(b.id, setTimeout(() => { markGutter(b); }, 300));
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer));
   fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer));
   fresh.onBuffer(app, "buffer.saved", (buffer) => schedule(buffer));
 
+  /** const step: (Number) => Undefined */
   const step = (dir) => {
     const v = fresh.activeView(app);
-    const b = v?.buffer;
-    const L = b?.lines();
-    const list = b && changes.get(b.id);
-    if (!L || !list || !list.length) return fresh.message(app, "No changes");
+    if (v === null) return;
+    const b = v.buffer;
+    const L = b.lines();
+    const list = changes.get(b.id) ?? [];
+    if (L === null || !list.length) { fresh.message(app, "No changes"); return; }
     const cur = L.starts.findIndex((s, k) => v.cursor() >= s && (k + 1 >= L.starts.length || v.cursor() < L.starts[k + 1]));
     const next = dir > 0 ? list.find((i) => i > cur) ?? list[0] : [...list].reverse().find((i) => i < cur) ?? list[list.length - 1];
     v.setCursor(L.starts[next], { center: true });
@@ -157,13 +162,15 @@ export function activate(app) {
   const blamed = new Set();
   const blame = async () => {
     const b = fresh.activeBuffer(app);
-    if (!b || !rel(b.path())) return;
+    if (b === null) return;
+    const file = rel(b.path());
+    if (file === null) return;
     const d = b.decorations("blame");
     if (blamed.has(b.id)) { blamed.delete(b.id); d.clear(); b.render(); return; }
-    const r = await git(["blame", "--line-porcelain", "--", rel(b.path())]);
-    if (r.code !== 0) return fresh.message(app, r.stderr.trim() || "Not tracked by git");
+    const r = await git(["blame", "--line-porcelain", "--", file]);
+    if (r.code !== 0) { fresh.message(app, r.stderr.trim() || "Not tracked by git"); return; }
     const L = b.lines();
-    if (!L || !b.whole()) return fresh.message(app, "Blame needs the whole file");
+    if (L === null || !b.whole()) { fresh.message(app, "Blame needs the whole file"); return; }
     // Blame describes the file on disk; the buffer's lines map onto it.
     const disk = (await fresh.read(app, b.path())).replace(/\n$/, "").split("\n");
     const map = mapLines(disk, held(L));
@@ -174,8 +181,8 @@ export function activate(app) {
     d.clear();
     held(L).forEach((text, i) => {
       const x = map ? byLine.get(map[i]) : byLine.get(i);
-      const committed = x && !/^0+$/.test(x.hash);
-      d.inline(L.starts[i] + fresh.byteLen(text), committed ? ` ${x.author}, ${x.time} · ${x.summary}` : " (not committed)", { style: BLAME, side: "before", edge: true, when: "always" });
+      const note = x === undefined || /^0+$/.test(x.hash) ? " (not committed)" : ` ${x.author}, ${x.time} · ${x.summary}`;
+      d.inline(L.starts[i] + fresh.byteLen(text), note, { style: BLAME, side: "before", edge: true, when: "always" });
     });
     blamed.add(b.id);
     b.render();
@@ -189,11 +196,12 @@ export function activate(app) {
   });
 
   // The log of the workspace, or of one file (`path`).
+  /** const log: (String | Null) => Promise<Undefined> */
   const log = async (path) => {
-    const of = path ? rel(path) : null;
+    const of = path === null ? null : rel(path);
     const format = ["log", "-n", "500", "--format=%H%x1f%h%x1f%an%x1f%ar%x1f%s"];
     const r = await git(of ? [...format, "--", of] : format);
-    if (r.code !== 0) return fresh.message(app, r.stderr.trim() || "git log failed");
+    if (r.code !== 0) { fresh.message(app, r.stderr.trim() || "git log failed"); return; }
     const items = r.stdout.trim().split("\n").filter(Boolean).map((l) => { const [hash, short, author, when, subject] = l.split("\x1f"); return { hash, short, author, when, subject }; });
     const logPanel = fresh.panel(app, { id: "git-log", title: of ? `Log: ${of}` : "Git Log", place: "bottom", onClose: null });
     logPanel.render(h("list", {
@@ -209,26 +217,30 @@ export function activate(app) {
   };
 
   // The buffer as it is against HEAD, so unsaved edits show too.
+  /** const diffFile: () => Promise<Undefined> */
   const diffFile = async () => {
     const b = fresh.activeBuffer(app);
-    const L = b?.lines();
-    if (!b || !rel(b.path()) || !L) return;
-    if (!b.whole()) return fresh.message(app, "Diff needs the whole file");
+    if (b === null) return;
+    const L = b.lines();
+    const file = rel(b.path());
+    if (file === null || L === null) return;
+    if (!b.whole()) { fresh.message(app, "Diff needs the whole file"); return; }
     const base = await baseline(b.path());
-    if (!base) return fresh.message(app, "Not in HEAD");
-    const text = unifiedDiff(base, held(L), `a/${rel(b.path())}`, `b/${rel(b.path())}`);
-    if (text === null) return fresh.message(app, "Too many changes to diff here");
-    if (!text) return fresh.message(app, "No changes against HEAD");
+    if (!base) { fresh.message(app, "Not in HEAD"); return; }
+    const text = unifiedDiff(base, held(L), `a/${file}`, `b/${file}`);
+    if (text === null) { fresh.message(app, "Too many changes to diff here"); return; }
+    if (!text) { fresh.message(app, "No changes against HEAD"); return; }
     showDiff(`diff ${b.name()}`, text);
   };
 
   // A command, and its key ("" for none).
+  /** const reg: (String, String, () => Undefined, String) => Undefined */
   const reg = (id, title, run, key) => { fresh.register(app, id, { title, hidden: false, run }); if (key) fresh.bindKey(app, key, id); };
-  reg("git.log", "Git: Log", () => log(null), "C-S-g");
-  reg("git.logFile", "Git: Log of Current File", () => log(fresh.activeBuffer(app)?.path() ?? null), "");
-  reg("git.blame", "Git: Toggle Blame", blame, "");
-  reg("git.diffFile", "Git: Diff Current File", diffFile, "");
-  reg("git.nextChange", "Git: Next Change", () => step(1), "M-F5");
-  reg("git.prevChange", "Git: Previous Change", () => step(-1), "M-S-F5");
+  reg("git.log", "Git: Log", () => { log(null); }, "C-S-g");
+  reg("git.logFile", "Git: Log of Current File", () => { const b = fresh.activeBuffer(app); log(b === null ? null : b.path()); }, "");
+  reg("git.blame", "Git: Toggle Blame", () => { blame(); }, "");
+  reg("git.diffFile", "Git: Diff Current File", () => { diffFile(); }, "");
+  reg("git.nextChange", "Git: Next Change", () => { step(1); }, "M-F5");
+  reg("git.prevChange", "Git: Previous Change", () => { step(-1); }, "M-S-F5");
   reg("git.refresh", "Git: Refresh", () => { baselines.clear(); const b = fresh.activeBuffer(app); if (b) markGutter(b); refreshBranch(); }, "");
 }

@@ -20,25 +20,31 @@ import { color, highlightLine, THEME } from "./highlight.js";
 
 /** const EMPTY: Drawn */
 export const EMPTY = Object.freeze({ fg: "", bg: "", bold: false, italic: false, underline: false, strike: false, mono: false, markup: false, wavy: "" });
+// A syntax span of a line: UTF-16 [s, e) and its finished style.
+/** type Span = {s: Number, e: Number, style: Drawn} */
+/** const NO_SPANS: Span[] */
 export const NO_SPANS = [];
 
 // Syntax spans by language and line text: a line's colours depend only on
 // its text (the highlighter is line-local), so scrolling and editing reuse
 // them. Each span carries its finished style.
-const spanCache = new Map();
+/** function noSpans() => Map<String, Span[]> */
+function noSpans() { return new Map(); }
+const spanCache = noSpans();
 const cssCache = new Map();
+/** function spansFor(lang: String | Null, text: String) => Span[] */
 export function spansFor(lang, text) {
-  if (!lang) return NO_SPANS;
+  if (lang === null || lang === "") return NO_SPANS;
   const key = lang + "\u0000" + text;
-  let v = spanCache.get(key);
-  if (!v) {
-    v = highlightLine(lang, text).map((x) => ({ s: x.s, e: x.e, style: Object.freeze({ fg: THEME[x.k] ?? "", bg: "", bold: x.bold, italic: x.italic, underline: false, strike: false, mono: false, markup: false, wavy: "" }) }));
-    if (spanCache.size > 50000) spanCache.clear();
-    spanCache.set(key, v);
-  }
+  const had = spanCache.get(key);
+  if (had !== undefined) return had;
+  const v = highlightLine(lang, text).map((x) => ({ s: x.s, e: x.e, style: Object.freeze({ fg: THEME[x.k] ?? "", bg: "", bold: x.bold, italic: x.italic, underline: false, strike: false, mono: false, markup: false, wavy: "" }) }));
+  if (spanCache.size > 50000) spanCache.clear();
+  spanCache.set(key, v);
   return v;
 }
 // The style of UTF-16 index `idx` among a line's syntax spans.
+/** function synAt(spans: Span[], idx: Number) => Drawn */
 export function synAt(spans, idx) {
   for (const x of spans) if (idx >= x.s && idx < x.e) return x.style;
   return EMPTY;

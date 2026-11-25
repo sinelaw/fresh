@@ -31,13 +31,14 @@ export function activate(app) {
   const SEV = ["", "error", "warning", "info", "hint"];
   const status = fresh.statusItem(app, "lsp");
 
+  /** const active: () => ViewHandle | Null */
   const active = () => {
     const v = fresh.activeView(app);
-    return v && fresh.lspAvailable(app, v.buffer) ? v : null;
+    return v !== null && fresh.lspAvailable(app, v.buffer) ? v : null;
   };
   // A request about the cursor's position. A refused one throws; each
   // command shows the server's reason (see `reg`).
-  const ask = (v, method, params) => fresh.lspRequest(app, v.buffer, method, params, v.cursor());
+  const ask = (v, method, params) => fresh.lspRequestAt(app, v.buffer, method, params, v.cursor());
   const rel = (p) => (p.startsWith(fresh.root(app) + "/") ? p.slice(fresh.root(app).length + 1) : p);
 
   // Open a location: `preview` as for OpenOptions (a list's selection
@@ -135,7 +136,7 @@ export function activate(app) {
       return out.length ? out : [note(q ? "No symbol matches" : "No symbols")];
     },
   });
-  const symbols = () => fresh.run(app, "palette.open", "@");
+  const symbols = () => fresh.runWith(app, "palette.open", "@");
 
   // The palette's `%`: the workspace's symbols matching what is typed,
   // from every running server.
@@ -174,7 +175,7 @@ export function activate(app) {
       return out.length ? out : [note("No symbol matches")];
     },
   });
-  const workspaceSymbols = () => fresh.run(app, "palette.open", "%");
+  const workspaceSymbols = () => fresh.runWith(app, "palette.open", "%");
 
   // ---------------------------------------------------------------- edits
 
@@ -189,12 +190,15 @@ export function activate(app) {
     }
     return n;
   };
+  /** const applyTextEdits: (BufferHandle, LspTextEdit[]) => Number */
   const applyTextEdits = (b, edits) => {
     /** const ops: Op[] */
     const ops = [];
     const resolved = edits
-      .map((e) => ({ s: fresh.lspOffset(app, b, e.range.start.line, e.range.start.character), e: fresh.lspOffset(app, b, e.range.end.line, e.range.end.character), text: e.newText }))
-      .filter((e) => e.s != null && e.e != null)
+      .flatMap((e) => {
+        const s = fresh.lspOffset(app, b, e.range.start.line, e.range.start.character), end = fresh.lspOffset(app, b, e.range.end.line, e.range.end.character);
+        return s !== null && end !== null ? [{ s, e: end, text: e.newText }] : [];
+      })
       .sort((x, y) => y.s - x.s);
     for (const e of resolved) {
       if (e.e > e.s) ops.push({ t: "del", pos: e.s, len: e.e - e.s });
@@ -208,6 +212,7 @@ export function activate(app) {
   const wordEnd = (s) => s.slice(s.search(/[\w$]*$/));
   const wordStart = (s) => s.slice(0, s.search(/[^\w$]|$/));
   // The identifier around the cursor.
+  /** const currentWord: (ViewHandle) => String */
   const currentWord = (v) => {
     const b = v.buffer;
     const left = b.text(Math.max(0, v.cursor() - 100), v.cursor()) || "";
@@ -307,9 +312,10 @@ export function activate(app) {
     /** let about: String | Null */
     let about = null;
     if (fresh.lspAvailable(app, b)) {
-      try { about = hoverText(await fresh.lspRequest(app, b, "textDocument/hover", {}, pos)); } catch {}
+      try { about = hoverText(await fresh.lspRequestAt(app, b, "textDocument/hover", {}, pos)); } catch {}
     }
-    const parts = about === null ? problems : [...problems, about];
+    const extra = about === null ? [] : [about];
+    const parts = [...problems, ...extra];
     return parts.length ? parts.join("\n\n") : null;
   });
   const hover = async () => {
@@ -329,7 +335,7 @@ export function activate(app) {
     fresh.popup(app, doc ? `${sig.label}\n\n${doc}` : sig.label);
   };
 
-  fresh.onBuffer(app, "buffer.changed", (buffer, { ops, local }) => {
+  fresh.onBufferChanged(app, (buffer, { ops, local }) => {
     if (!local || !fresh.lspAvailable(app, buffer)) return;
     const op = ops[0];
     if (op?.t !== "ins") return;
@@ -342,9 +348,10 @@ export function activate(app) {
   // ---------------------------------------------------------------- diagnostics
 
   // The line number (1-based, as text) of byte `pos` in `b`, or "?".
+  /** const lineLabel: (BufferHandle, Number) => String */
   const lineLabel = (b, pos) => {
     const L = b.lines();
-    if (!L) return "?";
+    if (L === null) return "?";
     const i = L.starts.findIndex((s, k) => pos >= s && (k + 1 >= L.starts.length || pos < L.starts[k + 1]));
     return i >= 0 ? String((L.firstLine ?? 0) + i + 1) : "?";
   };
@@ -363,7 +370,7 @@ export function activate(app) {
       render: (it) => it.header
         ? h("text", { bold: true }, [rel(it.b.path())])
         : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [it.line]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
-      onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path(), { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.activeView(app).setCursor(it.d.start, { center: true }); },
+      onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path(), { line: null, column: 1, place: "tab", preview: null, focus: true }); const v = fresh.activeView(app); if (v !== null) v.setCursor(it.d.start, { center: true }); },
     }));
   };
   const diagnosticsPanel = () => {
@@ -371,10 +378,11 @@ export function activate(app) {
     renderDiagnostics();
     diagPanel.focus("diags");
   };
-  fresh.onBuffer(app, "diagnostics.changed", renderDiagnostics);
+  fresh.onBuffer(app, "diagnostics.changed", (_b) => { renderDiagnostics(); });
 
   // ---------------------------------------------------------------- folding and status
 
+  /** const refreshFolds: (BufferHandle) => Promise<Undefined> */
   const refreshFolds = async (b) => {
     if (!fresh.lspAvailable(app, b)) return;
     try {
@@ -385,11 +393,16 @@ export function activate(app) {
   };
   // The status bar: the active file's server, or `LSP (off)` when it was
   // stopped.
+  /** const showStatus: (BufferHandle | Null) => Undefined */
   const showStatus = (b) => {
-    const lang = b === null ? null : b.language();
-    const installed = b !== null && lang !== null && fresh.lspLanguages(app).includes(lang) && !b.isVirtual;
-    const text = !installed || lang === null ? "" : fresh.lspAvailable(app, b) ? `LSP ${lang}` : running.get(lang) === false ? "LSP (off)" : "";
-    status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.run(app, "lsp.status") });
+    status.set(b === null ? "" : statusText(b), { title: "Language servers: Show Status", onClick: () => { fresh.run(app, "lsp.status"); } });
+  };
+  // A file's server as the status bar shows it.
+  /** const statusText: (BufferHandle) => String */
+  const statusText = (b) => {
+    const lang = b.language();
+    if (lang === null || b.isVirtual || !fresh.lspLanguages(app).includes(lang)) return "";
+    return fresh.lspAvailable(app, b) ? `LSP ${lang}` : running.get(lang) === false ? "LSP (off)" : "";
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
   // Its language changed: another server, or none.
@@ -451,6 +464,7 @@ export function activate(app) {
   // line numbers' colour), asked for the whole document once its text has
   // settled after an edit. An answer to an older text is dropped.
   const hintTimers = new Map();
+  /** const refreshHints: (BufferHandle) => Promise<Undefined> */
   const refreshHints = async (b) => {
     const deco = b.decorations("inlay");
     if (!fresh.settings(app).inlay_hints || !fresh.lspAvailable(app, b) || !b.whole()) { deco.clear(); b.render(); return; }
@@ -472,6 +486,7 @@ export function activate(app) {
     }
     b.render();
   };
+  /** const hintsSoon: (BufferHandle) => Undefined */
   const hintsSoon = (b) => {
     const pending = hintTimers.get(b.id);
     if (pending !== undefined) clearTimeout(pending);
@@ -490,20 +505,21 @@ export function activate(app) {
 
   // A command, and its key ("" for none).
   // A failure (a refused request) shows the server's reason.
+  /** const reg: (String, String, () => Promise<Undefined>, String) => Undefined */
   const reg = (id, title, run, key) => {
-    fresh.register(app, id, { title, hidden: false, run: () => { Promise.resolve(run()).catch((e) => fresh.showError(app, e)); } });
+    fresh.register(app, id, { title, hidden: false, run: () => { run().catch((e) => fresh.showError(app, e)); } });
     if (key) fresh.bindKey(app, key, id);
   };
-  reg("lsp.definition", "LSP: Go to Definition", definition, "F12");
-  reg("lsp.references", "LSP: Find References", references, "S-F12");
-  reg("lsp.completion", "LSP: Completion", completion, "C-Space");
-  reg("lsp.hover", "LSP: Hover", hover, "C-k");
-  reg("lsp.rename", "LSP: Rename Symbol", rename, "F2");
-  reg("lsp.codeActions", "LSP: Code Actions", codeActions, "C-.");
-  reg("lsp.format", "LSP: Format Document", format, "M-S-f");
-  reg("lsp.symbols", "Go to Symbol in File…", symbols, "C-S-o");
-  reg("lsp.signatureHelp", "LSP: Signature Help", signatureHelp, "C-S-Space");
-  reg("lsp.diagnostics", "Diagnostics: Show Panel", diagnosticsPanel, "C-S-m");
+  reg("lsp.definition", "LSP: Go to Definition", async () => { await definition(); }, "F12");
+  reg("lsp.references", "LSP: Find References", async () => { await references(); }, "S-F12");
+  reg("lsp.completion", "LSP: Completion", async () => { await completion(); }, "C-Space");
+  reg("lsp.hover", "LSP: Hover", async () => { await hover(); }, "C-k");
+  reg("lsp.rename", "LSP: Rename Symbol", async () => { await rename(); }, "F2");
+  reg("lsp.codeActions", "LSP: Code Actions", async () => { await codeActions(); }, "C-.");
+  reg("lsp.format", "LSP: Format Document", async () => { await format(); }, "M-S-f");
+  reg("lsp.symbols", "Go to Symbol in File…", async () => { await symbols(); }, "C-S-o");
+  reg("lsp.signatureHelp", "LSP: Signature Help", async () => { await signatureHelp(); }, "C-S-Space");
+  reg("lsp.diagnostics", "Diagnostics: Show Panel", async () => { diagnosticsPanel(); }, "C-S-m");
   // The next (previous) diagnostic after (before) the cursor, round the
   // end of the file; its message in the status bar.
   const stepDiagnostic = async (dir) => {
@@ -517,11 +533,11 @@ export function activate(app) {
     await v.setCursor(d.start, { center: true });
     fresh.message(app, `${SEV[d.severity] || "error"}: ${d.message.split("\n")[0]}`);
   };
-  reg("lsp.nextDiagnostic", "Go to Next Problem", () => stepDiagnostic(1), "F8");
-  reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
-  reg("lsp.status", "LSP: Show Status", lspStatus, "");
-  reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", workspaceSymbols, "");
-  reg("lsp.restart", "LSP: Start/Restart Server", () => activeServerOp("restart"), "");
-  reg("lsp.stop", "LSP: Stop Server", () => activeServerOp("stop"), "");
-  reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", toggleHints, "");
+  reg("lsp.nextDiagnostic", "Go to Next Problem", async () => { await stepDiagnostic(1); }, "F8");
+  reg("lsp.prevDiagnostic", "Go to Previous Problem", async () => { await stepDiagnostic(-1); }, "S-F8");
+  reg("lsp.status", "LSP: Show Status", async () => { await lspStatus(); }, "");
+  reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", async () => { await workspaceSymbols(); }, "");
+  reg("lsp.restart", "LSP: Start/Restart Server", async () => { activeServerOp("restart"); }, "");
+  reg("lsp.stop", "LSP: Stop Server", async () => { activeServerOp("stop"); }, "");
+  reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", async () => { toggleHints(); }, "");
 }

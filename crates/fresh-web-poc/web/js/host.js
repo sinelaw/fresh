@@ -13,12 +13,12 @@ function decorationSet(buf, ns) {
   return asDecorations({
     clear: () => { buf.decor.clearNamespace(ns); },
     clearRange: (start, end) => { buf.decor.clearNamespaceRange(ns, start, end); },
-    overlay: (start, end, style, opts) => { buf.decor.add("overlays", { ns, start, end, style, when: opts.when, mark: opts.mark, above: opts.above }); },
-    conceal: (start, end, opts) => { buf.decor.add("conceals", { ns, start, end, text: opts.text, style: opts.style, reveal: opts.reveal, when: opts.when }); },
-    inline: (pos, text, opts) => { buf.decor.add("inlines", { ns, pos, text, style: opts.style, side: opts.side, edge: opts.edge, when: opts.when }); },
-    line: (pos, opts) => { buf.decor.add("lines", { ns, pos, above: opts.above, text: opts.text, style: opts.style, when: opts.when, order: opts.order }); },
-    node: (start, end, block, when) => { buf.decor.add("nodes", { ns, start, end, ...block, when }); },
-    gutter: (pos, opts) => { buf.decor.add("gutters", { ns, start: pos, end: pos, glyph: opts.glyph, color: opts.color, title: opts.title }); },
+    overlay: (start, end, style, opts) => { buf.decor.addOverlay({ ns, start, end, style, when: opts.when, mark: opts.mark, above: opts.above }); },
+    conceal: (start, end, opts) => { buf.decor.addConceal({ ns, start, end, text: opts.text, style: opts.style, reveal: opts.reveal, when: opts.when }); },
+    inline: (pos, text, opts) => { buf.decor.addInline({ ns, pos, text, style: opts.style, side: opts.side, edge: opts.edge, when: opts.when }); },
+    line: (pos, opts) => { buf.decor.addLine({ ns, pos, above: opts.above, text: opts.text, style: opts.style, when: opts.when, order: opts.order }); },
+    node: (start, end, block, when) => { buf.decor.addNode({ ns, start, end, type: block.type, level: block.level, depth: block.depth, marker: block.marker, lang: block.lang, align: block.align, header: block.header, delimiter: block.delimiter, when }); },
+    gutter: (pos, opts) => { buf.decor.addGutter({ ns, start: pos, end: pos, glyph: opts.glyph, color: opts.color, title: opts.title }); },
     gutters: () => buf.decor.gutters.filter((g) => g.ns === ns).map((g) => ({ pos: g.start, glyph: g.glyph })),
     overlays: () => buf.decor.overlays.filter((o) => o.ns === ns).map((o) => ({ start: o.start, end: o.end })),
   });

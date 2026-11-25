@@ -7,7 +7,7 @@ import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
-import { EMPTY, NO_SPANS, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
+import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
 import { DocView } from "./doc.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
 
@@ -368,7 +368,7 @@ export class Pane {
       const regions = struct ? struct.region : [];
       const inFence = li < regions.length && regions[li] === "body";
       const l = inFence ? fenceLang(regions, li) : lang;
-      return inFence && !l ? NO_SPANS : spansFor(l, L.lines[li]);
+      return spansFor(l, L.lines[li]);
     };
     // Each line's decorations, gathered when the layout first reaches the
     // line (the interval index makes that cost what the line has), in order
@@ -387,7 +387,7 @@ export class Pane {
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
     const depths = s.rainbow_brackets && buf.full ? rainbowDepths(buf, lang, synFor) : null;
-    const DIAG = ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]];
+    const DIAG = ["", THEME["diagnostic.error"] ?? "", THEME["diagnostic.warning"] ?? "", THEME["diagnostic.info"] ?? "", THEME["diagnostic.hint"] ?? ""];
     const lineCache = new Map();
     const lineDecos = (li) => {
       const hit = lineCache.get(li);
@@ -395,7 +395,7 @@ export class Pane {
       const out = [];
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
       const above = [];
-      for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
+      for (const o of buf.decor.overlaysIn(ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
       if (depths) {
         const line = L.lines[li];
         const skip = synFor(li).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
@@ -422,7 +422,7 @@ export class Pane {
         }
       }
       if (brackets) for (const x of [brackets.at, brackets.match]) if (x >= ls && x < le) out.push({ s: x, e: x + 1, f: BRACKET });
-      for (const g of buf.decor.query("diags", ls, le)) { const wavy = DIAG[g.severity] || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => withWavy(st, wavy) }); }
+      for (const g of buf.decor.diagsIn(ls, le)) { const wavy = (DIAG.at(g.severity) ?? "") || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => withWavy(st, wavy) }); }
       for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: SELECTED });
       out.push(...above);
       lineCache.set(li, out);
@@ -441,14 +441,18 @@ export class Pane {
       cursors: v.cursors.map((c) => c.pos),
       folds: v.folds,
       whitespace: s.show_whitespace,
+      // The background an overlay at `b` carries to the row's end, if any.
       extendAt: (b) => {
-        for (const o of buf.decor.query("overlays", b, b + 1)) if (o.style?.extendToLineEnd && o.style.bg) return color(o.style.bg);
-        return null;
+        const o = buf.decor.overlaysIn(b, b + 1).find((x) => x.style.extendToLineEnd && x.style.bg !== null);
+        return o === undefined ? null : color(o.style.bg);
       },
       decoStyle,
-      styleAt: (b, li, idx) => {
-        if (li == null) { li = L.indexOf(b); idx = li >= 0 ? byteToIdx(L.lines[li], b - L.starts[li]) : 0; }
-        return li >= 0 ? decoStyle(b, li, synAt(synFor(li), idx)) : EMPTY;
+      // The style at byte `b`, the `idx`th UTF-16 unit of line `li`.
+      styleAt: (b, li, idx) => (li >= 0 ? decoStyle(b, li, synAt(synFor(li), idx)) : EMPTY),
+      // The style at byte `b`, its line found.
+      styleAtByte: (b) => {
+        const li = L.indexOf(b);
+        return li >= 0 ? decoStyle(b, li, synAt(synFor(li), byteToIdx(L.lines[li], b - L.starts[li]))) : EMPTY;
       },
     };
   }
@@ -723,7 +727,7 @@ export class Pane {
     const h = L && this.foldHiding(v, L.indexOf(p));
     if (h) p = dir < 0 || h.fold.end + 1 >= L.count ? L.lineEnd(h.keep) : L.starts[h.fold.end + 1];
     for (let guard = 0; guard < 64; guard++) {
-      const c = v.buf.decor.query("conceals", p, p + 1).find((c) => c.start < p && p < c.end && applies(c, v.mode) && !(c.reveal && cursorIn([p], c.reveal)));
+      const c = v.buf.decor.concealsIn(p, p + 1).find((c) => c.start < p && p < c.end && applies(c, v.mode) && !(c.reveal && cursorIn([p], c.reveal)));
       if (!c) return p;
       p = dir < 0 ? c.start : c.end;
     }

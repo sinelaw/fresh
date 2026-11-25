@@ -27,6 +27,7 @@ import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { applies, cursorIn } from "./layout.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
+import { within } from "./dom.js";
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
@@ -38,14 +39,20 @@ const FOLD_MARGIN = 40;
 const PLAIN = styleKey(EMPTY);
 const anchor = (p) => `<span data-a="${p}">​</span>`;
 
+// Decorations by line, and inline texts by position and side, typed.
+/** function noLines() => Map<Number, VirtualLine[]> */
+function noLines() { return new Map(); }
+/** function noInlines() => Map<String, InlineText[]> */
+function noInlines() { return new Map(); }
+
 export class DocView {
   constructor() {
     this.el = document.createElement("div");
     this.el.className = "doc";
     this.el.innerHTML = `<div class="doc-content"><div class="doc-body"></div><div class="doc-carets"></div></div>`;
-    this.content = this.el.firstChild;
-    this.body = this.content.firstChild;
-    this.caretsEl = this.content.lastChild;
+    this.content = within(this.el, ".doc-content");
+    this.body = within(this.el, ".doc-body");
+    this.caretsEl = within(this.el, ".doc-carets");
     this.els = []; // the drawn block elements
     this.map = []; // drawn pieces in byte order: {el, start, end, kind: "p"|"a"|"at"}
     this.dom = []; // the same, in document order
@@ -100,11 +107,11 @@ export class DocView {
     const d = buf.decor;
     const cursors = v.cursors.map((c) => c.pos);
     const o = v.pane.layoutOpts(v, 0);
-    const vlines = new Map();
+    const vlines = noLines();
     for (const x of d.lines) {
       if (!applies(x, v.mode)) continue;
       const i = L.indexOf(x.pos);
-      if (i >= 0) (vlines.get(i) || vlines.set(i, []).get(i)).push(x);
+      if (i >= 0) vlines.set(i, [...(vlines.get(i) ?? []), x]);
     }
     const lineCache = new Map();
     // A line's active conceals (sorted, the longest first at one start),
@@ -114,17 +121,17 @@ export class DocView {
       if (x) return x;
       const ls = L.starts[li], le = L.lineEnd(li);
       const act = [], rev = [];
-      for (const c of d.query("conceals", ls, le + 1)) {
+      for (const c of d.concealsIn(ls, le + 1)) {
         if (c.end <= c.start || !applies(c, v.mode)) continue;
         if (c.reveal && cursorIn(cursors, c.reveal)) rev.push(c);
         else act.push(c);
       }
       act.sort((a, b) => a.start - b.start || b.end - a.end);
-      const inl = new Map();
-      for (const t of d.query("inlines", ls, le + 1)) {
+      const inl = noInlines();
+      for (const t of d.inlinesIn(ls, le + 1)) {
         if (!applies(t, v.mode) || t.pos < ls || t.pos > le) continue;
         const k = t.pos + (t.side === "after" ? "a" : "b");
-        (inl.get(k) || inl.set(k, []).get(k)).push(t);
+        inl.set(k, [...(inl.get(k) ?? []), t]);
       }
       x = { act, rev, inl };
       lineCache.set(li, x);
@@ -196,7 +203,7 @@ export class DocView {
   blockAt(ctx, li) {
     const { L, d } = ctx;
     let best = null;
-    for (const n of d.query("nodes", L.starts[li], L.lineEnd(li) + 1)) {
+    for (const n of d.nodesIn(L.starts[li], L.lineEnd(li) + 1)) {
       if (PART.has(n.type) || !applies(n, ctx.mode)) continue;
       if (!best || n.start < best.start) best = n;
     }
@@ -392,7 +399,7 @@ export class DocView {
   tableHTML(ctx, blk, tog) {
     const { L, d } = ctx;
     const n = blk.node;
-    const parts = d.query("nodes", n.start, n.end + 1).filter((x) => PART.has(x.type) && applies(x, ctx.mode));
+    const parts = d.nodesIn(n.start, n.end + 1).filter((x) => PART.has(x.type) && applies(x, ctx.mode));
     const rows = new Map(), cells = new Map();
     for (const x of parts) {
       const li = L.indexOf(x.start);

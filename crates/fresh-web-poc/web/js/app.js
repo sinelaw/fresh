@@ -85,12 +85,19 @@ function savedPane(tabs, active) { return { kind: "pane", tabs, active }; }
 /** function savedSplit(dir: String, ratio: Number, a: SavedNode, b: SavedNode) => SavedNode */
 function savedSplit(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
 
+// The buffer modes' keys, typed; the key `k` of mode `mode` (none: a
+// buffer of no mode, or a key it leaves alone).
+/** function noModes() => Map<String, ModeKey[]> */
+function noModes() { return new Map(); }
+/** function modeKey(modes: Map<String, ModeKey[]>, mode: String | Null, k: String) => ModeKey | Undefined */
+function modeKey(modes, mode, k) { return mode === null ? undefined : (modes.get(mode) ?? []).find((b) => b.key === k); }
+
 export class App {
   constructor(c) {
     this.buffers = new Map();
     this.docs = new Map();
     this.commands = new Map(); // id -> {title, run, source, hidden}
-    this.modes = new Map(); // buffer mode -> {key: fn}
+    this.modes = noModes(); // buffer mode -> its keys
     this.keys = {}; // key -> command, from plugins
     this.terminalKeys = new Set(["C-`"]); // keys a focused terminal leaves to the editor
     this.statusItems = new Map();
@@ -1032,8 +1039,7 @@ export class App {
         const items = ev.items.map((d) => ({ ...d }));
         const move = (op) => { for (const d of items) { d.start = shiftPos(d.start, op, true); d.end = Math.max(d.start, shiftPos(d.end, op, false)); } };
         for (const op of b.opsSince(ev.version)) move(op);
-        b.decor.diags = items;
-        b.decor.gen++;
+        b.decor.setDiagnostics(items);
         this.renderBuffer(b.id);
         this.host.emitBuffer("diagnostics.changed", b, [], false);
         this.updateStatus();
@@ -1115,8 +1121,8 @@ export class App {
     const v = this.view();
     if (!v || v.buf.readOnly) return;
     // A buffer mode may claim printable keys (a panel's single-key commands).
-    const mode = v.buf.mode && this.modes.get(v.buf.mode);
-    if (mode && t.length === 1 && mode[t]) { mode[t](); return; }
+    const bound = t.length === 1 ? modeKey(this.modes, v.buf.mode, t) : undefined;
+    if (bound !== undefined) { bound.run(); return; }
     this.macros.text(t, true);
     this.editing.type(this.activePane, t, true);
   }
@@ -1164,8 +1170,8 @@ export class App {
     const v = this.view();
     const k = this.keyName(e);
     // A buffer's mode (a plugin's panel buffer) takes its keys first.
-    const mode = v?.buf.mode && this.modes.get(v.buf.mode);
-    if (mode && mode[k]) { e.preventDefault(); mode[k](); return; }
+    const bound = v ? modeKey(this.modes, v.buf.mode, k) : undefined;
+    if (bound !== undefined) { e.preventDefault(); bound.run(); return; }
     const cmd = this.keymap()[k];
     if (cmd) { e.preventDefault(); this.run(cmd); }
   }
@@ -1574,18 +1580,21 @@ export class App {
     }, 600);
   }
 
+  // `text` in the popup at `at`.
   popup(text, at) {
     const h = $("#popup");
     h.textContent = text;
-    if (!at) {
-      const pane = this.activePane;
-      const c = pane.caretBox(pane.view.primary.pos);
-      const r = pane.surfaceEl.getBoundingClientRect();
-      at = c ? { x: c.x, y: c.y + c.h } : { x: r.left, y: r.top };
-    }
     h.style.left = `${Math.min(at.x, innerWidth - 420)}px`;
     h.style.top = `${at.y}px`;
     h.classList.remove("hidden");
+  }
+  // `text` in the popup under the active view's caret.
+  popupAtCaret(text) {
+    const pane = this.activePane;
+    const v = pane.view;
+    const c = v ? pane.caretBox(v.primary.pos) : null;
+    const r = pane.surfaceEl.getBoundingClientRect();
+    this.popup(text, c ? { x: c.x, y: c.y + c.h } : { x: r.left, y: r.top });
   }
   hidePopup() { $("#popup").classList.add("hidden"); }
 

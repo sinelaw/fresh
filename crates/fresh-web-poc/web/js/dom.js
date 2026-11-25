@@ -8,6 +8,14 @@ export function $(selector) {
   return el;
 }
 
+// The element `selector` names inside `el`, which made it (a missing one
+// is a broken page, said at once).
+export function within(el, selector) {
+  const found = el.querySelector(selector);
+  if (found === null) throw new Error(`No ${selector} in its element`);
+  return found;
+}
+
 // `text` as HTML text.
 /** function escapeHtml(text: String) => String */
 export function escapeHtml(text) {

@@ -12,7 +12,7 @@
 // "diagnostics.changed"), `onView` ("cursor.moved", "view.resized") and
 // `onLspStatus`.
 
-import { rpc, RpcError } from "./rpc.js";
+import { rpc } from "./rpc.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand } from "./commands.js";
 export { byteLen } from "./ot.js";
@@ -38,7 +38,9 @@ export const saveSettings = (app) => app.saveSettings();
 export const register = (app, id, spec) => {
   app.commands.set(id, { title: spec.title, run: asCommand(spec.run), source: id.split(".")[0], hidden: spec.hidden });
 };
-export const run = (app, id, arg) => app.run(id, arg);
+export const run = (app, id) => app.run(id, undefined);
+// A command with its argument (a palette prefix: "palette.open", "@").
+export const runWith = (app, id, arg) => app.run(id, arg);
 export const commands = (app) => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: c.hidden }));
 export const bindKey = (app, key, command) => app.bindKey(key, command);
 export const keyFor = (app, command) => app.keyFor(command);
@@ -47,7 +49,7 @@ export const keyLabel = (app, command) => app.keyLabel(command);
 // The effective keymap: {key: command}.
 export const keymap = (app) => app.keymap();
 // The user's own bindings (saved in the browser), over the defaults.
-export const userKeys = (app) => ({ ...app.userKeys });
+export const userKeys = (app) => new Map(Object.entries(app.userKeys));
 export const setUserKey = (app, key, command) => {
   const others = Object.entries(app.userKeys).filter(([k]) => k !== key);
   app.userKeys = Object.fromEntries(command ? [...others, [key, command]] : others);
@@ -55,7 +57,8 @@ export const setUserKey = (app, key, command) => {
 };
 // The next key pressed, as the keymap names it.
 export const captureKey = (app) => app.captureKey();
-// Keys for a buffer kind: defineMode(app, "git-log", { Enter: fn, q: fn }).
+// Keys for a buffer kind: defineMode(app, "welcome", [{ key: "Enter",
+// run }]) (a ModeKey each, types/fresh.d.js).
 export const defineMode = (app, mode, keys) => { app.modes.set(mode, keys); };
 // A row at the end of a menu bar menu: addMenuItem(app, "Go",
 // fresh.menuCommand("bookmark.list", "Bookmarks…")); MENU_BAR_SEPARATOR parts.
@@ -72,7 +75,9 @@ export const paletteMode = (app, prefix, o) => app.prompt.provide(prefix, o);
 // ---------------------------------------------------------------- events
 
 export const on = (app, event, f) => app.host.on(event, () => { f(); });
-export const onBuffer = (app, event, f) => app.host.onBuffer(event, (b, change) => { f(b, change); });
+export const onBuffer = (app, event, f) => app.host.onBuffer(event, (b, _change) => { f(b); });
+// "buffer.changed" with what changed: its ops, and whether it was typed here.
+export const onBufferChanged = (app, f) => app.host.onBuffer("buffer.changed", (b, change) => { f(b, change); });
 export const onView = (app, event, f) => app.host.onView(event, (v) => { f(v); });
 export const onLspStatus = (app, f) => app.host.onStatus((status) => { f(status); });
 
@@ -120,9 +125,10 @@ export const statusItem = (app, id) => app.statusItem(id);
 export const message = (app, text) => app.setStatus(text);
 // A failure's text in the status bar: a refused request's detail (the
 // server's own words), else the error as written.
-export const errorText = (e) => (e instanceof RpcError ? e.detail : String(e));
+export const errorText = (e) => String(e);
 export const showError = (app, e) => app.setStatus(errorText(e));
-export const popup = (app, text, at) => app.popup(text, at);
+// `text` in a popup under the caret.
+export const popup = (app, text) => app.popupAtCaret(text);
 // Colours: {"--var": css} for the page's colour variables (style.css).
 export const setTheme = (app, vars) => app.applyTheme(vars);
 // Text shown when the pointer rests on a position: f(buffer, pos) -> string|null.
@@ -154,7 +160,8 @@ export const theme = (_app, key) => rpc("theme.get", { key });
 
 export const lspAvailable = (app, buffer) => { const b = held(app, buffer); return b !== undefined && app.lspAvailable(b); };
 // A request about `buffer` (at byte `pos` when it is about a position).
-export const lspRequest = (app, buffer, method, params, pos) => rpc("lsp.call", { doc: held(app, buffer)?.doc ?? null, method, params, pos });
+export const lspRequest = (app, buffer, method, params) => rpc("lsp.call", { doc: held(app, buffer)?.doc ?? null, method, params, pos: null });
+export const lspRequestAt = (app, buffer, method, params, pos) => rpc("lsp.call", { doc: held(app, buffer)?.doc ?? null, method, params, pos });
 // A request about the workspace (`workspace/symbol`) to `language`'s server.
 export const lspWorkspaceRequest = (_app, language, method, params) => rpc("lsp.call", { language, method, params });
 // LSP (line, character) to a byte offset in a held buffer, and back.

@@ -55,8 +55,44 @@ function idxOf(s, b) {
   return i;
 }
 
+// A row's cell: its character, the byte it shows (none: text that is not
+// the buffer's), its style and its width in columns.
+/** type Cell = {ch: String, src: Number | Null, style: Drawn, w: Number} */
+// A row: of source text ("text": its line, whether it continues a wrapped
+// line, the byte where its line ends when it does (none: it wraps or a
+// conceal runs on), the background its last overlay carries to the edge)
+// or a plugin's whole row ("virtual", no line). `edge`: inline texts held
+// for the row's right edge.
+/** type Row = {
+ *   kind: String,
+ *   cells: Cell[],
+ *   col: Number,
+ *   lineIdx: Number | Null,
+ *   cont: Boolean,
+ *   eol: Number | Null,
+ *   fill: String | Null,
+ *   edge: InlineText[],
+ * } */
+/** function textRow(lineIdx: Number, cont: Boolean) => Row */
+function textRow(lineIdx, cont) { return { kind: "text", cells: [], col: 0, lineIdx, cont, eol: null, fill: null, edge: [] }; }
+/** function virtualRow() => Row */
+function virtualRow() { return { kind: "virtual", cells: [], col: 0, lineIdx: null, cont: false, eol: null, fill: null, edge: [] }; }
+// Whether a conceal is revealed (a cursor is in its `reveal` range).
+/** function revealed(c: Conceal, cursors: Number[]) => Boolean */
+function revealed(c, cursors) { const rv = c.reveal; return rv !== null && cursorIn(cursors, rv); }
+
+// Decorations by position, typed.
+/** function noConceals() => Map<Number, Conceal> */
+function noConceals() { return new Map(); }
+/** function noInlines() => Map<Number, InlineText[]> */
+function noInlines() { return new Map(); }
+/** function noLines() => Map<Number, VirtualLine[]> */
+function noLines() { return new Map(); }
+/** function noFolds() => Map<Number, Range> */
+function noFolds() { return new Map(); }
+
 // o: {mode, wrap, width, tab, cursors, folds:[{start,end}] (line indices),
-//     styleAt(b, li, idx), whitespace}
+//     styleAt(b, li, idx), styleAtByte(b), whitespace, extendAt(b)}
 export function layout(buf, top, maxRows, o) {
   const L = buf.text;
   const d = buf.decor;
@@ -66,32 +102,29 @@ export function layout(buf, top, maxRows, o) {
   const width = Math.max(8, o.width);
 
   // Index the active decorations by position.
-  const conceals = new Map();
+  const conceals = noConceals();
   for (const c of d.conceals) {
     if (c.end <= c.start || !applies(c, o.mode)) continue;
-    if (c.reveal && cursorIn(o.cursors, c.reveal)) continue;
+    if (revealed(c, o.cursors)) continue;
     const prev = conceals.get(c.start);
-    if (!prev || prev.end < c.end) conceals.set(c.start, c);
+    if (prev === undefined || prev.end < c.end) conceals.set(c.start, c);
   }
-  const inlines = new Map();
+  const inlines = noInlines();
   for (const v of d.inlines) {
-    if (!applies(v, o.mode)) continue;
-    if (!inlines.has(v.pos)) inlines.set(v.pos, []);
-    inlines.get(v.pos).push(v);
+    if (applies(v, o.mode)) inlines.set(v.pos, [...(inlines.get(v.pos) ?? []), v]);
   }
-  const vlines = new Map();
+  const vlines = noLines();
   for (const v of d.lines) {
     if (!applies(v, o.mode)) continue;
     const i = L.indexOf(v.pos);
-    if (i < 0) continue;
-    if (!vlines.has(i)) vlines.set(i, []);
-    vlines.get(i).push(v);
+    if (i >= 0) vlines.set(i, [...(vlines.get(i) ?? []), v]);
   }
   for (const list of vlines.values()) list.sort((a, b) => a.order - b.order);
-  const foldAt = new Map((o.folds || []).map((f) => [f.start, f]));
+  const foldAt = noFolds();
+  for (const f of o.folds) foldAt.set(f.start, f);
 
-  const newRow = (lineIdx, cont) => ({ kind: "text", cells: [], col: 0, lineIdx, cont, eol: null, fill: null, edge: [] });
-  let row;
+  const newRow = textRow;
+  let row = newRow(top, false);
   const put = (ch, src, style, w) => { row.cells.push({ ch, src, style, w }); row.col += w; };
   const putText = (text, src, style) => {
     for (const ch of text) put(ch, src, style, charWidth(ch.codePointAt(0)));
@@ -107,14 +140,14 @@ export function layout(buf, top, maxRows, o) {
     rows.push(row);
   };
   const inlineAt = (b, side) => {
-    for (const v of inlines.get(b) || []) {
+    for (const v of inlines.get(b) ?? []) {
       if (v.side !== side) continue;
       if (v.edge) row.edge.push(v);
       else putText(v.text, null, drawnOf(v.style));
     }
   };
-  const virtualRow = (v) => {
-    const r = { kind: "virtual", cells: [], col: 0, lineIdx: null, cont: false, eol: null, fill: null, edge: [] };
+  const addVirtual = (v) => {
+    const r = virtualRow();
     const prev = row;
     row = r;
     putText(v.text, null, drawnOf(v.style));
@@ -132,7 +165,7 @@ export function layout(buf, top, maxRows, o) {
 
   let li = top;
   while (rows.length < maxRows && li < L.count) {
-    for (const v of vlines.get(li) || []) if (v.above) virtualRow(v);
+    for (const v of vlines.get(li) ?? []) if (v.above) addVirtual(v);
     row = newRow(li, false);
     consumed.push(li);
     let cur = li, text = L.lines[cur], i = 0, b = L.starts[cur], last = li;
@@ -144,8 +177,8 @@ export function layout(buf, top, maxRows, o) {
         // End of a source line; b is its newline (or the end of the text).
         inlineAt(b, "before");
         const c = conceals.get(b);
-        if (c && L.hasNewline(cur)) {
-          putText(c.text, b, restyler(c.style)(o.styleAt(b)));
+        if (c !== undefined && L.hasNewline(cur)) {
+          putText(c.text, b, restyler(c.style)(o.styleAtByte(b)));
           const j = L.indexOf(c.end);
           if (j < 0) { row.eol = b; break; }
           for (let k = last + 1; k <= j; k++) consumed.push(k);
@@ -156,15 +189,15 @@ export function layout(buf, top, maxRows, o) {
           breakAt = row.cells.length;
           continue;
         }
-        if (fold) putText(" ⋯", null, FOLD_MARK);
+        if (fold !== undefined) putText(" ⋯", null, FOLD_MARK);
         inlineAt(b, "after");
         row.eol = b;
-        if (o.extendAt) row.fill = o.extendAt(b);
+        row.fill = o.extendAt(b);
         break;
       }
       inlineAt(b, "before");
       const c = conceals.get(b);
-      if (c) {
+      if (c !== undefined) {
         putText(c.text, b, restyler(c.style)(o.styleAt(b, cur, i)));
         const j = L.indexOf(c.end);
         if (j < 0) { row.eol = b; break; }
@@ -203,8 +236,9 @@ export function layout(buf, top, maxRows, o) {
     }
     finishRow();
     // A fold hides the lines after its first.
-    if (fold) last = Math.max(last, fold.end);
-    for (let k = li; k <= last; k++) for (const v of vlines.get(k) || []) if (!v.above && !(fold && k > li)) virtualRow(v);
+    if (fold !== undefined) last = Math.max(last, fold.end);
+    const folded = fold !== undefined;
+    for (let k = li; k <= last; k++) for (const v of vlines.get(k) ?? []) if (!v.above && !(folded && k > li)) addVirtual(v);
     li = last + 1;
   }
   return { rows, consumed, next: li };

@@ -17,10 +17,8 @@ export function activate(app) {
     ["lsp.definition", "go to definition"], ["lsp.references", "find references"], ["git.log", "git log"], ["go.back", "go back"],
   ];
   // A key's line, which runs its command on Enter.
-  /** function keyLine(id: String, what: String) => Entry */
-  function keyLine(id, what) {
-    return { text: `  ${(fresh.keyLabel(app, id) || "palette").padEnd(22)} ${what}\n`, props: { command: id }, style: null };
-  }
+  /** const keyLine: (String, String) => Entry */
+  const keyLine = (id, what) => ({ text: `  ${(fresh.keyLabel(app, id) || "palette").padEnd(22)} ${what}\n`, props: { command: id }, style: null });
   const show = () => {
     /** const entries: Entry[] */
     const entries = [
@@ -29,17 +27,18 @@ export function activate(app) {
       ...keys.map(([id, what]) => keyLine(id, what)),
       { text: "\nOpen the same file in two browser tabs to edit it together.\nIn a Markdown file, run “Markdown: Toggle Compose”.\n", props: {}, style: NOTE },
     ];
-    const b = fresh.createVirtual(app, { name: "Welcome", entries, mode: "welcome", readOnly: true, language: null, keep: false, place: "tab", lineNumbers: false });
-    return b;
+    fresh.createVirtual(app, { name: "Welcome", entries, mode: "welcome", readOnly: true, language: null, keep: false, place: "tab", lineNumbers: false });
   };
-  fresh.defineMode(app, "welcome", {
-    Enter: () => {
+  fresh.defineMode(app, "welcome", [{
+    key: "Enter",
+    run: () => {
       const v = fresh.activeView(app);
-      const props = v.buffer.propsAt(v.cursor())[0];
-      if (props?.command) fresh.run(app, props.command);
+      if (v === null) return;
+      const command = v.buffer.propsAt(v.cursor()).at(0)?.command;
+      if (command !== undefined) fresh.run(app, command);
     },
-  });
-  fresh.register(app, "help.welcome", { title: "Help: Welcome", hidden: false, run: show });
+  }]);
+  fresh.register(app, "help.welcome", { title: "Help: Welcome", hidden: false, run: () => { show(); } });
   fresh.on(app, "app.ready", () => {
     if (!fresh.activeView(app)) show();
   });

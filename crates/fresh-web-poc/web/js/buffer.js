@@ -512,7 +512,7 @@ class VirtualSource {
     buf.totalLines = buf.text.count;
     buf.decor.clearNamespace("entry-style");
     for (const r of this.ranges) {
-      if (r.style) buf.decor.add("overlays", { ns: "entry-style", start: r.start, end: r.end, style: r.style, when: "always", mark: false, above: false });
+      if (r.style) buf.decor.addOverlay({ ns: "entry-style", start: r.start, end: r.end, style: r.style, when: "always", mark: false, above: false });
     }
     buf.emit("text");
   }

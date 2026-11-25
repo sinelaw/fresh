@@ -24,7 +24,7 @@ export function activate(app) {
     return fresh.commands(app)
       .filter((c) => !q || c.title.toLowerCase().includes(q) || c.id.includes(q) || (byCmd.get(c.id) || []).some((k) => k.toLowerCase().includes(q)))
       .sort((a, b) => a.title.localeCompare(b.title))
-      .map((c) => ({ ...c, keys: byCmd.get(c.id) || [], custom: (byCmd.get(c.id) || []).some((k) => user[k] === c.id) }));
+      .map((c) => ({ ...c, keys: byCmd.get(c.id) || [], custom: (byCmd.get(c.id) || []).some((k) => user.get(k) === c.id) }));
   };
   const record = async (row) => {
     if (!row) return;
@@ -41,7 +41,7 @@ export function activate(app) {
   const remove = (row) => {
     if (!row) return;
     const user = fresh.userKeys(app);
-    for (const k of row.keys) if (user[k] === row.id) fresh.setUserKey(app, k, null);
+    for (const k of row.keys) if (user.get(k) === row.id) fresh.setUserKey(app, k, null);
     refresh();
   };
   // Redraw the editor if it is on screen.

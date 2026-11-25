@@ -13,7 +13,8 @@ export class RpcError {
     this.detail = error.message;
     this.message = `${op}: ${error.message}`;
   }
-  toString() { return this.message; }
+  // Its text: the server's own words (`message` says the operation too).
+  toString() { return this.detail; }
 }
 
 // Operations that change documents or files. A client's are sent one at a

@@ -77,6 +77,28 @@
 
 /** type GutterOptions = {glyph: String, color: Color, title: String} */
 
+// The decorations a buffer holds (js/decor.js), each in a plugin's
+// namespace `ns`: the options above, placed.
+/** type Overlay = {ns: String, start: Number, end: Number, style: Style, when: String, mark: Boolean, above: Boolean} */
+/** type Conceal = {ns: String, start: Number, end: Number, text: String, style: Style, reveal: Range | Null, when: String} */
+/** type InlineText = {ns: String, pos: Number, text: String, style: Style, side: String, edge: Boolean, when: String} */
+/** type VirtualLine = {ns: String, pos: Number, text: String, style: Style, above: Boolean, order: Number, when: String} */
+/** type DocNode = {
+ *   ns: String,
+ *   start: Number,
+ *   end: Number,
+ *   type: String,
+ *   level: Number,
+ *   depth: Number,
+ *   marker: String,
+ *   lang: String,
+ *   align: (String | Null)[],
+ *   header: Boolean,
+ *   delimiter: Boolean,
+ *   when: String,
+ * } */
+/** type GutterMark = {ns: String, start: Number, end: Number, glyph: String, color: Color, title: String} */
+
 // ---------------------------------------------------------------- navigation
 
 // Where a file opens (`fresh.buffers.open`): at `line` (1-based; null: where
@@ -315,6 +337,10 @@
 // Ask for text (`fresh.input`): `value` the text at first (all selected
 // when `select`), `hint` shown under it.
 /** type AskOptions = {title: String, value: String, hint: String, select: Boolean} */
+
+// A key of a buffer mode (`fresh.defineMode`): `run` when it is pressed
+// in a buffer of that mode.
+/** type ModeKey = {key: String, run: () => Undefined} */
 
 // A row a palette mode lists (`fresh.paletteMode`): `run` when it is
 // chosen, `preview` when it is selected; a row with neither is a note.

@@ -16,6 +16,10 @@ import { h } from "../js/ui.js";
 // The selection: the cursor row, the rows marked (Ctrl+click, Shift+click,
 // Shift+arrows, Ctrl+A) and the row a range is extended from. With none
 // marked, the cursor row is the selection.
+// A file or folder by its name and path.
+/** type Named = {name: String, path: String} */
+/** function namedOf(r: Row) => Named */
+function namedOf(r) { return { name: r.name, path: r.path }; }
 /** type Sel = {cursor: String | Null, marks: String[], anchor: String | Null} */
 /** const NO_SEL: Sel */
 const NO_SEL = { cursor: null, marks: [], anchor: null };
@@ -218,6 +222,7 @@ export function activate(app) {
   const rel = (p) => (p === root ? "the workspace's root" : p.slice(root.length + 1));
   const forget = (path) => { for (const d of [...open]) if (d === path || d.startsWith(path + "/")) collapse(d); };
   // Run `f` on each of `list`, one after the other; says what failed.
+  /** const each: (Named[], (Named) => Promise<Undefined>) => Promise<Number> */
   const each = async (list, f) => {
     const failed = [];
     for (const x of list) {
@@ -256,7 +261,7 @@ export function activate(app) {
       if (!list.length) return;
       const folders = list.some((x) => x.dir);
       if (!(await fresh.confirm(app, `Delete ${named(list)}${folders ? " and everything in them" : ""}?`, "Delete"))) return;
-      const n = await each(list, async (x) => { await fresh.remove(app, x.path); forget(x.path); });
+      const n = await each(list.map(namedOf), async (x) => { await fresh.remove(app, x.path); forget(x.path); });
       sel = NO_SEL;
       await refresh();
       if (n) fresh.message(app, `Deleted ${n === list.length ? named(list) : `${n} of ${list.length} items`}`);
@@ -272,7 +277,7 @@ export function activate(app) {
       if (c.kind === "cut") {
         await each(list.filter((x) => parentOf(x.path) !== dest), async (x) => { await fresh.rename(app, x.path, `${dest}/${x.name}`); forget(x.path); });
         clip = NO_CLIP;
-      } else await each(list, (x) => fresh.copy(app, x.path, dest));
+      } else await each(list, async (x) => { await fresh.copy(app, x.path, dest); });
       await expand(dest);
       await refresh();
     },
@@ -280,7 +285,7 @@ export function activate(app) {
     // Move into folder `to`, once confirmed (open files follow, as a rename).
     move: async (list, to) => {
       if (!(await fresh.confirm(app, `Move ${named(list)} into ${rel(to)}?`, "Move"))) return;
-      const n = await each(list, async (x) => { await fresh.rename(app, x.path, `${to}/${x.name}`); forget(x.path); });
+      const n = await each(list.map(namedOf), async (x) => { await fresh.rename(app, x.path, `${to}/${x.name}`); forget(x.path); });
       await expand(to);
       sel = selectPaths(list.map((x) => `${to}/${x.name}`));
       await refresh();
@@ -341,7 +346,7 @@ export function activate(app) {
   };
 
   fresh.onBuffer(app, "buffer.activated", (buffer) => reveal(buffer.path()));
-  fresh.onBuffer(app, "buffer.saved", refresh);
+  fresh.onBuffer(app, "buffer.saved", (_b) => { refresh(); });
   fresh.register(app, "explorer.focus", { title: "Explorer: Focus", hidden: false, run: () => panel.focus("tree") });
   fresh.register(app, "explorer.toggle", { title: "View: Toggle File Explorer", hidden: false, run: () => fresh.run(app, "view.toggleSidebar") });
   fresh.register(app, "explorer.newFile", { title: "Explorer: New File…", hidden: false, run: () => ops.newFile(root) });
