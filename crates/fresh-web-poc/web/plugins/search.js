@@ -17,6 +17,7 @@
 // clients and undo all see the change.
 
 import * as fresh from "../js/api.js";
+import { byteLen } from "../js/api.js";
 import { h } from "../js/ui.js";
 
 // The searched range, the matches and the current match.
@@ -26,6 +27,22 @@ const SCOPE = { fg: null, bg: "search.scope_bg", bold: false, italic: false, und
 const MATCH = { fg: "search.match_fg", bg: "search.match_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
 /** const CURRENT: Style */
 const CURRENT = { fg: "search.current_fg", bg: "search.current_bg", bold: true, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+
+// The word (letters, digits, _) at byte `pos` of the held lines `L`, if
+// there is one.
+/** function wordIn(L: Lines, pos: Number) => Range | Null */
+function wordIn(L, pos) {
+  const i = L.starts.findIndex((s, k) => pos >= s && (k === L.starts.length - 1 || pos < L.starts[k + 1]));
+  if (i < 0) return null;
+  const line = L.lines[i];
+  let col = 0, bytes = 0;
+  while (col < line.length && bytes < pos - L.starts[i]) { bytes += byteLen(line[col]); col++; }
+  let s = col, e = col;
+  while (s > 0 && /[\p{L}\p{N}_]/u.test(line[s - 1])) s--;
+  while (e < line.length && /[\p{L}\p{N}_]/u.test(line[e])) e++;
+  if (s === e) return null;
+  return { start: L.starts[i] + byteLen(line.slice(0, s)), end: L.starts[i] + byteLen(line.slice(0, e)) };
+}
 
 // A match: its bytes, and its text (null until held, for a match the
 // server found in a huge file).
@@ -378,9 +395,10 @@ export function activate(app) {
     const at = matches[current];
     const onMatch = sel != null && at != null && sel.start === at.pos && sel.end === at.pos + at.len && b.text(sel.start, sel.end) === at.text;
     if (!onMatch) {
-      const word = sel != null ? sel : wordAt(b, v.cursor);
-      const t = word.start < word.end ? b.text(word.start, word.end) : null;
-      if (t == null || t.includes("\n")) { fresh.message(app, "Select the text to find first"); return; }
+      const L = b.lines();
+      const word = sel !== null ? sel : L === null ? null : wordIn(L, v.cursor);
+      const t = word === null ? null : b.text(word.start, word.end);
+      if (word === null || t === null || t.includes("\n")) { fresh.message(app, "Select the text to find first"); return; }
       query = opts.regex ? t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : t;
       if (findBar()) clearScope(b);
       if (sel == null) await v.select(word.start, word.end, { center: false });
@@ -388,23 +406,6 @@ export function activate(app) {
     }
     await go(dir);
   };
-  // The word at `pos`; an empty range when there is none.
-  const wordAt = (b, pos) => {
-    const none = { start: pos, end: pos };
-    const L = b.lines();
-    if (!L) return none;
-    const i = L.starts.findIndex((s, k) => pos >= s && (k === L.starts.length - 1 || pos < L.starts[k + 1]));
-    if (i < 0) return none;
-    const line = L.lines[i];
-    let col = 0, bytes = 0;
-    while (col < line.length && bytes < pos - L.starts[i]) { bytes += fresh.byteLen(line[col]); col++; }
-    let s = col, e = col;
-    while (s > 0 && /[\p{L}\p{N}_]/u.test(line[s - 1])) s--;
-    while (e < line.length && /[\p{L}\p{N}_]/u.test(line[e])) e++;
-    if (s === e) return none;
-    return { start: L.starts[i] + fresh.byteLen(line.slice(0, s)), end: L.starts[i] + fresh.byteLen(line.slice(0, e)) };
-  };
-
   fresh.register(app, "search.find", { title: "Find…", hidden: false, run: () => open(false, { inSelection: false, ask: false }) });
   fresh.register(app, "search.replace", { title: "Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: false }) });
   fresh.register(app, "search.findInSelection", { title: "Find in Selection…", hidden: false, run: () => open(false, { inSelection: true, ask: false }) });

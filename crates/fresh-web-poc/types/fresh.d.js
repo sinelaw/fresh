@@ -15,6 +15,10 @@
 // A byte range [start, end).
 /** type Range = {start: Number, end: Number} */
 
+// A buffer's held lines (a BufferHandle's lines()): their text, their byte
+// starts, and the document line of the first (null without a line index).
+/** type Lines = {lines: String[], starts: Number[], firstLine: Number | Null} */
+
 // ---------------------------------------------------------------- records
 //
 // A record lists every field, at each place one is made. Only a field that

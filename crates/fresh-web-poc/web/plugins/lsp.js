@@ -375,11 +375,21 @@ export function activate(app) {
       },
     });
   };
-  // Restart or stop `language`'s server (the active file's when not given).
-  const serverOp = async (what, language) => {
+  // The active file's language, when a server is found for it.
+  const activeLanguage = () => {
     const b = fresh.activeBuffer(app);
-    const l = language || (b != null && b.language != null && fresh.lspLanguages(app).includes(b.language) ? b.language : "");
-    if (!l) { lspStatus(); return; }
+    const l = b === null ? null : b.language;
+    return l !== null && fresh.lspLanguages(app).includes(l) ? l : null;
+  };
+  // Restart or stop the active file's server (the list of them when it has
+  // none).
+  const activeServerOp = (what) => {
+    const l = activeLanguage();
+    if (l === null) lspStatus();
+    else serverOp(what, l);
+  };
+  // Restart or stop language `l`'s server.
+  const serverOp = async (what, l) => {
     try {
       running = await (what === "stop" ? fresh.lspStop(app, l) : fresh.lspRestart(app, l));
       fresh.message(app, what === "stop" ? `Stopped the ${l} language server` : `Restarted the ${l} language server`);
@@ -468,7 +478,7 @@ export function activate(app) {
   reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
   reg("lsp.status", "LSP: Show Status", lspStatus, "");
   reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", workspaceSymbols, "");
-  reg("lsp.restart", "LSP: Start/Restart Server", () => serverOp("restart", ""), "");
-  reg("lsp.stop", "LSP: Stop Server", () => serverOp("stop", ""), "");
+  reg("lsp.restart", "LSP: Start/Restart Server", () => activeServerOp("restart"), "");
+  reg("lsp.stop", "LSP: Stop Server", () => activeServerOp("stop"), "");
   reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", toggleHints, "");
 }

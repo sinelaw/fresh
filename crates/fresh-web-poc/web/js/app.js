@@ -14,6 +14,11 @@ import { sash, clamp } from "./sash.js";
 const $ = (s) => document.querySelector(s);
 
 
+// A command's action as the command table holds it: run with its one
+// optional argument, it comes to a promise of nothing (its failure reaches
+// whoever awaits it).
+export const asCommand = (f) => (arg) => Promise.resolve(f(arg)).then(() => undefined);
+
 // The clipboard's keys are the browser's own (not in the keymap); menus
 // show them.
 const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.paste": "Ctrl+V" };
@@ -1203,7 +1208,7 @@ export class App {
     const P = () => this.activePane;
     const V = () => this.view();
     const ro = () => { const v = V(); return !v || v.buf.readOnly; };
-    const cmd = (id, title, run, hidden = false) => this.commands.set(id, { title, run, source: "core", hidden });
+    const cmd = (id, title, run, hidden = false) => { this.commands.set(id, { title, run: asCommand(run), source: "core", hidden }); };
     const toggle = (k) => () => { this.settings[k] = !this.settings[k]; this.saveSettings(); this.setStatus(`${k.replace(/_/g, " ")}: ${this.settings[k] ? "on" : "off"}`); };
     const page = (dir, extend) => () => P().page(dir, extend);
     const mutate = (f) => () => { if (!ro()) f(); };

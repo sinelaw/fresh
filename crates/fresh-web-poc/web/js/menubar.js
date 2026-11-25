@@ -10,6 +10,7 @@
 // the next title's.
 
 import { Menu } from "./menu.js";
+import { asCommand } from "./app.js";
 
 const $ = (s) => document.querySelector(s);
 
@@ -241,7 +242,7 @@ export class MenuBar {
       const t = e.target.closest(".mtop");
       if (t && this.open >= 0 && +t.dataset.i !== this.open) this.show(+t.dataset.i, false);
     });
-    const cmd = (id, title, run) => this.app().commands.set(id, { title, run, source: "core", hidden: true });
+    const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: true }); };
     cmd("menu.open", "Open the Menu Bar", () => this.show(0, true));
     for (const [i, m] of this.menus.entries()) cmd(`menu.${m.label.toLowerCase()}`, `Open the ${m.label} Menu`, () => this.show(i, true));
   }

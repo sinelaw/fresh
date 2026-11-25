@@ -33,6 +33,7 @@
 import { rpc } from "./rpc.js";
 import { h } from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
+import { asCommand } from "./app.js";
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
@@ -93,7 +94,7 @@ export class Orchestrator {
   // (once, after `new`).
   listen() {
     try { Object.assign(this.prefs, JSON.parse(localStorage.getItem(STORE) || "{}") || {}); } catch {}
-    const cmd = (id, title, run) => this.app().commands.set(id, { title, run, source: "core", hidden: false });
+    const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: false }); };
     cmd("orchestrator.dock", "Orchestrator: Toggle Dock", () => this.toggleDock());
     cmd("orchestrator.focus", "Orchestrator: Focus Dock", () => this.focusDock());
     cmd("orchestrator.switch", "Orchestrator: Switch Workspace…", () => this.quickSwitch());

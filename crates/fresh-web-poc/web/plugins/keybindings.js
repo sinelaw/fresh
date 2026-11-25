@@ -7,12 +7,19 @@ import { h } from "../js/ui.js";
 
 export function activate(app) {
   // The command whose new key is being recorded ("" when none).
-  let query = "", recording = "", selected = 0;
+  let query = "", selected = 0;
+  // The command whose new key is being recorded, if any.
+  /** let recording: String | Null */
+  let recording = null;
   const rows = () => {
     const km = fresh.keymap(app);
     const user = fresh.userKeys(app);
     const byCmd = new Map();
-    for (const [k, c] of Object.entries(km)) { if (!byCmd.has(c)) byCmd.set(c, []); byCmd.get(c).push(k); }
+    for (const [k, c] of Object.entries(km)) {
+      const keys = byCmd.get(c);
+      if (keys) keys.push(k);
+      else byCmd.set(c, [k]);
+    }
     const q = query.toLowerCase();
     return fresh.commands(app)
       .filter((c) => !q || c.title.toLowerCase().includes(q) || c.id.includes(q) || (byCmd.get(c.id) || []).some((k) => k.toLowerCase().includes(q)))
@@ -24,7 +31,7 @@ export function activate(app) {
     recording = row.id;
     refresh();
     const key = await fresh.captureKey(app);
-    recording = "";
+    recording = null;
     if (key) {
       fresh.setUserKey(app, key, row.id);
       fresh.message(app, `${key} → ${row.title}`);
@@ -46,7 +53,7 @@ export function activate(app) {
     panel.render(h("col", {}, [
       h("row", {}, [
         h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; selected = 0; refresh(); }, onEnter: () => record(rows()[selected]) }),
-        h("text", { dim: true }, [recording ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"]),
+        h("text", { dim: true }, [recording !== null ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"]),
         h("button", { onClick: () => record(rows()[selected]) }, ["Add Key"]),
         h("button", { onClick: () => remove(rows()[selected]) }, ["Remove Mine"]),
         h("button", { onClick: () => panel.close() }, ["Close"]),

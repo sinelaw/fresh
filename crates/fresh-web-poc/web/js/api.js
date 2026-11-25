@@ -14,6 +14,7 @@
 
 import { rpc, RpcError } from "./rpc.js";
 import { BufferHandle, ViewHandle } from "./host.js";
+import { asCommand } from "./app.js";
 export { byteLen } from "./ot.js";
 export { stringWidth as textWidth } from "./layout.js";
 
@@ -35,7 +36,7 @@ export const saveSettings = (app) => app.saveSettings();
 // `spec`: {title, hidden, run}; a hidden command is left out of the
 // palette. The command's source is the first part of its id ("git.log").
 export const register = (app, id, spec) => {
-  app.commands.set(id, { title: spec.title, run: spec.run, source: id.split(".")[0], hidden: spec.hidden });
+  app.commands.set(id, { title: spec.title, run: asCommand(spec.run), source: id.split(".")[0], hidden: spec.hidden });
 };
 export const run = (app, id, arg) => app.run(id, arg);
 export const commands = (app) => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: c.hidden }));

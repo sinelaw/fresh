@@ -7,6 +7,8 @@
 // are left out; what is typed into a prompt or a panel is not recorded.
 // Registers last as long as the page.
 
+import { asCommand } from "./app.js";
+
 const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 export class Macros {
@@ -99,7 +101,7 @@ export class Macros {
   }
 
   register() {
-    const cmd = (id, title, run) => this.app().commands.set(id, { title, run, source: "core", hidden: false });
+    const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: false }); };
     cmd("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r) this.start(r); });
     cmd("macro.stop", "Macro: Stop Recording Macro", () => this.stop());
     cmd("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r) await this.play(r); });
