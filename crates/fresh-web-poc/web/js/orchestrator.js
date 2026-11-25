@@ -793,8 +793,8 @@ export class Orchestrator {
   }
 
   // The New Workspace dialog: a prompt for the agent, and under it the
-  // agent, the machine (the one used last), the folder (the current
-  // workspace's) and how git is used (a new worktree, offered when git says
+  // agent, the machine and the folder (the ones used last; the folder at
+  // first the current workspace's) and how git is used (a new worktree, offered when git says
   // the folder is in a work tree); Launch, or Launch in Background from
   // its ▾. The workspace is trusted and the agent runs in its auto mode.
   // `preset`: fields filled in (an imported session's folder and resume
@@ -802,7 +802,7 @@ export class Orchestrator {
   newWorkspace(preset) {
     const f = {
       agent: this.prefs.agent, custom: this.prefs.custom, prompt: "",
-      machine: this.machineChoice(this.prefs.machine), root: this.app().root || this.prefs.recent[0] || "",
+      machine: this.machineChoice(this.prefs.machine), root: this.prefs.recent[0] || this.app().root || "",
       git: this.prefs.git || "worktree", name: "",
       resume: "", // an imported session's: taken up again after a restart
       busy: false, error: "",
