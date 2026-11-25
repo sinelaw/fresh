@@ -5143,10 +5143,35 @@ function contentToLines(content: string): string[] {
  *
  *  The trailing newline is dropped so the buffer's line count matches the
  *  number of real lines — otherwise it adds a phantom empty line with no
- *  ViewLine, which logs "ViewLine missing" when scrolled to the bottom. */
+ *  ViewLine, which logs "ViewLine missing" when scrolled to the bottom.
+ *
+ *  A CRLF side is stored with LF endings. The pane is a virtual buffer,
+ *  which renders in LF mode, where a `\r` is a stray control byte and is
+ *  painted `<0D>` — on every line of a CRLF file (#3873). Opened in the
+ *  editor, the same file is detected as CRLF and its `\r\n` is the line
+ *  terminator; dropping the `\r` of each pair gives the pane that view.
+ *  A lone `\r` is left alone, as it is in a CRLF buffer. */
 function contentToEntries(content: string): TextPropertyEntry[] {
-    const text = contentToLines(content).join('\n');
+    const normalized = isCrlfText(content) ? content.replace(/\r\n/g, '\n') : content;
+    const text = contentToLines(normalized).join('\n');
     return text.length > 0 ? [{ text }] : [];
+}
+
+/** Whether the editor would open `content` as a CRLF file: the same
+ *  majority vote over the first 8 KB as the host's `detect_line_ending`. */
+function isCrlfText(content: string): boolean {
+    const sample = content.length > 8192 ? content.slice(0, 8192) : content;
+    let crlf = 0, lf = 0, cr = 0;
+    for (let i = 0; i < sample.length; i++) {
+        const c = sample.charCodeAt(i);
+        if (c === 13) {
+            if (i + 1 < sample.length && sample.charCodeAt(i + 1) === 10) { crlf++; i++; }
+            else cr++;
+        } else if (c === 10) {
+            lf++;
+        }
+    }
+    return crlf > lf && crlf > cr;
 }
 
 function compositeHunksForFile(fileHunks: readonly Hunk[]): TsCompositeHunk[] {
