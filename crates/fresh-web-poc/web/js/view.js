@@ -637,7 +637,7 @@ export class Pane {
     this.app().syncScroll(this, v);
     if (this.lastWidth.get(v) !== g.width) {
       this.lastWidth.set(v, g.width);
-      this.app().host.emitView("view.resized", v);
+      this.app().viewEvent("view.resized", v);
     }
     this.app().updateStatus();
   }

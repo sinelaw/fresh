@@ -96,17 +96,17 @@ function noViewHandlers() { return new Map(); }
 function noStatusHandlers() { return []; }
 
 export class Host {
-  constructor(app) {
-    this.app = app;
+  // `report(text)`: a failure for the user (a handler that threw).
+  constructor(report) {
+    this.report = report;
     this.plain = noPlain();
     this.bufferEvents = noBufferHandlers();
     this.viewEvents = noViewHandlers();
     this.statusHandlers = noStatusHandlers();
-    this.plugins = [];
   }
 
   // A handler that threw is reported; the others still run.
-  failed(event, what) { this.app().report(`${event}: ${what}`); }
+  failed(event, what) { this.report(`${event}: ${what}`); }
 
   on(event, f) { this.plain.set(event, [...(this.plain.get(event) ?? []), f]); }
   onBuffer(event, f) { this.bufferEvents.set(event, [...(this.bufferEvents.get(event) ?? []), f]); }
@@ -118,40 +118,20 @@ export class Host {
       try { f(); } catch (e) { this.failed(event, String(e)); }
     }
   }
-  // Buffer `b`'s event; `ops`: what changed ("buffer.changed"), `local`:
-  // typed here.
-  emitBuffer(event, b, ops, local) {
-    const handlers = this.bufferEvents.get(event) ?? [];
-    if (!handlers.length) return;
-    const h = bufferHandle(this.app(), b);
-    for (const f of handlers) {
-      try { f(h, { ops, local }); } catch (e) { this.failed(event, String(e)); }
+  // A buffer's event (`change`: what changed, for "buffer.changed").
+  emitBuffer(event, b, change) {
+    for (const f of this.bufferEvents.get(event) ?? []) {
+      try { f(b, change); } catch (e) { this.failed(event, String(e)); }
     }
   }
   emitView(event, v) {
-    const handlers = this.viewEvents.get(event) ?? [];
-    if (!handlers.length) return;
-    const h = viewHandle(this.app(), v);
-    for (const f of handlers) {
-      try { f(h); } catch (e) { this.failed(event, String(e)); }
+    for (const f of this.viewEvents.get(event) ?? []) {
+      try { f(v); } catch (e) { this.failed(event, String(e)); }
     }
   }
   emitStatus(status) {
     for (const f of this.statusHandlers) {
       try { f(status); } catch (e) { this.failed("lsp.status", String(e)); }
-    }
-  }
-
-  // Activate `plugins` ([{name, activate}], see plugins/index.js) in order;
-  // one that throws is reported and the rest still load.
-  async load(plugins) {
-    for (const { name, activate } of plugins) {
-      try {
-        await activate(this.app());
-        this.plugins.push(name);
-      } catch (e) {
-        this.failed(`plugin ${name}`, String(e));
-      }
     }
   }
 }

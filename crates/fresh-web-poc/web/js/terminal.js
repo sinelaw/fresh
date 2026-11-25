@@ -60,10 +60,9 @@ function streamAt(end) { return { end }; }
 const NOT_ATTACHED = null;
 
 class Term {
-  // `screens` holds it; `app` is the application; `changed()` redraws
-  // the tabs (its name, title or state changed).
-  constructor(id, screens, app, changed) {
-    this.app = app;
+  // `screens` holds it; `changed()` redraws the tabs (its name, title or
+  // state changed).
+  constructor(id, screens, changed) {
     this.changed = changed;
     this.id = id;
     this.stream = streamAt(NOT_ATTACHED); // the stream offset written so far
@@ -92,22 +91,14 @@ class Term {
     this.xt.open(this.el);
   }
 
-  // Wire the terminal to the server and the panel (once, after `new`).
-  listen() {
-
+  // Wire the terminal to the server and the panel (once, after `new`):
+  // `editorKey(e)` gives the editor its own keys (true: it took the key).
+  listen(editorKey) {
     this.xt.onData((data) => { rpc("term.input", { term: this.id, data }); });
     this.xt.onBinary((data) => { rpc("term.input", { term: this.id, data }); });
     this.xt.onResize(({ cols, rows }) => { rpc("term.resize", { term: this.id, cols, rows }).catch(() => {}); });
-    this.xt.attachCustomKeyEventHandler((e) => {
-      // The keys the editor keeps while a terminal has the keyboard (the
-      // terminal's toggle, moving between workspaces): `app.terminalKeys`.
-      const app = this.app();
-      const k = e.type === "keydown" ? app.keyName(e) : null;
-      if (!k || !app.terminalKeys.has(k)) return true;
-      e.preventDefault();
-      app.run(app.keymap()[k]);
-      return false;
-    });
+    // The keys the editor keeps while a terminal has the keyboard.
+    this.xt.attachCustomKeyEventHandler((e) => !editorKey(e));
     this.xt.onTitleChange((t) => { this.title = t; this.changed(); });
   }
 
@@ -145,8 +136,9 @@ class Term {
 }
 
 export class TerminalPanel {
-  constructor(app, el) {
-    this.app = app;
+  // `editor`: what the panel asks of the editor (js/main.js).
+  constructor(editor, el) {
+    this.editor = editor;
     this.el = el;
     this.tabsEl = el.querySelector(".term-tabs");
     this.screens = el.querySelector(".term-screens");
@@ -183,8 +175,8 @@ export class TerminalPanel {
 
   async add(id) {
     for (const had of found(this.terms.get(id))) return had;
-    const t = new Term(id, this.screens, () => this.app(), () => { this.renderTabs(); });
-    t.listen();
+    const t = new Term(id, this.screens, () => { this.renderTabs(); });
+    t.listen(this.editor.key);
     this.terms.set(id, t);
     await t.attach();
     if (!this.selected.length) this.select(id);
@@ -246,14 +238,14 @@ export class TerminalPanel {
     // A first terminal before the panel opens: when the workspace refuses
     // one (restricted), the panel stays closed.
     if (!this.visible && !this.terms.size) {
-      try { await this.create(null, null, null); } catch (e) { this.app().setStatus(`No terminal: ${String(e)}`); return; }
+      try { await this.create(null, null, null); } catch (e) { this.editor.say(`No terminal: ${String(e)}`); return; }
     }
     this.visible = !this.visible;
     setClass(this.el, "hidden", !this.visible);
     if (this.visible) {
       for (const s of this.selected) this.select(s);
-    } else this.app().focusPane(this.app().activePane);
-    this.app().relayout();
+    } else this.editor.focus();
+    this.editor.relayout();
   }
 
   applyTheme() {

@@ -15,11 +15,7 @@ export function activate(app) {
     const km = fresh.keymap(app);
     const user = fresh.userKeys(app);
     const byCmd = new Map();
-    for (const [k, c] of Object.entries(km)) {
-      const keys = byCmd.get(c);
-      if (keys) keys.push(k);
-      else byCmd.set(c, [k]);
-    }
+    km.forEach((c, k) => { byCmd.set(c, [...(byCmd.get(c) ?? []), k]); });
     const q = query.toLowerCase();
     return fresh.commands(app)
       .filter((c) => !q || c.title.toLowerCase().includes(q) || c.id.includes(q) || (byCmd.get(c.id) || []).some((k) => k.toLowerCase().includes(q)))

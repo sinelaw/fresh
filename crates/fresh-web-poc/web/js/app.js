@@ -16,6 +16,7 @@ import { $, setClass } from "./dom.js";
 
 
 import { asCommand } from "./commands.js";
+import { bufferHandle, viewHandle } from "./host.js";
 import { action, actionOf, SEPARATOR } from "./menu.js";
 import { rowOf, SEP } from "./menubar.js";
 
@@ -89,6 +90,11 @@ function savedSplit(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b
 // buffer of no mode, or a key it leaves alone).
 /** function noModes() => Map<String, ModeKey[]> */
 function noModes() { return new Map(); }
+// The plugins' key bindings, typed.
+/** function noKeys() => Map<String, String> */
+function noKeys() { return new Map(); }
+// How a key's modifiers are written for people.
+const MODIFIERS = new Map([["C", "Ctrl"], ["M", "Alt"], ["S", "Shift"]]);
 /** function modeKey(modes: Map<String, ModeKey[]>, mode: String | Null, k: String) => ModeKey | Undefined */
 function modeKey(modes, mode, k) { return mode === null ? undefined : (modes.get(mode) ?? []).find((b) => b.key === k); }
 
@@ -98,7 +104,7 @@ export class App {
     this.docs = new Map();
     this.commands = new Map(); // id -> {title, run, source, hidden}
     this.modes = noModes(); // buffer mode -> its keys
-    this.keys = {}; // key -> command, from plugins
+    this.keys = noKeys(); // key -> command, from plugins
     this.terminalKeys = new Set(["C-`"]); // keys a focused terminal leaves to the editor
     this.statusItems = new Map();
     this.procs = new Map();
@@ -171,7 +177,11 @@ export class App {
     new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));
     setInterval(() => { this.autoSave(); }, 1000);
     if (!ws) return;
-    await this.host.load(plugins);
+    // The plugins ([{name, activate}], see plugins/index.js), in order; one
+    // that throws is reported and the rest still load.
+    for (const { name, activate } of plugins) {
+      try { await activate(this); } catch (e) { this.report(`plugin ${name}: ${String(e)}`); }
+    }
     await this.term.adopt(ws.terminals);
     // What was open in this workspace last time, unless a file is named.
     const open = this.params.get("open");
@@ -392,7 +402,7 @@ export class App {
     this.input.focus({ preventScroll: true });
     // A maximized split gives way to the one focused.
     if (this.maximized.length > 0 && !this.maximized.includes(p)) { this.maximized = [p]; this.showMaximized(); }
-    if (changed) { this.renderAll(); if (p.view) this.host.emitBuffer("buffer.activated", p.view.buf, [], false); }
+    if (changed) { this.renderAll(); if (p.view) this.bufferEvent("buffer.activated", p.view.buf, [], false); }
   }
   // Split the active split in direction `dir` ("h", "v"), the new one
   // `ratio` of it, showing `shown` (a list of at most one buffer).
@@ -475,7 +485,7 @@ export class App {
         else if (r.others) this.setStatus(`${b.name} is open in ${r.others} other window${r.others === 1 ? "" : "s"}; its unsaved changes stay there`);
       }).catch((e) => this.report(String(e.message || e)));
     }
-    this.host.emitBuffer("buffer.closed", b, [], false);
+    this.bufferEvent("buffer.closed", b, [], false);
   }
   async closeBuffer(b) {
     for (const p of this.panes()) for (const v of [...p.views]) if (v.buf === b && !(await this.closeTab(p, v))) return false;
@@ -485,7 +495,7 @@ export class App {
   }
   onViewShown(pane, v) {
     this.rememberLayout();
-    if (pane === this.activePane) this.host.emitBuffer("buffer.activated", v.buf, [], false);
+    if (pane === this.activePane) this.bufferEvent("buffer.activated", v.buf, [], false);
     this.updateStatus();
   }
   // Show a buffer: in the active pane ("tab"), a new split below ("split")
@@ -682,7 +692,7 @@ export class App {
   watchBuffer(b) {
     b.listeners.add((news) => {
       if (news.kind === "edit") this.afterEdit(b, news.op, news.local);
-      if (news.kind === "text") { this.host.emitBuffer("buffer.changed", b, [], false); this.renderBuffer(b.id); }
+      if (news.kind === "text") { this.bufferEvent("buffer.changed", b, [], false); this.renderBuffer(b.id); }
       if (news.kind === "error") this.setStatus(news.message);
     });
   }
@@ -715,7 +725,7 @@ export class App {
     this.docs.set(b.doc, b);
     this.watchBuffer(b);
     await b.ensure(0);
-    this.host.emitBuffer("buffer.opened", b, [], false);
+    this.bufferEvent("buffer.opened", b, [], false);
     return b;
   }
 
@@ -769,10 +779,15 @@ export class App {
     b.edit(ops, true, typing);
   }
 
+  // Buffer `b`'s event to the plugins (`ops`: what changed, `local`: made
+  // here), and a view's.
+  bufferEvent(event, b, ops, local) { this.host.emitBuffer(event, bufferHandle(this, b), { ops, local }); }
+  viewEvent(event, v) { this.host.emitView(event, viewHandle(this, v)); }
+
   afterEdit(b, op, local) {
     // Editing a preview tab's file keeps it.
     if (local) for (const v of b.views) this.keep(v);
-    this.host.emitBuffer("buffer.changed", b, [op], local);
+    this.bufferEvent("buffer.changed", b, [op], local);
     this.renderBuffer(b.id);
     for (const p of this.panes()) if (p.views.some((v) => v.buf === b)) p.renderTabs();
   }
@@ -796,7 +811,7 @@ export class App {
     }
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
-    this.host.emitBuffer("buffer.saved", b, [], false);
+    this.bufferEvent("buffer.saved", b, [], false);
   }
 
   // Save As: a document is written to the file asked for and bound to it
@@ -822,7 +837,7 @@ export class App {
         this.noteRecent(b.path);
         this.renderAll();
         this.updateStatus();
-        this.host.emitBuffer("buffer.saved", b, [], false);
+        this.bufferEvent("buffer.saved", b, [], false);
       } else {
         await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
         await this.openFile(path, { line: null, column: 1, place: "tab", preview: null, focus: true });
@@ -860,7 +875,7 @@ export class App {
   }
 
   cursorMoved(v, old) {
-    this.host.emitView("cursor.moved", v);
+    this.viewEvent("cursor.moved", v);
     this.hidePopup();
     this.updateStatus();
   }
@@ -993,7 +1008,7 @@ export class App {
         b.setInfo(ev.info);
         this.renderAll();
         this.updateStatus();
-        this.host.emitBuffer("buffer.renamed", b, [], false);
+        this.bufferEvent("buffer.renamed", b, [], false);
         break;
       }
       case "doc.info": {
@@ -1003,7 +1018,7 @@ export class App {
         b.setInfo(ev.info);
         this.renderAll();
         this.updateStatus();
-        this.host.emitBuffer("buffer.info", b, [], false);
+        this.bufferEvent("buffer.info", b, [], false);
         break;
       }
       case "doc.reloaded": {
@@ -1029,7 +1044,7 @@ export class App {
         b.setInfo(ev.info);
         this.renderAll();
         this.setStatus(`${b.name} was deleted; its text is kept unsaved (save to write it again)`);
-        this.host.emitBuffer("buffer.deleted", b, [], false);
+        this.bufferEvent("buffer.deleted", b, [], false);
         break;
       }
       case "lsp.diagnostics": {
@@ -1042,7 +1057,7 @@ export class App {
         for (const op of b.opsSince(ev.version)) move(op);
         b.decor.setDiagnostics(items);
         this.renderBuffer(b.id);
-        this.host.emitBuffer("diagnostics.changed", b, [], false);
+        this.bufferEvent("diagnostics.changed", b, [], false);
         this.updateStatus();
         break;
       }
@@ -1157,6 +1172,18 @@ export class App {
   }
 
   // A key as the keymap names it: "C-S-k", "M-Up", "F12".
+  // A key pressed while a terminal has the keyboard: the editor runs the
+  // ones it keeps (`terminalKeys`: the terminal's toggle, moving between
+  // workspaces). True: it took the key.
+  terminalKey(e) {
+    const k = e.type === "keydown" ? this.keyName(e) : "";
+    const cmd = this.keymap().get(k);
+    if (!this.terminalKeys.has(k) || cmd === undefined) return false;
+    e.preventDefault();
+    this.run(cmd);
+    return true;
+  }
+
   keyName(e) {
     const names = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", " ": "Space", Escape: "Esc" };
     let k = names[e.key] || e.key;
@@ -1173,11 +1200,11 @@ export class App {
     // A buffer's mode (a plugin's panel buffer) takes its keys first.
     const bound = v ? modeKey(this.modes, v.buf.mode, k) : undefined;
     if (bound !== undefined) { e.preventDefault(); bound.run(); return; }
-    const cmd = this.keymap()[k];
-    if (cmd) { e.preventDefault(); this.run(cmd); }
+    const cmd = this.keymap().get(k);
+    if (cmd !== undefined) { e.preventDefault(); this.run(cmd); }
   }
 
-  bindKey(key, command) { this.keys[key] = command; }
+  bindKey(key, command) { this.keys.set(key, command); }
 
   // Resolve with the next key pressed, as the keymap names it.
   captureKey() {
@@ -1200,7 +1227,10 @@ export class App {
     this.term.applyTheme();
   }
 
+  // The effective keymap, key -> command: the defaults, the plugins', the
+  // Emacs keys when chosen, then the user's own.
   keymap() {
+    /** const base: Dict<String> */
     const base = {
       "C-s": "file.save", "C-n": "file.new", "C-M-s": "file.saveAll", "C-M-t": "skin.next", "C-z": "edit.undo", "C-y": "edit.redo", "C-S-z": "edit.redo",
       "C-p": "palette.commands", "C-S-p": "palette.commands", F1: "palette.commands", "C-o": "palette.files", "C-'": "palette.files", "C-;": "palette.buffers", "C-g": "palette.line",
@@ -1224,6 +1254,7 @@ export class App {
       "F4": "macro.playLast", "F5": "macro.stop", "C-=": "view.zoomIn", "C-+": "view.zoomIn", "C--": "view.zoomOut", "C-0": "view.zoomReset",
       F10: "menu.open", "M-f": "menu.file", "M-e": "menu.edit", "M-v": "menu.view", "M-s": "menu.selection", "M-g": "menu.go", "M-x": "menu.explorer", "M-h": "menu.help",
     };
+    /** const emacs: Dict<String> */
     const emacs = this.settings.keymap === "emacs" ? {
       "C-f": "cursor.right", "C-b": "cursor.left", "C-n": "cursor.down", "C-p": "cursor.up", "C-a": "cursor.home", "C-e": "cursor.end",
       "M-f": "cursor.wordRight", "M-b": "cursor.wordLeft", "M-<": "cursor.docStart", "M->": "cursor.docEnd", "C-v": "cursor.pageDown", "M-v": "cursor.pageUp",
@@ -1231,23 +1262,25 @@ export class App {
       "C-/": "edit.undo", "C-_": "edit.undo", "C-g": "edit.escape", "M-x": "palette.commands", "C-Space": "edit.setMark", "M-g": "palette.line",
       "M-}": "cursor.paragraphDown", "M-{": "cursor.paragraphUp", "C-s": "search.find", "C-r": "search.findPrevious", "M-%": "search.replace",
     } : {};
-    return { ...base, ...this.keys, ...emacs, ...this.userKeys };
+    return new Map([...Object.entries(base), ...this.keys, ...Object.entries(emacs), ...Object.entries(this.userKeys)]);
   }
 
+  // The keys bound to command `id`, as the keymap names them.
   keyFor(id) {
-    const km = this.keymap();
-    return Object.keys(km).filter((k) => km[k] === id).join(", ");
+    /** const keys: String[] */
+    const keys = [];
+    this.keymap().forEach((c, k) => { if (c === id) keys.push(k); });
+    return keys.join(", ");
   }
 
   // The first key for command `id` as people write it ("Ctrl+Shift+K"),
   // or "".
   keyLabel(id) {
     const k = this.keyFor(id).split(", ")[0];
-    if (!k) return "";
     const m = /^((?:[CMS]-)*)(.+)$/.exec(k);
-    const mods = { C: "Ctrl", M: "Alt", S: "Shift" };
+    if (m === null) return "";
     const key = m[2].length === 1 ? m[2].toUpperCase() : m[2];
-    return [...m[1].split("-").filter(Boolean).map((x) => mods[x]), key].join("+");
+    return [...m[1].split("-").filter(Boolean).map((x) => MODIFIERS.get(x) ?? x), key].join("+");
   }
 
   // Run command `id`, with its one optional argument (a theme name for

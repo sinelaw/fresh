@@ -46,7 +46,7 @@ export const bindKey = (app, key, command) => app.bindKey(key, command);
 export const keyFor = (app, command) => app.keyFor(command);
 // The first key for a command as people write it ("Ctrl+Shift+K").
 export const keyLabel = (app, command) => app.keyLabel(command);
-// The effective keymap: {key: command}.
+// The effective keymap: a Map of key -> command.
 export const keymap = (app) => app.keymap();
 // The user's own bindings (saved in the browser), over the defaults.
 export const userKeys = (app) => new Map(Object.entries(app.userKeys));

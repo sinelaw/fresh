@@ -35,6 +35,16 @@ async function main() {
   // Each part gets its own getter for the application (made below): one
   // function shared by all of them would make the checker take their
   // classes for one type (each calls it as its method, `this.app()`).
+  // What each part asks of the editor: the few functions it needs, not the
+  // whole application. The terminal panel: say something in the status
+  // bar, give the keyboard back, lay the window out again, and let the
+  // editor take its own keys from a focused terminal (true: it took one).
+  const terminalEditor = {
+    say: (text) => { app.setStatus(text); },
+    focus: () => { app.focusPane(app.activePane); },
+    relayout: () => { app.relayout(); },
+    key: (e) => app.terminalKey(e),
+  };
   const app = new App({
     settings: loadSettings(),
     userKeys: loadUserKeys(),
@@ -46,8 +56,8 @@ async function main() {
     editing: new Editing(() => app),
     ui: new UIKit(() => app),
     prompt: new Palette(() => app),
-    term: new TerminalPanel(() => app, $("#terminal")),
-    host: new Host(() => app),
+    term: new TerminalPanel(terminalEditor, $("#terminal")),
+    host: new Host((text) => { app.report(text); }),
     macros: new Macros(() => app),
     menubar: new MenuBar(() => app),
     input: $("#input"),
