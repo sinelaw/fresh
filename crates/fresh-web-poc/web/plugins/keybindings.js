@@ -4,7 +4,8 @@
 
 export function activate(fresh) {
   const { h } = fresh;
-  let panel = null, query = "", recording = null, selected = 0;
+  // The command whose new key is being recorded ("" when none).
+  let query = "", recording = "", selected = 0;
   const rows = () => {
     const km = fresh.keys.all();
     const user = fresh.keys.user();
@@ -19,26 +20,30 @@ export function activate(fresh) {
   const record = async (row) => {
     if (!row) return;
     recording = row.id;
-    render();
+    refresh();
     const key = await fresh.keys.capture();
-    recording = null;
+    recording = "";
     if (key) {
       fresh.keys.setUser(key, row.id);
       fresh.ui.message(`${key} → ${row.title}`);
     }
-    render();
+    refresh();
   };
   const remove = (row) => {
     if (!row) return;
     const user = fresh.keys.user();
     for (const k of row.keys) if (user[k] === row.id) fresh.keys.setUser(k, null);
-    render();
+    refresh();
   };
-  const render = () => {
-    if (!panel || !panel.open) return;
+  // Redraw the editor if it is on screen.
+  const refresh = () => {
+    const panel = fresh.ui.shown("keys");
+    if (panel) render(panel);
+  };
+  const render = (panel) => {
     panel.render(h("col", {}, [
       h("row", {}, [
-        h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; selected = 0; render(); }, onEnter: () => record(rows()[selected]) }),
+        h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; selected = 0; refresh(); }, onEnter: () => record(rows()[selected]) }),
         h("text", { dim: true }, [recording ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"]),
         h("button", { onClick: () => record(rows()[selected]) }, ["Add Key"]),
         h("button", { onClick: () => remove(rows()[selected]) }, ["Remove Mine"]),
@@ -62,7 +67,11 @@ export function activate(fresh) {
   fresh.commands.register("keys.editor", {
     title: "Keybindings: Open Editor",
     hidden: false,
-    run: () => { panel = fresh.ui.panel({ id: "keys", title: "Keybindings", place: "dialog", onClose: null }); render(); panel.focus("q"); },
+    run: () => {
+      const panel = fresh.ui.panel({ id: "keys", title: "Keybindings", place: "dialog", onClose: null });
+      render(panel);
+      panel.focus("q");
+    },
   });
   fresh.keys.bind("C-M-k", "keys.editor");
 }

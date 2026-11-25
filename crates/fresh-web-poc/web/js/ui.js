@@ -52,6 +52,11 @@ export class UIKit {
     return p;
   }
 
+  // The panel `id` if it is on screen, else undefined (never makes one).
+  shown(id) {
+    return this.panels.get(id);
+  }
+
   // A context menu: items [{label, run}] (null for a separator) at {x, y}.
   // Items are the menu component's (js/menu.js): {label, run, keys?,
   // checked?, disabled?, items?}. The menu has the keyboard until it closes.

@@ -224,6 +224,8 @@ export class Host {
       ui: {
         // A PanelOptions (types/fresh.d.js).
         panel: (o) => app.ui.panel(o),
+        // The panel `id` if it is on screen, else undefined.
+        shown: (id) => app.ui.shown(id),
         // A context menu: items [{label, run}] (null: separator) at {x, y}.
         menu: (items, at) => app.ui.menu(items, at),
         // Pick from a list: {title, items: [{label, detail, value}], onAccept, onChange}
