@@ -5,7 +5,7 @@
 
 // The shape it is kept in names the key: data kept in another shape is
 // left alone (not read).
-const PREFIX = "fresh-poc:session:";
+const PREFIX = "fresh-poc:session2:";
 
 /** function emptySession() => SessionData */
 function emptySession() { return { layout: null, recent: [], sizes: {} }; }

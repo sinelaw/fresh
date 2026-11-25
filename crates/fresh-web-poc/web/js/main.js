@@ -5,7 +5,7 @@
 import { rpc, session } from "./rpc.js";
 import { App, loadSettings, loadUserKeys } from "./app.js";
 import { Editing } from "./editing.js";
-import { TerminalPanel } from "./terminal.js";
+import { Terminals } from "./terminal.js";
 import { UIKit } from "./ui.js";
 import { Host } from "./host.js";
 import { Palette } from "./palette.js";
@@ -32,14 +32,13 @@ async function main() {
     history.replaceState(null, "", `?${params}`);
   }
   // What each part asks of the editor: the few functions it needs, not the
-  // whole application. The terminal panel: say something in the status
-  // bar, give the keyboard back, lay the window out again, and let the
-  // editor take its own keys from a focused terminal (true: it took one).
-  const terminalEditor = {
-    say: (text) => { app.setStatus(text); },
-    focus: () => { app.focusPane(app.activePane); },
-    relayout: () => { app.relayout(); },
+  // whole application. Terminals: let the editor take its own keys from a
+  // focused terminal (true: it took one), and hear that a terminal's label
+  // changed or that another client opened one.
+  const terminalsEditor = {
     key: (e) => app.terminalKey(e),
+    changed: (id) => { app.terminalChanged(id); },
+    appeared: (id) => { app.terminalAppeared(id); },
   };
   // Skins: report a failure, say something, measure the editor's cell
   // again (a skin's fonts are in), put an editor theme on, pick from a
@@ -93,7 +92,8 @@ async function main() {
     redraw: () => { app.renderAll(); },
   };
   // A pane: focus, settings and cell size, the editing a click or drag
-  // does, and the tab, menu, hover and scroll events it passes on.
+  // does, the tab, menu, hover and scroll events it passes on, and a
+  // terminal's screen for a terminal's tab.
   const paneEditor = {
     isActive: (pane) => app.activePane === pane,
     focus: (pane) => { app.focusPane(pane); },
@@ -117,6 +117,7 @@ async function main() {
     selectLine: (pane) => { app.editing.selectLine(pane); },
     setBlock: (pane, anchor, head) => { app.editing.setBlock(pane, anchor, head); },
     toggleFold: (pane, line) => { app.editing.toggleFoldAt(pane, line); },
+    mountTerminal: (id, box) => { app.terminals.mount(id, box); },
     wordAt: (buf, pos) => app.editing.wordAt(buf, pos),
     bracketPair: (buf, pos) => app.editing.bracketPair(buf, pos),
   };
@@ -152,12 +153,8 @@ async function main() {
     shown: (id) => app.ui.shown(id),
     menu: (items, at) => { app.ui.menu(items, at); },
     dropdown: (items, anchor) => { app.ui.dropdown(items, anchor); },
-    terminals: (states) => { app.term.states(states); },
-    runInTerminal: async (command, resume) => {
-      const id = await app.term.create(null, command, resume);
-      if (!app.term.visible) await app.term.toggle();
-      app.term.select(id);
-    },
+    terminals: (states) => { app.terminals.states(states); },
+    runInTerminal: (command, resume) => app.runInTerminal(command, resume),
   };
   const app = new App({
     settings: loadSettings(),
@@ -170,7 +167,7 @@ async function main() {
     editing: new Editing(editingEditor),
     ui: new UIKit(uiEditor),
     prompt: new Palette(paletteEditor),
-    term: new TerminalPanel(terminalEditor, $("#terminal")),
+    terminals: new Terminals(terminalsEditor),
     host: new Host((text) => { app.report(text); }),
     macros: new Macros(macrosEditor),
     menubar: new MenuBar(menuEditor),

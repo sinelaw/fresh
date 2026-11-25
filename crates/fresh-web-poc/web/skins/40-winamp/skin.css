@@ -69,7 +69,7 @@
 
 /* The chrome's own colours, where the chrome is: the buffers keep the
    editor theme's. */
-.skin-winamp :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+.skin-winamp :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
   --fg: #e9d9c2; --muted: #bda88c; --faint: #8a7660; --border: #1b1109; --panel: #3c2c23;
   --accent: #4ef07f; --on-accent: #04140a; --emphasis: #f7c978; --link: #7fe8a0;
   --control-bg: #070606; --control-fg: #4ef07f; --hover-bg: rgba(255, 208, 150, .10);
@@ -128,7 +128,7 @@
 
 /* Tab strips: metal plates; the active tab is the lit display — pressed
    in, black, a phosphor label. */
-.skin-winamp :is(.tabs, .term-tabs, .dock-tabs) { background: var(--wa-face-flat); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .85); }
+.skin-winamp :is(.tabs, .dock-tabs) { background: var(--wa-face-flat); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .85); }
 .skin-winamp .tab { color: #c2ab90; background: var(--wa-plate); box-shadow: var(--wa-out); border-right: 1px solid #241509; border-top: 0; }
 .skin-winamp .tab:not(.active):hover { background: linear-gradient(180deg, #8d5c36, #65401f); }
 .skin-winamp .tab.active, .skin-winamp .pane.active .tab.active { background: var(--wa-sunken); color: var(--wa-green);
@@ -150,7 +150,7 @@
 /* Pinned tree rows: the LCD's black under them. */
 .skin-winamp .ui-list-row.sticky { background-color: var(--wa-sunken); }
 .skin-winamp .ui-list-row.sticky.sel { background: var(--wa-lcd-sel), var(--wa-sunken); }
-.skin-winamp :is(#terminal, #dock) { border-top: 3px solid #2c2019; }
+.skin-winamp #dock { border-top: 3px solid #2c2019; }
 .skin-winamp .split.h > .sash { border-left: 3px solid #2c2019; }
 .skin-winamp .split.v > .sash { border-top: 3px solid #2c2019; }
 

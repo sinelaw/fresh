@@ -137,11 +137,13 @@
 // tabs (a file by its path, an untitled document by its number) with
 // their cursor and scroll and the one shown, the splits' directions and
 // ratios, the active split, and whether the sidebar and terminal show.
-/** type SavedTab = {path: String | Null, untitled: Number | Null, pos: Number, top: Number, preview: Boolean} */
+// What a remembered tab shows: a file, an untitled document, a terminal.
+/** type TabRef = {kind: "file", path: String} | {kind: "untitled", n: Number} | {kind: "terminal", term: Number} */
+/** type SavedTab = {ref: TabRef, pos: Number, top: Number, preview: Boolean} */
 /** type SavedNode =
  *   | {kind: "pane", tabs: SavedTab[], active: String | Null}
  *   | {kind: "split", dir: String, ratio: Number, a: SavedNode, b: SavedNode} */
-/** type SavedLayout = {tree: SavedNode, active: Number, sidebar: Boolean, terminal: Boolean} */
+/** type SavedLayout = {tree: SavedNode, active: Number, sidebar: Boolean} */
 /** type SessionData = {layout: SavedLayout | Null, recent: String[], sizes: Dict<Number>} */
 
 // A cursor moved (`setCursor`, `select`): `center` scrolls it to the middle.

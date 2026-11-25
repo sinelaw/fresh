@@ -6,7 +6,7 @@
 
 import { rpc, session, connectEvents, failure } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
-import { fileBuffer, virtualBuffer, byteToIdx } from "./buffer.js";
+import { fileBuffer, virtualBuffer, terminalBuffer, byteToIdx } from "./buffer.js";
 import { Pane, View, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP } from "./editing.js";
 import { THEME } from "./highlight.js";
@@ -16,6 +16,7 @@ import { $, setClass } from "./dom.js";
 
 
 import { asCommand } from "./commands.js";
+import { listOf, found } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { action, actionOf, SEPARATOR } from "./menu.js";
 import { rowOf, SEP } from "./menubar.js";
@@ -79,8 +80,17 @@ function without(n, p) {
 }
 
 // The remembered layout's parts (types/fresh.d.js).
-/** function savedTab(path: String | Null, untitled: Number | Null, pos: Number, top: Number, preview: Boolean) => SavedTab */
-function savedTab(path, untitled, pos, top, preview) { return { path, untitled, pos, top, preview }; }
+/** function savedTab(ref: TabRef, pos: Number, top: Number, preview: Boolean) => SavedTab */
+function savedTab(ref, pos, top, preview) { return { ref, pos, top, preview }; }
+/** function tabFile(path: String) => TabRef */
+function tabFile(path) { return { kind: "file", path }; }
+/** function tabUntitled(n: Number) => TabRef */
+function tabUntitled(n) { return { kind: "untitled", n }; }
+/** function tabTerminal(term: Number) => TabRef */
+function tabTerminal(term) { return { kind: "terminal", term }; }
+// A tab's name in the remembered layout (which of a split's tabs shows).
+/** function refKey(ref: TabRef) => String */
+function refKey(ref) { return ref.kind === "file" ? ref.path : ref.kind === "untitled" ? `untitled:${ref.n}` : `terminal:${ref.term}`; }
 /** function savedPane(tabs: SavedTab[], active: String | Null) => SavedNode */
 function savedPane(tabs, active) { return { kind: "pane", tabs, active }; }
 /** function savedSplit(dir: String, ratio: Number, a: SavedNode, b: SavedNode) => SavedNode */
@@ -108,7 +118,9 @@ export class App {
     this.commands = new Map(); // id -> {title, run, source, hidden}
     this.modes = noModes(); // buffer mode -> its keys
     this.keys = noKeys(); // key -> command, from plugins
-    this.terminalKeys = new Set(["C-`"]); // keys a focused terminal leaves to the editor
+    // Keys a focused terminal leaves to the editor: its toggle, moving
+    // between tabs, and the command palette's keys a shell does not use.
+    this.terminalKeys = new Set(["C-`", "C-Tab", "C-S-Tab", "C-PageDown", "C-PageUp", "F1", "C-S-p"]);
     this.statusItems = new Map();
     this.procs = new Map();
     this.watches = new Map();
@@ -145,7 +157,7 @@ export class App {
     this.editing = c.editing;
     this.ui = c.ui;
     this.prompt = c.prompt;
-    this.term = c.term;
+    this.terminals = c.terminals;
     this.host = c.host;
     this.macros = c.macros;
     this.menubar = c.menubar;
@@ -171,7 +183,6 @@ export class App {
     if (ws) this.session.open(ws.host, ws.root);
     this.installSashes();
     this.prompt.listen();
-    this.term.listen();
     this.activePane.listen();
     this.listenInput();
     this.registerCoreCommands();
@@ -189,10 +200,12 @@ export class App {
     for (const { name, activate } of plugins) {
       try { await activate(this); } catch (e) { this.report(`plugin ${name}: ${String(e)}`); }
     }
-    await this.term.adopt(ws.terminals);
-    // What was open in this workspace last time, unless a file is named.
+    await this.terminals.adopt(ws.terminals);
+    // What was open in this workspace last time, unless a file is named;
+    // then an agent's terminal not open in a tab opens in one, in front.
     const open = this.params.get("open");
     if (!open) await this.restoreLayout();
+    for (const id of this.terminals.agents()) if (this.terminalViews(id).length === 0) this.showTerminal(id, this.activePane);
     this.restoring = false;
     this.rememberLayout();
     window.addEventListener("pagehide", () => { this.rememberLayout(); this.session.flush(); });
@@ -232,21 +245,28 @@ export class App {
   // document by its number) with their cursor and scroll, the active split
   // and tab, and whether the sidebar and the terminal show.
   layoutSnapshot() {
-    const tabs = (views) => views.flatMap((v) => (this.tabKey(v.buf) ? [savedTab(v.buf.path, v.buf.untitled, v.primary.pos, v.top, v.preview)] : []));
+    const tabs = (views) => views.flatMap((v) => this.tabRef(v.buf).map((ref) => savedTab(ref, v.primary.pos, v.top, v.preview)));
     const node = (n) => {
       const pane = paneAt(n), f = forkAt(n);
       if (pane !== null) { const shown = pane.view; return savedPane(tabs(pane.views), shown ? this.tabKey(shown.buf) : null); }
       return f !== null ? savedSplit(f.dir, f.size.ratio, node(f.a), node(f.b)) : savedPane([], null);
     };
-    return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden"), terminal: this.term.visible };
+    return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden") };
   }
   rememberLayout() {
     if (this.restoring) return;
     this.session.setLayout(this.layoutSnapshot());
   }
-  // A document buffer as the remembered layout names it: its path, or
-  // `untitled:N`; null for any other buffer.
-  tabKey(b) { return b.path || (b.untitled ? `untitled:${b.untitled}` : null); }
+  // What a tab shows, as the remembered layout names it: a file by its
+  // path, an untitled document by its number, a terminal by its id (a
+  // list of at most one: a plugin's buffer is not remembered).
+  tabRef(b) {
+    if (b.path) return [tabFile(b.path)];
+    for (const n of listOf(b.untitled)) return [tabUntitled(n)];
+    for (const id of b.terminal) return [tabTerminal(id)];
+    return [];
+  }
+  tabKey(b) { return this.tabRef(b).map(refKey).at(0) ?? null; }
   // Put the remembered layout back: the splits, then each split's
   // documents (one that cannot be opened any more is left out — an
   // untitled one is there only while the server keeps it for its unsaved
@@ -277,7 +297,6 @@ export class App {
       if (active) pane.show(active.buf, null);
     }
     for (const { pane } of specs) if (!pane.views.length && this.panes().length > 1) await this.closePane(pane);
-    if (s.terminal && !this.term.visible) await this.term.toggle();
     this.focusPane(this.activePane);
     this.renderAll();
     return true;
@@ -285,10 +304,11 @@ export class App {
 
   // A remembered tab's document, or null when it cannot be opened any more.
   async loadTab(t) {
-    const untitled = t.untitled, path = t.path;
+    const ref = t.ref;
     try {
-      if (untitled !== null) return await this.loadUntitled(untitled);
-      return path !== null ? await this.loadFile(path) : null;
+      if (ref.kind === "file") return await this.loadFile(ref.path);
+      if (ref.kind === "untitled") return await this.loadUntitled(ref.n);
+      return this.terminals.has(ref.term) ? this.terminalBuffer(ref.term) : null;
     } catch { return null; }
   }
 
@@ -314,7 +334,7 @@ export class App {
   remeasure() {
     const { cw, lh } = this.metrics;
     this.measure();
-    this.term.applyFont();
+    this.terminals.applyFont();
     if (cw === this.metrics.cw && lh === this.metrics.lh) return;
     for (const p of this.panes()) p.clearRows();
     this.renderAll();
@@ -370,15 +390,14 @@ export class App {
     this.renderAll();
     this.rememberLayout();
   }
-  // The sashes of the sidebar, the right dock, the bottom dock and the
-  // terminal; their sizes are remembered for the workspace.
+  // The sashes of the sidebar, the right dock and the bottom dock; their
+  // sizes are remembered for the workspace.
   installSashes() {
     const parts = [
       { name: "left", el: $("#left-dock"), axis: "x", dir: 1, min: 160, most: 0.4 },
       { name: "sidebar", el: $("#sidebar"), axis: "x", dir: 1, min: 120, most: 0.5 },
       { name: "right", el: $("#right-dock"), axis: "x", dir: -1, min: 160, most: 0.6 },
       { name: "dock", el: $("#dock"), axis: "y", dir: -1, min: 80, most: 0.8 },
-      { name: "terminal", el: $("#terminal"), axis: "y", dir: -1, min: 80, most: 0.8 },
     ];
     const sizeOf = (name) => this.session.sizes[name];
     const setSize = (name, px) => { this.session.setSizes(Object.fromEntries([...Object.entries(this.session.sizes).filter(([k]) => k !== name), [name, px]])); };
@@ -419,11 +438,77 @@ export class App {
     const changed = this.activePane !== p;
     this.activePane = p;
     for (const x of this.panes()) setClass(x.el, "active", x === p);
-    this.input.focus({ preventScroll: true });
+    this.giveKeyboard(p);
     // A maximized split gives way to the one focused.
     if (this.maximized.length > 0 && !this.maximized.includes(p)) { this.maximized = [p]; this.showMaximized(); }
     if (changed) { this.renderAll(); if (p.view) this.bufferEvent("buffer.activated", p.view.buf, [], false); }
   }
+  // ------------------------------------------------------------- terminals, as tabs
+
+  // The tab buffer of terminal `id` (made the first time): kept while no
+  // tab shows it (a split closed, or Terminal: Toggle hid it).
+  terminalBuffer(id) {
+    const had = [...this.buffers.values()].find((b) => b.terminal.includes(id));
+    if (had !== undefined) return had;
+    const b = terminalBuffer(id, this.terminals.label(id));
+    b.keep = true;
+    this.buffers.set(b.id, b);
+    return b;
+  }
+  // The tabs showing terminal `id`.
+  terminalViews(id) { return this.panes().flatMap((p) => p.views.filter((v) => v.buf.terminal.includes(id))); }
+  // Show terminal `id` in a tab of split `p`, which takes the keyboard.
+  showTerminal(id, p) {
+    p.show(this.terminalBuffer(id), null);
+    this.focusPane(p);
+    this.rememberLayout();
+  }
+  // The split terminals go to: the active one if it shows a terminal, else
+  // the last one that does, else a new one under the active split.
+  terminalPane() {
+    const showing = (p) => p.view !== undefined && p.view.buf.terminal.length > 0;
+    if (showing(this.activePane)) return this.activePane;
+    return this.panes().filter(showing).at(-1) ?? this.split("v", 0.65, []);
+  }
+  // Terminal: Toggle. From a terminal, back to the editor (its split
+  // closes, its terminals kept, when there is another); to a terminal: the
+  // split showing one, else one not shown (a new one if none) in a split
+  // under the editor.
+  async toggleTerminal() {
+    const p = this.activePane;
+    if (p.view !== undefined && p.view.buf.terminal.length > 0) {
+      if (this.panes().length > 1 && p.views.every((v) => v.buf.terminal.length > 0)) await this.closePane(p);
+      return;
+    }
+    const showing = this.panes().filter((x) => x.view !== undefined && x.view.buf.terminal.length > 0).at(-1);
+    if (showing !== undefined) { this.focusPane(showing); return; }
+    const hidden = this.terminals.ids().filter((id) => this.terminalViews(id).length === 0);
+    let id = hidden.at(0);
+    if (id === undefined) {
+      try { id = await this.terminals.create(null, null, null); } catch (e) { this.setStatus(`No terminal: ${failure(e)}`); return; }
+    }
+    this.showTerminal(id, this.terminalPane());
+    for (const other of hidden.slice(1)) this.terminalPane().show(this.terminalBuffer(other), null);
+  }
+  // A terminal running `command` (an agent; `resume` takes it up again
+  // later), in a tab of the active split.
+  async runInTerminal(command, resume) {
+    this.showTerminal(await this.terminals.create(null, command, resume), this.activePane);
+  }
+  // Terminal `id`'s label changed: its tabs say so.
+  terminalChanged(id) {
+    for (const b of this.buffers.values()) if (b.terminal.includes(id)) b.name = this.terminals.label(id);
+    for (const p of this.panes()) if (p.views.some((v) => v.buf.terminal.includes(id))) p.renderTabs();
+  }
+  // Another client opened terminal `id`: it gets a tab here too, in the
+  // split showing terminals (not taking the keyboard).
+  terminalAppeared(id) {
+    if (this.terminalViews(id).length > 0) return;
+    const p = this.terminalPane();
+    p.show(this.terminalBuffer(id), null);
+    p.scheduleRender();
+  }
+
   // Split the active split in direction `dir` ("h", "v"), the new one
   // `ratio` of it, showing `shown` (a list of at most one buffer).
   split(dir, ratio, shown) {
@@ -467,6 +552,8 @@ export class App {
     if (!(await this.mayClose(v.buf, [v]))) return false;
     if (!p.views.includes(v)) return true; // closed meanwhile
     p.closeView(v);
+    // A terminal's last tab closed closes the terminal.
+    for (const id of v.buf.terminal) if (this.terminalViews(id).length === 0) { this.buffers.delete(v.buf.id); this.terminals.close(id); }
     this.dropIfUnshown(v.buf);
     if (!p.views.length && this.panes().length > 1) await this.closePane(p);
     this.renderAll();
@@ -513,9 +600,16 @@ export class App {
     this.dropIfUnshown(b);
     return true;
   }
+  // The keyboard to what split `p` shows: a terminal's tab gives it to the
+  // terminal, any other to the editor.
+  giveKeyboard(p) {
+    const terms = p.view === undefined ? [] : p.view.buf.terminal;
+    if (terms.length > 0) for (const id of terms) this.terminals.focus(id);
+    else { this.terminals.unfocus(); this.input.focus({ preventScroll: true }); }
+  }
   onViewShown(pane, v) {
     this.rememberLayout();
-    if (pane === this.activePane) this.bufferEvent("buffer.activated", v.buf, [], false);
+    if (pane === this.activePane) { this.giveKeyboard(pane); this.bufferEvent("buffer.activated", v.buf, [], false); }
     this.updateStatus();
   }
   // Show a buffer: in the active pane ("tab"), a new split below ("split")
@@ -810,7 +904,7 @@ export class App {
     if (name === "compose") return v !== undefined && v.mode === "compose";
     if (name === "orchestrator") return this.orchestrator.dockOpen();
     if (name === "explorer") return !$("#sidebar").classList.contains("hidden");
-    if (name === "terminal") return this.term.visible;
+    if (name === "terminal") return this.panes().some((p) => p.view !== undefined && p.view.buf.terminal.length > 0);
     if (name === "keymapDefault") return this.settings.keymap !== "emacs";
     if (name === "keymapEmacs") return this.settings.keymap === "emacs";
     return false;
@@ -1108,7 +1202,7 @@ export class App {
         break;
       }
       case "term.data": case "term.exit": case "term.size":
-        this.term.onEvent(ev);
+        this.terminals.onEvent(ev);
         break;
       case "proc.exit": {
         const done = this.procs.get(ev.proc);
@@ -1284,7 +1378,7 @@ export class App {
   // the page draws reads them; only the terminal's canvas copies them.
   applyTheme(vars) {
     for (const [k, v] of Object.entries(vars)) document.documentElement.style.setProperty(k, v);
-    this.term.applyTheme();
+    this.terminals.applyTheme();
   }
 
   // The effective keymap, key -> command: the defaults, the plugins', the
@@ -1410,25 +1504,25 @@ export class App {
     cmd("palette.buffers", "Switch Buffer…", () => this.prompt.palette("#"));
     cmd("palette.line", "Go to Line…", () => this.prompt.palette(":"));
     cmd("palette.open", "Palette with a Prefix", (prefix) => this.prompt.palette(prefix || ""), true);
-    cmd("terminal.toggle", "Terminal: Toggle", () => this.term.toggle());
-    cmd("terminal.new", "Terminal: New", async () => { if (!this.term.visible) await this.term.toggle(); await this.term.create(null, null, null); });
-    // The current terminal closed and a new one started in its place.
+    cmd("terminal.toggle", "Terminal: Toggle", () => this.toggleTerminal());
+    cmd("terminal.new", "Terminal: New", async () => { this.showTerminal(await this.terminals.create(null, null, null), this.terminalPane()); });
+    // The current terminal closed and a new one started in its tab's place.
     cmd("terminal.restart", "Terminal: Restart", async () => {
-      if (!this.term.visible) await this.term.toggle();
-      const id = this.term.current;
-      if (id !== undefined) this.term.close(id);
-      await this.term.create(null, null, null);
+      const p = this.terminalPane();
+      for (const v of found(p.view)) if (v.buf.terminal.length > 0) await this.closeTab(p, v);
+      this.showTerminal(await this.terminals.create(null, null, null), p);
     });
-    // The selection (or the cursor's line) typed into the current
-    // terminal, as if pasted there; the terminal shows (and has the keys).
+    // The selection (or the cursor's line) typed into the terminal shown
+    // last, as if pasted there; the terminal shows (and has the keys).
     cmd("terminal.sendSelection", "Terminal: Send Selection", async () => {
       const v = V();
       if (!v) return;
       const sels = v.selections().sort((x, y) => x.start - y.start);
       const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end)).join("\n") : this.editing.lineAt(v.buf, v.primary.pos).text + "\n";
-      if (!this.term.visible) await this.term.toggle();
-      const id = this.term.current ?? await this.term.create(null, null, null);
-      await rpc("term.input", { term: id, data: text });
+      const p = this.terminalPane();
+      const id = (p.view === undefined ? [] : p.view.buf.terminal).at(0) ?? await this.terminals.create(null, null, null);
+      this.showTerminal(id, p);
+      await this.terminals.send(id, text);
     });
     cmd("skin.select", "Select Skin…", () => this.skins.pick());
     cmd("skin.next", "Next Skin", () => this.skins.cycle(1));
@@ -1734,7 +1828,8 @@ export class App {
     const add = (text, title, run) => items.push({ text, title, run });
     const cmd = (id) => () => this.run(id);
     const titled = (what, id) => { const k = this.keyLabel(id); return k ? `${what} (${k})` : what; };
-    if (v) {
+    // A document's facts (a terminal's tab has none).
+    if (v && v.buf.terminal.length === 0) {
       const b = v.buf;
       const L = b.text;
       const c = v.primary;

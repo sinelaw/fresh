@@ -109,12 +109,10 @@ body {
 .scrollbar .mark.lane1 { left: 4px; width: 4px; }
 .scrollbar .mark.lane2 { right: 0; width: 4px; height: 3px; }
 .scrollbar .mark.cursor { left: 0; right: 0; background: var(--fg); opacity: .6; }
-#terminal { height: 40%; min-height: 120px; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: var(--terminal-bg); }
-#terminal.hidden { display: none; }
-.term-tabs { display: flex; background: var(--panel); }
-.term-tabs .tab { display: flex; max-width: 260px; } .term-tabs .tab .label { overflow: hidden; text-overflow: ellipsis; }
-.term-tabs .plus { color: var(--fg); }
-.term-screens { flex: 1; min-height: 0; padding: 2px 4px; }
+/* A terminal's tab: its screen fills the split. */
+.pane .term-box { display: none; flex: 1 1 0; min-height: 0; padding: 2px 4px; background: var(--terminal-bg); }
+.pane.terminal .term-box { display: block; }
+.pane.terminal .surface { display: none; }
 .xterm-host { height: 100%; }
 #status { display: flex; justify-content: space-between; padding: 2px 10px; background: var(--status-bg); color: var(--status-fg); border-top: 1px solid var(--border); font-size: var(--ui-font-sm); white-space: nowrap; overflow: hidden; }
 #prompt { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(700px, 90vw); background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); z-index: 25; }
@@ -216,7 +214,6 @@ body {
 /* A panel's sash goes with it: each names the panel it resizes. */
 #left-dock.hidden + .sash[data-sash="left"], #sidebar.hidden + .sash[data-sash="sidebar"],
 .sash[data-sash="right"]:has(+ #right-dock.hidden), .sash[data-sash="dock"]:has(+ #dock.hidden),
-.sash[data-sash="terminal"]:has(+ #terminal.hidden) { display: none; }
 .sash-dragging body { user-select: none; }
 #status .click { cursor: pointer; }
 #status .click:hover { background: color-mix(in srgb, var(--status-fg) 16%, transparent); }

@@ -219,7 +219,9 @@ export class Pane {
     // A view in compose mode is drawn as a document instead of rows.
     this.doc = new DocView();
     this.surfaceEl = div("surface", [this.rulersEl, this.gutterEl, this.textEl, this.caretsEl, this.doc.el, this.scrollbarEl]);
-    this.el = div("pane", [this.tabsEl, this.surfaceEl]);
+    // A terminal's tab shows the terminal's screen here instead.
+    this.termEl = div("term-box", []);
+    this.el = div("pane", [this.tabsEl, this.surfaceEl, this.termEl]);
     this.marksSig = "";
     this.rows = [];
     // The rows and gutter rows on screen (pool.js), and the rulers' and
@@ -516,8 +518,10 @@ export class Pane {
 
   render() {
     const v = this.view;
+    setClass(this.el, "terminal", v !== undefined && v.buf.terminal.length > 0);
     if (!v) { this.clearRows(); return; }
     const buf = v.buf;
+    for (const id of buf.terminal) { this.editor.mountTerminal(id, this.termEl); this.editor.updateStatus(); return; }
     if (!this.ready(v)) {
       buf.ensure(v.top, this.metrics().rows + 50).then(() => {
         const L2 = buf.text;

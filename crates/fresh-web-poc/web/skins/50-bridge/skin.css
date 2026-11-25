@@ -52,7 +52,7 @@
   --ui-font-size: calc(16px * var(--ui-scale));
   background: #000; accent-color: var(--br-orange);
 }
-.skin-bridge :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, .term-tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+.skin-bridge :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
   --fg: var(--br-text); --muted: var(--br-dim); --faint: #6d6390; --border: var(--br-line); --panel: #000;
   --accent: var(--br-orange); --on-accent: #000; --emphasis: var(--br-orange); --link: var(--br-blue);
   --control-bg: #000; --control-fg: var(--br-text); --hover-bg: rgba(255, 156, 26, .16);
@@ -162,12 +162,12 @@
 .skin-bridge #status-right > span.click:hover { filter: brightness(1.15); }
 
 /* ---- tabs: pills on black ------------------------------------------------ */
-.skin-bridge :is(.tabs, .term-tabs, .dock-tabs) { background: #000; gap: 4px; padding: 0 0 6px; border: 0; }
+.skin-bridge :is(.tabs, .dock-tabs) { background: #000; gap: 4px; padding: 0 0 6px; border: 0; }
 .skin-bridge .tab { border: 0; border-radius: 999px; padding: 3px 12px 3px 16px; background: var(--br-lav); color: #000;
   font-weight: 600; letter-spacing: .03em; }
 .skin-bridge .tab:not(.active):hover { background: var(--br-blue); }
 .skin-bridge .tab.active { background: var(--br-tan); color: #000; }
-.skin-bridge .pane.active .tab.active, .skin-bridge .term-tabs .tab.active { background: var(--br-orange); color: #000; border: 0; }
+.skin-bridge .pane.active .tab.active { background: var(--br-orange); color: #000; border: 0; }
 .skin-bridge .tab .x { opacity: .7; }
 .skin-bridge .split.h > .sash { border-left: 4px solid #000; }
 .skin-bridge .split.v > .sash { border-top: 4px solid #000; }
@@ -184,7 +184,6 @@
 .skin-bridge .ui-list-row.sel, .skin-bridge .ui-list:focus .ui-list-row.sel, .skin-bridge .ui-list-row.marked { background: var(--br-lav); color: #000; border-radius: 0 999px 999px 0; }
 .skin-bridge :is(.ui-list-row.sel, .ui-list-row.marked) * { color: #000; }
 .skin-bridge .ui-list-row.header { color: var(--br-orange); }
-.skin-bridge #terminal { border-top: 6px solid #000; background: #000; }
 .skin-bridge #dock { border-left: 14px solid var(--br-peach); border-top: 22px solid var(--br-peach);
   border-top-left-radius: 40px 30px; padding: 6px 8px 6px 10px; }
 

@@ -247,7 +247,10 @@ export class Buffer {
     this.foldRanges = none(); // a language server's, as line ranges
   }
   emit(news) { for (const f of this.listeners) f(news); }
-  get isVirtual() { return this.source.kind === "virtual"; }
+  // Not a document: a plugin's text, or a terminal.
+  get isVirtual() { return this.source.kind !== "file"; }
+  // The terminal it is the tab of: a list of at most one id.
+  get terminal() { return this.source.kind === "terminal" ? [this.source.term] : []; }
   // The server document's id; null for a virtual buffer.
   get doc() { return this.source.doc; }
   // The held text covers the whole document.
@@ -539,6 +542,33 @@ class FileSource {
   async fetchText(s, e) { return (await rpc("doc.text", { doc: this.doc, start: s, end: e })).text; }
 
   propsAt() { return []; }
+}
+
+// ---------------------------------------------------------------- terminal
+
+// A terminal (terminal.js) shown as a tab: it has no text, and its views
+// draw the terminal instead.
+class TerminalSource {
+  constructor(term) {
+    this.kind = "terminal";
+    this.doc = null;
+    this.term = term;
+  }
+  ensure() { return Promise.resolve(undefined); }
+  send() {}
+  async fetchText() { return ""; }
+  propsAt() { return []; }
+}
+
+// The tab of terminal `term`, named `name`.
+export function terminalBuffer(term, name) {
+  const b = new Buffer(new TerminalSource(term));
+  b.name = name;
+  b.readOnly = true;
+  const L = new Lines({ start: 0, text: "", bof: true, eof: true, firstLine: 0 });
+  b.text = some(L);
+  b.totalLines = some(L.count);
+  return b;
 }
 
 // ---------------------------------------------------------------- virtual

@@ -126,6 +126,11 @@ change. When the file changed:
 (or a command in it: an agent session); the server streams raw bytes with
 stream offsets and keeps a replay buffer, and each client runs its own
 emulator (xterm.js). Terminals belong to the workspace and outlive clients.
+In the client a terminal is a tab, in any split, as a file is (Terminal:
+Toggle, Ctrl+`, opens one in a split under the editor; closing a
+terminal's last tab closes the terminal); an agent's terminal that no tab
+shows opens in one when the workspace's page loads, so a new agent
+workspace opens on its agent.
 The server also reads each terminal's stream for the orchestrator: the title
 a program sets, the bell, and its state as the editor's orchestrator reads
 it — `working` (output in the last five seconds, or shell integration, OSC
@@ -334,8 +339,8 @@ another's. Two tabs can view two workspaces side by side.
   is; trust; a name and a dock folder. **Launch** (Ctrl+Enter) switches to
   it; **Launch in Background** (Alt+Enter) stays, and the dock shows it being
   made, and why it failed, with Retry.
-- **Run Agent…**: an agent from the same registry, here, in a terminal; its
-  tab shows its state (`*` working, `●` waiting, `✓` done, `·` idle).
+- **Run Agent…**: an agent from the same registry, here, in a terminal tab
+  in the active split; its tab shows its state (`*` working, `●` waiting, `✓` done, `·` idle).
 - **Import Sessions…**: the Claude Code and Codex sessions run outside the
   editor on a machine (their transcripts, read through its authority);
   Enter opens New Workspace filled in to resume one (`claude --resume`,
@@ -476,9 +481,9 @@ A skin is CSS against the client's stable structure. `<html>` carries
 | `#app` | the window: `#topbar`, `#main`, `#status`, top to bottom |
 | `#topbar` | `.brand`, `#menubar` (the menu bar: `.mtop` titles, `.mtop.open`; a column when a skin lays it out as one, and its menus open beside it), `#ws-name` (the workspace), `.hint`, `#skin-btn` |
 | `#main` | `#left-dock` (the orchestrator's dock), `#sidebar` (`#side-panels`: plugin panels, the explorer first), its `.sash`, and `#work` |
-| `#work` | `#bar` (a plugin bar), `#center` (`#editor-area`, `.sash`, `#right-dock`), `.sash`, `#dock` (`.dock-tabs`, `.dock-body`), `.sash`, `#terminal` (`.term-tabs`, `.term-screens`) |
+| `#work` | `#bar` (a plugin bar), `#center` (`#editor-area`, `.sash`, `#right-dock`), `.sash`, `#dock` (`.dock-tabs`, `.dock-body`) |
 | `.sash` | a drag handle between two parts (`.sash.x` moves sideways, `.sash.y` up and down; `.dragging` while dragged): no size in the layout, its grip reaches 3px either side; a split's sash is its dividing line (its border) |
-| `#editor-area` | `.split.h` / `.split.v` of `.pane`s with a `.sash` between them; a pane is `.tabs` (`.tab`, `.tab.active`, `.x`) over `.surface`; the focused pane is `.pane.active`; while a tab is dragged, `<html>` has `.tab-dragging` and its landing place is `.tab.drop-before` / `.tab.drop-after` or `.pane.drop-into` |
+| `#editor-area` | `.split.h` / `.split.v` of `.pane`s with a `.sash` between them; a pane is `.tabs` (`.tab`, `.tab.active`, `.x`) over `.surface`, or over `.term-box` (the terminal's screen) for a terminal's tab (`.pane.terminal`); the focused pane is `.pane.active`; while a tab is dragged, `<html>` has `.tab-dragging` and its landing place is `.tab.drop-before` / `.tab.drop-after` or `.pane.drop-into` |
 | `.surface` | a buffer: `.gutter`, `.text` (`.row`, `.row.current`), `.carets`, `.scrollbar` / `.thumb` and `.marks` (`.mark.lane0` git, `.lane1` search, `.lane2` diagnostics, `.mark.cursor`); in compose mode `.surface.compose` holds `.doc` / `.doc-content` / `.doc-body` (headings, `.doc-li`, `.doc-code`, `.doc-table`) |
 | `#status` | `#status-left` (the message), `#status-right > span` (the facts; `.click` when clickable) |
 | `#prompt` | the palette and prompts: `.bar` (`.label`, `input`), `.list` (`.item`, `.item.sel`, `.d` its detail), `.hint` |

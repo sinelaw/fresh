@@ -7,7 +7,6 @@
 // replays the server's buffer, which ends at a known offset, and then takes
 // only the bytes after it, so nothing is lost or written twice.
 
-import { setClass, escapeHtml } from "./dom.js";
 import { rpc } from "./rpc.js";
 import { found } from "./maybe.js";
 
@@ -60,9 +59,9 @@ function streamAt(end) { return { end }; }
 const NOT_ATTACHED = null;
 
 class Term {
-  // `screens` holds it; `changed()` redraws the tabs (its name, title or
-  // state changed).
-  constructor(id, screens, changed) {
+  // `changed()`: its label changed (its title, its agent's state, or it
+  // exited).
+  constructor(id, changed) {
     this.changed = changed;
     this.id = id;
     this.stream = streamAt(NOT_ATTACHED); // the stream offset written so far
@@ -75,9 +74,9 @@ class Term {
     this.state = "";
     this.title = "";
     this.done = false;
+    // Its screen, put in a tab's box (`mount`); it fits itself to it.
     this.el = document.createElement("div");
     this.el.className = "xterm-host";
-    screens.appendChild(this.el);
     this.xt = new Terminal({
       ...termFont(),
       cursorBlink: true,
@@ -91,8 +90,8 @@ class Term {
     this.xt.open(this.el);
   }
 
-  // Wire the terminal to the server and the panel (once, after `new`):
-  // `editorKey(e)` gives the editor its own keys (true: it took the key).
+  // Wire the terminal to the server (once, after `new`): `editorKey(e)`
+  // gives the editor its own keys (true: it took the key).
   listen(editorKey) {
     this.xt.onData((data) => { rpc("term.input", { term: this.id, data }); });
     this.xt.onBinary((data) => { rpc("term.input", { term: this.id, data }); });
@@ -100,6 +99,7 @@ class Term {
     // The keys the editor keeps while a terminal has the keyboard.
     this.xt.attachCustomKeyEventHandler((e) => !editorKey(e));
     this.xt.onTitleChange((t) => { this.title = t; this.changed(); });
+    new ResizeObserver(() => { this.refit(); }).observe(this.el);
   }
 
   async attach() {
@@ -129,32 +129,29 @@ class Term {
     this.changed();
   }
 
-  show(on) {
-    this.el.style.display = on ? "block" : "none";
-    if (on) requestAnimationFrame(() => { try { this.fit.fit(); } catch {} this.xt.focus(); });
+  // What its tab says: the agent's state or that it exited, then the
+  // title its program set (else its name).
+  get label() {
+    const mark = (this.done ? STATE_MARK.get("exited") : this.agent ? STATE_MARK.get(this.state) : undefined) ?? "";
+    return `${mark}${this.title || (this.agent ? this.name : `Terminal ${this.id}`)}`;
+  }
+
+  // Fit it to its box, while it is on screen.
+  refit() {
+    if (this.el.offsetParent === null) return;
+    try { this.fit.fit(); } catch {}
   }
 }
 
-export class TerminalPanel {
-  // `editor`: what the panel asks of the editor (js/main.js).
-  constructor(editor, el) {
+// The workspace's terminals. Each is shown as a tab (a terminal buffer,
+// buffer.js): `mount` puts its screen in the box of the split showing it.
+export class Terminals {
+  // `editor`: what terminals ask of the editor (js/main.js).
+  constructor(editor) {
     this.editor = editor;
-    this.el = el;
-    this.tabsEl = el.querySelector(".term-tabs");
-    this.screens = el.querySelector(".term-screens");
-    this.terms = new Map(); // its terminals, by id
-    this.selected = []; // the terminal shown: a list of at most one id
-    this.visible = false;
+    this.terms = new Map(); // by id
     this.closed = new Set(); // ids closed here: their last output is not a new terminal
-  }
-
-  // The terminal shown, if any.
-  get current() { return this.selected.at(0); }
-
-  // Refit the terminals as the panel resizes (once, after `new`).
-  listen() {
-    new ResizeObserver(() => this.refit()).observe(this.screens);
-    this.tabsEl.addEventListener("mousedown", (e) => { this.tabPress(e); });
+    this.wanted = []; // the one to take the keyboard once on screen: a list of at most one id
   }
 
   // Terminals the server already runs (from another client, or before a
@@ -163,24 +160,26 @@ export class TerminalPanel {
     for (const t of terms) await this.add(t.id);
   }
 
+  ids() { return [...this.terms.keys()]; }
+  // The ids of those running an agent's command.
+  agents() { return [...this.terms.values()].filter((t) => t.agent).map((t) => t.id); }
+  has(id) { return this.terms.has(id); }
+  label(id) { return found(this.terms.get(id)).map((t) => t.label).at(0) ?? `Terminal ${id}`; }
+
   // The terminals' states from the workspace's status: an agent session's
   // tab shows its own.
   states(terms) {
-    let changed = false;
     for (const s of terms) {
-      for (const t of found(this.terms.get(s.id))) if (t.state !== s.state) { t.state = s.state; changed = true; }
+      for (const t of found(this.terms.get(s.id))) if (t.state !== s.state) { t.state = s.state; this.editor.changed(t.id); }
     }
-    if (changed) this.renderTabs();
   }
 
   async add(id) {
     for (const had of found(this.terms.get(id))) return had;
-    const t = new Term(id, this.screens, () => { this.renderTabs(); });
+    const t = new Term(id, () => { this.editor.changed(id); });
     t.listen(this.editor.key);
     this.terms.set(id, t);
     await t.attach();
-    if (!this.selected.length) this.select(id);
-    this.renderTabs();
     return t;
   }
 
@@ -189,37 +188,32 @@ export class TerminalPanel {
   async create(name, command, resume) {
     const id = (await rpc("term.open", { cols: 100, rows: 24, name, command, resume })).term;
     await this.add(id);
-    this.select(id);
     return id;
   }
 
-  select(id) {
-    this.selected = [id];
-    this.terms.forEach((t, k) => { t.show(k === id && this.visible); });
-    this.renderTabs();
+  // Put terminal `id`'s screen in `box` (taking it from wherever it was);
+  // it takes the keyboard if it was asked to.
+  mount(id, box) {
+    for (const t of found(this.terms.get(id))) {
+      if (t.el.parentElement !== box) box.replaceChildren(t.el);
+      requestAnimationFrame(() => {
+        t.refit();
+        if (this.wanted.includes(id)) { this.wanted = []; t.xt.focus(); }
+      });
+    }
   }
-
-  renderTabs() {
-    const html = [];
-    this.terms.forEach((t, id) => {
-      const mark = (t.done ? STATE_MARK.get("exited") : t.agent ? STATE_MARK.get(t.state) : undefined) ?? "";
-      const label = escapeHtml(`${mark}${t.title || (t.agent ? t.name : `Terminal ${id}`)}`);
-      html.push(`<div class="tab${this.selected.includes(id) ? " active" : ""}" data-term="${id}" title="${label}"><span class="label">${label}</span><span class="x">×</span></div>`);
-    });
-    html.push(`<div class="tab plus" title="New terminal">+</div>`);
-    this.tabsEl.innerHTML = html.join("");
+  // Give terminal `id` the keyboard: now if it is on screen, else when it
+  // is mounted.
+  focus(id) {
+    this.wanted = [id];
+    for (const t of found(this.terms.get(id))) {
+      if (t.el.offsetParent !== null) requestAnimationFrame(() => { if (this.wanted.includes(id)) { this.wanted = []; t.refit(); t.xt.focus(); } });
+    }
   }
-
-  // A press on the tabs: a tab shows its terminal, its × closes it, + makes
-  // a new one.
-  tabPress(e) {
-    const tab = e.target.closest(".tab");
-    if (tab === null) return;
-    e.preventDefault();
-    const term = tab.dataset.term;
-    if (term === undefined) { this.create(null, null, null); return; }
-    if (e.target.closest(".x") !== null) { e.stopPropagation(); this.close(Number(term)); } else this.select(Number(term));
-  }
+  // None is to take the keyboard (the editor has it).
+  unfocus() { this.wanted = []; }
+  // Type `data` into it, as if pasted.
+  send(id, data) { return rpc("term.input", { term: id, data }); }
 
   close(id) {
     for (const t of found(this.terms.get(id))) {
@@ -229,23 +223,6 @@ export class TerminalPanel {
       t.el.remove();
       this.terms.delete(id);
     }
-    if (this.selected.includes(id)) this.selected = [...this.terms.keys()].slice(0, 1);
-    for (const s of this.selected) this.select(s);
-    this.renderTabs();
-  }
-
-  async toggle() {
-    // A first terminal before the panel opens: when the workspace refuses
-    // one (restricted), the panel stays closed.
-    if (!this.visible && !this.terms.size) {
-      try { await this.create(null, null, null); } catch (e) { this.editor.say(`No terminal: ${String(e)}`); return; }
-    }
-    this.visible = !this.visible;
-    setClass(this.el, "hidden", !this.visible);
-    if (this.visible) {
-      for (const s of this.selected) this.select(s);
-    } else this.editor.focus();
-    this.editor.relayout();
   }
 
   applyTheme() {
@@ -255,21 +232,15 @@ export class TerminalPanel {
 
   applyFont() {
     const f = termFont();
-    for (const t of this.terms.values()) Object.assign(t.xt.options, f);
-    this.refit();
-  }
-
-  refit() {
-    for (const s of this.selected) {
-      if (this.visible) for (const t of found(this.terms.get(s))) try { t.fit.fit(); } catch {}
-    }
+    for (const t of this.terms.values()) { Object.assign(t.xt.options, f); t.refit(); }
   }
 
   onEvent(ev) {
     if (ev.ev === "term.data") {
       const t = found(this.terms.get(ev.term));
       for (const x of t) x.data(ev);
-      if (!t.length && !this.closed.has(ev.term)) this.add(ev.term); // another client opened it: show it here too
+      // Another client opened it: it shows here too.
+      if (!t.length && !this.closed.has(ev.term)) this.add(ev.term).then(() => { this.editor.appeared(ev.term); });
     } else if (ev.ev === "term.exit") {
       for (const x of found(this.terms.get(ev.term))) x.exited();
     }
