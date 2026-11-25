@@ -4,7 +4,6 @@
 
 import { rpc, session } from "./rpc.js";
 import { App, loadSettings, loadUserKeys } from "./app.js";
-import { Pane } from "./view.js";
 import { Editing } from "./editing.js";
 import { TerminalPanel } from "./terminal.js";
 import { UIKit } from "./ui.js";
@@ -93,6 +92,34 @@ async function main() {
     focus: () => { app.focusPane(app.activePane); },
     redraw: () => { app.renderAll(); },
   };
+  // A pane: focus, settings and cell size, the editing a click or drag
+  // does, and the tab, menu, hover and scroll events it passes on.
+  const paneEditor = {
+    isActive: (pane) => app.activePane === pane,
+    focus: (pane) => { app.focusPane(pane); },
+    drive: (pane) => { app.scrollDriver = pane; },
+    settings: () => app.settings,
+    metrics: () => app.metrics,
+    shown: (pane, v) => { app.onViewShown(pane, v); },
+    dropIfUnshown: (buf) => { app.dropIfUnshown(buf); },
+    resized: (v) => { app.viewEvent("view.resized", v); },
+    updateStatus: () => { app.updateStatus(); },
+    syncScroll: (pane, v) => { app.syncScroll(pane, v); },
+    scrollTo: (pane, f) => { app.scrollToFraction(pane, f); },
+    hover: (pane, pos, x, y) => { app.onHover(pane, pos, x, y); },
+    editorMenu: (pane, at) => { app.editorMenu(pane, at); },
+    tabMenu: (pane, v, at) => { app.tabMenu(pane, v, at); },
+    tabPress: (e, pane, v) => { app.tabPress(e, pane, v); },
+    closeTab: (pane, v) => { app.closeTab(pane, v); },
+    run: (id) => { app.run(id, undefined); },
+    place: (pane, pos, extend) => { app.editing.place(pane, pos, extend); },
+    selectWord: (pane) => { app.editing.selectWord(pane); },
+    selectLine: (pane) => { app.editing.selectLine(pane); },
+    setBlock: (pane, anchor, head) => { app.editing.setBlock(pane, anchor, head); },
+    toggleFold: (pane, line) => { app.editing.toggleFoldAt(pane, line); },
+    wordAt: (buf, pos) => app.editing.wordAt(buf, pos),
+    bracketPair: (buf, pos) => app.editing.bracketPair(buf, pos),
+  };
   // The parts not yet given their own ports each get their own getter for
   // the application: one function shared by all of them would make the
   // checker take their classes for one type (each calls it as its method,
@@ -113,7 +140,7 @@ async function main() {
     macros: new Macros(macrosEditor),
     menubar: new MenuBar(menuEditor),
     input: $("#input"),
-    pane: new Pane(() => app),
+    paneEditor,
   });
   await app.start(PLUGINS);
 }

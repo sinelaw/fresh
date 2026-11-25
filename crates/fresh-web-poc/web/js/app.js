@@ -150,8 +150,10 @@ export class App {
     this.macros = c.macros;
     this.menubar = c.menubar;
     this.input = c.input;
-    this.layoutTree = leaf(c.pane);
-    this.activePane = c.pane;
+    this.paneEditor = c.paneEditor; // what each pane asks of the editor
+    const pane = new Pane(c.paneEditor);
+    this.layoutTree = leaf(pane);
+    this.activePane = pane;
   }
 
   // Wire the parts up, load the plugins and put the workspace's layout back.
@@ -250,7 +252,7 @@ export class App {
     if (s.sidebar) $("#sidebar").classList.remove("hidden"); else $("#sidebar").classList.add("hidden");
     const specs = [];
     const build = (n) => {
-      if (n.kind === "pane") { const pane = new Pane(() => this); pane.listen(); specs.push({ pane, tabs: n.tabs, active: n.active }); return leaf(pane); }
+      if (n.kind === "pane") { const pane = new Pane(this.paneEditor); pane.listen(); specs.push({ pane, tabs: n.tabs, active: n.active }); return leaf(pane); }
       return fork(n.dir === "v" ? "v" : "h", clamp(n.ratio || 0.5, 0.05, 0.95), build(n.a), build(n.b));
     };
     this.layoutTree = build(s.tree);
@@ -421,7 +423,7 @@ export class App {
   split(dir, ratio, shown) {
     const old = this.activePane;
     if (old.view) this.keep(old.view);
-    const np = new Pane(() => this);
+    const np = new Pane(this.paneEditor);
     np.listen();
     this.layoutTree = withSplit(this.layoutTree, old, np, dir, ratio);
     for (const b of shown) np.show(b, null);

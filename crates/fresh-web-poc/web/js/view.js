@@ -198,8 +198,11 @@ export class View {
 }
 
 export class Pane {
-  constructor(app) {
-    this.app = app;
+  // `editor` (main.js): what a pane asks of the editor it is in — focus,
+  // the settings and cell size, the editing a click or drag does, and the
+  // tab, menu, hover and scroll events it passes on.
+  constructor(editor) {
+    this.editor = editor;
     this.id = nextPaneId++;
     this.views = []; // tabs
     this.shown = []; // the view shown: one of `views`, or none
@@ -240,6 +243,9 @@ export class Pane {
   get view() { return first(this.shown); }
 
   // Take the surface's resizes and mouse (once, after `new`).
+  // Whether the editor's keys go to this pane.
+  get active() { return this.editor.isActive(this); }
+
   listen() {
     new ResizeObserver(() => {
       this.size = { w: this.surfaceEl.clientWidth, h: this.surfaceEl.clientHeight, sb: this.scrollbarEl.clientHeight };
@@ -254,7 +260,7 @@ export class Pane {
     this.surfaceEl.addEventListener("wheel", (e) => {
       e.preventDefault();
       // The split scrolled leads the ones that scroll with it.
-      this.app().scrollDriver = this;
+      this.editor.drive(this);
       const dx = e.shiftKey ? e.deltaY || e.deltaX : Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0;
       if (dx) this.scrollCols(Math.sign(dx) * 6);
       else this.scrollLines(Math.sign(e.deltaY) * 3);
@@ -262,7 +268,7 @@ export class Pane {
     this.surfaceEl.addEventListener("mousemove", (e) => this.onHover(e));
     this.scrollbarEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
     this.gutterEl.addEventListener("mousedown", (e) => this.onGutter(e));
-    this.surfaceEl.addEventListener("contextmenu", (e) => { e.preventDefault(); if (this.view) this.app().editorMenu(this, { x: e.clientX, y: e.clientY }); });
+    this.surfaceEl.addEventListener("contextmenu", (e) => { e.preventDefault(); if (this.view) this.editor.editorMenu(this, { x: e.clientX, y: e.clientY }); });
     // The wheel over the tabs scrolls them sideways.
     this.tabsEl.addEventListener("wheel", (e) => { if (!e.deltaX) this.tabsEl.scrollLeft += e.deltaY; }, { passive: true });
   }
@@ -282,7 +288,7 @@ export class Pane {
       if (old !== undefined && !old.buf.modified) {
         this.views.splice(this.views.indexOf(old), 1, v);
         old.dispose();
-        this.app().dropIfUnshown(old.buf);
+        this.editor.dropIfUnshown(old.buf);
       } else {
         if (old) old.preview = false;
         this.views.push(v);
@@ -290,7 +296,7 @@ export class Pane {
       v.preview = !!preview;
     } else if (preview === false) v.preview = false;
     this.shown = [v];
-    this.app().onViewShown(this, v);
+    this.editor.shown(this, v);
     this.renderTabs();
     this.scheduleRender();
     return v;
@@ -301,7 +307,7 @@ export class Pane {
     this.views.splice(i, 1);
     v.dispose();
     if (this.view === v) this.shown = this.views.slice(Math.max(0, i - 1), Math.max(0, i - 1) + 1);
-    if (this.view) this.app().onViewShown(this, this.view);
+    if (this.view) this.editor.shown(this, this.view);
     this.renderTabs();
     this.scheduleRender();
   }
@@ -319,12 +325,12 @@ export class Pane {
       t.title = (v.buf.path || v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
       // A press shows it (and may drag it: app.tabPress); the middle button
       // closes it; the right one opens its menu.
-      t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.app().closeTab(this, v); else if (e.button === 0) this.app().tabPress(e, this, v); };
-      t.oncontextmenu = (e) => { e.preventDefault(); this.show(v.buf); this.app().focusPane(this); this.app().tabMenu(this, v, { x: e.clientX, y: e.clientY }); };
+      t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.editor.closeTab(this, v); else if (e.button === 0) this.editor.tabPress(e, this, v); };
+      t.oncontextmenu = (e) => { e.preventDefault(); this.show(v.buf); this.editor.focus(this); this.editor.tabMenu(this, v, { x: e.clientX, y: e.clientY }); };
       const x = document.createElement("span");
       x.className = "x";
       x.textContent = "×";
-      x.onmousedown = (e) => { e.stopPropagation(); e.preventDefault(); this.app().closeTab(this, v); };
+      x.onmousedown = (e) => { e.stopPropagation(); e.preventDefault(); this.editor.closeTab(this, v); };
       t.appendChild(x);
       this.tabsEl.appendChild(t);
     }
@@ -333,7 +339,7 @@ export class Pane {
   // ---------------------------------------------------------------- geometry
 
   metrics() {
-    const m = this.app().metrics;
+    const m = this.editor.metrics();
     const w = (this.size.w || this.surfaceEl.clientWidth) - 12;
     const h = this.size.h || this.surfaceEl.clientHeight;
     return { cols: Math.max(10, Math.floor(w / m.cw)), rows: Math.max(1, Math.floor(h / m.lh)), cw: m.cw, lh: m.lh };
@@ -349,7 +355,7 @@ export class Pane {
     const digits = first !== null && L !== null ? String(first + L.count).length : 0;
     const gutter = (nums ? digits + 1 : 0) + 2;
     const avail = cols - gutter;
-    const width = compose ? Math.min(v.opts.composeWidth || this.app().settings.page_width, avail) : avail;
+    const width = compose ? Math.min(v.opts.composeWidth || this.editor.settings().page_width, avail) : avail;
     const margin = compose ? Math.max(0, Math.floor((avail - width) / 2)) : 0;
     return { cols, rows, gutter, digits, width, margin, nums };
   }
@@ -366,7 +372,7 @@ export class Pane {
     const L = buf.text;
     const lang = buf.language ?? (/\.(md|markdown)$/.test(buf.path ?? "") ? "markdown" : null);
     const sels = v.selections();
-    const s = this.app().settings;
+    const s = this.editor.settings();
     // Fenced blocks in markdown are highlighted in the fence's language.
     const struct = lang === "markdown" && buf.full ? markdownStructure(buf) : null;
     // The language of the fenced block holding line `li` (its opening
@@ -387,14 +393,14 @@ export class Pane {
     // line (the interval index makes that cost what the line has), in order
     // of precedence: overlays, occurrences, diagnostics, selection, then
     // the overlays drawn above the selection.
-    const w = s.highlight_occurrences ? v.selection() ?? this.app().editing.wordAt(buf, v.primary.pos) : null;
+    const w = s.highlight_occurrences ? v.selection() ?? this.editor.wordAt(buf, v.primary.pos) : null;
     const t = w !== null ? buf.textRange(w.start, w.end) : null;
     /** const occ: String | Null */
     const occ = t !== null && t.length >= 2 && !t.includes("\n") ? t : null;
     // The bracket at the cursor and its match, drawn bold in the theme's
     // colour for them (found once per cursor position and text).
     const brackets = s.highlight_brackets
-      ? remember(this.brackets, `${buf.id}:${buf.textGen}:${v.primary.pos}`, () => this.app().editing.bracketPair(buf, v.primary.pos))
+      ? remember(this.brackets, `${buf.id}:${buf.textGen}:${v.primary.pos}`, () => this.editor.bracketPair(buf, v.primary.pos))
       : null;
     // Rainbow brackets: each bracket in the colour of its nesting depth,
     // counted from the start of the file (a buffer held whole), strings
@@ -529,7 +535,7 @@ export class Pane {
     this.rows = rows;
     this.geom = g;
     const { cw, lh } = this.metrics();
-    const s = this.app().settings;
+    const s = this.editor.settings();
     this.gutterEl.style.width = `${g.gutter * cw}px`;
     // Sideways: the widest row on screen bounds the scroll, and a cursor
     // that moved is kept in view (a few columns in from the edge).
@@ -614,7 +620,7 @@ export class Pane {
     if (this.drawn.rulers !== guides) { this.rulersEl.innerHTML = guides; this.drawn.rulers = guides; }
     // Carets: absolutely placed, so moving one never touches the rows.
     let html = "";
-    if (this.app().activePane === this) {
+    if (this.active) {
       for (const c of v.cursors) {
         const at = this.caretXY(c.pos);
         if (at !== null) html += `<div class="caret" style="left:${at.x * cw}px;top:${at.r * lh}px;height:${lh}px"></div>`;
@@ -634,12 +640,12 @@ export class Pane {
 
   finishRender(v, g) {
     this.renderScrollbar(v, g);
-    this.app().syncScroll(this, v);
+    this.editor.syncScroll(this, v);
     if (this.lastWidth.get(v) !== g.width) {
       this.lastWidth.set(v, g.width);
-      this.app().viewEvent("view.resized", v);
+      this.editor.resized(v);
     }
-    this.app().updateStatus();
+    this.editor.updateStatus();
   }
 
   renderScrollbar(v, g) {
@@ -855,7 +861,7 @@ export class Pane {
         if (q == null) break;
         p = q;
       }
-      this.app().editing.place(this, p, extend);
+      this.editor.place(this, p, extend);
       c.goalX = goal;
       return;
     }
@@ -886,7 +892,7 @@ export class Pane {
       left--;
     }
     const p = this.posAt(r, goal);
-    if (p != null) { this.app().editing.place(this, p, extend); c.goalX = goal; }
+    if (p != null) { this.editor.place(this, p, extend); c.goalX = goal; }
   }
 
   // A page up or down: the view scrolls a screen and the cursor keeps its
@@ -911,7 +917,7 @@ export class Pane {
     this.finishRender(v, this.geometry(v));
     const y = (at ? at.y + at.h / 2 : sr.top + sr.height / 2) + dist - shift;
     const p = this.posFromPoint(this.doc.content.getBoundingClientRect().left + goal, y);
-    if (p != null) { this.app().editing.place(this, p, extend); c.goalX = goal; }
+    if (p != null) { this.editor.place(this, p, extend); c.goalX = goal; }
   }
 
   // ---------------------------------------------------------------- mouse
@@ -919,30 +925,30 @@ export class Pane {
   onMouseDown(e) {
     if (e.target === this.scrollbarEl || e.target === this.thumbEl || this.gutterEl.contains(e.target)) return;
     e.preventDefault();
-    this.app().focusPane(this);
+    this.editor.focus(this);
     const v = this.view;
     if (!v) return;
     // A document's fold toggle.
     const fold = e.target.closest?.("[data-fold]");
-    if (fold) { this.app().editing.toggleFoldAt(this, +fold.dataset.fold); return; }
+    if (fold) { this.editor.toggleFold(this, +fold.dataset.fold); return; }
     const toPos = (ev) => this.posFromPoint(ev.clientX, ev.clientY);
     const p = toPos(e);
     if (p == null) return;
     // A right press moves the caret there unless it is in the selection
     // (the context menu acts on it); the menu opens on `contextmenu`.
     if (e.button === 2) {
-      if (!v.selections().some((s) => p >= s.start && p <= s.end)) this.app().editing.place(this, p, false);
+      if (!v.selections().some((s) => p >= s.start && p <= s.end)) this.editor.place(this, p, false);
       return;
     }
     // Alt+drag or a middle-button drag selects a rectangle (a block); an
     // Alt+click without a drag adds a cursor.
     if (e.button === 1 || (e.button === 0 && e.altKey)) { this.blockDrag(e, p); return; }
     if (e.button !== 0) return;
-    this.app().editing.place(this, p, e.shiftKey);
-    if (e.ctrlKey && e.button === 0) { this.app().run("lsp.definition"); return; }
-    if (e.detail === 2) this.app().editing.selectWord(this);
-    if (e.detail === 3) this.app().editing.selectLine(this);
-    const extend = (ev) => { const q = toPos(ev); if (q != null) this.app().editing.place(this, q, true); };
+    this.editor.place(this, p, e.shiftKey);
+    if (e.ctrlKey && e.button === 0) { this.editor.run("lsp.definition"); return; }
+    if (e.detail === 2) this.editor.selectWord(this);
+    if (e.detail === 3) this.editor.selectLine(this);
+    const extend = (ev) => { const q = toPos(ev); if (q != null) this.editor.place(this, q, true); };
     // Held past the top or bottom edge, the view scrolls each frame (faster
     // the farther out) and the selection follows to the edge.
     let last = null, frame = null;
@@ -981,7 +987,7 @@ export class Pane {
       if (!dragged && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
       dragged = true;
       const head = this.cornerFromPoint(ev.clientX, ev.clientY);
-      if (anchor && head) this.app().editing.setBlock(this, anchor, head);
+      if (anchor && head) this.editor.setBlock(this, anchor, head);
     };
     const up = () => {
       window.removeEventListener("mousemove", move);
@@ -994,23 +1000,23 @@ export class Pane {
 
   onGutter(e) {
     e.preventDefault();
-    this.app().focusPane(this);
+    this.editor.focus(this);
     const row = e.target.closest(".row");
-    if (row?.dataset.line != null) this.app().editing.toggleFoldAt(this, +row.dataset.line);
+    if (row?.dataset.line != null) this.editor.toggleFold(this, +row.dataset.line);
   }
 
   onHover(e) {
     const v = this.view;
     if (!v || !v.buf.text) return;
-    this.app().onHover(this, this.posFromPoint(e.clientX, e.clientY), e.clientX, e.clientY);
+    this.editor.hover(this, this.posFromPoint(e.clientX, e.clientY), e.clientX, e.clientY);
   }
 
   onScrollbar(e) {
     e.preventDefault();
-    this.app().scrollDriver = this;
+    this.editor.drive(this);
     const go = (ev) => {
       const r = this.scrollbarEl.getBoundingClientRect();
-      this.app().scrollToFraction(this, Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)));
+      this.editor.scrollTo(this, Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)));
     };
     go(e);
     const up = () => { window.removeEventListener("mousemove", go); window.removeEventListener("mouseup", up); };

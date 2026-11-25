@@ -155,7 +155,7 @@ export class DocView {
     // Writes only from here: the translation and the carets.
     this.content.style.transform = `translateY(${-this.sy}px)`;
     let html = "";
-    if (pane.app().activePane === pane) {
+    if (pane.active) {
       for (const c of last.carets) html += `<div class="caret" style="left:${c.x}px;top:${c.y}px;height:${c.h}px"></div>`;
     }
     if (this.caretsHtml !== html) { this.caretsEl.innerHTML = html; this.caretsHtml = html; }
