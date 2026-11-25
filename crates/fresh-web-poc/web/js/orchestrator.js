@@ -686,12 +686,13 @@ export class Orchestrator {
 
   // ----------------------------------------------------------- machines
 
-  // The machine choices: this machine, the declared ones and (`withAdd`)
-  // "Add…", which declares another.
+  // The machine choices: this machine, the declared ones, the hosts in
+  // ~/.ssh/config (they need no declaring) and (`withAdd`) "Add…", which
+  // declares another.
   machineOptions(withAdd) {
     return [
       { value: "local", label: "This machine" },
-      ...this.machines.map((m) => ({ value: `m:${m.name}`, label: `${m.name} (${hostText(m.host)})` })),
+      ...this.machines.map((m) => ({ value: `m:${m.name}`, label: m.ssh_config ? `${m.name} (~/.ssh/config)` : m.name === hostText(m.host) ? m.name : `${m.name} (${hostText(m.host)})` })),
       ...(withAdd ? [{ value: "add", label: "Add…" }] : []),
     ];
   }
@@ -841,8 +842,8 @@ export class Orchestrator {
       if (error) { f.busy = false; f.error = error; render(); }
     };
     const addMachine = async () => {
-      const name = add.name.trim(), target = add.target.trim();
-      if (!name || !target) { add.error = "A name and a host are needed"; render(); return; }
+      const target = add.target.trim();
+      if (!target) { add.error = "A host is needed"; render(); return; }
       const host = {
         kind: "ssh",
         target: add.port.trim() ? `${target}:${add.port.trim()}` : target,
@@ -853,6 +854,8 @@ export class Orchestrator {
       add.error = "";
       render();
       try {
+        // Unnamed, the machine is called by its host.
+        const name = add.name.trim() || host.target;
         this.machines = (await rpc("machine.add", { name, host })).machines;
         f.machine = `m:${name}`;
         Object.assign(add, { name: "", target: "", port: "", identity: "", options: "" });
@@ -914,11 +917,11 @@ export class Orchestrator {
       f.machine = v;
       browse.shown = false;
       render();
-      if (v === "add") panel.focus("add-name");
+      if (v === "add") panel.focus("add-target");
     };
     const addSection = () => h("col", { class: "orch-add-machine" }, [
-      field("Name", [addInput("name", "how the machine is called here")]),
-      field("SSH host", [addInput("target", "[user@]host"), addInput("port", "port (22)")]),
+      field("SSH host", [addInput("target", "[user@]host, or a Host of your ~/.ssh/config"), addInput("port", "port (22)")]),
+      field("Name", [addInput("name", "optional: the host")]),
       field("Identity", [addInput("identity", "identity file (optional)")]),
       field("Options", [addInput("options", "more ssh options, e.g. -J jump (optional)")]),
       add.error ? h("text", { class: "orch-error" }, [add.error]) : null,
@@ -997,7 +1000,7 @@ export class Orchestrator {
       ]));
     };
     render();
-    panel.focus(f.machine === "add" ? "add-name" : "root");
+    panel.focus(f.machine === "add" ? "add-target" : "root");
   }
 }
 

@@ -195,11 +195,15 @@ Operations:
   subfolders and workspaces follow, a deleted one's move up),
   `agents.scan` (`{host}`: Claude Code and Codex sessions on the host, each
   `{agent, id, cwd, branch, title, mtime, resume}`)
-- Machines the user declared (kept with the registry; this machine is
-  always there and never declared): `machine.list` (`{machines}`, each
-  `{name, host}`; `hello` answers them too), `machine.add` (`{name, host}`:
-  the host is reached first, so one that cannot be is refused; a name
-  already declared is redeclared), `machine.remove` (`{name}`), and
+- Machines (this machine is always there and never declared): the ones
+  the user declared, kept with the registry, then each `Host` alias in
+  `~/.ssh/config` on the server's machine (not a pattern; `Include`s
+  followed), which needs no declaring and is reached by its alias.
+  `machine.list` (`{machines}`, each `{name, host, ssh_config}`; `hello`
+  answers them too), `machine.add` (`{name, host}`: the host is reached
+  first, so one that cannot be is refused; without a name it is called by
+  its host; a name already declared is redeclared), `machine.remove`
+  (`{name}`), and
   `machine.browse` (`{host, path}`: the folders in `path` on that host,
   through its authority, for choosing a workspace's folder; `""`, `~` and
   `~/…` start at the home folder there; answers `{path, parent, home,

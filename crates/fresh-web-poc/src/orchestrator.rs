@@ -89,11 +89,71 @@ pub struct Record {
 }
 
 /// A machine the user declared: a name and how to reach it. This machine
-/// is always there, undeclared.
+/// is always there, undeclared; the hosts in the user's `~/.ssh/config`
+/// are there too (`ssh_config`), without being declared.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Machine {
+    #[serde(default)]
     pub name: String,
     pub host: HostSpec,
+    /// Found in `~/.ssh/config` (not kept in the registry).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ssh_config: bool,
+}
+
+/// The hosts `~/.ssh/config` (on this machine, whose `ssh` reaches them)
+/// names: each `Host` alias that is not a pattern, in order, following
+/// `Include` lines (relative to `~/.ssh`, without wildcards). Each is
+/// reached by its alias, so `ssh` applies what the config says of it.
+pub fn ssh_config_hosts(fs: &Fs, home: &Path) -> Vec<Machine> {
+    fn read(fs: &Fs, path: &Path, home: &Path, depth: usize, out: &mut Vec<String>) {
+        let Ok(bytes) = fs.read_file(workspace::host(path).as_host_path()) else {
+            return;
+        };
+        for line in String::from_utf8_lossy(&bytes).lines() {
+            let line = line.trim();
+            let (key, rest) = line
+                .split_once(|c: char| c.is_whitespace() || c == '=')
+                .unwrap_or((line, ""));
+            let words = rest
+                .trim_start_matches(|c: char| c.is_whitespace() || c == '=')
+                .split_whitespace();
+            match key.to_ascii_lowercase().as_str() {
+                "host" => out.extend(
+                    words
+                        .filter(|w| !w.contains(['*', '?', '!']))
+                        .map(str::to_string),
+                ),
+                "include" if depth < 4 => {
+                    for w in words.filter(|w| !w.contains(['*', '?'])) {
+                        let p = match w.strip_prefix("~/") {
+                            Some(r) => home.join(r),
+                            None if w.starts_with('/') => PathBuf::from(w),
+                            None => home.join(".ssh").join(w),
+                        };
+                        read(fs, &p, home, depth + 1, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut aliases = Vec::new();
+    read(fs, &home.join(".ssh/config"), home, 0, &mut aliases);
+    let mut seen = std::collections::BTreeSet::new();
+    aliases
+        .into_iter()
+        .filter(|a| seen.insert(a.clone()))
+        .map(|alias| Machine {
+            name: alias.clone(),
+            host: HostSpec::Ssh {
+                target: alias,
+                identity: None,
+                options: Vec::new(),
+            },
+            ssh_config: true,
+        })
+        .collect()
 }
 
 /// The registry's file.
@@ -275,8 +335,24 @@ impl Orchestrator {
         self.folders.lock().unwrap().clone()
     }
 
+    /// The machines the user declared, as kept.
     pub fn machines(&self) -> Vec<Machine> {
         self.machines.lock().unwrap().clone()
+    }
+
+    /// Every machine to choose from: the declared ones, then the hosts in
+    /// `~/.ssh/config` not declared under the same name.
+    pub fn all_machines(&self) -> Vec<Machine> {
+        let mut out = self.machines();
+        let fs = authority::Local::new().fs();
+        if let Ok(home) = fs.home_dir() {
+            for m in ssh_config_hosts(&fs, &PathBuf::from(home)) {
+                if !out.iter().any(|d| d.name == m.name) {
+                    out.push(m);
+                }
+            }
+        }
+        out
     }
 
     /// `host`'s authority: this machine's, or a connection made once and
@@ -297,10 +373,15 @@ impl Orchestrator {
 
     /// Declare a machine (it is reached first, so one that cannot be is
     /// refused), or redeclare one of the same name.
-    fn add_machine(&self, machine: Machine) -> Result<Vec<Machine>> {
+    fn add_machine(&self, mut machine: Machine) -> Result<Vec<Machine>> {
+        // Unnamed, a machine is called by its host.
         if machine.name.trim().is_empty() {
-            fail!(BadRequest, "a machine needs a name");
+            machine.name = match &machine.host {
+                HostSpec::Ssh { target, .. } => target.clone(),
+                h => h.label(),
+            };
         }
+        machine.ssh_config = false;
         if machine.host == HostSpec::Local {
             fail!(BadRequest, "this machine is always there");
         }
@@ -312,13 +393,13 @@ impl Orchestrator {
             ms.push(machine);
         }
         self.save();
-        Ok(self.machines())
+        Ok(self.all_machines())
     }
 
     fn remove_machine(&self, name: &str) -> Vec<Machine> {
         self.machines.lock().unwrap().retain(|m| m.name != name);
         self.save();
-        self.machines()
+        self.all_machines()
     }
 
     /// The folders in `path` on `host` (`~` and a path under it start at
@@ -766,11 +847,11 @@ impl Orchestrator {
                     "workspace": session.map(|s| s.hello()),
                     "workspaces": self.list(),
                     "folders": self.folders(),
-                    "machines": self.machines(),
+                    "machines": self.all_machines(),
                 })
             }
             "workspace.list" => json!({ "workspaces": self.list(), "folders": self.folders() }),
-            "machine.list" => json!({ "machines": self.machines() }),
+            "machine.list" => json!({ "machines": self.all_machines() }),
             "machine.add" => {
                 self.known(client)?;
                 let machine: Machine = serde_json::from_value(m.clone())
@@ -1078,6 +1159,40 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         false
+    }
+
+    #[test]
+    fn ssh_config_hosts_are_its_aliases() {
+        let home = tempfile::tempdir().unwrap();
+        let ssh = home.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        std::fs::write(
+            ssh.join("config"),
+            "# mine\nHost devbox build-*\n  HostName 10.0.0.5\n  User me\nHost *\n  ServerAliveInterval 30\n\
+             Include extra.conf\nhost=gpu !nothere\nHost devbox\n",
+        )
+        .unwrap();
+        std::fs::write(ssh.join("extra.conf"), "Host jump\n  Port 2222\n").unwrap();
+        let fs = authority::Local::new().fs();
+        let names: Vec<String> = ssh_config_hosts(&fs, home.path())
+            .into_iter()
+            .map(|m| {
+                assert!(m.ssh_config);
+                assert_eq!(
+                    m.host,
+                    HostSpec::Ssh {
+                        target: m.name.clone(),
+                        identity: None,
+                        options: Vec::new()
+                    }
+                );
+                m.name
+            })
+            .collect();
+        assert_eq!(names, ["devbox", "jump", "gpu"]);
+        // No config: no hosts.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(ssh_config_hosts(&fs, empty.path()).is_empty());
     }
 
     #[test]
