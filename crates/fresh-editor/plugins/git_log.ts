@@ -725,8 +725,21 @@ function git_log_cleanup(): void {
     editor.closeBuffer(bufferId);
   }
   state.commitBuffers.clear();
-  // The buffer-group's `close` will tear down its own panel buffers
-  // (toolbar/log/initialDetail) too, which implicitly drops the widget
+  // The group closes the buffers its panels show *now*. Once a commit has
+  // been shown the detail panel holds that commit's buffer, so the initial
+  // virtual detail buffer is no longer the group's, and nothing else
+  // closed it: every session that showed a commit left a hidden
+  // `*detail*` buffer behind, whether it ended with `q` or by closing the
+  // tab. Still in the panel (no commit shown yet), it is the group's to
+  // close.
+  if (
+    state.initialDetailBufferId !== null &&
+    state.detailBufferId !== state.initialDetailBufferId
+  ) {
+    editor.closeBuffer(state.initialDetailBufferId);
+  }
+  // The buffer-group's `close` will tear down the buffers still in its
+  // panels (toolbar/log) too, which implicitly drops the widget
   // panels rendering into them. We still null out the handles so any
   // stray `renderToolbar()` / `renderLog()` call post-cleanup is a
   // no-op.
