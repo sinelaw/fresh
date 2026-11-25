@@ -37,6 +37,17 @@ import { asCommand } from "./app.js";
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
+// What a New Workspace folder is, as the machine's git says: being asked
+// about, not there, a folder outside git, or in a git work tree (its top).
+/** type Where = {kind: "asking"} | {kind: "missing"} | {kind: "plain"} | {kind: "repo", toplevel: String} */
+/** const ASKING: Where */
+const ASKING = { kind: "asking" };
+/** function whereOf(r: {repo: Boolean, folder: Boolean, toplevel: String}) => Where */
+function whereOf(r) {
+  if (!r.folder) return { kind: "missing" };
+  return r.repo ? { kind: "repo", toplevel: r.toplevel } : { kind: "plain" };
+}
+
 // A host as people read it: an SSH target, a container, the agent.
 const hostText = (host) => (host.kind === "ssh" ? host.target : host.kind === "container" ? `container ${host.id}` : host.kind);
 
@@ -116,12 +127,11 @@ export class Orchestrator {
     // From an agent's terminal too.
     this.app().terminalKeys.add("M-o").add("C-M-o");
     document.querySelector("#ws-name")?.addEventListener("click", () => this.toggleDock());
-    const look = () => this.seeIfLooked();
-    window.addEventListener("focus", look);
-    document.addEventListener("visibilitychange", look);
+    window.addEventListener("focus", (_e) => { this.seeIfLooked(); });
+    document.addEventListener("visibilitychange", (_e) => { this.seeIfLooked(); });
     if (this.prefs.dock || !this.current) this.openDock();
     this.renderBeacon();
-    look();
+    this.seeIfLooked();
   }
 
   byId(id) { return this.list.find((w) => w.id === id) || null; }
@@ -725,7 +735,7 @@ export class Orchestrator {
       if (!x) return;
       panel.close();
       this.newWorkspace({
-        root: x.cwd, machine: st.machine, git: "folder", agent: "custom", custom: x.resume, resume: x.resume,
+        root: x.cwd, machine: st.machine, git: "folder", agent: "terminal", prompt: x.resume, resume: x.resume,
         name: x.title ? x.title.slice(0, 40) : "",
       });
     };
@@ -802,15 +812,18 @@ export class Orchestrator {
   // command, and its name).
   newWorkspace(preset) {
     const f = {
-      agent: this.prefs.agent, custom: this.prefs.custom, prompt: "",
+      // A command of one's own is the terminal's (the prompt box is it).
+      agent: this.prefs.agent === "custom" ? "terminal" : this.prefs.agent, prompt: "",
       machine: this.machineChoice(this.prefs.machine), root: this.prefs.recent[0] || this.app().root || "",
       git: this.prefs.git || "worktree", name: "",
       resume: "", // an imported session's: taken up again after a restart
       busy: false, error: "",
       ...(preset || {}),
     };
-    // What git says of the folder: null while asking.
-    const git = { repo: null, toplevel: "", timer: 0, asked: "" };
+    // What the folder is (Where), and the question last asked about it.
+    /** let where: Where */
+    let where = ASKING;
+    let whereTimer = 0, asked = "";
     // Declaring a machine (the choice "Add…"): its SSH details, and the
     // choice to go back to on Cancel.
     const add = { back: f.machine, name: "", target: "", port: "", identity: "", options: "", busy: false, error: "" };
@@ -819,20 +832,23 @@ export class Orchestrator {
     // path, absolute or from ~) moves `base` there.
     const browse = { shown: false, base: "", text: "", dirs: new Map(), open: new Set(), sel: "", error: "", timer: 0 };
     const panel = this.app().ui.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
-    const worktree = () => f.git === "worktree" && git.repo === true;
+    const worktree = () => f.git === "worktree" && where.kind === "repo";
     const go = async (background) => {
-      if (f.busy || f.machine === "add" || !f.root.trim()) return;
+      if (f.busy || f.machine === "add" || !f.root.trim() || where.kind === "missing") return;
       const host = this.hostOf(f.machine);
-      const agent = f.agent === "terminal" ? null : this.commandFor(f.agent, true, f.prompt, f.custom);
+      // The terminal runs the prompt box's command (none: a shell); an
+      // agent gets the prompt.
+      const command = f.prompt.trim();
+      const agent = f.agent === "terminal" ? (command || null) : this.commandFor(f.agent, true, f.prompt, "");
       const spec = {
         root: f.root.trim(), host, trusted: true, agent,
-        agent_resume: agent ? this.resumeFor(f.agent, true, f.custom === f.resume ? f.resume : "") : null,
+        agent_resume: f.agent === "terminal" ? (f.resume && command === f.resume ? f.resume : null) : this.resumeFor(f.agent, true, ""),
         worktree: worktree() ? { branch: null, base: null } : null,
         name: f.name.trim() || null, folder: "",
       };
       const root = f.root.trim();
       Object.assign(this.prefs, {
-        agent: f.agent, custom: f.custom, machine: f.machine, git: f.git,
+        agent: f.agent, machine: f.machine, git: f.git,
         recent: [root, ...this.prefs.recent.filter((x) => x !== root)].slice(0, 8),
       });
       this.savePrefs();
@@ -846,20 +862,20 @@ export class Orchestrator {
     // Ask git (on the chosen machine) whether the folder is in a work tree,
     // a moment after the folder or the machine last changed.
     const checkGit = () => {
-      clearTimeout(git.timer);
-      git.timer = setTimeout(async () => {
+      clearTimeout(whereTimer);
+      whereTimer = setTimeout(async () => {
         const path = f.root.trim();
         const key = `${f.machine}\n${path}`;
-        git.asked = key;
-        git.repo = null;
+        asked = key;
+        where = ASKING;
         render();
-        let repo = false, toplevel = "";
+        /** let next: Where */
+        let next = { kind: "missing" };
         if (path && f.machine !== "add") {
-          try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); repo = r.repo; toplevel = r.toplevel || ""; } catch {}
+          try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); next = whereOf({ repo: r.repo, folder: r.folder, toplevel: r.toplevel || "" }); } catch {}
         }
-        if (git.asked !== key) return;
-        git.repo = repo;
-        git.toplevel = toplevel;
+        if (asked !== key) return;
+        where = next;
         render();
       }, 250);
     };
@@ -905,16 +921,14 @@ export class Orchestrator {
     };
     // The folders used last, in a menu under the ▾ beside the folder box.
     const recentMenu = (e) => {
-      const r = e.currentTarget.getBoundingClientRect();
       const items = this.prefs.recent.length
         ? this.prefs.recent.map((x) => ({ label: x, run: () => { setRoot(x); panel.focus("root"); } }))
         : [{ label: "No recent folders", disabled: true, run: () => {} }];
-      this.app().ui.menu(items, { x: r.left, y: r.bottom });
+      this.app().ui.dropdown(items, e.currentTarget);
     };
     // Launch in the background, from the ▾ beside Launch.
     const launchMenu = (e) => {
-      const r = e.currentTarget.getBoundingClientRect();
-      this.app().ui.menu([{ label: "Launch in Background", keys: "Alt+Enter", run: () => { go(true); } }], { x: r.left, y: r.bottom });
+      this.app().ui.dropdown([{ label: "Launch in Background", keys: "Alt+Enter", run: () => { go(true); } }], e.currentTarget);
     };
     // The browser's rows: `base`'s parent, then its folders as a tree.
     const browseRows = () => {
@@ -1005,39 +1019,41 @@ export class Orchestrator {
     const render = () => {
       const agent = agentById(f.agent);
       const adding = f.machine === "add";
+      const w = where;
+      const missing = w.kind === "missing" && f.root.trim() !== "";
       panel.render(h("col", { class: "orch-form orch-prompt-form" }, [
         h("textarea", {
           key: "prompt", rows: 6, value: f.prompt,
-          placeholder: agent ? `What should ${agent.label} do? (optional)` : f.agent === "custom" ? "Runs the command below (no prompt)" : "A plain terminal (no prompt)",
+          placeholder: agent ? `What should ${agent.label} do? (optional)` : "Command to run in the terminal… (none: a shell)",
           onInput: (v) => { f.prompt = v; },
         }),
         h("row", { class: "orch-opts" }, [
-          labelled("Agent", h("select", { key: "agent", value: f.agent, options: AGENT_CHOICES, onChange: (v) => { f.agent = v; render(); } })),
+          labelled("Agent", h("select", { key: "agent", value: f.agent, options: AGENT_CHOICES.filter((c) => c.value !== "custom"), onChange: (v) => { f.agent = v; render(); } })),
           labelled("Machine", h("select", { key: "machine", value: f.machine, options: this.machineOptions(true), onChange: machineChanged })),
           adding ? null : h("checkbox", {
-            key: "worktree", checked: worktree(), disabled: git.repo !== true,
-            title: git.repo === null ? "Asking git about the folder…" : git.repo ? `A new git worktree of ${git.toplevel}, on a new branch` : "The folder is not in a git work tree",
+            key: "worktree", checked: worktree(), disabled: w.kind !== "repo",
+            title: w.kind === "repo" ? `A new git worktree of ${w.toplevel}, on a new branch` : w.kind === "asking" ? "Asking git about the folder…" : w.kind === "missing" ? "No such folder" : "The folder is not in a git work tree",
             onChange: (v) => { f.git = v ? "worktree" : "folder"; render(); },
           }, ["New worktree"]),
         ]),
-        f.agent === "custom" ? field("Command", [input("custom", "a command line, run in your login shell in the workspace")]) : null,
         adding ? addSection() : null,
         adding ? null : field("Folder", [
-          h("row", { class: "orch-combo" }, [
+          h("row", { class: "orch-combo ui-joined" }, [
             h("input", { key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => go(false), onKey: launchKey }),
             h("button", { class: "orch-combo-button", title: "Recent folders", onClick: recentMenu }, ["▾"]),
           ]),
           h("button", { onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, ["Browse…"]),
         ]),
+        missing ? field("", [h("text", { class: "orch-error" }, [`No folder ${f.root.trim()} on ${f.machine === "local" ? "this machine" : f.machine.slice(2)}`])]) : null,
         !adding && browse.shown ? browser() : null,
         f.error ? h("text", { class: "orch-error" }, [f.error]) : null,
         h("row", {}, [
           h("text", { dim: true }, [f.busy ? "Opening…" : "Ctrl+Enter launches · Alt+Enter in the background"]),
           h("spacer", {}),
           h("button", { onClick: () => panel.close() }, ["Cancel"]),
-          h("row", { class: "orch-split-button" }, [
-            h("button", { primary: true, disabled: f.busy || adding, onClick: () => go(false) }, ["Launch"]),
-            h("button", { primary: true, disabled: f.busy || adding, title: "More ways to launch", onClick: launchMenu }, ["▾"]),
+          h("row", { class: "orch-split-button ui-joined" }, [
+            h("button", { primary: true, disabled: f.busy || adding || missing, onClick: () => go(false) }, ["Launch"]),
+            h("button", { primary: true, disabled: f.busy || adding || missing, title: "More ways to launch", onClick: launchMenu }, ["▾"]),
           ]),
         ]),
       ]));

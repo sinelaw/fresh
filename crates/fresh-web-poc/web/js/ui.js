@@ -67,6 +67,25 @@ export class UIKit {
     m.openAt(at.x, at.y);
   }
 
+  // A menu dropping from `anchor` (a ▾, or the joined group it is in):
+  // under it, at least as wide, and drawn as one shape with it while open.
+  dropdown(items, anchor) {
+    const group = anchor.closest(".ui-joined") || anchor;
+    if (this.context) this.context.close();
+    const m = new Menu(items, { app: this.app, onClose: () => { group.classList.remove("open"); if (this.context === m) this.context = null; } }).build();
+    this.context = m;
+    m.el.classList.add("attached");
+    const r = group.getBoundingClientRect();
+    m.el.style.minWidth = `${r.width}px`;
+    group.classList.add("open");
+    // A group in the window's right half drops its menu ending at its right edge.
+    m.openBelow(r, r.left + r.width / 2 > innerWidth / 2);
+    // Where the menu is wider than the group, the corner it overhangs is its own.
+    const mr = m.el.getBoundingClientRect();
+    if (mr.left < r.left - 1) m.el.classList.add("overhang-left");
+    if (mr.right > r.right + 1) m.el.classList.add("overhang-right");
+  }
+
   dockShow(p) {
     this.activeDock = p;
     for (const x of this.panels.values()) if (x.place === "bottom") x.el.style.display = x === p ? "flex" : "none";

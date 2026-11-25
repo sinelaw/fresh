@@ -313,11 +313,20 @@ body {
 .orch-prompt-form > .ui-textarea { min-height: 7em; }
 .orch-opts { flex-wrap: wrap; gap: 14px; align-items: center; }
 .orch-opt { gap: 6px; align-items: center; }
-.orch-split-button { gap: 0; }
-.orch-split-button > .ui-button + .ui-button { padding: 0 7px; margin-left: 1px; }
+.orch-split-button > .ui-button + .ui-button { padding: 0 8px; border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+/* A joined group (a box and its ▾, a button and its ▾): one shape, its
+   corners rounded (as the skin rounds them) only on the outside; with its
+   dropdown open, it and the menu under it are one shape too. */
+.ui-row.ui-joined { gap: 0; align-items: stretch; }
+body .ui-row.ui-joined > :not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+body .ui-row.ui-joined > :not(:first-child) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+body .ui-row.ui-joined.open > * { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+body .ctxmenu.attached { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -1px; }
+body .ctxmenu.attached.overhang-left { border-top-left-radius: var(--attached-radius, 0); }
+body .ctxmenu.attached.overhang-right { border-top-right-radius: var(--attached-radius, 0); }
 /* An editable box with a ▾ for its recent values, joined to it. */
 .orch-combo { flex: 1; gap: 0; min-width: 0; align-items: stretch; }
-.orch-combo > .ui-input { border-right: 0; }
+body .orch-combo > .ui-input { border-right: 0; }
 .orch-combo > .orch-combo-button { padding: 0 8px; border: 1px solid var(--border); background: var(--control-bg); color: var(--control-fg); }
 .orch-combo:focus-within > .orch-combo-button { border-color: var(--accent); }
 .orch-label { width: 90px; flex-shrink: 0; color: var(--muted); }

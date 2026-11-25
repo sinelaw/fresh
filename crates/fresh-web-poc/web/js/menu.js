@@ -169,6 +169,16 @@ export class Menu {
     this.listen();
   }
 
+  // Show it dropping from `rect` (a dropdown's control): under it, from
+  // its left edge, or ending at its right edge when `fromRight` or when it
+  // would cross the window's.
+  openBelow(rect, fromRight) {
+    document.body.appendChild(this.el);
+    place(this.el, rect.left, rect.bottom, rect.right);
+    if (fromRight) this.el.style.left = `${Math.max(4, rect.right - this.el.getBoundingClientRect().width)}px`;
+    this.listen();
+  }
+
   listen() {
     this.el.focus({ preventScroll: true });
     this.away = (e) => {

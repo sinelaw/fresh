@@ -9,3 +9,9 @@
  * } */
 /** const EventSource: new (url: String) => EventSource */
 const EventSource;
+
+// The window's size in CSS pixels.
+/** const innerWidth: Number */
+const innerWidth;
+/** const innerHeight: Number */
+const innerHeight;

@@ -206,3 +206,4 @@
 .skin-winamp *::-webkit-scrollbar { width: 12px; height: 12px; background: repeating-linear-gradient(90deg, #241610 0 1px, #140c07 1px 2px); }
 .skin-winamp *::-webkit-scrollbar-thumb { background: var(--wa-plate-brush); border-radius: 0; box-shadow: var(--wa-out); }
 .skin-winamp *::-webkit-scrollbar-corner { background: #140c07; }
+.skin-winamp .ctxmenu.attached { --attached-radius: 3px; }

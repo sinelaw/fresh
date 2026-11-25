@@ -210,6 +210,14 @@
 .skin-bridge .ui-button.primary { background: var(--br-orange); color: #000; }
 .skin-bridge :is(.ui-input, .ui-select) { background: #000; color: var(--br-text); border: 2px solid var(--br-lav); border-left-width: 6px;
   border-radius: 0 10px 10px 0; }
+/* A box's ▾ continues its frame; a dropdown under a box or a button is
+   framed as it is, the frame going round both. */
+.skin-bridge .orch-combo > .orch-combo-button { background: #000; color: var(--br-lav); border: 2px solid var(--br-lav); border-left: 0; padding: 0 10px; }
+.skin-bridge .ui-joined.open > .orch-combo-button, .skin-bridge .ui-joined.open > .ui-input { border-bottom-color: var(--br-dim); }
+.skin-bridge :is(#popup, .ctxmenu).attached { border: 2px solid var(--br-lav); border-left-width: 6px; border-top: 0;
+  border-radius: 0 0 10px 10px; padding: 2px 0 6px; }
+.skin-bridge .ctxmenu.attached { --attached-radius: 10px; }
+.skin-bridge .ctxmenu.attached.overhang-left { border-top: 2px solid var(--br-lav); }
 .skin-bridge .ui-toggle.on { color: #000; background: var(--br-orange); border-color: var(--br-orange); border-radius: 999px; }
 .skin-bridge .ui-badge { background: var(--br-lav); color: #000; }
 

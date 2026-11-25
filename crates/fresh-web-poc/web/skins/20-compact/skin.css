@@ -73,3 +73,4 @@
 .skin-compact .scrollbar { width: 8px; background: transparent; box-shadow: inset 1px 0 0 var(--hairline); }
 .skin-compact .thumb { left: 2px; right: 1px; border-radius: 0; background: color-mix(in srgb, var(--fg) 22%, transparent); }
 .skin-compact .thumb:hover { background: var(--accent); }
+.skin-compact .ctxmenu.attached { --attached-radius: 4px; }
