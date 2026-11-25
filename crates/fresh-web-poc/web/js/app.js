@@ -715,8 +715,8 @@ export class App {
   // The buffer for a file, opening its document without showing it.
   async loadFile(path) {
     const abs = path.startsWith("/") ? path : `${this.root}/${path}`;
-    let b = [...this.buffers.values()].find((x) => x.path === abs);
-    if (b) return b;
+    const open = [...this.buffers.values()].find((x) => x.path === abs);
+    if (open) return open;
     return this.adoptDoc(await rpc("doc.open", { path: abs }));
   }
   // The buffer for an untitled document the server keeps (the page was
@@ -733,9 +733,9 @@ export class App {
   }
   // The buffer of an opened document ({doc, path, ...} from the server).
   async adoptDoc(info) {
-    let b = this.docs.get(info.doc);
-    if (b) return b;
-    b = fileBuffer(info);
+    const known = this.docs.get(info.doc);
+    if (known) return known;
+    const b = fileBuffer(info);
     this.buffers.set(b.id, b);
     this.docs.set(b.doc, b);
     this.watchBuffer(b);

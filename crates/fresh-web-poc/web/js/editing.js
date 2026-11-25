@@ -80,6 +80,7 @@ const TAB = 4;
 
 // The screen column of UTF-16 index `idx` in `line` (tabs to the next stop,
 // wide characters two columns), and the index at or before column `col`.
+/** function colOf(line: String, idx: Number) => Number */
 function colOf(line, idx) {
   let c = 0;
   for (let i = 0; i < idx && i < line.length; i++) {
@@ -89,6 +90,7 @@ function colOf(line, idx) {
   }
   return c;
 }
+/** function idxAt(line: String, col: Number) => Number */
 function idxAt(line, col) {
   let c = 0, i = 0;
   while (i < line.length) {
