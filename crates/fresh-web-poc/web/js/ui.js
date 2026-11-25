@@ -40,9 +40,9 @@ export class UIKit {
     this.context = null; // the open context menu
   }
 
-  // place: "bottom" | "sidebar" | "left" (a column before the sidebar) |
-  // "right" | "bar" | "dialog"
-  panel({ id, title, place = "bottom", onClose }) {
+  // A PanelOptions (types/fresh.d.js): place "bottom" | "sidebar" | "left"
+  // (a column before the sidebar) | "right" | "bar" | "dialog".
+  panel({ id, title, place, onClose }) {
     let p = this.panels.get(id);
     if (p) { p.show(); return p; }
     p = new Panel(this, id, title, place, onClose);

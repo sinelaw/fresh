@@ -607,7 +607,7 @@ export class Orchestrator {
   // Working, Parked. Board: Backlog, Needs me, Working, Review. Tab or 1–2
   // switch the lens, Enter opens, n goes to the next one that needs you.
   workboard() {
-    const panel = this.app.ui.panel({ id: "workboard", title: "Workboard", place: "dialog" });
+    const panel = this.app.ui.panel({ id: "workboard", title: "Workboard", place: "dialog", onClose: null });
     // Where each workspace goes, from its state; idle with unsaved files
     // is work to review.
     const column = (w) => {
@@ -692,7 +692,7 @@ export class Orchestrator {
   // resume it in its folder.
   importSessions() {
     const st = { host: this.prefs.host || "local", target: this.prefs.target || "", sessions: null, error: "", busy: false };
-    const panel = this.app.ui.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog" });
+    const panel = this.app.ui.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog", onClose: null });
     const scan = async () => {
       const host = { kind: st.host };
       if (st.host === "ssh") host.target = st.target.trim();
@@ -791,7 +791,7 @@ export class Orchestrator {
       busy: false, error: "",
       ...(preset || {}),
     };
-    const panel = this.app.ui.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog" });
+    const panel = this.app.ui.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
     const go = async (background) => {
       if (f.busy || !f.root.trim()) return;
       const host = { kind: f.host };

@@ -142,6 +142,7 @@ export function activate(fresh) {
   fresh.commands.register("theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key) });
   fresh.commands.register("theme.select", {
     title: "Select Theme…",
+    hidden: false,
     run: async () => {
       const themes = await fresh.host.themes();
       const before = current;

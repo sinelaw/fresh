@@ -480,12 +480,13 @@ class FileSource {
 
 // ---------------------------------------------------------------- virtual
 
-// A buffer local to this client, of `entries` (see `setEntries`).
-export function virtualBuffer(name, entries, { mode = null, readOnly = false } = {}) {
+// A buffer local to this client, of `entries` (Entry[], see `setEntries`):
+// `mode` is the plugin mode whose keys apply in it (or null).
+export function virtualBuffer(name, entries, mode, readOnly) {
   const b = new Buffer(new VirtualSource());
   b.name = name;
   b.mode = mode;
-  b.readOnly = !!readOnly;
+  b.readOnly = readOnly;
   b.setEntries(entries);
   return b;
 }
@@ -504,8 +505,8 @@ class VirtualSource {
     this.ranges = [];
     for (const e of entries) {
       const s = byteLen(text);
-      text += e.text || "";
-      this.ranges.push({ start: s, end: byteLen(text), props: e.props || {}, style: e.style });
+      text += e.text;
+      this.ranges.push({ start: s, end: byteLen(text), props: e.props, style: e.style });
     }
     buf.len = byteLen(text);
     buf.text = new Lines(0, text, true, true, 0);

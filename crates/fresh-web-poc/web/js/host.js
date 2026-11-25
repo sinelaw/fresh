@@ -2,12 +2,12 @@
 // `activate(fresh)`; the client's own features (search, git, LSP panels,
 // markdown compose, the explorer...) are written against the same API.
 //
-//   fresh.commands.register("git.blame", { title: "Git: Toggle Blame", run })
+//   fresh.commands.register("git.blame", { title: "Git: Toggle Blame", hidden: false, run })
 //   fresh.keys.bind("C-S-g", "git.log")
 //   fresh.events.on("buffer.changed", ({ buffer, ops }) => ...)
 //   const deco = buffer.decorations("compose")   // this plugin's set
 //   deco.conceal(s, e, { text: "•", style, reveal: { start, end }, when: "always" })
-//   fresh.ui.panel({ id, title, place: "bottom" }).render(h("list", {...}))
+//   fresh.ui.panel({ id, title, place: "bottom", onClose: null }).render(h("list", {...}))
 //   await fresh.host.run("git", ["log", "--oneline"])
 //
 // Events: "buffer.opened", "buffer.closed", "buffer.changed" ({buffer, ops,
@@ -113,11 +113,12 @@ class ViewHandle {
   // {mode: "source"|"compose", composeWidth, wrap, lineNumbers}
   setOptions(o) { Object.assign(this.v.opts, o); if (o.mode) this.v.mode = o.mode; this.app.renderBuffer(this.v.buf.id); }
   // Both resolve once the text there is loaded and the view shows it.
-  setCursor(pos, { reveal = true, center = false } = {}) { return this.app.moveTo(this.v, pos, { reveal, center }); }
+  // (`o`: CursorOptions, types/fresh.d.js.)
+  setCursor(pos, o) { return this.app.moveTo(this.v, pos, { center: o.center, extend: false, history: false }); }
   // Select [start, end), the caret at `end`.
-  async select(start, end, { center = false } = {}) {
-    await this.app.moveTo(this.v, start);
-    await this.app.moveTo(this.v, end, { extend: true, center });
+  async select(start, end, o) {
+    await this.app.moveTo(this.v, start, { center: false, extend: false, history: false });
+    await this.app.moveTo(this.v, end, { center: o.center, extend: true, history: false });
   }
   // Columns of text the view shows across (its own width).
   get width() { return this.v.pane.geometry(this.v).width; }
@@ -169,9 +170,10 @@ export class Host {
       // Remember a change a plugin made to `settings` (in the browser) and redraw.
       saveSettings: () => app.saveSettings(),
       commands: {
-        register: (id, spec) => app.commands.set(id, { ...spec, source: name }),
+        // `spec`: {title, hidden, run}; a hidden command is left out of the palette.
+        register: (id, spec) => app.commands.set(id, { title: spec.title, run: spec.run, source: name, hidden: spec.hidden }),
         run: (id, arg) => app.run(id, arg),
-        all: () => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: !!c.hidden })),
+        all: () => [...app.commands].map(([id, c]) => ({ id, title: c.title, source: c.source, hidden: c.hidden })),
       },
       keys: {
         bind: (key, command) => app.bindKey(key, command),
@@ -196,12 +198,13 @@ export class Host {
         active: () => host.buffer(app.view()?.buf, name),
         all: () => [...app.buffers.values()].map((b) => host.buffer(b, name)),
         byPath: (p) => host.buffer([...app.buffers.values()].find((b) => b.path === p), name),
+        // `at`: OpenOptions (types/fresh.d.js).
         open: async (path, at) => { const v = await app.openFile(path, at); return v ? host.buffer(v.buf, name) : null; },
         // The buffer for a file, without showing it.
         load: async (path) => host.buffer(await app.loadFile(path), name),
-        // {name, entries: [{text, props, style}], mode, readOnly, place: "tab"|"split"|"right"}
+        // A VirtualOptions (types/fresh.d.js): {name, entries: [{text, props, style}], mode, readOnly, language, keep, place, lineNumbers}
         createVirtual: (o) => host.buffer(app.createVirtual(o), name),
-        show: (buffer, place) => app.showBuffer(buffer.b, place),
+        show: (buffer, place) => app.showBuffer(buffer.b, place, { preview: null, focus: true }),
         close: (buffer) => app.closeBuffer(buffer.b),
       },
       views: {
@@ -219,6 +222,7 @@ export class Host {
       // Keys for a buffer kind: fresh.modes.define("git-log", { Enter: fn, q: fn })
       modes: { define: (mode, keys) => app.modes.set(mode, keys) },
       ui: {
+        // A PanelOptions (types/fresh.d.js).
         panel: (o) => app.ui.panel(o),
         // A context menu: items [{label, run}] (null: separator) at {x, y}.
         menu: (items, at) => app.ui.menu(items, at),

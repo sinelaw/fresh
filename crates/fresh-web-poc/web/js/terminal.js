@@ -38,6 +38,14 @@ class Term {
     this.id = id;
     this.end = null; // stream offset written so far; null until attached
     this.queue = []; // chunks that arrived before the replay
+    // What it is (the server says when it is attached): its name, whether
+    // it runs an agent's command, the agent's state; the title its program
+    // set; whether it has exited.
+    this.name = "";
+    this.agent = false;
+    this.state = "";
+    this.title = "";
+    this.done = false;
     this.el = document.createElement("div");
     this.el.className = "xterm-host";
     panel.screens.appendChild(this.el);

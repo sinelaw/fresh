@@ -61,7 +61,8 @@ export function activate(fresh) {
   };
   fresh.commands.register("keys.editor", {
     title: "Keybindings: Open Editor",
-    run: () => { panel = fresh.ui.panel({ id: "keys", title: "Keybindings", place: "dialog" }); render(); panel.focus("q"); },
+    hidden: false,
+    run: () => { panel = fresh.ui.panel({ id: "keys", title: "Keybindings", place: "dialog", onClose: null }); render(); panel.focus("q"); },
   });
   fresh.keys.bind("C-M-k", "keys.editor");
 }

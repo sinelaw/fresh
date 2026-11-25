@@ -73,6 +73,45 @@
 
 /** type GutterOptions = {glyph: String, color: Color, title: String} */
 
+// ---------------------------------------------------------------- navigation
+
+// Where a file opens (`fresh.buffers.open`): at `line` (1-based; null: where
+// its view is) and `column` (UTF-16, 1-based), in `place` ("tab", "split"
+// or "right"), as the split's preview tab (`preview` true), in a tab of its
+// own (false) or as it is shown already (null); `focus: false` leaves the
+// keyboard where it is (a list previewing what it selects).
+/** type OpenOptions = {line: Number | Null, column: Number, place: String, preview: Boolean | Null, focus: Boolean} */
+
+// A cursor moved (`setCursor`, `select`): `center` scrolls it to the middle.
+/** type CursorOptions = {center: Boolean} */
+
+// ---------------------------------------------------------------- panels
+
+// A panel (`fresh.ui.panel`) in `place`: "bottom" (the dock), "sidebar",
+// "left" (a column before the sidebar), "right", "bar" (above the editor)
+// or "dialog"; `onClose` runs when it is closed.
+/** type PanelOptions = {id: String, title: String, place: String, onClose: (() => Undefined) | Null} */
+
+// ---------------------------------------------------------------- buffers
+
+// A piece of a virtual buffer's text: `props` are the plugin's own (read
+// back with `propsAt`), `style` overlays it.
+/** type Entry = {text: String, props: Dict<String>, style: Style | Null} */
+
+// A virtual buffer (`fresh.buffers.createVirtual`): `mode` names the keys
+// that apply in it (`fresh.modes.define`), `keep` keeps it while no view
+// shows it, `place` shows it ("tab", "split" or "right"; null: not shown).
+/** type VirtualOptions = {
+ *   name: String,
+ *   entries: Entry[],
+ *   mode: String | Null,
+ *   readOnly: Boolean,
+ *   language: String | Null,
+ *   keep: Boolean,
+ *   place: String | Null,
+ *   lineNumbers: Boolean,
+ * } */
+
 // ---------------------------------------------------------------- protocol
 
 // A document as the server describes it (`doc.open`, `doc.saved`).

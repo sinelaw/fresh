@@ -17,6 +17,7 @@
 // each).
 
 // An inlay hint.
+/** const HINT: Style */
 const HINT = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
 
 export function activate(fresh) {
@@ -43,7 +44,9 @@ export function activate(fresh) {
   const loc = (l) => ({ path: pathOf(l.uri || l.targetUri), range: l.range || l.targetSelectionRange });
 
   // `how` as for `fresh.buffers.open` ({preview, focus}).
-  const goto = (path, range, how = {}) => fresh.buffers.open(path, { line: range.start.line + 1, column: range.start.character + 1, ...how });
+  // Open a location: `preview` as for OpenOptions (a list's selection
+  // previews it, the keyboard staying in the list).
+  const goto = (path, range, preview) => fresh.buffers.open(path, { line: range.start.line + 1, column: range.start.character + 1, place: "tab", preview, focus: preview !== true });
 
   // ---------------------------------------------------------------- navigation
 
@@ -52,8 +55,8 @@ export function activate(fresh) {
     if (!v) return;
     const r = asList(await ask(v, "textDocument/definition")).map(loc);
     if (!r.length) return fresh.ui.message("No definition found");
-    if (r.length === 1) return goto(r[0].path, r[0].range);
-    fresh.ui.pick({ title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range) });
+    if (r.length === 1) return goto(r[0].path, r[0].range, null);
+    fresh.ui.pick({ title: "Definitions", items: r.map((l) => ({ label: `${rel(l.path)}:${l.range.start.line + 1}`, value: l })), onAccept: (it) => goto(it.value.path, it.value.range, null) });
   };
 
   let refsPanel = null;
@@ -75,15 +78,15 @@ export function activate(fresh) {
       if (l.path !== last) { items.push({ header: true, path: l.path }); last = l.path; }
       items.push({ ...l, text: (texts.get(l.path)[l.range.start.line] || "").trim() });
     }
-    refsPanel = fresh.ui.panel({ id: "references", title: `References (${r.length})`, place: "bottom" });
+    refsPanel = fresh.ui.panel({ id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
     refsPanel.render(h("list", {
       key: "refs",
       items,
       render: (it) => it.header ? h("text", { bold: true }, [rel(it.path)]) : h("row", {}, [h("text", { dim: true }, [`  ${it.range.start.line + 1}:${it.range.start.character + 1}`]), h("text", { mono: true }, [it.text])]),
       // Selected, a reference shows in the preview tab (the keyboard stays
       // in the list); Enter or a double-click opens it for good.
-      onSelect: (it) => !it.header && goto(it.path, it.range, { preview: true, focus: false }),
-      onActivate: (it) => !it.header && goto(it.path, it.range, { preview: false }),
+      onSelect: (it) => !it.header && goto(it.path, it.range, true),
+      onActivate: (it) => !it.header && goto(it.path, it.range, false),
     }));
     refsPanel.focus("refs");
   };
@@ -103,8 +106,8 @@ export function activate(fresh) {
       const walk = (list, path) => {
         for (const s of list) {
           const range = s.selectionRange || s.location?.range || s.range;
-          const go = (o) => { const p = fresh.lsp.offset(v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true, ...o }); };
-          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [KINDS[s.kind], path || s.containerName].filter(Boolean).join(" · "), run: () => go({}), preview: () => go({}) });
+          const go = () => { const p = fresh.lsp.offset(v.buffer, range.start.line, range.start.character); if (p != null) v.setCursor(p, { center: true }); };
+          if (!q || s.name.toLowerCase().includes(q.toLowerCase())) out.push({ label: s.name, detail: [KINDS[s.kind], path || s.containerName].filter(Boolean).join(" · "), run: go, preview: go });
           if (s.children) walk(s.children, path ? `${path}.${s.name}` : s.name);
         }
       };
@@ -138,7 +141,7 @@ export function activate(fresh) {
           out.push({
             label: s.name,
             detail: [KINDS[s.kind], s.containerName, `${rel(path)}:${range.start.line + 1}`].filter(Boolean).join(" · "),
-            run: () => goto(path, range, { preview: false }),
+            run: () => goto(path, range, false),
           });
         }
       }
@@ -245,7 +248,7 @@ export function activate(fresh) {
         const text = i.textEdit?.newText ?? i.insertText ?? i.label;
         const start = vv.cursor - fresh.text.byteLen(w);
         b.replace(start, vv.cursor, text);
-        vv.setCursor(start + fresh.text.byteLen(text));
+        vv.setCursor(start + fresh.text.byteLen(text), { center: false });
       },
     });
   };
@@ -314,11 +317,11 @@ export function activate(fresh) {
       render: (it) => it.header
         ? h("text", { bold: true }, [rel(it.b.path)])
         : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [String(it.line)]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
-      onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path); fresh.views.active().setCursor(it.d.start, { center: true }); },
+      onActivate: async (it) => { if (it.header) return; await fresh.buffers.open(it.b.path, { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.views.active().setCursor(it.d.start, { center: true }); },
     }));
   };
   const diagnosticsPanel = () => {
-    diagPanel = fresh.ui.panel({ id: "diagnostics", title: "Diagnostics", place: "bottom" });
+    diagPanel = fresh.ui.panel({ id: "diagnostics", title: "Diagnostics", place: "bottom", onClose: null });
     renderDiagnostics();
     diagPanel.focus("diags");
   };
@@ -422,7 +425,8 @@ export function activate(fresh) {
   fresh.events.on("workspace.trusted", () => { const b = fresh.buffers.active(); showStatus(b); if (b) { refreshFolds(b); refreshHints(b); } });
   fresh.events.on("buffer.saved", ({ buffer }) => refreshFolds(buffer));
 
-  const reg = (id, title, run, key) => { fresh.commands.register(id, { title, run }); if (key) fresh.keys.bind(key, id); };
+  // A command, and its key ("" for none).
+  const reg = (id, title, run, key) => { fresh.commands.register(id, { title, hidden: false, run }); if (key) fresh.keys.bind(key, id); };
   reg("lsp.definition", "LSP: Go to Definition", definition, "F12");
   reg("lsp.references", "LSP: Find References", references, "S-F12");
   reg("lsp.completion", "LSP: Completion", completion, "C-Space");
@@ -447,9 +451,9 @@ export function activate(fresh) {
   };
   reg("lsp.nextDiagnostic", "Go to Next Problem", () => stepDiagnostic(1), "F8");
   reg("lsp.prevDiagnostic", "Go to Previous Problem", () => stepDiagnostic(-1), "S-F8");
-  reg("lsp.status", "LSP: Show Status", lspStatus);
-  reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", workspaceSymbols);
-  reg("lsp.restart", "LSP: Start/Restart Server", () => serverOp("restart"));
-  reg("lsp.stop", "LSP: Stop Server", () => serverOp("stop"));
-  reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", toggleHints);
+  reg("lsp.status", "LSP: Show Status", lspStatus, "");
+  reg("lsp.workspaceSymbols", "Go to Symbol in Workspace…", workspaceSymbols, "");
+  reg("lsp.restart", "LSP: Start/Restart Server", () => serverOp("restart"), "");
+  reg("lsp.stop", "LSP: Stop Server", () => serverOp("stop"), "");
+  reg("lsp.toggleInlayHints", "LSP: Toggle Inlay Hints", toggleHints, "");
 }

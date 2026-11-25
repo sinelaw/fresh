@@ -12,7 +12,10 @@ const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 export class Macros {
   constructor(app) {
     this.app = app;
-    this.registers = new Map(); // register -> [{command, arg} | {text, typed}]
+    // register -> its steps, [{command, arg, text, typed}]: a command run
+    // (with its argument, or undefined; text "") or text typed or pasted
+    // (command "").
+    this.registers = new Map();
     this.recording = null; // {register, steps}
     this.playing = false;
     this.last = null; // the register last recorded or played
@@ -22,15 +25,15 @@ export class Macros {
   // A step as it happens; recorded while recording (and not playing).
   command(id, arg) {
     if (!this.recording || this.playing || this.depth > 0 || id.startsWith("macro.") || id.startsWith("palette.")) return;
-    this.recording.steps.push(arg === undefined ? { command: id } : { command: id, arg });
+    this.recording.steps.push({ command: id, arg, text: "", typed: false });
   }
   text(text, typed) {
     if (!this.recording || this.playing) return;
     const steps = this.recording.steps;
     const last = steps[steps.length - 1];
     // A run of typed characters is one step.
-    if (typed && last && last.typed && last.text != null) last.text += text;
-    else steps.push({ text, typed: !!typed });
+    if (typed && last && last.typed) last.text += text;
+    else steps.push({ command: "", arg: undefined, text, typed: !!typed });
   }
 
   start(register) {
@@ -101,6 +104,9 @@ export class Macros {
     cmd("macro.stop", "Macro: Stop Recording Macro", () => this.stop());
     cmd("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r) await this.play(r); });
     cmd("macro.playLast", "Macro: Play Last Macro", () => (this.last ? this.play(this.last) : this.app.setStatus("No macro recorded yet")));
-    cmd("macro.list", "Macro: List Macros", () => this.app.createVirtual({ name: "*Macros*", text: this.describe(), place: "tab" }));
+    cmd("macro.list", "Macro: List Macros", () => this.app.createVirtual({
+      name: "*Macros*", entries: [{ text: this.describe(), props: {}, style: null }],
+      mode: null, readOnly: true, language: null, keep: false, place: "tab", lineNumbers: true,
+    }));
   }
 }

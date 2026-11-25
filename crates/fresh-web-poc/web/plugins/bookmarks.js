@@ -43,7 +43,7 @@ export function activate(fresh) {
     }
     const m = marks.get(n);
     if (!m || !m.path) { fresh.ui.message(`No bookmark ${n}`); return; }
-    const b = await fresh.buffers.open(m.path);
+    const b = await fresh.buffers.open(m.path, { line: null, column: 1, place: "tab", preview: null, focus: true });
     if (!b) return;
     set(n)(b).gutter(m.pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
     await fresh.views.active()?.setCursor(Math.min(m.pos, b.length), { center: true });
@@ -56,6 +56,7 @@ export function activate(fresh) {
   }
   fresh.commands.register("bookmark.list", {
     title: "Bookmarks: List…",
+    hidden: false,
     run: () => {
       const items = [];
       for (let n = 0; n <= 9; n++) {

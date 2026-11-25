@@ -130,9 +130,10 @@ export class DocView {
       lineCache.set(li, x);
       return x;
     };
-    const ctx = { v, L, d, o, cursors, vlines, lineInfo, mode: v.mode };
-    ctx.hidden = this.hider(ctx);
-    return ctx;
+    // The folds hide lines by the blocks they fold, which takes only the
+    // view, its text and its decorations (as `hiding` asks).
+    const hidden = this.hider({ v, L, d, mode: v.mode });
+    return { v, L, d, o, cursors, vlines, lineInfo, mode: v.mode, hidden };
   }
 
   // hidden(li): the fold hiding line `li` and the last line it keeps

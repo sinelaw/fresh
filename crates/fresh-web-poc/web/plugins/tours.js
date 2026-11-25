@@ -4,6 +4,7 @@
 // step opens its file at its line and marks it.
 
 // The step's line.
+/** const STEP: Style */
 const STEP = { fg: null, bg: "ui.tour_step_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
 
 export function activate(fresh) {
@@ -21,7 +22,7 @@ export function activate(fresh) {
     render();
     unmark();
     if (!s.file) return;
-    const b = await fresh.buffers.open(`${root}/${s.file}`, s.line ? { line: s.line } : undefined);
+    const b = await fresh.buffers.open(`${root}/${s.file}`, { line: s.line || null, column: 1, place: "tab", preview: null, focus: true });
     if (b && s.line) {
       const L = b.lines();
       const li = s.line - 1 - (L.firstLine ?? 0);
@@ -70,7 +71,7 @@ export function activate(fresh) {
       },
     });
   };
-  fresh.commands.register("tour.open", { title: "Code Tour: Open…", run: open });
-  fresh.commands.register("tour.next", { title: "Code Tour: Next Step", run: () => go(step + 1) });
-  fresh.commands.register("tour.prev", { title: "Code Tour: Previous Step", run: () => go(step - 1) });
+  fresh.commands.register("tour.open", { title: "Code Tour: Open…", hidden: false, run: open });
+  fresh.commands.register("tour.next", { title: "Code Tour: Next Step", hidden: false, run: () => go(step + 1) });
+  fresh.commands.register("tour.prev", { title: "Code Tour: Previous Step", hidden: false, run: () => go(step - 1) });
 }

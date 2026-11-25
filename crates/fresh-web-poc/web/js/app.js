@@ -145,7 +145,7 @@ class App {
     window.addEventListener("pagehide", () => { this.rememberLayout(); this.session.flush(); });
     document.addEventListener("visibilitychange", () => { if (document.hidden) { this.rememberLayout(); this.session.flush(); } });
     this.host.emit("app.ready", {});
-    if (open) await this.openFile(open);
+    if (open) await this.openFile(open, { line: null, column: 1, place: "tab", preview: null, focus: true });
     this.focusPane(this.activePane);
   }
 
@@ -426,7 +426,7 @@ class App {
   // Show a buffer: in the active pane ("tab"), a new split below ("split")
   // or to the right ("right").
   // `preview` and `focus` as for `openFile`; preview tabs are a setting.
-  showBuffer(b, place = "tab", { preview = null, focus = true } = {}) {
+  showBuffer(b, place, { preview, focus }) {
     if (place === "split" || place === "right") {
       const existing = this.panes().find((p) => p.view?.buf === b);
       if (existing) { this.focusPane(existing); return existing.view; }
@@ -630,7 +630,7 @@ class App {
   // named Untitled-N, until it is saved as one.
   async newUntitled() {
     const b = await this.adoptDoc(await rpc("doc.new"));
-    this.showBuffer(b);
+    this.showBuffer(b, "tab", { preview: null, focus: true });
     return b;
   }
   // The buffer of an opened document ({doc, path, ...} from the server).
@@ -646,14 +646,13 @@ class App {
     return b;
   }
 
-  // Show a file, at a line and (UTF-16) column when given. A navigation:
-  // Go Back returns to where the active view was.
-  // `preview`: in the split's preview tab (true), in a tab of its own
-  // (false: a preview tab showing it is kept), or as it is shown already
-  // (left out). `focus: false` leaves the keyboard where it is (a list
-  // previewing what it selects). Files open in the order they were asked
-  // for (a click's preview, then the double-click's keep).
-  async openFile(path, { line, column, place, preview, focus } = {}) {
+  // Show a file, as `at` says (OpenOptions, types/fresh.d.js). A
+  // navigation: Go Back returns to where the active view was. A file shown
+  // in a tab of its own (`preview` false) keeps a preview tab showing it.
+  // Files open in the order they were asked for (a click's preview, then
+  // the double-click's keep).
+  async openFile(path, at) {
+    const { line, column, place, preview, focus } = at;
     const turn = this.opening;
     let done = () => {};
     this.opening = new Promise((r) => { done = r; });
@@ -664,7 +663,7 @@ class App {
       if (from) this.pushHistory(from);
       const v = this.showBuffer(b, place, { preview, focus });
       this.noteRecent(b.path);
-      if (line != null) await this.gotoLine(line - 1, column != null ? column - 1 : 0, { history: false });
+      if (line != null) await this.gotoLine(line - 1, column - 1, { history: false });
       this.updateStatus();
       return v;
     } catch (e) {
@@ -675,15 +674,16 @@ class App {
     }
   }
 
+  // A virtual buffer (`o`: VirtualOptions, types/fresh.d.js).
   createVirtual(o) {
-    const b = virtualBuffer(o.name, o.entries || [{ text: o.text || "" }], { mode: o.mode, readOnly: o.readOnly ?? true });
+    const b = virtualBuffer(o.name, o.entries, o.mode, o.readOnly);
     b.language = o.language || null;
-    b.keep = !!o.keep;
+    b.keep = o.keep;
     this.buffers.set(b.id, b);
     this.watchBuffer(b);
     if (o.place) {
-      const v = this.showBuffer(b, o.place);
-      if (o.lineNumbers === false) v.opts.lineNumbers = false;
+      const v = this.showBuffer(b, o.place, { preview: null, focus: true });
+      if (!o.lineNumbers) v.opts.lineNumbers = false;
     }
     return b;
   }
@@ -751,7 +751,7 @@ class App {
         this.host.emit("buffer.saved", { buffer: b });
       } else {
         await rpc("fs.write", { path, text: await b.textAsync(0, b.len) });
-        await this.openFile(path);
+        await this.openFile(path, { line: null, column: 1, place: "tab", preview: null, focus: true });
       }
     } catch (e) { this.setStatus(`Not saved: ${e.detail || e.message || e}`); return; }
     this.setStatus(`Saved as ${name}`);
@@ -792,7 +792,9 @@ class App {
   }
 
   // Move a view's cursor to `pos`, loading the text there first.
-  async moveTo(v, pos, { reveal = true, center = false, extend = false, history = false } = {}) {
+  // `center`: scroll it to the middle; `extend`: extend the selection;
+  // `history`: remember where the view was, for Go Back.
+  async moveTo(v, pos, { center, extend, history }) {
     if (history) this.pushHistory(v);
     const pane = v.pane;
     await v.buf.ensure(pos, pane.metrics().rows + 10);
@@ -805,11 +807,11 @@ class App {
   async gotoByte(p, extend) {
     const v = this.view();
     if (!v) return;
-    await this.moveTo(v, p, { extend, center: !extend && Math.abs(p - v.primary.pos) > 5000 });
+    await this.moveTo(v, p, { center: !extend && Math.abs(p - v.primary.pos) > 5000, extend, history: false });
   }
 
   // `history`: remember where the view was, for Go Back.
-  async gotoLine(line, col = 0, { history = true } = {}) {
+  async gotoLine(line, col, { history }) {
     const v = this.view();
     if (!v) return;
     // Only the latest navigation lands: a newer one (the palette previews a
@@ -831,7 +833,7 @@ class App {
     const i = L.indexOf(p);
     p += byteLen(L.lines[i].slice(0, col || 0));
     if (history) this.pushHistory(v);
-    await this.moveTo(v, p, { center: true });
+    await this.moveTo(v, p, { center: true, extend: false, history: false });
   }
 
   async scrollToFraction(pane, f) {
@@ -873,8 +875,8 @@ class App {
     // passed over.
     if (!this.buffers.has(e.buf.id) || (v && v.buf === e.buf && v.primary.pos === e.pos)) return this.historyStep(dir);
     if (v) to.push({ buf: v.buf, pos: v.primary.pos });
-    const nv = this.showBuffer(e.buf);
-    await this.moveTo(nv, Math.min(e.pos, e.buf.len), { center: true });
+    const nv = this.showBuffer(e.buf, "tab", { preview: null, focus: true });
+    await this.moveTo(nv, Math.min(e.pos, e.buf.len), { center: true, extend: false, history: false });
   }
 
   // ------------------------------------------------------------- server events
@@ -1288,7 +1290,7 @@ class App {
       this.prompt.open({
         title: "Open Recent",
         items: list.length ? list.map((p) => ({ label: rel(p), detail: p.split("/").pop(), value: p })) : [{ label: "No recent files", value: null }],
-        onAccept: (it) => it.value && this.openFile(it.value),
+        onAccept: (it) => it.value && this.openFile(it.value, { line: null, column: 1, place: "tab", preview: null, focus: true }),
       });
     });
     cmd("view.maximizeSplit", "View: Toggle Maximize Split", () => {
@@ -1328,7 +1330,10 @@ class App {
       if (this.trusted) { this.setStatus("The workspace is trusted"); return; }
       await rpc("workspace.trust");
     });
-    cmd("help.log", "Show Log", () => this.createVirtual({ name: "*Log*", entries: this.log.map((l) => ({ text: l + "\n" })), place: "tab" }));
+    cmd("help.log", "Show Log", () => this.createVirtual({
+      name: "*Log*", entries: this.log.map((l) => ({ text: l + "\n", props: {}, style: null })),
+      mode: null, readOnly: true, language: null, keep: false, place: "tab", lineNumbers: true,
+    }));
 
     // Motion and selection: nothing to do without a view.
     const vcmd = (id, title, f, hidden = false) => cmd(id, title, () => (V() ? f() : undefined), hidden);
@@ -1341,8 +1346,8 @@ class App {
     mv("select.up", "Select Up", () => ed().vertical(P(), -1, true)); mv("select.down", "Select Down", () => ed().vertical(P(), 1, true));
     mv("cursor.home", "Line Start", () => ed().home(P(), false)); mv("cursor.end", "Line End", () => ed().end(P(), false));
     mv("select.home", "Select to Line Start", () => ed().home(P(), true)); mv("select.end", "Select to Line End", () => ed().end(P(), true));
-    mv("cursor.docStart", "Document Start", () => { this.pushHistory(V()); return this.gotoByte(0); });
-    mv("cursor.docEnd", "Document End", () => { this.pushHistory(V()); return this.gotoByte(V().buf.len); });
+    mv("cursor.docStart", "Document Start", () => { this.pushHistory(V()); return this.gotoByte(0, false); });
+    mv("cursor.docEnd", "Document End", () => { this.pushHistory(V()); return this.gotoByte(V().buf.len, false); });
     mv("select.docStart", "Select to Document Start", () => this.gotoByte(0, true));
     mv("select.docEnd", "Select to Document End", () => this.gotoByte(V().buf.len, true));
     mv("cursor.pageUp", "Page Up", page(-1, false)); mv("cursor.pageDown", "Page Down", page(1, false));
@@ -1534,7 +1539,8 @@ class App {
     const app = this;
     if (!this.statusItems.has(id)) this.statusItems.set(id, { text: "", title: "", onClick: null });
     const it = this.statusItems.get(id);
-    return { set(text, o = {}) { it.text = text; it.title = o.title || ""; it.onClick = o.onClick || null; app.updateStatus(); } };
+    // `o`: {title, onClick} (onClick null: not clickable).
+    return { set(text, o) { it.text = text; it.title = o.title; it.onClick = o.onClick; app.updateStatus(); } };
   }
 
   // The status bar: the message, then the facts. A fact that has an action

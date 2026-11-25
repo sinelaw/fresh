@@ -12,6 +12,7 @@
 import { diffLines, mapLines, unifiedDiff } from "../js/diff.js";
 
 // A line's blame, at the row's end.
+/** const BLAME: Style */
 const BLAME = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
 
 export function activate(fresh) {
@@ -125,7 +126,7 @@ export function activate(fresh) {
     let cur = null;
     for (const line of r.stdout.split("\n")) {
       const head = /^([0-9a-f]{40}) \d+ (\d+)/.exec(line);
-      if (head) { cur = { hash: head[1], line: +head[2] - 1 }; continue; }
+      if (head) { cur = { hash: head[1], line: +head[2] - 1, author: "", time: "", summary: "" }; continue; }
       if (!cur) continue;
       if (line.startsWith("author ")) cur.author = line.slice(7);
       else if (line.startsWith("author-time ")) cur.time = new Date(+line.slice(12) * 1000).toISOString().slice(0, 10);
@@ -145,7 +146,10 @@ export function activate(fresh) {
 
   // ---------------------------------------------------------------- log and diffs
 
-  const showDiff = (name, text) => fresh.buffers.createVirtual({ name, entries: [{ text }], language: "diff", place: "tab", lineNumbers: false });
+  const showDiff = (name, text) => fresh.buffers.createVirtual({
+    name, entries: [{ text, props: {}, style: null }],
+    mode: null, readOnly: true, language: "diff", keep: false, place: "tab", lineNumbers: false,
+  });
 
   let logPanel = null;
   const log = async (path) => {
@@ -154,7 +158,7 @@ export function activate(fresh) {
     const r = await git(args);
     if (r.code !== 0) return fresh.ui.message(r.stderr.trim() || "git log failed");
     const items = r.stdout.trim().split("\n").filter(Boolean).map((l) => { const [hash, short, author, when, subject] = l.split("\x1f"); return { hash, short, author, when, subject }; });
-    logPanel = fresh.ui.panel({ id: "git-log", title: path ? `Log: ${rel(path)}` : "Git Log", place: "bottom" });
+    logPanel = fresh.ui.panel({ id: "git-log", title: path ? `Log: ${rel(path)}` : "Git Log", place: "bottom", onClose: null });
     logPanel.render(h("list", {
       key: "log",
       items,
@@ -181,12 +185,13 @@ export function activate(fresh) {
     showDiff(`diff ${b.name}`, text);
   };
 
-  const reg = (id, title, run, key) => { fresh.commands.register(id, { title, run }); if (key) fresh.keys.bind(key, id); };
+  // A command, and its key ("" for none).
+  const reg = (id, title, run, key) => { fresh.commands.register(id, { title, hidden: false, run }); if (key) fresh.keys.bind(key, id); };
   reg("git.log", "Git: Log", () => log(null), "C-S-g");
-  reg("git.logFile", "Git: Log of Current File", () => log(fresh.buffers.active()?.path));
-  reg("git.blame", "Git: Toggle Blame", blame);
-  reg("git.diffFile", "Git: Diff Current File", diffFile);
+  reg("git.logFile", "Git: Log of Current File", () => log(fresh.buffers.active()?.path), "");
+  reg("git.blame", "Git: Toggle Blame", blame, "");
+  reg("git.diffFile", "Git: Diff Current File", diffFile, "");
   reg("git.nextChange", "Git: Next Change", () => step(1), "M-F5");
   reg("git.prevChange", "Git: Previous Change", () => step(-1), "M-S-F5");
-  reg("git.refresh", "Git: Refresh", () => { baselines.clear(); const b = fresh.buffers.active(); if (b) markGutter(b); refreshBranch(); });
+  reg("git.refresh", "Git: Refresh", () => { baselines.clear(); const b = fresh.buffers.active(); if (b) markGutter(b); refreshBranch(); }, "");
 }

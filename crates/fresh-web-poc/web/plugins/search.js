@@ -17,8 +17,11 @@
 // clients and undo all see the change.
 
 // The searched range, the matches and the current match.
+/** const SCOPE: Style */
 const SCOPE = { fg: null, bg: "search.scope_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: true };
+/** const MATCH: Style */
 const MATCH = { fg: "search.match_fg", bg: "search.match_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+/** const CURRENT: Style */
 const CURRENT = { fg: "search.current_fg", bg: "search.current_bg", bold: true, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
 
 export function activate(fresh) {
@@ -58,7 +61,7 @@ export function activate(fresh) {
     const L = b.lines();
     if (!L || !b.whole || !query) return [];
     let re;
-    try { re = toRegex(query); error = ""; } catch (e) { error = "invalid regex"; return []; }
+    try { re = toRegex(query, true); error = ""; } catch (e) { error = "invalid regex"; return []; }
     const out = [];
     const scope = scopeOf(b);
     L.lines.forEach((line, i) => {
@@ -204,7 +207,7 @@ export function activate(fresh) {
     if (!b || !v || !m) return go(1);
     const text = replacementFor(m);
     b.replace(m.pos, m.pos + m.len, text);
-    await v.setCursor(m.pos + fresh.text.byteLen(text));
+    await v.setCursor(m.pos + fresh.text.byteLen(text), { center: false });
     update();
     go(1);
   };
@@ -299,8 +302,9 @@ export function activate(fresh) {
   };
 
   // The bar: a selection of one line is the query; one of several lines
-  // (or `inSelection`) is the range searched.
-  const open = (replace, { inSelection = false, ask = false } = {}) => {
+  // (or `inSelection`) is the range searched. `ask`: a replacement asks at
+  // each match.
+  const open = (replace, { inSelection, ask }) => {
     const v = fresh.views.active();
     const b = buffer();
     const sel = v?.selection;
@@ -332,7 +336,7 @@ export function activate(fresh) {
       if (!t || t.includes("\n")) { fresh.ui.message("Select the text to find first"); return; }
       query = opts.regex ? t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : t;
       if (bar && bar.open) setScope(b, null);
-      if (!sel) await v.select(word.start, word.end);
+      if (!sel) await v.select(word.start, word.end, { center: false });
       update();
     }
     await go(dir);
@@ -352,15 +356,15 @@ export function activate(fresh) {
     return { start: L.starts[i] + fresh.text.byteLen(line.slice(0, s)), end: L.starts[i] + fresh.text.byteLen(line.slice(0, e)) };
   };
 
-  fresh.commands.register("search.find", { title: "Find…", run: () => open(false) });
-  fresh.commands.register("search.replace", { title: "Replace…", run: () => open(true) });
-  fresh.commands.register("search.findInSelection", { title: "Find in Selection…", run: () => open(false, { inSelection: true }) });
-  fresh.commands.register("search.queryReplace", { title: "Query Replace…", run: () => open(true, { ask: true }) });
-  fresh.commands.register("search.findNext", { title: "Find Next", run: () => go(1) });
-  fresh.commands.register("search.findPrevious", { title: "Find Previous", run: () => go(-1) });
-  fresh.commands.register("search.findSelectionNext", { title: "Find Selection Next", run: () => findSelection(1) });
-  fresh.commands.register("search.findSelectionPrevious", { title: "Find Selection Previous", run: () => findSelection(-1) });
-  fresh.commands.register("search.clear", { title: "Clear Search Highlights", run: () => clearMarks() });
+  fresh.commands.register("search.find", { title: "Find…", hidden: false, run: () => open(false, { inSelection: false, ask: false }) });
+  fresh.commands.register("search.replace", { title: "Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: false }) });
+  fresh.commands.register("search.findInSelection", { title: "Find in Selection…", hidden: false, run: () => open(false, { inSelection: true, ask: false }) });
+  fresh.commands.register("search.queryReplace", { title: "Query Replace…", hidden: false, run: () => open(true, { inSelection: false, ask: true }) });
+  fresh.commands.register("search.findNext", { title: "Find Next", hidden: false, run: () => go(1) });
+  fresh.commands.register("search.findPrevious", { title: "Find Previous", hidden: false, run: () => go(-1) });
+  fresh.commands.register("search.findSelectionNext", { title: "Find Selection Next", hidden: false, run: () => findSelection(1) });
+  fresh.commands.register("search.findSelectionPrevious", { title: "Find Selection Previous", hidden: false, run: () => findSelection(-1) });
+  fresh.commands.register("search.clear", { title: "Clear Search Highlights", hidden: false, run: () => clearMarks() });
   fresh.keys.bind("C-M-r", "search.queryReplace");
   fresh.keys.bind("C-F3", "search.findSelectionNext");
   fresh.keys.bind("M-n", "search.findSelectionNext");
@@ -413,7 +417,7 @@ export function activate(fresh) {
   // tab of its own.
   const openMatch = async (m, preview) => {
     if (!m || m.header) return;
-    const b = await fresh.buffers.open(m.path, preview ? { preview: true, focus: false } : { preview: false });
+    const b = await fresh.buffers.open(m.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
     const v = fresh.views.active();
     const L = b?.lines();
     if (!L) return;
@@ -477,11 +481,11 @@ export function activate(fresh) {
       const t = v.buffer.text(sel.start, sel.end);
       if (t && !t.includes("\n")) pq.query = t;
     }
-    panel = fresh.ui.panel({ id: "project-search", title: "Search", place: "bottom" });
+    panel = fresh.ui.panel({ id: "project-search", title: "Search", place: "bottom", onClose: null });
     renderPanel();
     panel.focus("q");
     if (pq.query) runSearch();
   };
-  fresh.commands.register("search.project", { title: "Search in Workspace…", run: openPanel });
+  fresh.commands.register("search.project", { title: "Search in Workspace…", hidden: false, run: openPanel });
   fresh.keys.bind("C-S-f", "search.project");
 }

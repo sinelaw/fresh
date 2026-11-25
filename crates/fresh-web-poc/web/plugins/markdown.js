@@ -15,13 +15,20 @@ import { classify } from "../js/mdstruct.js";
 const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path || b.name || "");
 
 // Styles: the markup itself is not restyled; inline spans.
+/** const PLAIN: Style */
 const PLAIN = { fg: null, bg: null, bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+/** const CODE: Style */
 const CODE = { fg: null, bg: null, bold: false, italic: false, underline: false, strike: false, mono: true, extendToLineEnd: false };
+/** const BOLD: Style */
 const BOLD = { fg: null, bg: null, bold: true, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false };
+/** const ITALIC: Style */
 const ITALIC = { fg: null, bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
+/** const STRIKE: Style */
 const STRIKE = { fg: null, bg: null, bold: false, italic: false, underline: false, strike: true, mono: false, extendToLineEnd: false };
+/** const LINK: Style */
 const LINK = { fg: "syntax.link", bg: null, bold: false, italic: false, underline: true, strike: false, mono: false, extendToLineEnd: false };
 // Every overlay applies in compose views only.
+/** const COMPOSE: OverlayOptions */
 const COMPOSE = { when: "compose", mark: false, above: false };
 
 export function activate(fresh) {
@@ -267,14 +274,14 @@ export function activate(fresh) {
       : h("text", { dim: true }, ["No headings"]));
   };
   const showContents = () => {
-    contents = fresh.ui.panel({ id: "md-contents", title: "Contents", place: "sidebar" });
+    contents = fresh.ui.panel({ id: "md-contents", title: "Contents", place: "sidebar", onClose: null });
     renderContents();
   };
   fresh.events.on("buffer.activated", renderContents);
   fresh.events.on("buffer.changed", () => { clearTimeout(timers.get("toc")); timers.set("toc", setTimeout(renderContents, 300)); });
 
-  fresh.commands.register("markdown.toggleCompose", { title: "Markdown: Toggle Compose", run: toggle });
-  fresh.commands.register("markdown.composeWidth", { title: "Markdown: Set Compose Width…", run: setWidth });
-  fresh.commands.register("markdown.dual", { title: "Markdown: Source and Compose Side by Side", run: dual });
-  fresh.commands.register("markdown.contents", { title: "Markdown: Contents", run: showContents });
+  fresh.commands.register("markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
+  fresh.commands.register("markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });
+  fresh.commands.register("markdown.dual", { title: "Markdown: Source and Compose Side by Side", hidden: false, run: dual });
+  fresh.commands.register("markdown.contents", { title: "Markdown: Contents", hidden: false, run: showContents });
 }

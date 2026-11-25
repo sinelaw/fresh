@@ -81,7 +81,7 @@ export class Palette {
       const t = q.slice(1).toLowerCase();
       return [...app.buffers.values()]
         .filter((b) => (b.path || b.name).toLowerCase().includes(t))
-        .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", run: () => app.showBuffer(b) }));
+        .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", run: () => app.showBuffer(b, "tab", { preview: null, focus: true }) }));
     }
     const pr = this.providers.get(q[0]);
     if (pr) return pr.items(q.slice(1).trim());
@@ -93,18 +93,18 @@ export class Palette {
     // Nothing typed: the files opened lately.
     if (!q.trim()) {
       const rel = (p) => (p.startsWith(app.root + "/") ? p.slice(app.root.length + 1) : p);
-      return app.recentFiles().map((p) => ({ label: rel(p), detail: "recent", run: () => app.openFile(p) }));
+      return app.recentFiles().map((p) => ({ label: rel(p), detail: "recent", run: () => app.openFile(p, { line: null, column: 1, place: "tab", preview: null, focus: true }) }));
     }
     const files = (await rpc("fs.find", { query: m[1] })).files;
     return files.map((f) => ({
       label: f,
-      run: () => app.openFile(f, m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {}),
+      run: () => app.openFile(f, { line: m[2] ? +m[2] : null, column: m[3] ? +m[3] : 1, place: "tab", preview: null, focus: true }),
     }));
   }
 
   openTyped(q) {
     const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
-    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app.openFile(m[1], m[2] ? { line: +m[2], column: m[3] ? +m[3] : 1 } : {});
+    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app.openFile(m[1], { line: m[2] ? +m[2] : null, column: m[3] ? +m[3] : 1, place: "tab", preview: null, focus: true });
   }
 
   // Pick from a list: {title, items: [{label, detail, value}], onAccept(item), onChange(item)}

@@ -69,7 +69,10 @@ export function activate(fresh) {
     const rel = cur.path.slice(fresh.workspace.root.length + 1);
     const r = await fresh.host.run("git", ["show", `HEAD:./${rel}`], { cwd: fresh.workspace.root });
     if (r.code !== 0) return fresh.ui.message("Not in the last commit");
-    const head = fresh.buffers.createVirtual({ name: `${cur.name} (HEAD)`, entries: [{ text: r.stdout }], language: cur.language });
+    const head = fresh.buffers.createVirtual({
+      name: `${cur.name} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
+      mode: null, readOnly: true, language: cur.language, keep: false, place: null, lineNumbers: true,
+    });
     open(head, cur);
   };
   // The next (or previous) changed block, on whichever side is active.
@@ -89,10 +92,10 @@ export function activate(fresh) {
   fresh.events.on("buffer.changed", ({ buffer }) => {
     if (pair && (buffer.id === pair.a.id || buffer.id === pair.b.id)) { clearTimeout(t); t = setTimeout(mark, 200); }
   });
-  fresh.commands.register("compare.files", { title: "Compare Files…", run: compareFiles });
-  fresh.commands.register("compare.head", { title: "Compare with Last Commit", run: compareHead });
-  fresh.commands.register("compare.next", { title: "Compare: Next Difference", run: () => next(1) });
-  fresh.commands.register("compare.prev", { title: "Compare: Previous Difference", run: () => next(-1) });
+  fresh.commands.register("compare.files", { title: "Compare Files…", hidden: false, run: compareFiles });
+  fresh.commands.register("compare.head", { title: "Compare with Last Commit", hidden: false, run: compareHead });
+  fresh.commands.register("compare.next", { title: "Compare: Next Difference", hidden: false, run: () => next(1) });
+  fresh.commands.register("compare.prev", { title: "Compare: Previous Difference", hidden: false, run: () => next(-1) });
   fresh.keys.bind("F7", "compare.next");
   fresh.keys.bind("S-F7", "compare.prev");
 }
