@@ -65,7 +65,7 @@ export class UIKit {
   // A context menu of `items`, the one open (`closed()` when it closes).
   contextMenu(items, closed) {
     for (const open of this.contexts) open.close();
-    const m = makeMenu(items, menuSpec(this.app, null, null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
+    const m = makeMenu(items, menuSpec(() => { const app = this.app(); app.focusPane(app.activePane); }, [], null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
     this.contexts = [m];
     return m;
   }

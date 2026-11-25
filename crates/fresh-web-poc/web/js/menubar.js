@@ -362,7 +362,7 @@ export class MenuBar {
     this.opened = [];
     for (const o of prev) o.menu.close();
     const n = this.menus.length;
-    const menu = makeMenu(this.resolve(this.menus[i].items), menuSpec(this.app, "#menubar",
+    const menu = makeMenu(this.resolve(this.menus[i].items), menuSpec(() => { const app = this.app(); app.focusPane(app.activePane); }, ["#menubar"],
       (d) => { this.show((i + d + n) % n, true); },
       () => { if (this.opened.some((o) => o.menu === menu)) { this.opened = []; this.render(); } }, null), []);
     this.opened = [{ i, menu }];

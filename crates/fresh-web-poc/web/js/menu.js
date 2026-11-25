@@ -64,6 +64,12 @@ function callIf(f) { if (f !== null) f(); }
 /** function sideIf(f: ((Number) => Undefined) | Null, d: Number) => Undefined */
 function sideIf(f, d) { if (f !== null) f(d); }
 
+// `text` as HTML text.
+/** function escapeHtml(text: String) => String */
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 // A key's name (KeyboardEvent.key).
 /** function keyName(k: String) => String */
 function keyName(k) { return k; }
@@ -72,18 +78,20 @@ function keyName(k) { return k; }
 /** const NO_ROW: Number | Null */
 const NO_ROW = null;
 
-// How a menu behaves: `app`; `ignore`, a selector whose presses do not
-// close it (the menu bar's titles); `onSide(d)`, Left / Right past its
-// edge; `onClose()`; `from`, a submenu's row in its parent.
-/** type MenuSpec<A> = {
- *   app: () => A,
- *   ignore: String | Null,
+// How a menu behaves: `refocus()` gives the keyboard back to the editor
+// when it closes with the focus in it; `ignore`, selectors whose presses
+// do not close it (the menu bar's titles); `onSide(d)`, Left / Right past
+// its edge; `onClose()`; `from`, a submenu's row in its parent.
+/** type MenuSpec = {
+ *   refocus: () => Undefined,
+ *   ignore: String[],
  *   onSide: ((Number) => Undefined) | Null,
  *   onClose: (() => Undefined) | Null,
  *   from: Number | Null,
  * } */
-/** function menuSpec<A>(app: () => A, ignore: String | Null, onSide: ((Number) => Undefined) | Null, onClose: (() => Undefined) | Null, from: Number | Null) => MenuSpec<A> */
-export function menuSpec(app, ignore, onSide, onClose, from) { return { app, ignore, onSide, onClose, from }; }
+/** function menuSpec(refocus: () => Undefined, ignore: String[], onSide: ((Number) => Undefined) | Null, onClose: (() => Undefined) | Null, from: Number | Null) => MenuSpec */
+export function menuSpec(refocus, ignore, onSide, onClose, from) { return { refocus, ignore, onSide, onClose, from }; }
+
 
 // What a submenu may do to the menu it opened from: close it (the
 // submenu), give it back the keyboard, close it and every menu above.
@@ -111,8 +119,7 @@ export function makeMenu(all, o, up) {
   const away = (e) => {
     const t = e.target;
     if (contains(t)) return;
-    const ignore = o.ignore;
-    if (ignore !== null && t.closest(ignore) !== null) return;
+    for (const sel of o.ignore) if (t.closest(sel) !== null) return;
     close();
   };
   // Close it and its submenus; the keyboard goes back to the editor.
@@ -123,9 +130,8 @@ export function makeMenu(all, o, up) {
     window.removeEventListener("pointerdown", away);
     window.removeEventListener("blur", away);
     el.remove();
-    const app = o.app();
     const focused = document.activeElement;
-    if (!focused || focused === document.body || focused === el) app.focusPane(app.activePane);
+    if (!focused || focused === document.body || focused === el) o.refocus();
     callIf(o.onClose);
   };
   // Close it and every menu it opened from.
@@ -145,7 +151,7 @@ export function makeMenu(all, o, up) {
     if (its === null) return;
     const r = rowEls[i].getBoundingClientRect();
     // Its Left / Right past the edge are the top menu's.
-    const sub = makeMenu(its, menuSpec(o.app, null, o.onSide, null, i), [{ closeSub, focus, closeAll }]);
+    const sub = makeMenu(its, menuSpec(o.refocus, [], o.onSide, null, i), [{ closeSub, focus, closeAll }]);
     subs = [sub];
     // To the right of its row, or to the left when there is no room.
     sub.putAt(r.right, r.top - 4, r.left);
@@ -238,12 +244,7 @@ export function makeMenu(all, o, up) {
     row.setAttribute("role", checked !== null ? "menuitemcheckbox" : "menuitem");
     if (checked !== null) row.setAttribute("aria-checked", String(checked));
     const [check, label, keys] = cells(it);
-    for (const [cls, text] of [["check", check], ["label", label], ["keys", keys]]) {
-      const s = document.createElement("span");
-      s.className = cls;
-      s.textContent = text;
-      row.appendChild(s);
-    }
+    row.innerHTML = `<span class="check">${escapeHtml(check)}</span><span class="label">${escapeHtml(label)}</span><span class="keys">${escapeHtml(keys)}</span>`;
     // A move, not an enter: a menu opened under a resting pointer must
     // not take the highlight from the keyboard.
     row.addEventListener("mousemove", () => { if (hi !== i) highlight(i, true); });

@@ -24,7 +24,8 @@ async function main() {
   // when it was closed (or none is open): the page is then the
   // orchestrator's dock alone.
   const params = new URLSearchParams(location.search);
-  const hello = await rpc("hello", params.has("ws") ? { workspace: Number(params.get("ws")) } : {});
+  const asked = params.get("ws");
+  const hello = await rpc("hello", { workspace: asked === null ? null : Number(asked) });
   session.client = hello.client;
   const ws = hello.workspace;
   if (ws && params.get("ws") !== String(ws.id)) {

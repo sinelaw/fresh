@@ -12,12 +12,16 @@ const DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 /** type FenceRole = "open" | "body" | "close" */
 /** type TableRow = {role: "header" | "delimiter" | "row", first_row: Boolean, last: Boolean} */
 
+// A line in no fence, and in no table.
+/** const NO_ROLE: FenceRole | Undefined */
+const NO_ROLE = undefined;
+/** const NO_ROW: TableRow | Undefined */
+const NO_ROW = undefined;
+
 /** function classify(lines: String[]) => {region: (FenceRole | Undefined)[], table: (TableRow | Undefined)[]} */
 export function classify(lines) {
-  /** const region: (FenceRole | Undefined)[] */
-  const region = new Array(lines.length).fill(undefined);
-  /** const table: (TableRow | Undefined)[] */
-  const table = new Array(lines.length).fill(undefined);
+  const region = lines.map(() => NO_ROLE);
+  const table = lines.map(() => NO_ROW);
   /** let fence: {ch: String, n: Number} | Null */
   let fence = null;
   for (let i = 0; i < lines.length; i++) {
