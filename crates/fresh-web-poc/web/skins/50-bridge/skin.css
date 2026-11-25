@@ -180,7 +180,7 @@
   border-top-left-radius: 40px 30px; padding: 6px 8px 6px 10px; }
 
 /* ---- floating panels: black, framed by an elbow -------------------------- */
-.skin-bridge :is(#popup, .ctxmenu) { background: #000; color: var(--br-text); border: 0; border-left: 10px solid var(--br-orange);
+.skin-bridge #popup, .skin-bridge .ctxmenu { background: #000; color: var(--br-text); border: 0; border-left: 10px solid var(--br-orange);
   border-radius: 18px 0 0 18px; box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, .8); }
 .skin-bridge .ctxmenu .menu-item { border-radius: 0 999px 999px 0; padding: 4px 14px 4px 10px; text-transform: uppercase; letter-spacing: .05em; }
 .skin-bridge .ctxmenu .menu-item.hi { background: var(--br-orange); color: #000; }
@@ -213,7 +213,11 @@
 /* A box's ▾ continues its frame; a dropdown under a box or a button is
    framed as it is, the frame going round both. */
 .skin-bridge .ui-field-button { background: #000; color: var(--br-lav); border: 2px solid var(--br-lav); border-left: 0; padding: 0 10px; }
-.skin-bridge .ui-joined.open > .ui-field-button, .skin-bridge .ui-joined.open > .ui-input { border-bottom-color: var(--br-dim); }
+/* Open, a box's bottom edge is a faint 1px line over its list (the
+   pixel it gives up goes to its padding: nothing moves). */
+.skin-bridge .ui-joined.open > :is(.ui-field-button, .ui-input) { border-bottom: 1px solid color-mix(in srgb, var(--br-lav) 30%, transparent); }
+.skin-bridge .ui-joined.open > .ui-input { padding-bottom: 4px; }
+.skin-bridge .ui-joined.open > .ui-field-button { padding-bottom: 1px; }
 .skin-bridge :is(#popup, .ctxmenu).attached { border: 2px solid var(--br-lav); border-left-width: 6px; border-top: 0;
   border-radius: 0 0 10px 10px; padding: 2px 0 6px; }
 .skin-bridge .ctxmenu.attached { --attached-radius: 10px; }

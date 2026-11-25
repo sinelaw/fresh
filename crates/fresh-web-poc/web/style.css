@@ -322,7 +322,9 @@ body .ui-row.ui-joined > :not(:last-child) { border-top-right-radius: 0; border-
 body .ui-row.ui-joined > :not(:first-child) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 body .ui-row.ui-joined.open > * { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 body .ctxmenu.attached { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -1px; }
-body .ctxmenu.attached.of-field { background: var(--control-bg); color: var(--control-fg); font-family: var(--mono); }
+body .ctxmenu.attached.of-field { background: var(--control-bg); color: var(--control-fg); border-top: 0; margin-top: 0; }
+body .ui-joined.open > :is(.ui-input, .ui-field-button) { border-bottom-color: color-mix(in srgb, var(--border) 45%, transparent); }
+body .ctxmenu.of-field .menu-item { padding-left: var(--field-text, 14px); text-transform: inherit; letter-spacing: inherit; }
 body .ctxmenu.attached.overhang-left { border-top-left-radius: var(--attached-radius, 0); }
 body .ctxmenu.attached.overhang-right { border-top-right-radius: var(--attached-radius, 0); }
 /* An editable box with a ▾ for its recent values, joined to it. */

@@ -213,12 +213,15 @@
 .skin-winamp *::-webkit-scrollbar-thumb { background: var(--wa-plate-brush); border-radius: 0; box-shadow: var(--wa-out); }
 .skin-winamp *::-webkit-scrollbar-corner { background: #140c07; }
 .skin-winamp .ctxmenu.attached { --attached-radius: 3px; }
-/* A box's list of values: an LCD like the box's, set in a raised
-   brushed-metal frame, as the skin's windows are. */
-.skin-winamp .ctxmenu.attached.of-field { color: var(--wa-green); border: 0; border-radius: 0; margin-top: 0; padding: 4px;
+/* A box's list of values: the box's LCD, continued below it past a
+   faint line, in a raised brushed-metal frame (as the skin's windows)
+   on its other three sides. */
+.skin-winamp .ctxmenu.attached.of-field { color: var(--wa-green); border: 0; border-radius: 0; margin-top: 0; padding: 0 4px 4px;
   background: var(--wa-scan), linear-gradient(var(--wa-sunken), var(--wa-sunken)), var(--wa-brush), var(--wa-face);
   background-clip: content-box, content-box, border-box, border-box;
-  box-shadow: var(--wa-seam), var(--wa-out), 6px 8px 0 rgba(0, 0, 0, .5); }
+  box-shadow: -1px 0 0 rgba(0, 0, 0, .6), 1px 1px 0 rgba(0, 0, 0, .6), inset 1px 0 0 var(--wa-lt), inset -1px -1px 0 var(--wa-dk), 6px 8px 0 rgba(0, 0, 0, .5); }
+.skin-winamp .ui-joined.open > :is(.ui-input, .ui-field-button) { border-bottom-color: rgba(78, 240, 127, .14); box-shadow: inset 0 1px 0 var(--wa-dk); }
+.skin-winamp .ui-joined.open > .ui-input { box-shadow: inset 1px 1px 0 var(--wa-dk); }
 .skin-winamp .ctxmenu.of-field .menu-item + .menu-item { box-shadow: none; }
 .skin-winamp .ctxmenu.of-field .menu-item.hi { background: var(--wa-green); color: #000; box-shadow: none; text-shadow: none; }
 .skin-winamp .ctxmenu.of-field .menu-item .keys { color: inherit; opacity: .7; }

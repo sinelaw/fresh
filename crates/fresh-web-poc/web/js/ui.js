@@ -75,8 +75,14 @@ export class UIKit {
     const m = new Menu(items, { app: this.app, onClose: () => { group.classList.remove("open"); if (this.context === m) this.context = null; } }).build();
     this.context = m;
     m.el.classList.add("attached");
-    // Under a box, the menu is that box's list of values, drawn as the box is.
-    if (group.querySelector(".ui-input")) m.el.classList.add("of-field");
+    // Under a box, the menu is that box's list of values, drawn as the box
+    // is: in its type, each value starting where the box's text does.
+    const box = group.querySelector(".ui-input");
+    const boxStyle = box ? getComputedStyle(box) : null;
+    if (boxStyle) {
+      m.el.classList.add("of-field");
+      for (const k of ["fontFamily", "fontSize", "fontWeight", "letterSpacing", "textTransform"]) m.el.style[k] = boxStyle[k];
+    }
     const r = group.getBoundingClientRect();
     m.el.style.minWidth = `${r.width}px`;
     group.classList.add("open");
@@ -86,6 +92,11 @@ export class UIKit {
     const mr = m.el.getBoundingClientRect();
     if (mr.left < r.left - 1) m.el.classList.add("overhang-left");
     if (mr.right > r.right + 1) m.el.classList.add("overhang-right");
+    const first = m.el.querySelector(".menu-item");
+    if (box && boxStyle && first) {
+      const textLeft = box.getBoundingClientRect().left + parseFloat(boxStyle.getPropertyValue("border-left-width")) + parseFloat(boxStyle.getPropertyValue("padding-left"));
+      m.el.style.setProperty("--field-text", `${Math.max(0, textLeft - first.getBoundingClientRect().left)}px`);
+    }
   }
 
   dockShow(p) {
