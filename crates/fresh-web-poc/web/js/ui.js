@@ -15,7 +15,7 @@
 // virtualised (any number of items) and keyboard-navigable.
 
 import { color } from "./highlight.js";
-import { Menu } from "./menu.js";
+import { makeMenu, menuSpec } from "./menu.js";
 
 // `children` is one array of nodes and strings; nested arrays are
 // flattened, and null and false left out (for conditional parts).
@@ -37,7 +37,7 @@ export class UIKit {
     this.left = document.querySelector("#left-dock");
     this.bar = document.querySelector("#bar");
     this.activeDock = null;
-    this.context = null; // the open context menu
+    this.contexts = []; // the open context menu: a list of at most one
   }
 
   // A PanelOptions (types/fresh.d.js): place "bottom" | "sidebar" | "left"
@@ -57,23 +57,24 @@ export class UIKit {
     return this.panels.get(id);
   }
 
-  // A context menu: items [{label, run}] (null for a separator) at {x, y}.
-  // Items are the menu component's (js/menu.js): {label, run, keys?,
-  // checked?, disabled?, items?}. The menu has the keyboard until it closes.
+  // A context menu of MenuItems (menu.js) at {x, y}; it has the keyboard
+  // until it closes. One is open at a time.
   menu(items, at) {
-    if (this.context) this.context.close();
-    const m = new Menu(items, { app: this.app, onClose: () => { if (this.context === m) this.context = null; } }).build();
-    this.context = m;
-    m.openAt(at.x, at.y);
+    this.contextMenu(items, () => {}).openAt(at.x, at.y);
+  }
+  // A context menu of `items`, the one open (`closed()` when it closes).
+  contextMenu(items, closed) {
+    for (const open of this.contexts) open.close();
+    const m = makeMenu(items, menuSpec(this.app, null, null, () => { this.contexts = this.contexts.filter((x) => x !== m); closed(); }, null), []);
+    this.contexts = [m];
+    return m;
   }
 
   // A menu dropping from `anchor` (a ▾, or the joined group it is in):
   // under it, at least as wide, and drawn as one shape with it while open.
   dropdown(items, anchor) {
     const group = anchor.closest(".ui-joined") || anchor;
-    if (this.context) this.context.close();
-    const m = new Menu(items, { app: this.app, onClose: () => { group.classList.remove("open"); if (this.context === m) this.context = null; } }).build();
-    this.context = m;
+    const m = this.contextMenu(items, () => { group.classList.remove("open"); });
     m.el.classList.add("attached");
     // Under a box, the menu is that box's list of values, drawn as the box
     // is: in its type, each value starting where the box's text does.

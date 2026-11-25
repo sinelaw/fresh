@@ -33,7 +33,8 @@
 import { rpc } from "./rpc.js";
 import { h } from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
-import { asCommand } from "./app.js";
+import { asCommand } from "./commands.js";
+import { action, actionOf } from "./menu.js";
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
@@ -275,6 +276,9 @@ export class Orchestrator {
     this.prefs.dock = false;
     this.savePrefs();
   }
+
+  // Whether the dock is on screen.
+  dockOpen() { const p = this.app().ui.shown("orchestrator"); return p !== undefined && p.open; }
 
   toggleDock() {
     if (this.panel?.open) this.panel.close();
@@ -922,13 +926,13 @@ export class Orchestrator {
     // The folders used last, in a menu under the ▾ beside the folder box.
     const recentMenu = (e) => {
       const items = this.prefs.recent.length
-        ? this.prefs.recent.map((x) => ({ label: x, run: () => { setRoot(x); panel.focus("root"); } }))
-        : [{ label: "No recent folders", disabled: true, run: () => {} }];
+        ? this.prefs.recent.map((x) => action(x, null, () => { setRoot(x); panel.focus("root"); }))
+        : [actionOf("No recent folders", null, null, true, () => {})];
       this.app().ui.dropdown(items, e.currentTarget);
     };
     // Launch in the background, from the ▾ beside Launch.
     const launchMenu = (e) => {
-      this.app().ui.dropdown([{ label: "Launch in Background", keys: "Alt+Enter", run: () => { go(true); } }], e.currentTarget);
+      this.app().ui.dropdown([action("Launch in Background", "Alt+Enter", () => { go(true); })], e.currentTarget);
     };
     // The browser's rows: `base`'s parent, then its folders as a tree.
     const browseRows = () => {

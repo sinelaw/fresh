@@ -15,14 +15,13 @@ import { sash, clamp } from "./sash.js";
 import { $ } from "./dom.js";
 
 
-// A command's action as the command table holds it: run with its one
-// optional argument, it comes to a promise of nothing (its failure reaches
-// whoever awaits it).
-export const asCommand = (f) => (arg) => Promise.resolve(f(arg)).then(() => undefined);
+import { asCommand } from "./commands.js";
+import { action, actionOf, SEPARATOR } from "./menu.js";
+import { rowOf, SEP } from "./menubar.js";
 
 // The clipboard's keys are the browser's own (not in the keymap); menus
 // show them.
-const CLIPBOARD_KEYS = { "edit.cut": "Ctrl+X", "edit.copy": "Ctrl+C", "edit.paste": "Ctrl+V" };
+const CLIPBOARD_KEYS = new Map([["edit.cut", "Ctrl+X"], ["edit.copy", "Ctrl+C"], ["edit.paste", "Ctrl+V"]]);
 
 export const DEFAULT_SETTINGS = {
   auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
@@ -575,21 +574,22 @@ export class App {
     const b = v.buf;
     const rel = b.path && b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
     const copy = (t) => navigator.clipboard?.writeText(t).then(() => this.setStatus(`Copied ${t}`), () => this.setStatus("The browser did not allow writing the clipboard"));
+    const path = b.path;
     this.ui.menu([
-      ...(v.preview ? [{ label: "Keep Open", run: () => this.keep(v) }] : []),
-      { label: "Close", keys: this.keyLabel("view.closeTab"), run: () => this.closeTab(pane, v) },
-      { label: "Close Others", run: () => this.closeTabs(pane, (x) => x !== v) },
-      { label: "Close to the Right", disabled: pane.views.indexOf(v) === pane.views.length - 1, run: () => this.closeTabs(pane, (x, i) => i > pane.views.indexOf(v)) },
-      { label: "Close Saved", run: () => this.closeTabs(pane, (x) => !x.buf.modified) },
-      { label: "Close All", run: () => this.closeTabs(pane, () => true) },
-      null,
-      { label: "Split Right", keys: this.keyLabel("view.splitRight"), run: () => { this.focusPane(pane); this.split("h"); } },
-      { label: "Split Down", run: () => { this.focusPane(pane); this.split("v"); } },
-      ...(b.path ? [
-        null,
-        { label: "Copy Path", run: () => copy(b.path) },
-        { label: "Copy Relative Path", run: () => copy(rel) },
-        { label: "Reveal in Explorer", run: () => this.run("explorer.reveal") },
+      ...(v.preview ? [action("Keep Open", null, () => this.keep(v))] : []),
+      action("Close", this.keyLabel("view.closeTab"), () => this.closeTab(pane, v)),
+      action("Close Others", null, () => this.closeTabs(pane, (x) => x !== v)),
+      actionOf("Close to the Right", null, null, pane.views.indexOf(v) === pane.views.length - 1, () => this.closeTabs(pane, (x, i) => i > pane.views.indexOf(v))),
+      action("Close Saved", null, () => this.closeTabs(pane, (x) => !x.buf.modified)),
+      action("Close All", null, () => this.closeTabs(pane, () => true)),
+      SEPARATOR,
+      action("Split Right", this.keyLabel("view.splitRight"), () => { this.focusPane(pane); this.split("h"); }),
+      action("Split Down", null, () => { this.focusPane(pane); this.split("v"); }),
+      ...(path ? [
+        SEPARATOR,
+        action("Copy Path", null, () => copy(path)),
+        action("Copy Relative Path", null, () => copy(rel ?? path)),
+        action("Reveal in Explorer", null, () => this.run("explorer.reveal")),
       ] : []),
     ], at);
   }
@@ -599,15 +599,20 @@ export class App {
     this.focusPane(pane);
     const b = pane.view.buf;
     const lsp = this.lspAvailable(b);
+    // A command's row, its title without its group ("Edit: ").
+    const row = (id) => {
+      const c = this.commands.get(id);
+      return rowOf(id, c ? c.title.replace(/^(Edit|LSP|File|View): /, "") : null, CLIPBOARD_KEYS.get(id) ?? null, null);
+    };
     this.ui.menu(this.menubar.resolve([
-      "edit.cut", "edit.copy", "edit.paste",
-      null,
-      ...(lsp ? ["lsp.definition", "lsp.references", "lsp.rename", "lsp.codeActions", "lsp.hover", null, "lsp.format"] : []),
-      "edit.toggleComment", "edit.duplicateLine", "edit.deleteLine",
-      null,
-      "select.all", "select.allOccurrences",
-      ...(b.doc ? [null, "file.revert"] : []),
-    ].map((id) => (id ? { command: id, label: this.commands.get(id)?.title.replace(/^(Edit|LSP|File|View): /, ""), keys: CLIPBOARD_KEYS[id] } : null))), at);
+      ...["edit.cut", "edit.copy", "edit.paste"].map(row),
+      SEP,
+      ...(lsp ? [...["lsp.definition", "lsp.references", "lsp.rename", "lsp.codeActions", "lsp.hover"].map(row), SEP, row("lsp.format")] : []),
+      ...["edit.toggleComment", "edit.duplicateLine", "edit.deleteLine"].map(row),
+      SEP,
+      ...["select.all", "select.allOccurrences"].map(row),
+      ...(b.doc ? [SEP, row("file.revert")] : []),
+    ]), at);
   }
 
   // ------------------------------------------------------------- buffers

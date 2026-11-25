@@ -39,7 +39,7 @@ function matchLength(m) { return m ? m[0].length : 0; }
 
 // Run `f` once `ms` after the last call for `key` (`timers` holds each
 // key's pending run).
-/** function later<K>(timers: Map<K, Number>, key: K, ms: Number, f: () => Undefined) => Undefined */
+/** function later(timers: Map<String, Number>, key: String, ms: Number, f: () => Undefined) => Undefined */
 function later(timers, key, ms, f) {
   const before = timers.get(key);
   if (before !== undefined) clearTimeout(before);
@@ -233,7 +233,7 @@ export function activate(app) {
   const composing = (b) => b.views().some((v) => v.mode === "compose");
   const schedule = (b, delay) => {
     if (!isMarkdown(b) || !composing(b)) return;
-    later(timers, b.id, delay, () => decorate(b));
+    later(timers, String(b.id), delay, () => { decorate(b); });
   };
   fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer, 30));
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer, 0));
@@ -296,7 +296,7 @@ export function activate(app) {
   };
   fresh.onBuffer(app, "buffer.activated", renderContents);
   const tocTimer = new Map();
-  fresh.onBuffer(app, "buffer.changed", () => later(tocTimer, "toc", 300, renderContents));
+  fresh.onBuffer(app, "buffer.changed", () => { later(tocTimer, "toc", 300, renderContents); });
 
   fresh.register(app, "markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
   fresh.register(app, "markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });

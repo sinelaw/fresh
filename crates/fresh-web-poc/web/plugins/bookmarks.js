@@ -88,6 +88,6 @@ export function activate(app) {
       fresh.pick(app, { title: "Bookmarks", items, onAccept: (it) => { const n = it.value; if (n !== null) jump(n); } });
     },
   });
-  fresh.addMenuItem(app, "Go", null);
-  fresh.addMenuItem(app, "Go", { command: "bookmark.list", label: "Bookmarks…" });
+  fresh.addMenuItem(app, "Go", fresh.MENU_BAR_SEPARATOR);
+  fresh.addMenuItem(app, "Go", fresh.menuCommand("bookmark.list", "Bookmarks…"));
 }

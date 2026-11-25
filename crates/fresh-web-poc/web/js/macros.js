@@ -7,7 +7,7 @@
 // are left out; what is typed into a prompt or a panel is not recorded.
 // Registers last as long as the page.
 
-import { asCommand } from "./app.js";
+import { asCommand } from "./commands.js";
 
 const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 

@@ -9,254 +9,289 @@
 // the one with that letter (LSP has none: Alt+L is lowercase); Left and Right past a menu's edge move to
 // the next title's.
 
-import { Menu } from "./menu.js";
-import { asCommand } from "./app.js";
+import { makeMenu, menuSpec, actionOf, submenu, SEPARATOR } from "./menu.js";
+import { asCommand } from "./commands.js";
 
 import { $ } from "./dom.js";
 
-// A row: a command id; {command, label?, keys?, checked?}; {label, items} (a
-// submenu); null (a separator). `checked(app)` makes the row a toggle.
-const view = (app) => app.view();
-const setting = (k) => (app) => !!app.settings[k];
+// A menu bar row: a command (its label, keys and, for a toggle, the check
+// `checked(app)` reads when the menu opens; none given: the command's
+// own), a submenu, or a separator.
+// A toggle's check: a setting (on when true), a piece of the editor's
+// state (MenuBar.state), or a plugin's own reading.
+/** type Check = {kind: "setting", key: String} | {kind: "state", name: String} | {kind: "read", read: () => Boolean} */
+/** type MenuRow =
+ *   | {kind: "command", command: String, label: String | Null, keys: String | Null, checked: Check | Null}
+ *   | {kind: "submenu", label: String, items: MenuRow[]}
+ *   | {kind: "separator"} */
+/** function rowOf(command: String, label: String | Null, keys: String | Null, checked: Check | Null) => MenuRow */
+export function rowOf(command, label, keys, checked) { return { kind: "command", command, label, keys, checked }; }
+/** function cmd(command: String, label: String | Null) => MenuRow */
+export function cmd(command, label) { return rowOf(command, label, null, null); }
+/** function keyed(command: String, label: String, keys: String) => MenuRow */
+function keyed(command, label, keys) { return rowOf(command, label, keys, null); }
+/** function check(command: String, label: String, checked: Check) => MenuRow */
+function check(command, label, checked) { return rowOf(command, label, null, checked); }
+// A plugin's toggle row: checked while `read()` is true.
+/** function toggle(command: String, label: String, read: () => Boolean) => MenuRow */
+export function toggle(command, label, read) { return check(command, label, { kind: "read", read }); }
+/** function sub(label: String, items: MenuRow[]) => MenuRow */
+function sub(label, items) { return { kind: "submenu", label, items }; }
+/** const SEP: MenuRow */
+export const SEP = { kind: "separator" };
+/** function setting(key: String) => Check */
+function setting(key) { return { kind: "setting", key }; }
+/** function state(name: String) => Check */
+function state(name) { return { kind: "state", name }; }
+
+// A menu bar menu: its title, its Alt+letter (null: none) and its rows.
+/** function menuOf(label: String, key: String | Null, items: MenuRow[]) => {label: String, key: String | Null, items: MenuRow[]} */
+function menuOf(label, key, items) { return { label, key, items }; }
 export const MENUS = [
-  { label: "File", key: "f", items: [
-    { command: "file.new", label: "New File" },
-    { command: "palette.files", label: "Open File…" },
-    { command: "file.recent", label: "Open Recent…" },
-    null,
-    { command: "file.save", label: "Save" },
-    { command: "file.saveAs", label: "Save As…" },
-    { command: "file.saveAll", label: "Save All" },
-    { command: "file.revert", label: "Revert File" },
-    null,
-    { command: "file.language", label: "Set Language…" },
-    { command: "file.encoding", label: "Set Encoding…" },
-    { command: "file.lineEnding", label: "Set Line Ending…" },
-    { command: "file.toggleReadOnly", label: "Read-Only", checked: (app) => !!view(app)?.buf.readOnly },
-    null,
-    { command: "view.closeTab", label: "Close Tab" },
-    { command: "view.closeAllTabs", label: "Close All Tabs" },
-    null,
-    { command: "workspace.trust", label: "Trust Workspace" },
-    { command: "orchestrator.new", label: "New Workspace…" },
-    { command: "orchestrator.switch", label: "Switch Workspace…" },
-    { command: "orchestrator.agent", label: "Run Agent…" },
-    { command: "orchestrator.close", label: "Close Workspace" },
-  ] },
-  { label: "Edit", key: "e", items: [
-    { command: "edit.undo", label: "Undo" },
-    { command: "edit.redo", label: "Redo" },
-    null,
-    { command: "edit.cut", label: "Cut", keys: "Ctrl+X" },
-    { command: "edit.copy", label: "Copy", keys: "Ctrl+C" },
-    { command: "edit.paste", label: "Paste", keys: "Ctrl+V" },
-    null,
-    { command: "search.find", label: "Find…" },
-    { command: "search.replace", label: "Replace…" },
-    { command: "search.findInSelection", label: "Find in Selection…" },
-    { command: "search.queryReplace", label: "Query Replace…" },
-    { command: "search.findNext", label: "Find Next" },
-    { command: "search.findPrevious", label: "Find Previous" },
-    { command: "search.project", label: "Search in Workspace…" },
-    null,
-    { command: "edit.deleteLine", label: "Delete Line" },
-    { command: "edit.duplicateLine", label: "Duplicate Line" },
-    { command: "edit.moveLineUp", label: "Move Line Up" },
-    { command: "edit.moveLineDown", label: "Move Line Down" },
-    { command: "edit.toggleComment", label: "Toggle Comment" },
-    { command: "lsp.format", label: "Format Document" },
-    { label: "Transform", items: [
-      { command: "edit.upperCase", label: "Uppercase" }, { command: "edit.lowerCase", label: "Lowercase" },
-      { command: "edit.sortLines", label: "Sort Lines" }, { command: "edit.trimTrailing", label: "Trim Trailing Whitespace" },
-      { command: "edit.transposeChars", label: "Transpose Characters" }, { command: "edit.transposeLines", label: "Transpose Lines" },
-    ] },
-    { label: "Macros", items: [
-      { command: "macro.record", label: "Record Macro…" }, { command: "macro.stop", label: "Stop Recording" },
-      { command: "macro.playLast", label: "Play Last Macro" }, { command: "macro.play", label: "Play Macro…" },
-      { command: "macro.list", label: "List Macros" },
-    ] },
-    null,
-    { label: "Settings", items: [
-      { command: "settings.autoSave", label: "Auto Save", checked: setting("auto_save") },
-      { command: "settings.autoClose", label: "Auto Close Brackets", checked: setting("auto_close") },
-      { command: "settings.previewTabs", label: "Preview Tabs", checked: setting("preview_tabs") },
-    ] },
-    { command: "keys.editor", label: "Keyboard Shortcuts" },
-  ] },
-  { label: "View", key: "v", items: [
-    { command: "orchestrator.dock", label: "Orchestrator Dock", checked: (app) => !!app.orchestrator?.panel?.open },
-    { command: "palette.commands", label: "Command Palette…" },
-    null,
-    { command: "explorer.toggle", label: "File Explorer", checked: () => !$("#sidebar").classList.contains("hidden") },
-    { command: "terminal.toggle", label: "Terminal", checked: (app) => !!app.term?.visible },
-    { command: "lsp.diagnostics", label: "Diagnostics" },
-    { command: "markdown.contents", label: "Markdown Contents" },
-    null,
-    { command: "view.toggleLineNumbers", label: "Line Numbers", checked: (app) => !!view(app)?.opts.lineNumbers },
-    { command: "view.toggleWrap", label: "Line Wrap", checked: (app) => !!view(app)?.opts.wrap },
-    { command: "view.toggleWhitespace", label: "Whitespace", checked: setting("show_whitespace") },
-    { command: "view.toggleCurrentLine", label: "Current Line", checked: setting("highlight_current_line") },
-    { command: "view.toggleOccurrences", label: "Occurrences", checked: setting("highlight_occurrences") },
-    { command: "view.toggleIndentGuides", label: "Indentation Guides", checked: setting("show_indent_guides") },
-    { command: "view.toggleBrackets", label: "Matching Brackets", checked: setting("highlight_brackets") },
-    { command: "view.toggleRainbow", label: "Rainbow Brackets", checked: setting("rainbow_brackets") },
-    { command: "view.toggleScrollSync", label: "Scroll Sync", checked: setting("scroll_sync") },
-    { command: "markdown.toggleCompose", label: "Markdown Compose", checked: (app) => view(app)?.mode === "compose" },
-    { label: "Rulers", items: ["view.addRuler", "view.removeRulers"] },
-    { label: "Folding", items: [{ command: "fold.toggle", label: "Toggle Fold" }, { command: "fold.all", label: "Fold All" }, { command: "fold.none", label: "Unfold All" }] },
-    null,
-    { command: "view.zoomIn", label: "Zoom In" },
-    { command: "view.zoomOut", label: "Zoom Out" },
-    { command: "view.zoomReset", label: "Reset Zoom" },
-    null,
-    { command: "theme.select", label: "Select Theme…" },
-    { command: "skin.select", label: "Select Skin…" },
-    { label: "Keymap", items: [
-      { command: "settings.keymapDefault", label: "Default", checked: (app) => app.settings.keymap !== "emacs" },
-      { command: "settings.keymapEmacs", label: "Emacs", checked: (app) => app.settings.keymap === "emacs" },
-    ] },
-    null,
-    { command: "view.splitRight", label: "Split Right" },
-    { command: "view.splitDown", label: "Split Down" },
-    { command: "view.closeSplit", label: "Close Split" },
-    { command: "view.maximizeSplit", label: "Maximize Split" },
-    { command: "view.nextSplit", label: "Next Split" },
-    { command: "view.prevSplit", label: "Previous Split" },
-    null,
-    { label: "Terminal", items: [
-      { command: "terminal.toggle", label: "Toggle Terminal" }, { command: "terminal.new", label: "New Terminal" },
-      { command: "terminal.restart", label: "Restart Terminal" }, { command: "terminal.sendSelection", label: "Send Selection to Terminal" },
-    ] },
-    { label: "Git", items: [
-      { command: "git.log", label: "Log" }, { command: "git.logFile", label: "Log of Current File" },
-      { command: "git.blame", label: "Toggle Blame" }, { command: "git.diffFile", label: "Diff Current File" },
-      { command: "compare.head", label: "Compare with Last Commit" }, null, { command: "git.refresh", label: "Refresh" },
-    ] },
-    { label: "Compare", items: [{ command: "compare.files", label: "Compare Files…" }, { command: "compare.next", label: "Next Difference" }, { command: "compare.prev", label: "Previous Difference" }] },
-    { label: "Code Tour", items: [{ command: "tour.open", label: "Open…" }, { command: "tour.next", label: "Next Step" }, { command: "tour.prev", label: "Previous Step" }] },
-  ] },
-  { label: "Selection", key: "s", items: [
-    { command: "select.all", label: "Select All" },
-    { command: "select.line", label: "Select Line" },
-    { command: "select.expand", label: "Expand Selection" },
-    { command: "select.shrink", label: "Shrink Selection" },
-    { label: "Block Select", items: [
-      { command: "select.blockUp", label: "Up" }, { command: "select.blockDown", label: "Down" },
-      { command: "select.blockLeft", label: "Left" }, { command: "select.blockRight", label: "Right" },
-    ] },
-    null,
-    { command: "cursor.addAbove", label: "Add Cursor Above" },
-    { command: "cursor.addBelow", label: "Add Cursor Below" },
-    { command: "select.nextOccurrence", label: "Add Next Occurrence" },
-    { command: "select.allOccurrences", label: "Select All Occurrences" },
-    { command: "search.findSelectionNext", label: "Find Selection Next" },
-    { command: "search.findSelectionPrevious", label: "Find Selection Previous" },
-    { command: "edit.escape", label: "Single Cursor" },
-  ] },
-  { label: "Go", key: "g", items: [
-    { command: "go.back", label: "Back" },
-    { command: "go.forward", label: "Forward" },
-    null,
-    { command: "palette.files", label: "Go to File…" },
-    { command: "palette.buffers", label: "Switch Buffer…" },
-    { command: "palette.line", label: "Go to Line…" },
-    { command: "lsp.symbols", label: "Go to Symbol in File…" },
-    { command: "lsp.workspaceSymbols", label: "Go to Symbol in Workspace…" },
-    null,
-    { command: "lsp.definition", label: "Go to Definition" },
-    { command: "lsp.references", label: "Find References" },
-    { command: "lsp.nextDiagnostic", label: "Next Problem" },
-    { command: "lsp.prevDiagnostic", label: "Previous Problem" },
-    { command: "git.nextChange", label: "Next Change" },
-    { command: "git.prevChange", label: "Previous Change" },
-    null,
-    { command: "cursor.matchingBracket", label: "Matching Bracket" },
-    { command: "cursor.paragraphDown", label: "Next Paragraph" },
-    { command: "cursor.paragraphUp", label: "Previous Paragraph" },
-    null,
-    { command: "view.nextTab", label: "Next Tab" },
-    { command: "view.prevTab", label: "Previous Tab" },
-  ] },
-  { label: "LSP", key: "", items: [
-    { command: "lsp.hover", label: "Show Hover" },
-    { command: "lsp.definition", label: "Go to Definition" },
-    { command: "lsp.references", label: "Find References" },
-    { command: "lsp.rename", label: "Rename Symbol…" },
-    { command: "lsp.completion", label: "Completion" },
-    { command: "lsp.signatureHelp", label: "Signature Help" },
-    { command: "lsp.codeActions", label: "Code Actions…" },
-    { command: "lsp.format", label: "Format Document" },
-    { command: "lsp.symbols", label: "Go to Symbol in File…" },
-    { command: "lsp.workspaceSymbols", label: "Go to Symbol in Workspace…" },
-    { command: "lsp.diagnostics", label: "Diagnostics" },
-    { command: "lsp.toggleInlayHints", label: "Inlay Hints", checked: setting("inlay_hints") },
-    null,
-    { command: "lsp.status", label: "Show Status" },
-    { command: "lsp.restart", label: "Restart Server" },
-    { command: "lsp.stop", label: "Stop Server" },
-  ] },
-  { label: "Explorer", key: "x", items: [
-    { command: "explorer.focus", label: "Focus Explorer" },
-    { command: "explorer.toggle", label: "Show Explorer", checked: () => !$("#sidebar").classList.contains("hidden") },
-    null,
-    { command: "explorer.newFile", label: "New File…" },
-    { command: "explorer.newFolder", label: "New Folder…" },
-    { command: "explorer.rename", label: "Rename…" },
-    { command: "explorer.delete", label: "Delete" },
-    null,
-    { command: "explorer.reveal", label: "Reveal Active File" },
-    { command: "explorer.collapseAll", label: "Collapse All" },
-    { command: "explorer.refresh", label: "Refresh" },
-  ] },
-  { label: "Help", key: "h", items: [
-    { command: "help.welcome", label: "Welcome" },
-    { command: "keys.editor", label: "Keyboard Shortcuts" },
-    { command: "palette.commands", label: "All Commands…" },
-    null,
-    { command: "help.log", label: "Show Log" },
-  ] },
+  menuOf("File", "f", [
+    cmd("file.new", "New File"),
+    cmd("palette.files", "Open File…"),
+    cmd("file.recent", "Open Recent…"),
+    SEP,
+    cmd("file.save", "Save"),
+    cmd("file.saveAs", "Save As…"),
+    cmd("file.saveAll", "Save All"),
+    cmd("file.revert", "Revert File"),
+    SEP,
+    cmd("file.language", "Set Language…"),
+    cmd("file.encoding", "Set Encoding…"),
+    cmd("file.lineEnding", "Set Line Ending…"),
+    check("file.toggleReadOnly", "Read-Only", state("readOnly")),
+    SEP,
+    cmd("view.closeTab", "Close Tab"),
+    cmd("view.closeAllTabs", "Close All Tabs"),
+    SEP,
+    cmd("workspace.trust", "Trust Workspace"),
+    cmd("orchestrator.new", "New Workspace…"),
+    cmd("orchestrator.switch", "Switch Workspace…"),
+    cmd("orchestrator.agent", "Run Agent…"),
+    cmd("orchestrator.close", "Close Workspace"),
+  ]),
+  menuOf("Edit", "e", [
+    cmd("edit.undo", "Undo"),
+    cmd("edit.redo", "Redo"),
+    SEP,
+    keyed("edit.cut", "Cut", "Ctrl+X"),
+    keyed("edit.copy", "Copy", "Ctrl+C"),
+    keyed("edit.paste", "Paste", "Ctrl+V"),
+    SEP,
+    cmd("search.find", "Find…"),
+    cmd("search.replace", "Replace…"),
+    cmd("search.findInSelection", "Find in Selection…"),
+    cmd("search.queryReplace", "Query Replace…"),
+    cmd("search.findNext", "Find Next"),
+    cmd("search.findPrevious", "Find Previous"),
+    cmd("search.project", "Search in Workspace…"),
+    SEP,
+    cmd("edit.deleteLine", "Delete Line"),
+    cmd("edit.duplicateLine", "Duplicate Line"),
+    cmd("edit.moveLineUp", "Move Line Up"),
+    cmd("edit.moveLineDown", "Move Line Down"),
+    cmd("edit.toggleComment", "Toggle Comment"),
+    cmd("lsp.format", "Format Document"),
+    sub("Transform", [
+      cmd("edit.upperCase", "Uppercase"), cmd("edit.lowerCase", "Lowercase"),
+      cmd("edit.sortLines", "Sort Lines"), cmd("edit.trimTrailing", "Trim Trailing Whitespace"),
+      cmd("edit.transposeChars", "Transpose Characters"), cmd("edit.transposeLines", "Transpose Lines"),
+    ]),
+    sub("Macros", [
+      cmd("macro.record", "Record Macro…"), cmd("macro.stop", "Stop Recording"),
+      cmd("macro.playLast", "Play Last Macro"), cmd("macro.play", "Play Macro…"),
+      cmd("macro.list", "List Macros"),
+    ]),
+    SEP,
+    sub("Settings", [
+      check("settings.autoSave", "Auto Save", setting("auto_save")),
+      check("settings.autoClose", "Auto Close Brackets", setting("auto_close")),
+      check("settings.previewTabs", "Preview Tabs", setting("preview_tabs")),
+    ]),
+    cmd("keys.editor", "Keyboard Shortcuts"),
+  ]),
+  menuOf("View", "v", [
+    check("orchestrator.dock", "Orchestrator Dock", state("orchestrator")),
+    cmd("palette.commands", "Command Palette…"),
+    SEP,
+    check("explorer.toggle", "File Explorer", state("explorer")),
+    check("terminal.toggle", "Terminal", state("terminal")),
+    cmd("lsp.diagnostics", "Diagnostics"),
+    cmd("markdown.contents", "Markdown Contents"),
+    SEP,
+    check("view.toggleLineNumbers", "Line Numbers", state("lineNumbers")),
+    check("view.toggleWrap", "Line Wrap", state("wrap")),
+    check("view.toggleWhitespace", "Whitespace", setting("show_whitespace")),
+    check("view.toggleCurrentLine", "Current Line", setting("highlight_current_line")),
+    check("view.toggleOccurrences", "Occurrences", setting("highlight_occurrences")),
+    check("view.toggleIndentGuides", "Indentation Guides", setting("show_indent_guides")),
+    check("view.toggleBrackets", "Matching Brackets", setting("highlight_brackets")),
+    check("view.toggleRainbow", "Rainbow Brackets", setting("rainbow_brackets")),
+    check("view.toggleScrollSync", "Scroll Sync", setting("scroll_sync")),
+    check("markdown.toggleCompose", "Markdown Compose", state("compose")),
+    sub("Rulers", [cmd("view.addRuler", null), cmd("view.removeRulers", null)]),
+    sub("Folding", [cmd("fold.toggle", "Toggle Fold"), cmd("fold.all", "Fold All"), cmd("fold.none", "Unfold All")]),
+    SEP,
+    cmd("view.zoomIn", "Zoom In"),
+    cmd("view.zoomOut", "Zoom Out"),
+    cmd("view.zoomReset", "Reset Zoom"),
+    SEP,
+    cmd("theme.select", "Select Theme…"),
+    cmd("skin.select", "Select Skin…"),
+    sub("Keymap", [
+      check("settings.keymapDefault", "Default", state("keymapDefault")),
+      check("settings.keymapEmacs", "Emacs", state("keymapEmacs")),
+    ]),
+    SEP,
+    cmd("view.splitRight", "Split Right"),
+    cmd("view.splitDown", "Split Down"),
+    cmd("view.closeSplit", "Close Split"),
+    cmd("view.maximizeSplit", "Maximize Split"),
+    cmd("view.nextSplit", "Next Split"),
+    cmd("view.prevSplit", "Previous Split"),
+    SEP,
+    sub("Terminal", [
+      cmd("terminal.toggle", "Toggle Terminal"), cmd("terminal.new", "New Terminal"),
+      cmd("terminal.restart", "Restart Terminal"), cmd("terminal.sendSelection", "Send Selection to Terminal"),
+    ]),
+    sub("Git", [
+      cmd("git.log", "Log"), cmd("git.logFile", "Log of Current File"),
+      cmd("git.blame", "Toggle Blame"), cmd("git.diffFile", "Diff Current File"),
+      cmd("compare.head", "Compare with Last Commit"), SEP, cmd("git.refresh", "Refresh"),
+    ]),
+    sub("Compare", [cmd("compare.files", "Compare Files…"), cmd("compare.next", "Next Difference"), cmd("compare.prev", "Previous Difference")]),
+    sub("Code Tour", [cmd("tour.open", "Open…"), cmd("tour.next", "Next Step"), cmd("tour.prev", "Previous Step")]),
+  ]),
+  menuOf("Selection", "s", [
+    cmd("select.all", "Select All"),
+    cmd("select.line", "Select Line"),
+    cmd("select.expand", "Expand Selection"),
+    cmd("select.shrink", "Shrink Selection"),
+    sub("Block Select", [
+      cmd("select.blockUp", "Up"), cmd("select.blockDown", "Down"),
+      cmd("select.blockLeft", "Left"), cmd("select.blockRight", "Right"),
+    ]),
+    SEP,
+    cmd("cursor.addAbove", "Add Cursor Above"),
+    cmd("cursor.addBelow", "Add Cursor Below"),
+    cmd("select.nextOccurrence", "Add Next Occurrence"),
+    cmd("select.allOccurrences", "Select All Occurrences"),
+    cmd("search.findSelectionNext", "Find Selection Next"),
+    cmd("search.findSelectionPrevious", "Find Selection Previous"),
+    cmd("edit.escape", "Single Cursor"),
+  ]),
+  menuOf("Go", "g", [
+    cmd("go.back", "Back"),
+    cmd("go.forward", "Forward"),
+    SEP,
+    cmd("palette.files", "Go to File…"),
+    cmd("palette.buffers", "Switch Buffer…"),
+    cmd("palette.line", "Go to Line…"),
+    cmd("lsp.symbols", "Go to Symbol in File…"),
+    cmd("lsp.workspaceSymbols", "Go to Symbol in Workspace…"),
+    SEP,
+    cmd("lsp.definition", "Go to Definition"),
+    cmd("lsp.references", "Find References"),
+    cmd("lsp.nextDiagnostic", "Next Problem"),
+    cmd("lsp.prevDiagnostic", "Previous Problem"),
+    cmd("git.nextChange", "Next Change"),
+    cmd("git.prevChange", "Previous Change"),
+    SEP,
+    cmd("cursor.matchingBracket", "Matching Bracket"),
+    cmd("cursor.paragraphDown", "Next Paragraph"),
+    cmd("cursor.paragraphUp", "Previous Paragraph"),
+    SEP,
+    cmd("view.nextTab", "Next Tab"),
+    cmd("view.prevTab", "Previous Tab"),
+  ]),
+  menuOf("LSP", null, [
+    cmd("lsp.hover", "Show Hover"),
+    cmd("lsp.definition", "Go to Definition"),
+    cmd("lsp.references", "Find References"),
+    cmd("lsp.rename", "Rename Symbol…"),
+    cmd("lsp.completion", "Completion"),
+    cmd("lsp.signatureHelp", "Signature Help"),
+    cmd("lsp.codeActions", "Code Actions…"),
+    cmd("lsp.format", "Format Document"),
+    cmd("lsp.symbols", "Go to Symbol in File…"),
+    cmd("lsp.workspaceSymbols", "Go to Symbol in Workspace…"),
+    cmd("lsp.diagnostics", "Diagnostics"),
+    check("lsp.toggleInlayHints", "Inlay Hints", setting("inlay_hints")),
+    SEP,
+    cmd("lsp.status", "Show Status"),
+    cmd("lsp.restart", "Restart Server"),
+    cmd("lsp.stop", "Stop Server"),
+  ]),
+  menuOf("Explorer", "x", [
+    cmd("explorer.focus", "Focus Explorer"),
+    check("explorer.toggle", "Show Explorer", state("explorer")),
+    SEP,
+    cmd("explorer.newFile", "New File…"),
+    cmd("explorer.newFolder", "New Folder…"),
+    cmd("explorer.rename", "Rename…"),
+    cmd("explorer.delete", "Delete"),
+    SEP,
+    cmd("explorer.reveal", "Reveal Active File"),
+    cmd("explorer.collapseAll", "Collapse All"),
+    cmd("explorer.refresh", "Refresh"),
+  ]),
+  menuOf("Help", "h", [
+    cmd("help.welcome", "Welcome"),
+    cmd("keys.editor", "Keyboard Shortcuts"),
+    cmd("palette.commands", "All Commands…"),
+    SEP,
+    cmd("help.log", "Show Log"),
+  ]),
 ];
 
 export class MenuBar {
   constructor(app) {
     this.app = app;
     this.host = $("#menubar");
-    this.menus = MENUS.map((m) => ({ ...m, items: [...m.items] }));
-    this.open = -1;
-    this.menu = null;
+    this.menus = MENUS.map((m) => menuOf(m.label, m.key, [...m.items]));
+    // The menu open, and its title's index: a list of at most one.
+    this.opened = [];
   }
+
 
   // Draw the titles and take their pointer; register the commands that
   // open the menus (bound to F10 and Alt+letter in the keymap).
   listen() {
     this.render();
-    this.host.addEventListener("mousedown", (e) => {
+    // The title under a pointer event, as its menu's index.
+    const titleAt = (e) => {
       const t = e.target.closest(".mtop");
-      if (!t) return;
+      return t === null ? null : Number(t.dataset.i);
+    };
+    this.host.addEventListener("mousedown", (e) => {
+      const i = titleAt(e);
+      if (i === null) return;
       e.preventDefault();
-      const i = +t.dataset.i;
-      if (this.open === i) this.close(); else this.show(i, false);
+      if (this.isOpen(i)) this.close(); else this.show(i, false);
     });
     // Moving onto another title switches to its menu.
     this.host.addEventListener("mousemove", (e) => {
-      const t = e.target.closest(".mtop");
-      if (t && this.open >= 0 && +t.dataset.i !== this.open) this.show(+t.dataset.i, false);
+      const i = titleAt(e);
+      if (i !== null && this.opened.length > 0 && !this.isOpen(i)) this.show(i, false);
     });
     const cmd = (id, title, run) => { this.app().commands.set(id, { title, run: asCommand(run), source: "core", hidden: true }); };
     cmd("menu.open", "Open the Menu Bar", () => this.show(0, true));
-    for (const [i, m] of this.menus.entries()) cmd(`menu.${m.label.toLowerCase()}`, `Open the ${m.label} Menu`, () => this.show(i, true));
+    this.menus.forEach((m, i) => { cmd(`menu.${m.label.toLowerCase()}`, `Open the ${m.label} Menu`, () => this.show(i, true)); });
   }
 
   render() {
     this.host.replaceChildren(...this.menus.map((m, i) => {
       const b = document.createElement("button");
-      b.className = "mtop" + (this.open === i ? " open" : "");
+      b.className = "mtop" + (this.isOpen(i) ? " open" : "");
       b.dataset.i = String(i);
       b.tabIndex = -1;
       b.textContent = m.label;
-      b.title = m.key ? `${m.label} (Alt+${m.key.toUpperCase()})` : m.label;
+      const key = m.key;
+      b.title = key ? `${m.label} (Alt+${key.toUpperCase()})` : m.label;
       b.setAttribute("aria-haspopup", "true");
-      b.setAttribute("aria-expanded", String(this.open === i));
+      b.setAttribute("aria-expanded", String(this.isOpen(i)));
       return b;
     }));
   }
@@ -264,9 +299,9 @@ export class MenuBar {
   // A plugin's row at the end of menu `label` (a new menu when there is
   // none by that name).
   add(label, row) {
-    let m = this.menus.find((x) => x.label === label);
-    if (!m) { m = { label, key: "", items: [] }; this.menus.push(m); }
-    m.items.push(row);
+    const m = this.menus.find((x) => x.label === label);
+    if (m) m.items.push(row);
+    else this.menus.push(menuOf(label, null, [row]));
     this.render();
   }
 
@@ -274,43 +309,64 @@ export class MenuBar {
   // key, check), unknown ones left out, separators never doubled.
   resolve(rows) {
     const app = this.app();
+    /** const out: MenuItem[] */
     const out = [];
+    const lastIsRow = () => out.length > 0 && out[out.length - 1].kind !== "separator";
     for (const r of rows) {
-      if (!r) { if (out.length && out[out.length - 1]) out.push(null); continue; }
-      const row = typeof r === "string" ? { command: r } : r;
-      if (row.items) {
-        const items = this.resolve(row.items);
-        if (items.some(Boolean)) out.push({ label: row.label, items });
+      if (r.kind === "separator") { if (lastIsRow()) out.push(SEPARATOR); continue; }
+      if (r.kind === "submenu") {
+        const items = this.resolve(r.items);
+        if (items.length) out.push(submenu(r.label, items));
         continue;
       }
-      const c = app.commands.get(row.command);
+      const c = app.commands.get(r.command);
       if (!c) continue;
-      out.push({
-        label: row.label || c.title,
-        keys: row.keys || app.keyLabel(row.command),
-        checked: row.checked ? row.checked(app) : undefined,
-        run: () => app.run(row.command),
-      });
+      const checked = r.checked;
+      const command = r.command;
+      out.push(actionOf(r.label ?? c.title, r.keys ?? app.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => app.run(command)));
     }
-    while (out.length && !out[out.length - 1]) out.pop();
-    return out;
+    return lastIsRow() || !out.length ? out : out.slice(0, -1);
   }
+
+  // Whether a toggle's check is on now.
+  isChecked(c) {
+    if (c.kind === "read") return c.read();
+    const app = this.app();
+    if (c.kind === "setting") return !!app.settings[c.key];
+    return this.state(c.name);
+  }
+  // A piece of the editor's state, by name.
+  state(name) {
+    const app = this.app();
+    const v = app.view();
+    const reads = new Map([
+      ["readOnly", () => !!v && v.buf.readOnly],
+      ["lineNumbers", () => !!v && v.opts.lineNumbers],
+      ["wrap", () => !!v && v.opts.wrap],
+      ["compose", () => !!v && v.mode === "compose"],
+      ["orchestrator", () => app.orchestrator.dockOpen()],
+      ["explorer", () => !$("#sidebar").classList.contains("hidden")],
+      ["terminal", () => app.term.visible],
+      ["keymapDefault", () => app.settings.keymap !== "emacs"],
+      ["keymapEmacs", () => app.settings.keymap === "emacs"],
+    ]);
+    const read = reads.get(name);
+    return read ? read() : false;
+  }
+
+  isOpen(i) { return this.opened.some((o) => o.i === i); }
 
   // Open menu `i` under its title; `keys`: highlight its first row.
   show(i, keys) {
-    const prev = this.menu;
-    this.menu = null;
-    if (prev) prev.close();
-    this.open = i;
-    this.render();
+    const prev = this.opened;
+    this.opened = [];
+    for (const o of prev) o.menu.close();
     const n = this.menus.length;
-    const menu = new Menu(this.resolve(this.menus[i].items), {
-      app: this.app,
-      ignore: "#menubar",
-      onSide: (d) => this.show((i + d + n) % n, true),
-      onClose: () => { if (this.menu === menu) { this.menu = null; this.open = -1; this.render(); } },
-    }).build();
-    this.menu = menu;
+    const menu = makeMenu(this.resolve(this.menus[i].items), menuSpec(this.app, "#menubar",
+      (d) => { this.show((i + d + n) % n, true); },
+      () => { if (this.opened.some((o) => o.menu === menu)) { this.opened = []; this.render(); } }, null), []);
+    this.opened = [{ i, menu }];
+    this.render();
     // A menu bar's menu: a skin may join it to its title.
     menu.el.classList.add("of-bar");
     const title = this.host.children[i].getBoundingClientRect();
@@ -318,5 +374,5 @@ export class MenuBar {
     if (keys) menu.enter();
   }
 
-  close() { if (this.menu) this.menu.close(); }
+  close() { for (const o of this.opened) o.menu.close(); }
 }

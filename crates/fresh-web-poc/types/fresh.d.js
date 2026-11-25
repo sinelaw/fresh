@@ -168,6 +168,14 @@
 // foldingRange (document lines):
 /** type LspFold = {start: Number, end: Number} */
 
+// A menu's item (js/menu.js: action, actionOf, submenu, SEPARATOR): an
+// action runs `run` (its `keys` shown beside it; `checked` true or false
+// gives the row a check; `disabled` greys it out), a submenu opens `items`.
+/** type MenuItem =
+ *   | {kind: "action", label: String, keys: String | Null, checked: Boolean | Null, disabled: Boolean, run: () => Undefined}
+ *   | {kind: "submenu", label: String, items: MenuItem[]}
+ *   | {kind: "separator"} */
+
 // A row a palette mode lists (`fresh.paletteMode`): `run` when it is
 // chosen, `preview` when it is selected; a row with neither is a note.
 /** type PaletteItem = {

@@ -14,7 +14,7 @@
 
 import { rpc, RpcError } from "./rpc.js";
 import { BufferHandle, ViewHandle } from "./host.js";
-import { asCommand } from "./app.js";
+import { asCommand } from "./commands.js";
 export { byteLen } from "./ot.js";
 export { stringWidth as textWidth } from "./layout.js";
 
@@ -57,8 +57,14 @@ export const setUserKey = (app, key, command) => {
 export const captureKey = (app) => app.captureKey();
 // Keys for a buffer kind: defineMode(app, "git-log", { Enter: fn, q: fn }).
 export const defineMode = (app, mode, keys) => { app.modes.set(mode, keys); };
-// A row at the end of a menu bar menu: addMenuItem(app, "Go", {command, label}).
+// A row at the end of a menu bar menu: addMenuItem(app, "Go",
+// fresh.menuCommand("bookmark.list", "Bookmarks…")); menuToggle's row has a
+// check, `checked(app)` read when the menu opens; MENU_BAR_SEPARATOR parts.
 export const addMenuItem = (app, menu, row) => app.menubar.add(menu, row);
+export { cmd as menuCommand, toggle as menuToggle, SEP as MENU_BAR_SEPARATOR } from "./menubar.js";
+// A context menu's items (fresh.menu): an action, one with its keys, check
+// and state given, or a separator.
+export { action as menuAction, actionOf as menuActionOf, SEPARATOR as MENU_SEPARATOR } from "./menu.js";
 // A palette mode for a prefix: paletteMode(app, "@", {hint, items(q)}).
 export const paletteMode = (app, prefix, o) => app.prompt.provide(prefix, o);
 

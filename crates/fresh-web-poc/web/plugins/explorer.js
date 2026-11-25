@@ -292,19 +292,19 @@ export function activate(app) {
     const list = targets(r);
     const many = list.length > 1 ? ` (${list.length})` : "";
     fresh.menu(app, [
-      { label: "New File…", run: () => ops.newFile(dirOf(root, r)) },
-      { label: "New Folder…", run: () => ops.newFolder(dirOf(root, r)) },
-      null,
-      { label: "Rename…", disabled: list.length !== 1, run: () => ops.rename(list[0]) },
-      { label: `Delete${many}`, keys: "Delete", run: () => ops.remove(list) },
-      null,
-      { label: `Copy${many}`, keys: "Ctrl+C", run: () => ops.copy(list) },
-      { label: `Cut${many}`, keys: "Ctrl+X", run: () => ops.cut(list) },
-      { label: "Paste", keys: "Ctrl+V", disabled: clip.kind === "none", run: () => ops.paste(dirOf(root, r)) },
-      { label: `Copy Path${many}`, run: () => ops.copyPath(list) },
-      null,
-      { label: "Select All", keys: "Ctrl+A", run: selectAll },
-      { label: "Refresh", run: refresh },
+      fresh.menuAction("New File…", null, () => ops.newFile(dirOf(root, r))),
+      fresh.menuAction("New Folder…", null, () => ops.newFolder(dirOf(root, r))),
+      fresh.MENU_SEPARATOR,
+      fresh.menuActionOf("Rename…", null, null, list.length !== 1, () => ops.rename(list[0])),
+      fresh.menuAction(`Delete${many}`, "Delete", () => ops.remove(list)),
+      fresh.MENU_SEPARATOR,
+      fresh.menuAction(`Copy${many}`, "Ctrl+C", () => ops.copy(list)),
+      fresh.menuAction(`Cut${many}`, "Ctrl+X", () => ops.cut(list)),
+      fresh.menuActionOf("Paste", "Ctrl+V", null, clip.kind === "none", () => ops.paste(dirOf(root, r))),
+      fresh.menuAction(`Copy Path${many}`, null, () => ops.copyPath(list)),
+      fresh.MENU_SEPARATOR,
+      fresh.menuAction("Select All", "Ctrl+A", selectAll),
+      fresh.menuAction("Refresh", null, refresh),
     ], at);
   };
   const selectAll = () => { sel = selectPaths(rows.map((r) => r.path)); render(); };
@@ -365,9 +365,9 @@ export function activate(app) {
   };
   fresh.register(app, "explorer.toggleHidden", { title: "Explorer: Toggle Hidden Files", hidden: false, run: () => setShow({ hidden: !show.hidden, ignored: show.ignored }) });
   fresh.register(app, "explorer.toggleIgnored", { title: "Explorer: Toggle Gitignored Files", hidden: false, run: () => setShow({ hidden: show.hidden, ignored: !show.ignored }) });
-  fresh.addMenuItem(app, "Explorer", null);
-  fresh.addMenuItem(app, "Explorer", { command: "explorer.toggleHidden", label: "Show Hidden Files", checked: () => show.hidden });
-  fresh.addMenuItem(app, "Explorer", { command: "explorer.toggleIgnored", label: "Show Gitignored Files", checked: () => show.ignored });
+  fresh.addMenuItem(app, "Explorer", fresh.MENU_BAR_SEPARATOR);
+  fresh.addMenuItem(app, "Explorer", fresh.menuToggle("explorer.toggleHidden", "Show Hidden Files", () => show.hidden));
+  fresh.addMenuItem(app, "Explorer", fresh.menuToggle("explorer.toggleIgnored", "Show Gitignored Files", () => show.ignored));
   panel.actions([
     { icon: "+", title: "New File…", run: () => ops.newFile(dirOf(root, current())) },
     { icon: "⊞", title: "New Folder…", run: () => ops.newFolder(dirOf(root, current())) },
