@@ -14,6 +14,7 @@
 // focus and the caret back on the control with the same key. Lists are
 // virtualised (any number of items) and keyboard-navigable.
 
+import { $, setClass } from "./dom.js";
 import { color } from "./highlight.js";
 import { makeMenu, menuSpec } from "./menu.js";
 
@@ -29,13 +30,13 @@ export class UIKit {
   constructor(app) {
     this.app = app;
     this.panels = new Map();
-    this.dock = document.querySelector("#dock");
+    this.dock = $("#dock");
     this.dockTabs = this.dock.querySelector(".dock-tabs");
     this.dockBody = this.dock.querySelector(".dock-body");
-    this.side = document.querySelector("#side-panels");
-    this.right = document.querySelector("#right-dock");
-    this.left = document.querySelector("#left-dock");
-    this.bar = document.querySelector("#bar");
+    this.side = $("#side-panels");
+    this.right = $("#right-dock");
+    this.left = $("#left-dock");
+    this.bar = $("#bar");
     this.activeDock = null;
     this.contexts = []; // the open context menu: a list of at most one
   }
@@ -103,7 +104,7 @@ export class UIKit {
   dockShow(p) {
     this.activeDock = p;
     for (const x of this.panels.values()) if (x.place === "bottom") x.el.style.display = x === p ? "flex" : "none";
-    this.dock.classList.toggle("hidden", ![...this.panels.values()].some((x) => x.place === "bottom"));
+    setClass(this.dock, "hidden", ![...this.panels.values()].some((x) => x.place === "bottom"));
     this.renderDockTabs();
     this.app().renderAll();
   }
@@ -407,7 +408,7 @@ class Panel {
       r.onmousedown = (e) => {
         e.preventDefault();
         st.sel = i;
-        for (const x of inner.children) x.classList.toggle("sel", +x.dataset.i === i);
+        for (const x of inner.children) setClass(x, "sel", +x.dataset.i === i);
         el.focus({ preventScroll: true });
         // `onSelect(item, index, how, event)`: how is "mouse" (a press) or
         // "key" (the arrows); the event says which modifiers were held.
@@ -429,7 +430,7 @@ class Panel {
     const dragFrom = (e, it) => {
       const x0 = e.clientX, y0 = e.clientY;
       let dragging = false, onto, ok = false;
-      const mark = (row) => { for (const x of inner.children) x.classList.toggle("drop-target", x === row); el.classList.toggle("drop-target", ok && !row); };
+      const mark = (row) => { for (const x of inner.children) setClass(x, "drop-target", x === row); setClass(el, "drop-target", ok && !row); };
       const move = (ev) => {
         if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
         if (!dragging) { dragging = true; el.classList.add("dragging"); }

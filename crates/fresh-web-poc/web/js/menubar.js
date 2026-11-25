@@ -18,8 +18,9 @@ import { $ } from "./dom.js";
 // `checked(app)` reads when the menu opens; none given: the command's
 // own), a submenu, or a separator.
 // A toggle's check: a setting (on when true), a piece of the editor's
-// state (MenuBar.state), or a plugin's own reading.
-/** type Check = {kind: "setting", key: String} | {kind: "state", name: String} | {kind: "read", read: () => Boolean} */
+// state (MenuBar.state), or a plugin's own reader (MenuBar.addToggle),
+// each by its name.
+/** type Check = {kind: "setting" | "state" | "read", name: String} */
 /** type MenuRow =
  *   | {kind: "command", command: String, label: String | Null, keys: String | Null, checked: Check | Null}
  *   | {kind: "submenu", label: String, items: MenuRow[]}
@@ -32,15 +33,15 @@ export function cmd(command, label) { return rowOf(command, label, null, null); 
 function keyed(command, label, keys) { return rowOf(command, label, keys, null); }
 /** function check(command: String, label: String, checked: Check) => MenuRow */
 function check(command, label, checked) { return rowOf(command, label, null, checked); }
-// A plugin's toggle row: checked while `read()` is true.
-/** function toggle(command: String, label: String, read: () => Boolean) => MenuRow */
-export function toggle(command, label, read) { return check(command, label, { kind: "read", read }); }
+// A plugin's toggle row: checked by the reader registered for its command.
+/** function toggle(command: String, label: String) => MenuRow */
+function toggle(command, label) { return check(command, label, { kind: "read", name: command }); }
 /** function sub(label: String, items: MenuRow[]) => MenuRow */
 function sub(label, items) { return { kind: "submenu", label, items }; }
 /** const SEP: MenuRow */
 export const SEP = { kind: "separator" };
 /** function setting(key: String) => Check */
-function setting(key) { return { kind: "setting", key }; }
+function setting(key) { return { kind: "setting", name: key }; }
 /** function state(name: String) => Check */
 function state(name) { return { kind: "state", name }; }
 
@@ -279,6 +280,7 @@ export class MenuBar {
     this.menus = MENUS.map((m) => menuOf(m.label, m.key, [...m.items]));
     // The menu open, and its title's index: a list of at most one.
     this.opened = [];
+    this.readers = new Map(); // a plugin toggle's reader, by its command
   }
 
 
@@ -323,6 +325,12 @@ export class MenuBar {
 
   // A plugin's row at the end of menu `label` (a new menu when there is
   // none by that name).
+  // A plugin's toggle row at the end of menu `label`, checked while
+  // `read()` is true.
+  addToggle(label, command, title, read) {
+    this.readers.set(command, read);
+    this.add(label, toggle(command, title));
+  }
   add(label, row) {
     this.menus = withRow(this.menus, label, row);
     this.render();
@@ -355,11 +363,12 @@ export class MenuBar {
 
   // Whether a toggle's check is on now.
   isChecked(c) {
-    if (c.kind === "read") return c.read();
-    const app = this.app();
-    if (c.kind === "setting") return !!app.settings[c.key];
-    return this.state(c.name);
+    if (c.kind === "setting") return !!this.app().settings[c.name];
+    if (c.kind === "state") return this.state(c.name);
+    const read = this.readers.get(c.name);
+    return read !== undefined && read();
   }
+
   // A piece of the editor's state, by name.
   state(name) {
     const app = this.app();

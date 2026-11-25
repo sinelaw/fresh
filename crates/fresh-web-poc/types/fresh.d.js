@@ -196,10 +196,52 @@
  *   preview: (() => Undefined) | Null,
  * } */
 
+// A workspace as the orchestrator lists it (src/session.rs: entry,
+// status; src/terminal.rs: a terminal).
+/** type TermInfo = {id: Number, name: String, command: String | Null, agent: Boolean, resume: String | Null, title: String, state: String, bells: Number} */
+/** type WorkspaceStatus = {
+ *   trusted: Boolean,
+ *   docs: Number,
+ *   modified: Number,
+ *   terminals: TermInfo[],
+ *   procs: Number,
+ *   errors: Number,
+ *   warnings: Number,
+ *   branch: String | Null,
+ *   viewers: Number,
+ *   worked: Number,
+ *   attention: String | Null,
+ * } */
+/** type Worktree = {repo: String, branch: String} */
+/** type WorkspaceEntry = {
+ *   id: Number,
+ *   name: String,
+ *   label: String | Null,
+ *   root: String,
+ *   host: String,
+ *   folder: String,
+ *   pinned: Boolean,
+ *   created: Number,
+ *   worktree: Worktree | Null,
+ *   status: WorkspaceStatus | Null,
+ *   error: String | Null,
+ * } */
+
 // What the server pushes over the event stream.
 /** type ServerEvent =
  *   | {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: Op[], len: Number, modified: Boolean}
  *   | {ev: "doc.saved", doc: Number, info: DocInfo}
+ *   | {ev: "doc.renamed", doc: Number, info: DocInfo}
+ *   | {ev: "doc.info", doc: Number, info: DocInfo}
+ *   | {ev: "doc.deleted", doc: Number, info: DocInfo}
+ *   | {ev: "doc.reloaded", doc: Number, info: DocInfo, lost: Boolean}
+ *   | {ev: "doc.changed_on_disk", doc: Number}
+ *   | {ev: "lsp.status", status: Dict<Boolean>}
+ *   | {ev: "workspace.added", workspace: WorkspaceEntry}
+ *   | {ev: "workspace.changed", workspace: WorkspaceEntry}
+ *   | {ev: "workspace.removed", workspace: Number}
+ *   | {ev: "workspace.status", workspace: Number, status: WorkspaceStatus}
+ *   | {ev: "orchestrator.folders", folders: String[]}
  *   | {ev: "doc.indexing", doc: Number, done: Number, total: Number}
  *   | {ev: "doc.indexed", doc: Number, lines: Number, version: Number}
  *   | {ev: "lsp.diagnostics", doc: Number, version: Number, items: Diagnostic[]}

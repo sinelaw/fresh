@@ -12,7 +12,7 @@ import { put, KEEP } from "./editing.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 
-import { $ } from "./dom.js";
+import { $, setClass } from "./dom.js";
 
 
 import { asCommand } from "./commands.js";
@@ -43,6 +43,40 @@ export function loadUserKeys() {
 // The application: built by main.js from its parts (each made before it,
 // holding a getter for it), with the workspace the server said this page
 // views. Its constructor only sets fields; start() wires it up.
+// The editor area's layout: a pane, or a split of two layouts, side by
+// side ("h") or stacked ("v"), the first taking `size.ratio` of it (its
+// sash moves it).
+/** type Fork<P> = {dir: String, size: {ratio: Number}, a: Layout<P>, b: Layout<P>} */
+/** type Layout<P> = {kind: "pane", pane: P} | {kind: "split", fork: Fork<P>} */
+/** function leaf<P>(pane: P) => Layout<P> */
+function leaf(pane) { return { kind: "pane", pane }; }
+/** function fork<P>(dir: String, ratio: Number, a: Layout<P>, b: Layout<P>) => Layout<P> */
+function fork(dir, ratio, a, b) { return { kind: "split", fork: { dir, size: { ratio }, a, b } }; }
+// A layout's pane when it is one, its split when it is one.
+/** function paneAt<P>(n: Layout<P>) => P | Null */
+function paneAt(n) { return n.kind === "pane" ? n.pane : null; }
+/** function forkAt<P>(n: Layout<P>) => Fork<P> | Null */
+function forkAt(n) { return n.kind === "split" ? n.fork : null; }
+// Its panes, in order.
+/** function panesOf<P>(n: Layout<P>) => P[] */
+function panesOf(n) { return n.kind === "pane" ? [n.pane] : [...panesOf(n.fork.a), ...panesOf(n.fork.b)]; }
+// `n` with pane `old` split in two: `old`, then `np` (`dir`, `ratio`).
+/** function withSplit<P>(n: Layout<P>, old: P, np: P, dir: String, ratio: Number) => Layout<P> */
+function withSplit(n, old, np, dir, ratio) {
+  if (n.kind === "pane") return n.pane === old ? fork(dir, ratio, leaf(old), leaf(np)) : n;
+  const f = n.fork;
+  return { kind: "split", fork: { dir: f.dir, size: f.size, a: withSplit(f.a, old, np, dir, ratio), b: withSplit(f.b, old, np, dir, ratio) } };
+}
+// `n` without pane `p` (its sibling takes its split's place).
+/** function without<P>(n: Layout<P>, p: P) => Layout<P> */
+function without(n, p) {
+  if (n.kind === "pane") return n;
+  const f = n.fork;
+  if (paneAt(f.a) === p) return f.b;
+  if (paneAt(f.b) === p) return f.a;
+  return { kind: "split", fork: { dir: f.dir, size: f.size, a: without(f.a, p), b: without(f.b, p) } };
+}
+
 // The remembered layout's parts (types/fresh.d.js).
 /** function savedTab(path: String | Null, untitled: Number | Null, pos: Number, top: Number, preview: Boolean) => SavedTab */
 function savedTab(path, untitled, pos, top, preview) { return { path, untitled, pos, top, preview }; }
@@ -73,7 +107,7 @@ export class App {
     this.statusSig = ""; // what the status bar shows, to write it only when it changes
     this.statusRuns = []; // its items' actions
     this.formats = null; // the server's languages, encodings and line endings
-    this.maximized = null; // the split filling the editor area, if one does
+    this.maximized = []; // the split filling the editor area: a list of at most one
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
     this.composing = false; // an input method is composing text
     this.log = [];
@@ -100,7 +134,7 @@ export class App {
     this.macros = c.macros;
     this.menubar = c.menubar;
     this.input = c.input;
-    this.layoutTree = { pane: c.pane };
+    this.layoutTree = leaf(c.pane);
     this.activePane = c.pane;
   }
 
@@ -115,7 +149,7 @@ export class App {
     const name = $("#ws-name");
     name.textContent = ws ? `${ws.name} · ${ws.host}${ws.trusted ? "" : " · restricted"}` : "No workspace";
     name.title = "Workspaces (Alt+O)";
-    connectEvents((ev) => this.onEvent(ev));
+    connectEvents((ev) => { this.onEvent(ev); });
     if (ws) this.session.open(ws.host, ws.root);
     this.installSashes();
     this.prompt.listen();
@@ -171,14 +205,14 @@ export class App {
   layoutSnapshot() {
     const tabs = (views) => views.flatMap((v) => (this.tabKey(v.buf) ? [savedTab(v.buf.path, v.buf.untitled, v.primary.pos, v.top, v.preview)] : []));
     const node = (n) => {
-      const pane = n.pane;
-      if (pane) { const shown = pane.view; return savedPane(tabs(pane.views), shown ? this.tabKey(shown.buf) : null); }
-      return savedSplit(n.dir, n.ratio, node(n.a), node(n.b));
+      const pane = paneAt(n), f = forkAt(n);
+      if (pane !== null) { const shown = pane.view; return savedPane(tabs(pane.views), shown ? this.tabKey(shown.buf) : null); }
+      return f !== null ? savedSplit(f.dir, f.size.ratio, node(f.a), node(f.b)) : savedPane([], null);
     };
     return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden"), terminal: this.term.visible };
   }
   rememberLayout() {
-    if (this.restoring || !this.layoutTree) return;
+    if (this.restoring) return;
     this.session.setLayout(this.layoutSnapshot());
   }
   // A document buffer as the remembered layout names it: its path, or
@@ -195,17 +229,15 @@ export class App {
     if (s.sidebar) $("#sidebar").classList.remove("hidden"); else $("#sidebar").classList.add("hidden");
     const specs = [];
     const build = (n) => {
-      if (n.kind === "pane") { const pane = new Pane(() => this); pane.listen(); specs.push({ pane, tabs: n.tabs, active: n.active }); return { pane }; }
-      return { dir: n.dir === "v" ? "v" : "h", ratio: clamp(n.ratio || 0.5, 0.05, 0.95), a: build(n.a), b: build(n.b) };
+      if (n.kind === "pane") { const pane = new Pane(() => this); pane.listen(); specs.push({ pane, tabs: n.tabs, active: n.active }); return leaf(pane); }
+      return fork(n.dir === "v" ? "v" : "h", clamp(n.ratio || 0.5, 0.05, 0.95), build(n.a), build(n.b));
     };
     this.layoutTree = build(s.tree);
     this.activePane = specs[Math.max(0, Math.min(specs.length - 1, s.active | 0))].pane;
     this.relayout();
     for (const { pane, tabs, active: shown } of specs) {
       for (const t of tabs) {
-        const untitled = t.untitled, path = t.path;
-        let b;
-        try { b = untitled !== null ? await this.loadUntitled(untitled) : path !== null ? await this.loadFile(path) : null; } catch { continue; }
+        const b = await this.loadTab(t);
         if (!b) continue;
         const v = pane.show(b, t.preview ? true : null);
         const pos = Math.max(0, Math.min(t.pos | 0, b.len));
@@ -220,6 +252,15 @@ export class App {
     this.focusPane(this.activePane);
     this.renderAll();
     return true;
+  }
+
+  // A remembered tab's document, or null when it cannot be opened any more.
+  async loadTab(t) {
+    const untitled = t.untitled, path = t.path;
+    try {
+      if (untitled !== null) return await this.loadUntitled(untitled);
+      return path !== null ? await this.loadFile(path) : null;
+    } catch { return null; }
   }
 
   // Files opened lately in this workspace, the latest first.
@@ -258,44 +299,44 @@ export class App {
 
   // ------------------------------------------------------------- panes
 
-  panes(node = this.layoutTree, out = []) {
-    if (node.pane) out.push(node.pane);
-    else { this.panes(node.a, out); this.panes(node.b, out); }
-    return out;
-  }
+  panes() { return panesOf(this.layoutTree); }
   relayout() {
     const area = $("#editor-area");
     area.innerHTML = "";
     const build = (n) => {
-      if (n.pane) return n.pane.el;
+      const pane = paneAt(n), f = forkAt(n);
+      if (pane !== null || f === null) return pane !== null ? pane.el : document.createElement("div");
+      const size = f.size;
       const d = document.createElement("div");
-      d.className = `split ${n.dir}`;
-      const a = build(n.a), b = build(n.b);
+      d.className = `split ${f.dir}`;
+      const a = build(f.a), b = build(f.b);
       // Grow factors in thousandths: they sum past one, so a child left
       // alone (its sibling hidden by a maximized split) fills the split.
-      const flex = () => { a.style.flex = `${n.ratio * 1000} 1 0`; b.style.flex = `${(1 - n.ratio) * 1000} 1 0`; };
+      const flex = () => { a.style.flex = `${size.ratio * 1000} 1 0`; b.style.flex = `${(1 - size.ratio) * 1000} 1 0`; };
       flex();
       // Its sash moves the line between them; the panes redraw at their
       // new sizes (each observes its own).
       const s = document.createElement("div");
-      const x = n.dir === "h";
+      const x = f.dir === "h";
       sash(s, x ? "x" : "y", {
-        begin: () => { const r = d.getBoundingClientRect(); return { at: n.ratio, size: x ? r.width : r.height }; },
+        begin: () => { const r = d.getBoundingClientRect(); return { at: size.ratio, size: x ? r.width : r.height }; },
         drag: (c, delta) => {
           const min = Math.min(0.45, 60 / Math.max(1, c.size));
-          n.ratio = clamp(c.at + delta / Math.max(1, c.size), min, 1 - min);
+          size.ratio = clamp(c.at + delta / Math.max(1, c.size), min, 1 - min);
           flex();
         },
         end: () => this.rememberLayout(),
-        reset: () => { n.ratio = 0.5; flex(); this.rememberLayout(); },
+        reset: () => { size.ratio = 0.5; flex(); this.rememberLayout(); },
       });
-      d.append(a, s, b);
+      d.append(a);
+      d.append(s);
+      d.append(b);
       return d;
     };
     const el = build(this.layoutTree);
     el.style.flex = "1 1 0";
     area.appendChild(el);
-    for (const p of this.panes()) p.el.classList.toggle("active", p === this.activePane);
+    for (const p of this.panes()) setClass(p.el, "active", p === this.activePane);
     this.showMaximized();
     this.renderAll();
     this.rememberLayout();
@@ -303,17 +344,18 @@ export class App {
   // The sashes of the sidebar, the right dock, the bottom dock and the
   // terminal; their sizes are remembered for the workspace.
   installSashes() {
-    const parts = {
-      left: { el: $("#left-dock"), axis: "x", dir: 1, min: 160, most: 0.4 },
-      sidebar: { el: $("#sidebar"), axis: "x", dir: 1, min: 120, most: 0.5 },
-      right: { el: $("#right-dock"), axis: "x", dir: -1, min: 160, most: 0.6 },
-      dock: { el: $("#dock"), axis: "y", dir: -1, min: 80, most: 0.8 },
-      terminal: { el: $("#terminal"), axis: "y", dir: -1, min: 80, most: 0.8 },
-    };
+    const parts = [
+      { name: "left", el: $("#left-dock"), axis: "x", dir: 1, min: 160, most: 0.4 },
+      { name: "sidebar", el: $("#sidebar"), axis: "x", dir: 1, min: 120, most: 0.5 },
+      { name: "right", el: $("#right-dock"), axis: "x", dir: -1, min: 160, most: 0.6 },
+      { name: "dock", el: $("#dock"), axis: "y", dir: -1, min: 80, most: 0.8 },
+      { name: "terminal", el: $("#terminal"), axis: "y", dir: -1, min: 80, most: 0.8 },
+    ];
     const sizeOf = (name) => this.session.sizes[name];
-    const setSize = (name, px) => { this.session.setSizes({ ...this.session.sizes, [name]: px }); };
+    const setSize = (name, px) => { this.session.setSizes(Object.fromEntries([...Object.entries(this.session.sizes).filter(([k]) => k !== name), [name, px]])); };
     const prop = (p) => (p.axis === "x" ? "width" : "height");
-    for (const [name, p] of Object.entries(parts)) {
+    for (const p of parts) {
+      const name = p.name;
       const kept = sizeOf(name);
       if (kept) p.el.style[prop(p)] = `${kept}px`;
       sash(document.querySelector(`.sash[data-sash="${name}"]`), p.axis, {
@@ -339,10 +381,10 @@ export class App {
     this.scrollDriver = null;
     const changed = this.activePane !== p;
     this.activePane = p;
-    for (const x of this.panes()) x.el.classList.toggle("active", x === p);
+    for (const x of this.panes()) setClass(x.el, "active", x === p);
     this.input.focus({ preventScroll: true });
     // A maximized split gives way to the one focused.
-    if (this.maximized && this.maximized !== p) { this.maximized = p; this.showMaximized(); }
+    if (this.maximized.length > 0 && !this.maximized.includes(p)) { this.maximized = [p]; this.showMaximized(); }
     if (changed) { this.renderAll(); if (p.view) this.host.emitBuffer("buffer.activated", p.view.buf, [], false); }
   }
   split(dir, ratio = 0.5, buf = null) {
@@ -350,12 +392,7 @@ export class App {
     if (old.view) this.keep(old.view);
     const np = new Pane(() => this);
     np.listen();
-    const replace = (n) => {
-      if (n.pane === old) return { dir, ratio, a: { pane: old }, b: { pane: np } };
-      if (n.pane) return n;
-      return { ...n, a: replace(n.a), b: replace(n.b) };
-    };
-    this.layoutTree = replace(this.layoutTree);
+    this.layoutTree = withSplit(this.layoutTree, old, np, dir, ratio);
     const b = buf || old.view?.buf;
     if (b) np.show(b, null);
     this.activePane = np;
@@ -368,20 +405,15 @@ export class App {
   // One split filling the editor area (the others hidden, not closed), or
   // none.
   showMaximized() {
-    if (this.maximized && !this.panes().includes(this.maximized)) this.maximized = null;
-    $("#editor-area").classList.toggle("maximized", !!this.maximized);
-    for (const p of this.panes()) p.el.classList.toggle("max", p === this.maximized);
+    const panes = this.panes();
+    this.maximized = this.maximized.filter((m) => panes.includes(m));
+    setClass($("#editor-area"), "maximized", this.maximized.length > 0);
+    for (const p of panes) setClass(p.el, "max", this.maximized.includes(p));
   }
   async closePane(p) {
     if (this.panes().length === 1) return;
     for (const b of new Set(p.views.map((v) => v.buf))) if (!(await this.mayClose(b, p.views))) return;
-    const remove = (n) => {
-      if (n.pane) return n;
-      if (n.a.pane === p) return n.b;
-      if (n.b.pane === p) return n.a;
-      return { ...n, a: remove(n.a), b: remove(n.b) };
-    };
-    this.layoutTree = remove(this.layoutTree);
+    this.layoutTree = without(this.layoutTree, p);
     for (const v of [...p.views]) { v.dispose(); this.dropIfUnshown(v.buf); }
     this.activePane = this.panes()[0];
     this.relayout();
@@ -409,7 +441,7 @@ export class App {
     const pick = await this.choose(`${b.name} has unsaved changes`, [
       { label: "Save", value: "save" },
       { label: "Discard", value: "discard" },
-      { label: "Cancel", value: null },
+      { label: "Cancel", value: "cancel" },
     ]);
     if (pick === "save") { await this.saveBuffer(b); return !b.modified; }
     if (pick === "discard") { b.discard = true; return true; }
@@ -1018,15 +1050,17 @@ export class App {
         // The language servers start now: the event names them.
         this.trusted = true;
         this.lspLanguages = new Set(ev.lsp);
-        document.querySelector("#ws-name").textContent = document.querySelector("#ws-name").textContent.replace(" · restricted", "");
+        $("#ws-name").textContent = $("#ws-name").textContent.replace(" · restricted", "");
         this.host.emit("workspace.trusted");
         break;
       case "fs.changed":
         this.watches.get(ev.watch)?.(ev.path);
         break;
-      case "workspace.added": case "workspace.removed": case "workspace.status": case "workspace.changed": case "orchestrator.folders":
-        this.orchestrator.onEvent(ev);
-        break;
+      case "workspace.added": this.orchestrator.added(ev.workspace); break;
+      case "workspace.changed": this.orchestrator.changed(ev.workspace); break;
+      case "workspace.removed": this.orchestrator.removed(ev.workspace); break;
+      case "workspace.status": this.orchestrator.statusOf(ev.workspace, ev.status); break;
+      case "orchestrator.folders": this.orchestrator.foldersChanged(ev.folders); break;
     }
   }
 
@@ -1321,7 +1355,7 @@ export class App {
       });
     });
     cmd("view.maximizeSplit", "View: Toggle Maximize Split", () => {
-      this.maximized = this.maximized || this.panes().length < 2 ? null : P();
+      this.maximized = this.maximized.length > 0 || this.panes().length < 2 ? [] : [P()];
       this.showMaximized();
       this.renderAll();
     });

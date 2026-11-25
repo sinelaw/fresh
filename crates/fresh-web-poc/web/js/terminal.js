@@ -7,6 +7,7 @@
 // replays the server's buffer, which ends at a known offset, and then takes
 // only the bytes after it, so nothing is lost or written twice.
 
+import { setClass } from "./dom.js";
 import { rpc } from "./rpc.js";
 
 // The terminal's colours, from the theme's variables (xterm draws on a
@@ -222,7 +223,7 @@ export class TerminalPanel {
       try { await this.create(); } catch (e) { this.app().setStatus(`No terminal: ${e.detail || e.message || e}`); return; }
     }
     this.visible = !this.visible;
-    this.el.classList.toggle("hidden", !this.visible);
+    setClass(this.el, "hidden", !this.visible);
     if (this.visible) {
       this.select(this.current);
     } else this.app().focusPane(this.app().activePane);

@@ -33,6 +33,7 @@
 import { rpc } from "./rpc.js";
 import { h } from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
+import { $ } from "./dom.js";
 import { asCommand } from "./commands.js";
 import { action, actionOf } from "./menu.js";
 
@@ -96,7 +97,7 @@ export class Orchestrator {
     this.nextPending = 0;
     this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [], machine: "local" };
     this.formGo = null; // the open New Workspace form's launch
-    this.renderBoard = null; // the open Workboard's redraw
+    this.boards = []; // the open Workboard's redraw: a list of at most one
   }
 
   // The workspace this page views (null: none).
@@ -127,7 +128,7 @@ export class Orchestrator {
     this.app().bindKey("C-M-o", "orchestrator.switch");
     // From an agent's terminal too.
     this.app().terminalKeys.add("M-o").add("C-M-o");
-    document.querySelector("#ws-name")?.addEventListener("click", () => this.toggleDock());
+    $("#ws-name").addEventListener("click", () => this.toggleDock());
     window.addEventListener("focus", (_e) => { this.seeIfLooked(); });
     document.addEventListener("visibilitychange", (_e) => { this.seeIfLooked(); });
     if (this.prefs.dock || !this.current) this.openDock();
@@ -143,48 +144,48 @@ export class Orchestrator {
 
   // ----------------------------------------------------------- events
 
-  onEvent(ev) {
-    switch (ev.ev) {
-      case "workspace.added":
-        if (!this.byId(ev.workspace.id)) this.list.push(ev.workspace);
-        break;
-      case "workspace.changed": {
-        const i = this.list.findIndex((w) => w.id === ev.workspace.id);
-        if (i >= 0) this.list[i] = ev.workspace;
-        else this.list.push(ev.workspace);
-        if (ev.workspace.id === this.current) this.renderTitle();
-        break;
-      }
-      case "workspace.removed":
-        this.list = this.list.filter((w) => w.id !== ev.workspace);
-        if (ev.workspace === this.current) {
-          // Nothing more can be done here: say so, and offer the others.
-          this.app().workspace = null;
-          this.app().setStatus("This workspace was closed");
-          document.querySelector("#ws-name").textContent = "Closed workspace";
-          this.openDock();
-        }
-        break;
-      case "workspace.status": {
-        const w = this.byId(ev.workspace);
-        if (!w) break;
-        w.status = ev.status;
-        if (w.id === this.current) {
-          this.app().term?.states(ev.status.terminals);
-          this.renderTitle();
-          this.seeIfLooked();
-        }
-        break;
-      }
-      case "orchestrator.folders":
-        this.folders = ev.folders;
-        break;
-      default:
-        return;
+  // The server's news of the workspaces (app.js passes each on).
+  added(w) {
+    if (!this.byId(w.id)) this.list.push(w);
+    this.redraw();
+  }
+  changed(w) {
+    const i = this.list.findIndex((x) => x.id === w.id);
+    if (i >= 0) this.list[i] = w;
+    else this.list.push(w);
+    if (w.id === this.current) this.renderTitle();
+    this.redraw();
+  }
+  removed(id) {
+    this.list = this.list.filter((w) => w.id !== id);
+    if (id === this.current) {
+      // Nothing more can be done here: say so, and offer the others.
+      this.app().workspace = null;
+      this.app().setStatus("This workspace was closed");
+      $("#ws-name").textContent = "Closed workspace";
+      this.openDock();
     }
+    this.redraw();
+  }
+  statusOf(id, status) {
+    const w = this.byId(id);
+    if (!w) return;
+    w.status = status;
+    if (w.id === this.current) {
+      this.app().term.states(status.terminals);
+      this.renderTitle();
+      this.seeIfLooked();
+    }
+    this.redraw();
+  }
+  foldersChanged(folders) {
+    this.folders = folders;
+    this.redraw();
+  }
+  redraw() {
     this.renderDock();
     this.renderBeacon();
-    this.renderBoard?.();
+    for (const redraw of this.boards) redraw();
   }
 
   looked() { return document.visibilityState === "visible" && document.hasFocus(); }
@@ -204,7 +205,7 @@ export class Orchestrator {
     const w = this.byId(this.current);
     if (!w) return;
     document.title = `${displayName(w)} — Fresh`;
-    document.querySelector("#ws-name").textContent = `${displayName(w)} · ${w.host}${w.status.trusted ? "" : " · restricted"}`;
+    $("#ws-name").textContent = `${displayName(w)} · ${w.host}${w.status.trusted ? "" : " · restricted"}`;
   }
 
   // ----------------------------------------------------------- moving
@@ -690,7 +691,7 @@ export class Orchestrator {
       WIRED.add(panel);
       panel.el.addEventListener("keydown", (e) => { if (e.target.tagName !== "INPUT") lensKey(e); });
     }
-    this.renderBoard = () => { if (panel.open) render(); };
+    this.boards = [() => { if (panel.open) render(); }];
     render();
     panel.focus(this.prefs.lens === "board" ? "" : "cards");
   }

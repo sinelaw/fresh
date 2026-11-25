@@ -58,10 +58,11 @@ export const captureKey = (app) => app.captureKey();
 // Keys for a buffer kind: defineMode(app, "git-log", { Enter: fn, q: fn }).
 export const defineMode = (app, mode, keys) => { app.modes.set(mode, keys); };
 // A row at the end of a menu bar menu: addMenuItem(app, "Go",
-// fresh.menuCommand("bookmark.list", "Bookmarks…")); menuToggle's row has a
-// check, `checked(app)` read when the menu opens; MENU_BAR_SEPARATOR parts.
+// fresh.menuCommand("bookmark.list", "Bookmarks…")); MENU_BAR_SEPARATOR parts.
 export const addMenuItem = (app, menu, row) => app.menubar.add(menu, row);
-export { cmd as menuCommand, toggle as menuToggle, SEP as MENU_BAR_SEPARATOR } from "./menubar.js";
+export { cmd as menuCommand, SEP as MENU_BAR_SEPARATOR } from "./menubar.js";
+// A toggle row at the end of a menu bar menu, checked while `read()` is true.
+export const addMenuToggle = (app, menu, command, label, read) => app.menubar.addToggle(menu, command, label, read);
 // A context menu's items (fresh.menu): an action, one with its keys, check
 // and state given, or a separator.
 export { action as menuAction, actionOf as menuActionOf, SEPARATOR as MENU_SEPARATOR } from "./menu.js";

@@ -366,8 +366,8 @@ export function activate(app) {
   fresh.register(app, "explorer.toggleHidden", { title: "Explorer: Toggle Hidden Files", hidden: false, run: () => setShow({ hidden: !show.hidden, ignored: show.ignored }) });
   fresh.register(app, "explorer.toggleIgnored", { title: "Explorer: Toggle Gitignored Files", hidden: false, run: () => setShow({ hidden: show.hidden, ignored: !show.ignored }) });
   fresh.addMenuItem(app, "Explorer", fresh.MENU_BAR_SEPARATOR);
-  fresh.addMenuItem(app, "Explorer", fresh.menuToggle("explorer.toggleHidden", "Show Hidden Files", () => show.hidden));
-  fresh.addMenuItem(app, "Explorer", fresh.menuToggle("explorer.toggleIgnored", "Show Gitignored Files", () => show.ignored));
+  fresh.addMenuToggle(app, "Explorer", "explorer.toggleHidden", "Show Hidden Files", () => show.hidden);
+  fresh.addMenuToggle(app, "Explorer", "explorer.toggleIgnored", "Show Gitignored Files", () => show.ignored);
   panel.actions([
     { icon: "+", title: "New File…", run: () => ops.newFile(dirOf(root, current())) },
     { icon: "⊞", title: "New Folder…", run: () => ops.newFolder(dirOf(root, current())) },

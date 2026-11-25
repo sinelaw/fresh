@@ -47,8 +47,9 @@ async function send(op, args) {
 }
 
 /** function connectEvents(onEvent: (ServerEvent) => Undefined) => EventSource */
+/** function connectEvents(onEvent: (ServerEvent) => Undefined) => EventSource */
 export function connectEvents(onEvent) {
   const es = new EventSource(`/events?client=${session.client}`);
-  es.onmessage = (m) => onEvent(JSON.parse(m.data));
+  es.onmessage = (m) => { onEvent(JSON.parse(m.data)); };
   return es;
 }

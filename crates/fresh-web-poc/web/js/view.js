@@ -1,6 +1,7 @@
 // A pane and the views in it: one view per buffer tab, each with its own
 // scroll, cursors, options and folds — all of it this client's.
 
+import { setClass } from "./dom.js";
 import { layout, applies, cursorIn } from "./layout.js";
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
@@ -505,7 +506,7 @@ export class Pane {
     const L = buf.text;
     v.setTop(L.starts[L.indexOf(v.top)], v.topPx);
     const compose = v.mode === "compose";
-    if (this.surfaceEl.classList.contains("compose") !== compose) { this.clearRows(); this.surfaceEl.classList.toggle("compose", compose); }
+    if (this.surfaceEl.classList.contains("compose") !== compose) { this.clearRows(); setClass(this.surfaceEl, "compose", compose); }
     if (compose) { this.renderDoc(v); return; }
     const { rows, g } = this.computeRows(v, 0);
     this.rows = rows;

@@ -88,8 +88,8 @@ export class Macros {
   }
 
   async play(register) {
-    const steps = this.registers.get(register);
-    if (!steps) { this.app().setStatus(`No macro in register ${register}`); return; }
+    if (!this.registers.has(register)) { this.app().setStatus(`No macro in register ${register}`); return; }
+    const steps = this.registers.get(register) ?? [];
     if (this.playing) return;
     if (this.recording.some((r) => r.register === register)) { this.app().setStatus(`Macro ${register} is being recorded`); return; }
     this.playing = true;
@@ -125,7 +125,9 @@ export class Macros {
     for (const r of REGISTERS) {
       const steps = this.registers.get(r);
       if (!steps) continue;
-      out.push(`Macro ${r}${this.last.includes(r) ? " (last)" : ""}:`, ...steps.map((s) => describeStep(s, titleOf)), "");
+      out.push(`Macro ${r}${this.last.includes(r) ? " (last)" : ""}:`);
+      for (const s of steps) out.push(describeStep(s, titleOf));
+      out.push("");
     }
     return out.length ? out.join("\n") : "No macros recorded. Record one with Record Macro… in the command palette.\n";
   }
