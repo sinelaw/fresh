@@ -273,6 +273,14 @@ export const MENUS = [
   ]),
 ];
 
+// A plugin toggle's check (none registered: off).
+/** function readOf(read: (() => Boolean) | Undefined) => Boolean */
+function readOf(read) { return read !== undefined && read(); }
+
+// No plugin toggles yet, typed.
+/** function noReaders() => Map<String, () => Boolean> */
+function noReaders() { return new Map(); }
+
 export class MenuBar {
   constructor(app) {
     this.app = app;
@@ -280,7 +288,7 @@ export class MenuBar {
     this.menus = MENUS.map((m) => menuOf(m.label, m.key, [...m.items]));
     // The menu open, and its title's index: a list of at most one.
     this.opened = [];
-    this.readers = new Map(); // a plugin toggle's reader, by its command
+    this.readers = noReaders(); // a plugin toggle's reader, by its command
   }
 
 
@@ -365,8 +373,7 @@ export class MenuBar {
   isChecked(c) {
     if (c.kind === "setting") return !!this.app().settings[c.name];
     if (c.kind === "state") return this.state(c.name);
-    const read = this.readers.get(c.name);
-    return read !== undefined && read();
+    return readOf(this.readers.get(c.name));
   }
 
   // A piece of the editor's state, by name.

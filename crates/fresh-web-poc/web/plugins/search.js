@@ -96,7 +96,7 @@ export function activate(app) {
   // All matches in a buffer held whole, as byte ranges.
   const findAll = (b) => {
     const L = b.lines();
-    if (!L || !b.whole || !query) return [];
+    if (!L || !b.whole() || !query) return [];
     let re;
     try { re = toRegex(query, true); error = ""; } catch (e) { error = "invalid regex"; return []; }
     /** const out: Match[] */
@@ -136,7 +136,7 @@ export function activate(app) {
     if (!b) return;
     matches = findAll(b);
     const v = fresh.activeView(app);
-    current = matches.findIndex((m) => m.pos >= (v ? v.cursor : 0));
+    current = matches.findIndex((m) => m.pos >= (v ? v.cursor() : 0));
     if (current < 0 && matches.length) current = 0;
     mark();
     renderBar();
@@ -146,25 +146,25 @@ export function activate(app) {
     const b = buffer();
     const v = fresh.activeView(app);
     if (!b || !v || !query) return;
-    if (!b.whole) {
+    if (!b.whole()) {
       // A huge file: the server finds the next match (plain text).
-      const sel = v.selection;
-      const start = dir > 0 ? (sel ? sel.end : v.cursor) : (sel ? sel.start : v.cursor);
+      const sel = v.selection();
+      const start = dir > 0 ? (sel ? sel.end : v.cursor()) : (sel ? sel.start : v.cursor());
       const res = await fresh.searchDocument(app, b, query, start, dir < 0);
       if (res == null) { fresh.message(app, `Not found: ${query}`); return; }
       matches = [match(res, fresh.byteLen(query), null)];
       current = 0;
     } else {
       if (!matches.length) { fresh.message(app, `Not found: ${query}`); renderBar(); return; }
-      const at = v.cursor;
+      const at = v.cursor();
       if (dir > 0) {
-        const sel = v.selection;
+        const sel = v.selection();
         const cur = matches[current];
         const start = sel != null && cur != null && sel.start === cur.pos ? sel.end : at;
         current = matches.findIndex((m) => m.pos >= start && !(sel != null && m.pos === sel.start && sel.end === m.pos + m.len));
         if (current < 0) current = 0;
       } else {
-        const sel = v.selection;
+        const sel = v.selection();
         const start = sel ? sel.start : at;
         let k = -1;
         for (let i = 0; i < matches.length; i++) if (matches[i].pos < start) k = i;
@@ -206,9 +206,9 @@ export function activate(app) {
     const b = buffer();
     const v = fresh.activeView(app);
     if (!b || !v || !query) return;
-    if (!b.whole) { fresh.message(app, "A huge file is searched by the server: Query Replace needs a file held whole"); return; }
-    const sel = v.selection;
-    const q = { start: sel ? sel.start : v.cursor, wrapped: false, done: 0, of: 0 };
+    if (!b.whole()) { fresh.message(app, "A huge file is searched by the server: Query Replace needs a file held whole"); return; }
+    const sel = v.selection();
+    const q = { start: sel ? sel.start : v.cursor(), wrapped: false, done: 0, of: 0 };
     asking.set(b.id, q);
     await ask(q.start);
     const bar = findBar();
@@ -299,7 +299,7 @@ export function activate(app) {
       key: "scope", on: !!scopeOf(b), title: "Find in selection",
       onChange: (on) => {
         if (!b) return;
-        const sel = fresh.activeView(app)?.selection;
+        const sel = fresh.activeView(app)?.selection() ?? null;
         if (on && !sel) { fresh.message(app, "Select the text to search in first"); return; }
         if (on && sel != null) setScope(b, sel);
         else clearScope(b);
@@ -321,7 +321,7 @@ export function activate(app) {
     if (!bar) return;
     const b = buffer();
     const q = questionIn(b);
-    const count = !query ? "" : error || (b != null && !b.whole ? "huge file: Enter searches" : matches.length ? `${current + 1} of ${matches.length}` : "no results");
+    const count = !query ? "" : error || (b != null && !b.whole() ? "huge file: Enter searches" : matches.length ? `${current + 1} of ${matches.length}` : "no results");
     const cur = matches[current];
     const shown = q != null && cur != null ? replacementFor(cur) : "";
     bar.render(h("col", {}, [
@@ -368,8 +368,8 @@ export function activate(app) {
   const open = (replace, { inSelection, ask }) => {
     const v = fresh.activeView(app);
     const b = buffer();
-    const sel = v?.selection;
-    const t = sel != null && v.buffer.whole ? v.buffer.text(sel.start, sel.end) : null;
+    const sel = v === null ? null : v.selection();
+    const t = v !== null && sel !== null && v.buffer.whole() ? v.buffer.text(sel.start, sel.end) : null;
     if (b) {
       if (sel != null && (inSelection || (t != null && t.includes("\n")))) setScope(b, sel);
       else clearScope(b);
@@ -391,12 +391,12 @@ export function activate(app) {
     const v = fresh.activeView(app);
     const b = buffer();
     if (!v || !b) return;
-    const sel = v.selection;
+    const sel = v.selection();
     const at = matches[current];
     const onMatch = sel != null && at != null && sel.start === at.pos && sel.end === at.pos + at.len && b.text(sel.start, sel.end) === at.text;
     if (!onMatch) {
       const L = b.lines();
-      const word = sel !== null ? sel : L === null ? null : wordIn(L, v.cursor);
+      const word = sel !== null ? sel : L === null ? null : wordIn(L, v.cursor());
       const t = word === null ? null : b.text(word.start, word.end);
       if (word === null || t === null || t.includes("\n")) { fresh.message(app, "Select the text to find first"); return; }
       query = opts.regex ? t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : t;
@@ -531,8 +531,8 @@ export function activate(app) {
   };
   const openPanel = () => {
     const v = fresh.activeView(app);
-    const sel = v?.selection;
-    if (sel != null && v.buffer.whole) {
+    const sel = v === null ? null : v.selection();
+    if (v !== null && sel !== null && v.buffer.whole()) {
       const t = v.buffer.text(sel.start, sel.end);
       if (t != null && !t.includes("\n")) pq.query = t;
     }

@@ -50,10 +50,10 @@ export class Skins {
     $("#skin-btn").addEventListener("click", () => { this.pick(); });
     try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.app().report(`Skins: ${String(e)}`); }
     const id = new URLSearchParams(location.search).get("skin") ?? savedSkin();
-    await this.apply(id !== null && this.byId(id) ? id : "default");
+    await this.apply(id !== null && this.byId(id) !== null ? id : "default");
   }
 
-  byId(id) { return this.all.find((s) => s.id === id) || null; }
+  byId(id) { return this.all.find((s) => s.id === id) ?? null; }
 
   // Where a skin's files are served: a built-in skin's beside the client's
   // own files, a user skin's through the workspace whose host has it.
@@ -65,7 +65,12 @@ export class Skins {
   // skin to set a frame, scale, furniture or theme wins.
   resolve(id) {
     const chain = [];
-    for (let s = this.byId(id); s && !chain.includes(s) && chain.length < 8; s = s.extends ? this.byId(s.extends) : null) chain.unshift(s);
+    let next = this.byId(id);
+    while (next !== null && !chain.includes(next) && chain.length < 8) {
+      chain.unshift(next);
+      const base = next.extends;
+      next = base ? this.byId(base) : null;
+    }
     const r = { id, name: chain.at(-1)?.name || id, chain: chain.map((s) => s.id), frame: "full", scale: 1, furniture: null, theme: null };
     for (const s of chain) {
       r.frame = s.frame;

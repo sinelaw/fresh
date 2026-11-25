@@ -12,6 +12,26 @@ import { rpc } from "./rpc.js";
 
 import { $ } from "./dom.js";
 
+// A palette row that runs `run` when chosen (none: a note).
+/** function paletteItem(label: String, detail: String | Null, run: (() => Undefined) | Null) => PaletteItem */
+function paletteItem(label, detail, run) { return { label, detail, run, preview: null }; }
+
+// Run a palette row's action, or its preview: whether it has one.
+/** function ran(it: PaletteItem | Undefined) => Boolean */
+function ran(it) {
+  const run = it === undefined ? null : it.run;
+  if (run === null) return false;
+  run();
+  return true;
+}
+/** function previewed(it: PaletteItem | Undefined) => Boolean */
+function previewed(it) {
+  const preview = it === undefined ? null : it.preview;
+  if (preview === null) return false;
+  preview();
+  return true;
+}
+
 export class Palette {
   constructor(app) {
     this.app = app;
@@ -45,7 +65,7 @@ export class Palette {
   palette(prefix) {
     const v = this.app().view();
     const origin = v ? { v, pos: v.primary.pos, top: v.top } : null;
-    let previewed = false;
+    let moved = false;
     this.show({
       label: "",
       value: prefix,
@@ -60,11 +80,11 @@ export class Palette {
         // The jump is remembered from where the palette opened, not from
         // the preview.
         if (/^:\d/.test(q) && origin) this.app().pushHistory(origin.v, origin.pos);
-        it?.run ? it.run() : this.openTyped(q);
+        if (!ran(it)) this.openTyped(q);
       },
       // A provider's item previews where it goes.
-      onSelect: (it) => { if (it?.preview) { previewed = true; it.preview(); } },
-      onCancel: () => { if (origin && (previewed || /^:\d/.test(this.input.value))) { origin.v.setTop(origin.top); this.app().editing.place(origin.v.pane, origin.pos, false); } },
+      onSelect: (it) => { if (previewed(it)) moved = true; },
+      onCancel: () => { if (origin && (moved || /^:\d/.test(this.input.value))) { origin.v.setTop(origin.top); this.app().editing.place(origin.v.pane, origin.pos, false); } },
     });
   }
 
@@ -74,38 +94,37 @@ export class Palette {
       const terms = q.slice(1).toLowerCase().split(/\s+/).filter(Boolean);
       return [...app.commands]
         .filter(([, c]) => !c.hidden && terms.every((t) => c.title.toLowerCase().includes(t)))
-        .map(([id, c]) => ({ label: c.title, detail: [app.keyFor(id), c.source !== "core" ? c.source : ""].filter(Boolean).join(" · "), run: () => app.run(id) }))
+        .map(([id, c]) => paletteItem(c.title, [app.keyFor(id), c.source !== "core" ? c.source : ""].filter(Boolean).join(" · "), () => { app.run(id); }))
         .sort((a, b) => a.label.localeCompare(b.label));
     }
     if (q.startsWith("#")) {
       const t = q.slice(1).toLowerCase();
       return [...app.buffers.values()]
         .filter((b) => (b.path || b.name).toLowerCase().includes(t))
-        .map((b) => ({ label: `${b.modified ? "● " : ""}${b.name}`, detail: b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", run: () => app.showBuffer(b, "tab", { preview: null, focus: true }) }));
+        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path ? b.path.replace(app.root + "/", "") : b.doc ? "unsaved" : "virtual", () => { app.showBuffer(b, "tab", { preview: null, focus: true }); }));
     }
     const pr = this.providers.get(q[0]);
     if (pr) return pr.items(q.slice(1).trim());
     if (q.startsWith(":")) {
       const n = parseInt(q.slice(1), 10);
-      return [{ label: n > 0 ? `Go to line ${n}` : "Type a line number", run: () => n > 0 && app.gotoLine(n - 1, 0, { history: false }) }];
+      return [n > 0 ? paletteItem(`Go to line ${n}`, null, () => { app.gotoLine(n - 1, 0, { history: false }); }) : paletteItem("Type a line number", null, null)];
     }
     const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
     // Nothing typed: the files opened lately.
     if (!q.trim()) {
       const rel = (p) => (p.startsWith(app.root + "/") ? p.slice(app.root.length + 1) : p);
-      return app.recentFiles().map((p) => ({ label: rel(p), detail: "recent", run: () => app.openFile(p, { line: null, column: 1, place: "tab", preview: null, focus: true }) }));
+      return app.recentFiles().map((p) => paletteItem(rel(p), "recent", () => { app.openFile(p, { line: null, column: 1, place: "tab", preview: null, focus: true }); }));
     }
     if (!m) return [];
     const files = (await rpc("fs.find", { query: m[1] })).files;
-    return files.map((f) => ({
-      label: f,
-      run: () => app.openFile(f, { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true }),
+    return files.map((f) => paletteItem(f, null, () => {
+      app.openFile(f, { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true });
     }));
   }
 
   openTyped(q) {
     const m = /^(.+?)(?::(\d+)(?::(\d+))?)?$/.exec(q.trim());
-    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app().openFile(m[1], { line: m[2] ? +m[2] : null, column: m[3] ? +m[3] : 1, place: "tab", preview: null, focus: true });
+    if (m && !/^[>#:]/.test(q) && !this.providers.has(q[0])) this.app().openFile(m[1], { line: m[2] ? Number(m[2]) : null, column: m[3] ? Number(m[3]) : 1, place: "tab", preview: null, focus: true });
   }
 
   // Pick from a list: {title, items: [{label, detail, value}], onAccept(item), onChange(item)}
@@ -120,7 +139,7 @@ export class Palette {
         const hits = (o.items || []).filter((it) => t.every((x) => `${it.label} ${it.detail || ""}`.toLowerCase().includes(x)));
         if (!t.length) return hits;
         const lead = (it) => (it.label.toLowerCase().startsWith(t[0]) ? 0 : 1);
-        return hits.map((it, i) => [lead(it), i, it]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
+        return hits.map((it, i) => ({ lead: lead(it), i, it })).sort((a, b) => a.lead - b.lead || a.i - b.i).map((x) => x.it);
       },
       onSelect: o.onChange,
       // Enter with nothing left to pick is a cancel.

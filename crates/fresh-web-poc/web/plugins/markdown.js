@@ -14,7 +14,7 @@ import { classify } from "../js/mdstruct.js";
 import * as fresh from "../js/api.js";
 import { h } from "../js/ui.js";
 
-const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path || b.name || "");
+const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path() || b.name());
 
 // Styles: the markup itself is not restyled; inline spans.
 /** const PLAIN: Style */
@@ -99,7 +99,7 @@ export function activate(app) {
     const d = b.decorations("compose");
     d.clear();
     const L = b.lines();
-    if (!L || !b.whole) { b.render(); return; }
+    if (!L || !b.whole()) { b.render(); return; }
     const { lines, starts } = L;
     const { region, table } = classify(lines);
     const lineEnd = (i) => starts[i] + B(lines[i]);
@@ -143,7 +143,8 @@ export function activate(app) {
         for (let k = i; k < j; k++) {
           const s = lines[k];
           const rv = reveal(k);
-          const role = table[k].role;
+          const row = table[k];
+          const role = row === undefined ? "row" : row.role;
           node(k, k, { type: "row", level: 0, depth: 0, marker: "", lang: "", align: [], header: role === "header", delimiter: role === "delimiter" });
           if (role === "delimiter") { hide(starts[k], lineEnd(k), rv); continue; }
           const at2 = atOf(k);
@@ -230,7 +231,7 @@ export function activate(app) {
   };
 
   const timers = new Map();
-  const composing = (b) => b.views().some((v) => v.mode === "compose");
+  const composing = (b) => b.views().some((v) => v.mode() === "compose");
   const schedule = (b, delay) => {
     if (!isMarkdown(b) || !composing(b)) return;
     later(timers, String(b.id), delay, () => { decorate(b); });
@@ -243,26 +244,26 @@ export function activate(app) {
   const toggle = () => {
     const v = fresh.activeView(app);
     if (!v || !isMarkdown(v.buffer)) return fresh.message(app, "Not a Markdown file");
-    const on = v.mode !== "compose";
-    v.setOptions({ mode: on ? "compose" : "source" });
+    const on = v.mode() !== "compose";
+    v.setMode(on ? "compose" : "source");
     if (on) decorate(v.buffer);
     fresh.message(app, `Markdown compose: ${on ? "on" : "off"}`);
   };
   const setWidth = async () => {
     const v = fresh.activeView(app);
     if (!v) return;
-    const t = await fresh.input(app, { title: "Compose width (columns, empty for the setting)", value: String(v.options.composeWidth || fresh.settings(app).page_width) });
+    const t = await fresh.input(app, { title: "Compose width (columns, empty for the setting)", value: String(v.composeWidth() ?? fresh.settings(app).page_width) });
     if (t == null) return;
     const n = parseInt(t, 10);
-    v.setOptions({ composeWidth: n > 20 ? n : null });
+    v.setComposeWidth(n > 20 ? n : null);
   };
   const dual = () => {
     const v = fresh.activeView(app);
     if (!v || !isMarkdown(v.buffer)) return fresh.message(app, "Not a Markdown file");
-    v.setOptions({ mode: "source" });
+    v.setMode("source");
     fresh.run(app, "view.splitRight");
     const right = fresh.activeView(app);
-    right.setOptions({ mode: "compose" });
+    right.setMode("compose");
     decorate(right.buffer);
   };
 

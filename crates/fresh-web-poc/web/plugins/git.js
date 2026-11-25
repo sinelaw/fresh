@@ -113,8 +113,8 @@ export function activate(app) {
   const timers = new Map();
   const changes = new Map(); // buffer id -> changed window line indices
   const markGutter = async (b) => {
-    if (!b || b.isVirtual || !b.whole || !rel(b.path)) return;
-    const base = await baseline(b.path);
+    if (!b || b.isVirtual || !b.whole() || !rel(b.path())) return;
+    const base = await baseline(b.path());
     const L = b.lines();
     const d = b.decorations("gutter");
     d.clear();
@@ -147,7 +147,7 @@ export function activate(app) {
     const L = b?.lines();
     const list = b && changes.get(b.id);
     if (!L || !list || !list.length) return fresh.message(app, "No changes");
-    const cur = L.starts.findIndex((s, k) => v.cursor >= s && (k + 1 >= L.starts.length || v.cursor < L.starts[k + 1]));
+    const cur = L.starts.findIndex((s, k) => v.cursor() >= s && (k + 1 >= L.starts.length || v.cursor() < L.starts[k + 1]));
     const next = dir > 0 ? list.find((i) => i > cur) ?? list[0] : [...list].reverse().find((i) => i < cur) ?? list[list.length - 1];
     v.setCursor(L.starts[next], { center: true });
   };
@@ -157,15 +157,15 @@ export function activate(app) {
   const blamed = new Set();
   const blame = async () => {
     const b = fresh.activeBuffer(app);
-    if (!b || !rel(b.path)) return;
+    if (!b || !rel(b.path())) return;
     const d = b.decorations("blame");
     if (blamed.has(b.id)) { blamed.delete(b.id); d.clear(); b.render(); return; }
-    const r = await git(["blame", "--line-porcelain", "--", rel(b.path)]);
+    const r = await git(["blame", "--line-porcelain", "--", rel(b.path())]);
     if (r.code !== 0) return fresh.message(app, r.stderr.trim() || "Not tracked by git");
     const L = b.lines();
-    if (!L || !b.whole) return fresh.message(app, "Blame needs the whole file");
+    if (!L || !b.whole()) return fresh.message(app, "Blame needs the whole file");
     // Blame describes the file on disk; the buffer's lines map onto it.
-    const disk = (await fresh.read(app, b.path)).replace(/\n$/, "").split("\n");
+    const disk = (await fresh.read(app, b.path())).replace(/\n$/, "").split("\n");
     const map = mapLines(disk, held(L));
     const info = parseBlame(r.stdout);
     /** const byLine: Map<Number, Blamed> */
@@ -212,20 +212,20 @@ export function activate(app) {
   const diffFile = async () => {
     const b = fresh.activeBuffer(app);
     const L = b?.lines();
-    if (!b || !rel(b.path) || !L) return;
-    if (!b.whole) return fresh.message(app, "Diff needs the whole file");
-    const base = await baseline(b.path);
+    if (!b || !rel(b.path()) || !L) return;
+    if (!b.whole()) return fresh.message(app, "Diff needs the whole file");
+    const base = await baseline(b.path());
     if (!base) return fresh.message(app, "Not in HEAD");
-    const text = unifiedDiff(base, held(L), `a/${rel(b.path)}`, `b/${rel(b.path)}`);
+    const text = unifiedDiff(base, held(L), `a/${rel(b.path())}`, `b/${rel(b.path())}`);
     if (text === null) return fresh.message(app, "Too many changes to diff here");
     if (!text) return fresh.message(app, "No changes against HEAD");
-    showDiff(`diff ${b.name}`, text);
+    showDiff(`diff ${b.name()}`, text);
   };
 
   // A command, and its key ("" for none).
   const reg = (id, title, run, key) => { fresh.register(app, id, { title, hidden: false, run }); if (key) fresh.bindKey(app, key, id); };
   reg("git.log", "Git: Log", () => log(null), "C-S-g");
-  reg("git.logFile", "Git: Log of Current File", () => log(fresh.activeBuffer(app)?.path), "");
+  reg("git.logFile", "Git: Log of Current File", () => log(fresh.activeBuffer(app)?.path() ?? null), "");
   reg("git.blame", "Git: Toggle Blame", blame, "");
   reg("git.diffFile", "Git: Diff Current File", diffFile, "");
   reg("git.nextChange", "Git: Next Change", () => step(1), "M-F5");

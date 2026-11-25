@@ -46,6 +46,17 @@ function stepParts(s) {
   return s.kind === "command" ? { command: s.command, arg: s.arg, text: "", typed: false } : { command: null, arg: undefined, text: s.text, typed: s.typed };
 }
 
+// Every register's steps, as text (`last`: the register last recorded or
+// played).
+/** function describeMacros(registers: Map<String, Step[]>, last: String[], titleOf: (String) => String) => String */
+function describeMacros(registers, last, titleOf) {
+  const out = REGISTERS.flatMap((r) => {
+    const steps = registers.get(r);
+    return steps === undefined ? [] : [`Macro ${r}${last.includes(r) ? " (last)" : ""}:`, ...steps.map((s) => describeStep(s, titleOf)), ""];
+  });
+  return out.length ? out.join("\n") : "No macros recorded. Record one with Record Macro… in the command palette.\n";
+}
+
 /** function plural(n: Number, word: String) => String */
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
@@ -128,16 +139,7 @@ export class Macros {
 
   // Every register's steps, as text.
   describe() {
-    const titleOf = (id) => { const c = this.app().commands.get(id); return c ? c.title : id; };
-    const out = [];
-    for (const r of REGISTERS) {
-      const steps = this.registers.get(r);
-      if (!steps) continue;
-      out.push(`Macro ${r}${this.last.includes(r) ? " (last)" : ""}:`);
-      for (const s of steps) out.push(describeStep(s, titleOf));
-      out.push("");
-    }
-    return out.length ? out.join("\n") : "No macros recorded. Record one with Record Macro… in the command palette.\n";
+    return describeMacros(this.registers, this.last, (id) => { const c = this.app().commands.get(id); return c ? c.title : id; });
   }
 
   register() {

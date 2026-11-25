@@ -544,38 +544,40 @@ export class App {
     pane.show(v.buf, false);
     this.focusPane(pane);
     const x0 = e.clientX, y0 = e.clientY;
-    let dragging = false, target = null, marked = null;
-    const unmark = () => { if (marked) marked.classList.remove("drop-before", "drop-after", "drop-into"); marked = null; };
+    // Where it would drop: a list of at most one place.
+    let dragging = false, target = [];
+    const unmark = () => { for (const t of target) t.el.classList.remove(`drop-${t.side}`); };
     const move = (ev) => {
       if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
       if (!dragging) { dragging = true; document.documentElement.classList.add("tab-dragging"); }
-      target = this.tabDropAt(ev.clientX, ev.clientY);
       unmark();
-      if (target) { marked = target.el; marked.classList.add(`drop-${target.side}`); }
+      target = this.tabDropAt(ev.clientX, ev.clientY);
+      for (const t of target) t.el.classList.add(`drop-${t.side}`);
     };
-    const up = () => {
+    const up = (_ev) => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       document.documentElement.classList.remove("tab-dragging");
       unmark();
-      if (dragging && target) this.moveView(v, target.pane, target.index);
+      if (dragging) for (const t of target) this.moveView(v, t.pane, t.index);
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   }
-  // Where a tab dropped at (x, y) goes: {pane, index, el, side}, or null.
+  // Where a tab dropped at (x, y) goes: {pane, index, el, side}, in a list
+  // of at most one (none: not on a split).
   tabDropAt(x, y) {
     const el = document.elementFromPoint(x, y);
-    const paneEl = el && el.closest(".pane");
-    const pane = paneEl && this.panes().find((p) => p.el === paneEl);
-    if (!pane) return null;
-    const tab = el.closest(".tab");
-    if (tab && pane.tabsEl.contains(tab)) {
-      const r = tab.getBoundingClientRect();
-      const after = x > r.left + r.width / 2;
-      return { pane, index: +tab.dataset.i + (after ? 1 : 0), el: tab, side: after ? "after" : "before" };
-    }
-    return { pane, index: pane.views.length, el: pane.el, side: "into" };
+    const paneEl = el === null ? null : el.closest(".pane");
+    return this.panes().filter((p) => paneEl !== null && p.el === paneEl).map((pane) => {
+      const tab = el === null ? null : el.closest(".tab");
+      if (tab !== null && pane.tabsEl.contains(tab)) {
+        const r = tab.getBoundingClientRect();
+        const after = x > r.left + r.width / 2;
+        return { pane, index: Number(tab.dataset.i) + (after ? 1 : 0), el: tab, side: after ? "after" : "before" };
+      }
+      return { pane, index: pane.views.length, el: pane.el, side: "into" };
+    });
   }
   // Move view `v` to place `index` among the tabs of `to`. In another split
   // it is a new view of the buffer there, keeping its cursors, scroll,

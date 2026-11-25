@@ -131,6 +131,78 @@
  *   lineNumbers: Boolean,
  * } */
 
+// ---------------------------------------------------------------- handles
+//
+// What a plugin holds of a buffer, a view and a buffer's decorations
+// (host.js): functions, each reading or changing the application's own as
+// it is when called.
+
+// A buffer's decoration set (`decorations(name)`; each plugin names its
+// own): `gutters()` and `overlays()` are its marks as edits moved them.
+/** type DecorationSet = {
+ *   clear: () => Undefined,
+ *   clearRange: (Number, Number) => Undefined,
+ *   overlay: (Number, Number, Style, OverlayOptions) => Undefined,
+ *   conceal: (Number, Number, ConcealOptions) => Undefined,
+ *   inline: (Number, String, InlineOptions) => Undefined,
+ *   line: (Number, LineOptions) => Undefined,
+ *   node: (Number, Number, Block, String) => Undefined,
+ *   gutter: (Number, GutterOptions) => Undefined,
+ *   gutters: () => {pos: Number, glyph: String}[],
+ *   overlays: () => Range[],
+ * } */
+
+// A buffer: `path()` is "" while untitled; `whole()`: its whole text is
+// held (an ordinary file, or a virtual buffer); `text(start, end)` is null
+// where the text is not held; `lines()` the held lines; `propsAt(pos)` a
+// virtual buffer's entries' props there; `setFoldRanges` the foldable
+// blocks as document line ranges (a language server's; folding uses
+// indentation where none are given).
+/** type BufferHandle = {
+ *   id: Number,
+ *   isVirtual: Boolean,
+ *   path: () => String,
+ *   name: () => String,
+ *   language: () => String | Null,
+ *   length: () => Number,
+ *   modified: () => Boolean,
+ *   whole: () => Boolean,
+ *   text: (Number, Number) => String | Null,
+ *   textAsync: (Number, Number) => Promise<String>,
+ *   lines: () => Lines | Null,
+ *   edit: (Op[]) => Undefined,
+ *   insert: (Number, String) => Undefined,
+ *   delete: (Number, Number) => Undefined,
+ *   replace: (Number, Number, String) => Undefined,
+ *   save: () => Promise<Undefined>,
+ *   decorations: (String) => DecorationSet,
+ *   views: () => ViewHandle[],
+ *   setEntries: (Entry[]) => Undefined,
+ *   propsAt: (Number) => Dict<String>[],
+ *   setFoldRanges: (LspFold[]) => Undefined,
+ *   render: () => Undefined,
+ * } */
+
+// A view of a buffer: its primary cursor and selection, its mode
+// ("source" or "compose") and a compose view's width (null: the
+// setting's). `setCursor` and `select` (the caret at the end) resolve once
+// the text there is loaded and the view shows it.
+/** type ViewHandle = {
+ *   buffer: BufferHandle,
+ *   cursor: () => Number,
+ *   selection: () => Range | Null,
+ *   mode: () => String,
+ *   composeWidth: () => Number | Null,
+ *   setMode: (String) => Undefined,
+ *   setComposeWidth: (Number | Null) => Undefined,
+ *   setCursor: (Number, CursorOptions) => Promise<Undefined>,
+ *   select: (Number, Number, CursorOptions) => Promise<Undefined>,
+ * } */
+
+// What a buffer event says of a change: its ops ("buffer.changed"), and
+// whether it was made here.
+/** type BufferChange = {ops: Op[], local: Boolean} */
+
 // ---------------------------------------------------------------- protocol
 
 // A document as the server describes it (`doc.open`, `doc.saved`).
@@ -186,6 +258,28 @@
  *   | {kind: "action", label: String, keys: String | Null, checked: Boolean | Null, disabled: Boolean, run: () => Undefined}
  *   | {kind: "submenu", label: String, items: MenuItem[]}
  *   | {kind: "separator"} */
+
+// A DOM element whose element-valued members (its children, its parent,
+// `closest`) are elements again.
+/** type El = Element<El> */
+
+// A menu (js/menu.js `makeMenu`), built, then shown: at a point
+// (`openAt`), under or beside a menu bar title (`openUnder`, true:
+// beside), dropping from a control (`openBelow`, true: ending at its
+// right edge), or as a submenu at (x, y), left of the third value when
+// there is no room (`putAt`). `from`: a submenu's row in its parent.
+/** type Menu = {
+ *   el: El,
+ *   from: Number | Null,
+ *   enter: () => Undefined,
+ *   close: () => Undefined,
+ *   closeSub: () => Undefined,
+ *   contains: (El) => Boolean,
+ *   putAt: (Number, Number, Number) => Undefined,
+ *   openAt: (Number, Number) => Undefined,
+ *   openUnder: (DOMRect, Boolean) => Undefined,
+ *   openBelow: (DOMRect, Boolean) => Undefined,
+ * } */
 
 // A row a palette mode lists (`fresh.paletteMode`): `run` when it is
 // chosen, `preview` when it is selected; a row with neither is a note.

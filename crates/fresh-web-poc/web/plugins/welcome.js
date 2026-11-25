@@ -35,7 +35,7 @@ export function activate(app) {
   fresh.defineMode(app, "welcome", {
     Enter: () => {
       const v = fresh.activeView(app);
-      const props = v.buffer.propsAt(v.cursor)[0];
+      const props = v.buffer.propsAt(v.cursor())[0];
       if (props?.command) fresh.run(app, props.command);
     },
   });

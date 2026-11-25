@@ -39,6 +39,11 @@ import { action, actionOf } from "./menu.js";
 
 const STORE = "fresh-poc:orchestrator";
 const JUMPED = "fresh-poc:orchestrator:jumped-from";
+// The workspace jumped from last (`jump`), if this page remembers one.
+/** function jumpedFrom() => Number | Null */
+function jumpedFrom() {
+  try { const s = sessionStorage.getItem(JUMPED); return s === null ? null : Number(s); } catch { return null; }
+}
 // What a New Workspace folder is, as the machine's git says: being asked
 // about, not there, a folder outside git, or in a git work tree (its top).
 /** type Where = {kind: "asking"} | {kind: "missing"} | {kind: "plain"} | {kind: "repo", toplevel: String} */
@@ -54,7 +59,10 @@ function whereOf(r) {
 const hostText = (host) => (host.kind === "ssh" ? host.target : host.kind === "container" ? `container ${host.id}` : host.kind);
 
 // The dock's marks, as the editor's.
-export const MARKS = { failed: "!", pending: "…", waiting: "●", done: "✓", working: "*", idle: "·", unknown: "?", exited: "·" };
+const MARKS = new Map([["failed", "!"], ["pending", "…"], ["waiting", "●"], ["done", "✓"], ["working", "*"], ["idle", "·"], ["unknown", "?"], ["exited", "·"]]);
+// A state's mark (a state this client does not know reads as unknown).
+/** function markOf(state: String) => String */
+export function markOf(state) { return MARKS.get(state) ?? "?"; }
 // The order a workspace's terminals decide its state in.
 const RANK = ["waiting", "done", "working", "idle", "unknown", "exited"];
 // A remote host's mark beside the state.
@@ -91,7 +99,6 @@ export class Orchestrator {
     this.folders = folders;
     // The machines the user declared (this machine is always there).
     this.machines = machines;
-    this.panel = null;
     this.filter = "";
     this.pending = []; // workspaces being made in the background: {key, spec, name, error}
     this.nextPending = 0;
@@ -235,9 +242,8 @@ export class Orchestrator {
   }
 
   jumpBack() {
-    let id = null;
-    try { id = Number(sessionStorage.getItem(JUMPED)); } catch {}
-    if (!id || !this.byId(id) || id === this.current) { this.app().setStatus("No workspace to jump back to"); return; }
+    const id = jumpedFrom();
+    if (id === null || !this.byId(id) || id === this.current) { this.app().setStatus("No workspace to jump back to"); return; }
     try { sessionStorage.setItem(JUMPED, String(this.current)); } catch {}
     this.switchTo(id);
   }
@@ -256,7 +262,7 @@ export class Orchestrator {
     this.app().prompt.open({
       title: "Switch workspace",
       items: this.list.filter((w) => w.status).map((w) => ({
-        label: `${MARKS[stateOf(w)]} ${displayName(w)}${w.id === this.current ? " (this one)" : ""}`,
+        label: `${markOf(stateOf(w))} ${displayName(w)}${w.id === this.current ? " (this one)" : ""}`,
         detail: [w.folder, w.host, w.status.branch, w.status.attention].filter(Boolean).join(" · "),
         value: w.id,
       })),
@@ -266,14 +272,15 @@ export class Orchestrator {
 
   // ----------------------------------------------------------- the dock
 
+  // The dock's panel, opened.
   openDock() {
-    this.panel = this.app().ui.panel({ id: "orchestrator", title: "Orchestrator", place: "left", onClose: () => this.dockClosed() });
+    const panel = this.app().ui.panel({ id: "orchestrator", title: "Orchestrator", place: "left", onClose: () => this.dockClosed() });
     if (!this.prefs.dock) { this.prefs.dock = true; this.savePrefs(); }
     this.renderDock();
+    return panel;
   }
 
   dockClosed() {
-    this.panel = null;
     this.prefs.dock = false;
     this.savePrefs();
   }
@@ -282,15 +289,17 @@ export class Orchestrator {
   dockOpen() { const p = this.app().ui.shown("orchestrator"); return p !== undefined && p.open; }
 
   toggleDock() {
-    if (this.panel?.open) this.panel.close();
-    else { this.openDock(); this.panel.focus("dock"); }
+    const p = this.app().ui.shown("orchestrator");
+    if (p !== undefined && p.open) p.close();
+    else this.openDock().focus("dock");
   }
 
   // Alt+O: the keyboard to the dock (opening it), and back to the editor.
   focusDock() {
-    if (this.panel?.open && this.panel.el.contains(document.activeElement)) { this.app().focusPane(this.app().activePane); return; }
-    if (!this.panel?.open) this.openDock();
-    this.panel.focus("dock");
+    const p = this.app().ui.shown("orchestrator");
+    const open = p !== undefined && p.open;
+    if (p !== undefined && open && p.el.contains(document.activeElement)) { this.app().focusPane(this.app().activePane); return; }
+    (p !== undefined && open ? p : this.openDock()).focus("dock");
   }
 
   setGroup(g) {
@@ -320,7 +329,7 @@ export class Orchestrator {
       h("spacer", {}),
       st && !st.trusted ? h("text", { class: "orch-restricted", title: "Restricted: no processes, terminals or language servers" }, ["⊘"]) : null,
       HOST_MARK[kind] ? h("text", { dim: true, title: w.host }, [HOST_MARK[kind]]) : null,
-      h("text", { class: `orch-mark ${state}`, title: state }, [MARKS[state]]),
+      h("text", { class: `orch-mark ${state}`, title: state }, [markOf(state)]),
     ]);
   }
 
@@ -330,7 +339,7 @@ export class Orchestrator {
       h("text", { class: "orch-name keep", title: p.error || "" }, [p.name]),
       h("text", { dim: !p.error, class: p.error ? "orch-why" : "", title: p.error || "" }, [p.error ? p.error : "Creating…"]),
       h("spacer", {}),
-      h("text", { class: `orch-mark ${state}` }, [MARKS[state]]),
+      h("text", { class: `orch-mark ${state}` }, [markOf(state)]),
     ]);
   }
 
@@ -392,11 +401,12 @@ export class Orchestrator {
   }
 
   renderDock() {
-    if (!this.panel?.open) return;
+    const panel = this.app().ui.shown("orchestrator");
+    if (panel === undefined || !panel.open) return;
     const others = this.needing();
     const waiting = others.filter((w) => stateOf(w) === "waiting").length, done = others.length - waiting;
     const total = this.list.length, shown = this.list.filter((w) => this.matches(w)).length;
-    this.panel.render(h("col", { class: "orch-dock" }, [
+    panel.render(h("col", { class: "orch-dock" }, [
       h("row", { class: "orch-dock-head" }, [
         h("button", { primary: true, title: "New Workspace…", onClick: () => this.newWorkspace() }, ["+ New"]),
         h("spacer", {}),
@@ -405,8 +415,8 @@ export class Orchestrator {
       h("row", {}, [h("input", {
         key: "q", value: this.filter, placeholder: "/ search workspaces", list: "dock",
         onInput: (v) => { this.filter = v; this.renderDock(); },
-        onKey: (e) => { if (e.key === "Escape" && this.filter) { this.filter = ""; this.renderDock(); this.panel.focus("dock"); return true; } return false; },
-        onEnter: () => this.panel.focus("dock"),
+        onKey: (e) => { if (e.key === "Escape" && this.filter) { this.filter = ""; this.renderDock(); panel.focus("dock"); return true; } return false; },
+        onEnter: () => panel.focus("dock"),
       })]),
       waiting || done
         ? h("row", { class: "orch-attention-line" }, [
@@ -421,7 +431,7 @@ export class Orchestrator {
         onActivate: (d) => this.activate(d),
         onContext: (d, _nd, at) => this.ui().menu(this.rowMenu(d), at),
         onKey: (e, d) => {
-          if (e.key === "/") { e.preventDefault(); this.panel.focus("q"); }
+          if (e.key === "/") { e.preventDefault(); panel.focus("q"); }
           else if (d && (e.key === "F2" || e.key === "ContextMenu")) { e.preventDefault(); this.ui().menu(this.rowMenu(d), this.menuAt()); }
           else if (d?.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
         },
@@ -431,9 +441,11 @@ export class Orchestrator {
 
   ui() { return this.app().ui; }
 
-  // Where a menu opened from the keyboard goes: by the dock's head.
+  // Where a menu opened from the keyboard goes: by the dock's head (by
+  // the window's corner while it is closed).
   menuAt() {
-    const r = this.panel.el.getBoundingClientRect();
+    const p = this.app().ui.shown("orchestrator");
+    const r = p === undefined ? { left: 0, top: 0 } : p.el.getBoundingClientRect();
     return { x: r.left + 12, y: r.top + 56 };
   }
 
@@ -647,7 +659,7 @@ export class Orchestrator {
     };
     // A workspace on the board: its state, name, and what it needs.
     const card = (w) => h("row", { class: "orch-row" }, [
-      h("text", { class: `orch-mark ${stateOf(w)}` }, [MARKS[stateOf(w)]]),
+      h("text", { class: `orch-mark ${stateOf(w)}` }, [markOf(stateOf(w))]),
       h("text", { class: "orch-name keep", bold: w.id === this.current, title: [w.root, w.folder, w.status?.branch].filter(Boolean).join(" · ") }, [displayName(w)]),
       h("text", { class: "wb-why" }, [why(w)]),
     ]);

@@ -26,8 +26,12 @@ function tableRow(k, firstRow, last) { return { role: k === 0 ? "header" : k ===
 
 /** function classify(lines: String[]) => {region: (FenceRole | Undefined)[], table: (TableRow | Undefined)[]} */
 export function classify(lines) {
-  const region = lines.map(() => NO_ROLE);
-  const table = lines.map(() => NO_ROW);
+  // (Filled by `push`: a `map` to the constant would widen its type.)
+  /** const region: (FenceRole | Undefined)[] */
+  const region = [];
+  /** const table: (TableRow | Undefined)[] */
+  const table = [];
+  for (const _ of lines) { region.push(NO_ROLE); table.push(NO_ROW); }
   /** let fence: {ch: String, n: Number} | Null */
   let fence = null;
   for (let i = 0; i < lines.length; i++) {

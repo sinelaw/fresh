@@ -67,6 +67,14 @@ function partnerOf(lines, starts, li, k, ch, at) {
   return null;
 }
 // How many lines a bracket's match is looked for in.
+// No block folds there.
+/** const NO_FOLD: Range | Null */
+const NO_FOLD = null;
+
+// No language server's selection ranges (none runs, or it has no answer).
+/** const NO_RANGES: Range[][] | Null */
+const NO_RANGES = null;
+
 const BRACKET_SCAN = 5000;
 const TAB = 4;
 
@@ -329,20 +337,20 @@ export class Editing {
   // answer.
   async lspSelectionRanges(v) {
     const b = v.buf;
-    if (!this.app().lspAvailable(b)) return null;
+    if (!this.app().lspAvailable(b)) return NO_RANGES;
     const positions = v.cursors.map((c) => this.app().lspPosition(b, c.pos));
-    if (positions.some((x) => !x)) return null;
+    if (positions.some((x) => !x)) return NO_RANGES;
     try {
       // Each position's ranges, innermost first (src/lsp_shapes.rs).
       /** const r: LspRange[][] */
       const r = await rpc("lsp.call", { doc: b.doc, method: "textDocument/selectionRange", params: { positions } });
-      if (r.length !== v.cursors.length) return null;
+      if (r.length !== v.cursors.length) return NO_RANGES;
       return r.map((ranges) => ranges.flatMap((x) => {
         const start = this.app().lspOffset(b, x.start.line, x.start.character);
         const end = this.app().lspOffset(b, x.end.line, x.end.character);
         return start != null && end != null ? [{ start, end }] : [];
       }));
-    } catch { return null; }
+    } catch { return NO_RANGES; }
   }
 
   // Expand each cursor's selection to the next range that holds it: the
@@ -487,8 +495,8 @@ export class Editing {
     const first = L.firstLine ?? 0;
     const lsp = (b.foldRanges || []).find((r) => r.start === li + first && r.end > r.start);
     if (lsp) return { start: li, end: Math.min(L.count - 1, lsp.end - first) };
-    const ind = (t) => /^\s*/.exec(t)[0].length;
-    if (L.lines[li].trim() === "") return null;
+    const ind = (t) => t.length - t.trimStart().length;
+    if (L.lines[li].trim() === "") return NO_FOLD;
     const base = ind(L.lines[li]);
     let end = li;
     for (let k = li + 1; k < L.count; k++) {
@@ -496,7 +504,7 @@ export class Editing {
       if (ind(L.lines[k]) <= base) break;
       end = k;
     }
-    return end > li ? { start: li, end } : null;
+    return end > li ? { start: li, end } : NO_FOLD;
   }
 
   toggleFoldAt(pane, li) {

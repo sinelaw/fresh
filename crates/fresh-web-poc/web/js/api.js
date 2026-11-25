@@ -13,13 +13,13 @@
 // `onLspStatus`.
 
 import { rpc, RpcError } from "./rpc.js";
-import { BufferHandle, ViewHandle } from "./host.js";
+import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand } from "./commands.js";
 export { byteLen } from "./ot.js";
 export { stringWidth as textWidth } from "./layout.js";
 
-const bufferOf = (app, b) => (b ? new BufferHandle(app, b) : null);
-const viewOf = (app, v) => (v ? new ViewHandle(app, v) : null);
+// The application's buffer a handle is of (none once it is closed).
+const held = (app, buffer) => app.buffers.get(buffer.id);
 
 // ---------------------------------------------------------------- the workspace
 
@@ -71,31 +71,34 @@ export const paletteMode = (app, prefix, o) => app.prompt.provide(prefix, o);
 
 // ---------------------------------------------------------------- events
 
-export const on = (app, event, f) => app.host.on(event, f);
-export const onBuffer = (app, event, f) => app.host.onBuffer(event, (b, change) => f(new BufferHandle(app, b), change));
-export const onView = (app, event, f) => app.host.onView(event, (v) => f(new ViewHandle(app, v)));
-export const onLspStatus = (app, f) => app.host.onStatus(f);
+export const on = (app, event, f) => app.host.on(event, () => { f(); });
+export const onBuffer = (app, event, f) => app.host.onBuffer(event, (b, change) => { f(b, change); });
+export const onView = (app, event, f) => app.host.onView(event, (v) => { f(v); });
+export const onLspStatus = (app, f) => app.host.onStatus((status) => { f(status); });
 
 // ---------------------------------------------------------------- buffers and views
 
-export const activeBuffer = (app) => { const v = app.view(); return v ? new BufferHandle(app, v.buf) : null; };
-export const buffers = (app) => [...app.buffers.values()].map((b) => new BufferHandle(app, b));
-export const bufferById = (app, id) => bufferOf(app, app.buffers.get(id));
-export const bufferByPath = (app, path) => bufferOf(app, [...app.buffers.values()].find((b) => b.path === path));
+export const activeBuffer = (app) => { const v = app.view(); return v ? bufferHandle(app, v.buf) : null; };
+export const buffers = (app) => [...app.buffers.values()].map((b) => bufferHandle(app, b));
+export const bufferById = (app, id) => { const b = app.buffers.get(id); return b === undefined ? null : bufferHandle(app, b); };
+export const bufferByPath = (app, path) => { const b = [...app.buffers.values()].find((x) => x.path === path); return b === undefined ? null : bufferHandle(app, b); };
 // `at`: OpenOptions (types/fresh.d.js).
-export const open = async (app, path, at) => { const v = await app.openFile(path, at); return v ? new BufferHandle(app, v.buf) : null; };
+export const open = async (app, path, at) => { const v = await app.openFile(path, at); return v ? bufferHandle(app, v.buf) : null; };
 // The buffer for a file, without showing it.
-export const load = async (app, path) => bufferOf(app, await app.loadFile(path));
+export const load = async (app, path) => bufferHandle(app, await app.loadFile(path));
 // A VirtualOptions (types/fresh.d.js).
-export const createVirtual = (app, o) => new BufferHandle(app, app.createVirtual(o));
-export const show = (app, buffer, place) => app.showBuffer(buffer.b, place, { preview: null, focus: true });
-export const closeBuffer = (app, buffer) => app.closeBuffer(buffer.b);
-export const activeView = (app) => viewOf(app, app.view());
-export const views = (app) => app.panes().flatMap((p) => p.views).map((v) => new ViewHandle(app, v));
+export const createVirtual = (app, o) => bufferHandle(app, app.createVirtual(o));
+export const show = (app, buffer, place) => { const b = held(app, buffer); if (b !== undefined) app.showBuffer(b, place, { preview: null, focus: true }); };
+export const closeBuffer = async (app, buffer) => { const b = held(app, buffer); if (b !== undefined) await app.closeBuffer(b); };
+export const activeView = (app) => { const v = app.view(); return v ? viewHandle(app, v) : null; };
+export const views = (app) => app.panes().flatMap((p) => p.views).map((v) => viewHandle(app, v));
 // Scroll two buffers' views together through a line mapping: aToB(line of
 // a) -> line of b, bToA the other way. Returns the function that unlinks
 // them.
-export const linkScroll = (app, a, b, aToB, bToA) => app.linkScroll(a.b, b.b, aToB, bToA);
+export const linkScroll = (app, a, b, aToB, bToA) => {
+  const x = held(app, a), y = held(app, b);
+  return x !== undefined && y !== undefined ? app.linkScroll(x, y, aToB, bToA) : () => {};
+};
 
 // ---------------------------------------------------------------- the UI
 
@@ -123,7 +126,7 @@ export const popup = (app, text, at) => app.popup(text, at);
 // Colours: {"--var": css} for the page's colour variables (style.css).
 export const setTheme = (app, vars) => app.applyTheme(vars);
 // Text shown when the pointer rests on a position: f(buffer, pos) -> string|null.
-export const hoverProvider = (app, f) => app.hoverProvide((b, p) => f(new BufferHandle(app, b), p));
+export const hoverProvider = (app, f) => app.hoverProvide((b, p) => f(bufferHandle(app, b), p));
 
 // ---------------------------------------------------------------- the workspace's host
 
@@ -142,22 +145,22 @@ export const findFiles = async (_app, query) => (await rpc("fs.find", { query })
 export const searchWorkspace = (_app, query, o) => rpc("search.project", { query, regex: o.regex, case: o.case, whole: o.whole, max: o.max });
 // The next (or previous) occurrence of `query` in a document, found by the
 // server: how a huge file is searched.
-export const searchDocument = async (_app, buffer, query, from, backward) => (await rpc("doc.search", { doc: buffer.b.doc, query, from, backward })).pos;
+export const searchDocument = async (app, buffer, query, from, backward) => (await rpc("doc.search", { doc: held(app, buffer)?.doc ?? null, query, from, backward })).pos;
 // The editor's themes: [{key, name}], and one fully resolved.
 export const themes = async (_app) => (await rpc("theme.list", {})).themes;
 export const theme = (_app, key) => rpc("theme.get", { key });
 
 // ---------------------------------------------------------------- language servers
 
-export const lspAvailable = (app, buffer) => app.lspAvailable(buffer.b);
+export const lspAvailable = (app, buffer) => { const b = held(app, buffer); return b !== undefined && app.lspAvailable(b); };
 // A request about `buffer` (at byte `pos` when it is about a position).
-export const lspRequest = (_app, buffer, method, params, pos) => rpc("lsp.call", { doc: buffer.b.doc, method, params, pos });
+export const lspRequest = (app, buffer, method, params, pos) => rpc("lsp.call", { doc: held(app, buffer)?.doc ?? null, method, params, pos });
 // A request about the workspace (`workspace/symbol`) to `language`'s server.
 export const lspWorkspaceRequest = (_app, language, method, params) => rpc("lsp.call", { language, method, params });
 // LSP (line, character) to a byte offset in a held buffer, and back.
-export const lspOffset = (app, buffer, line, character) => app.lspOffset(buffer.b, line, character);
-export const lspPosition = (app, buffer, pos) => app.lspPosition(buffer.b, pos);
-export const diagnostics = (_app, buffer) => buffer.b.decor.diags.map((d) => ({ start: d.start, end: d.end, severity: d.severity, message: d.message, source: d.source }));
+export const lspOffset = (app, buffer, line, character) => { const b = held(app, buffer); return b !== undefined ? app.lspOffset(b, line, character) : null; };
+export const lspPosition = (app, buffer, pos) => { const b = held(app, buffer); return b !== undefined ? app.lspPosition(b, pos) : null; };
+export const diagnostics = (app, buffer) => (held(app, buffer)?.decor.diags ?? []).map((d) => ({ start: d.start, end: d.end, severity: d.severity, message: d.message, source: d.source }));
 // The languages with a server on the host.
 export const lspLanguages = (app) => [...app.lspLanguages];
 // Which servers run: {language: running}.

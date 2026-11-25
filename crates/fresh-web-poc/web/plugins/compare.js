@@ -87,13 +87,13 @@ export function activate(app) {
   };
   const compareHead = async () => {
     const cur = fresh.activeBuffer(app);
-    if (!cur?.path) return;
-    const rel = cur.path.slice(fresh.root(app).length + 1);
+    if (!cur || !cur.path()) return;
+    const rel = cur.path().slice(fresh.root(app).length + 1);
     const r = await fresh.runProcess(app, "git", ["show", `HEAD:./${rel}`], { cwd: fresh.root(app) });
     if (r.code !== 0) return fresh.message(app, "Not in the last commit");
     const head = fresh.createVirtual(app, {
-      name: `${cur.name} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
-      mode: null, readOnly: true, language: cur.language, keep: false, place: null, lineNumbers: true,
+      name: `${cur.name()} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
+      mode: null, readOnly: true, language: cur.language(), keep: false, place: null, lineNumbers: true,
     });
     open(head, cur);
   };
@@ -108,7 +108,7 @@ export function activate(app) {
     if (!now.blocks.length) return fresh.message(app, "No differences");
     const L = v.buffer.lines();
     if (!L) return;
-    const cur = L.starts.findIndex((s, k) => v.cursor >= s && (k + 1 >= L.starts.length || v.cursor < L.starts[k + 1]));
+    const cur = L.starts.findIndex((s, k) => v.cursor() >= s && (k + 1 >= L.starts.length || v.cursor() < L.starts[k + 1]));
     const lines = now.blocks.map(side.start);
     const line = dir > 0 ? lines.find((i) => i > cur) ?? lines[0] : [...lines].reverse().find((i) => i < cur) ?? lines[lines.length - 1];
     v.setCursor(L.starts[Math.min(line, L.starts.length - 1)], { center: true });

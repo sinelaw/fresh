@@ -97,9 +97,10 @@ export function menuSpec(refocus, ignore, onSide, onClose, from) { return { refo
 // submenu), give it back the keyboard, close it and every menu above.
 /** type MenuUp = {closeSub: () => Undefined, focus: () => Undefined, closeAll: () => Undefined} */
 
-/** A menu of `items`, behaving as `o` (a MenuSpec) says; `up`: for a
- *  submenu, the menu it opened from (a list of at most one). Built, not
- *  shown: show it with openAt, openUnder or openBelow. */
+// A menu of `items`, behaving as `o` (a MenuSpec) says; `up`: for a
+// submenu, the menu it opened from (a list of at most one). Built, not
+// shown: show it with openAt, openUnder or openBelow.
+/** function makeMenu(all: MenuItem[], o: MenuSpec, up: MenuUp[]) => Menu */
 export function makeMenu(all, o, up) {
   // The rows: every item but the separators, each with its element.
   const items = all.filter((it) => it.kind !== "separator");

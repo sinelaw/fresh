@@ -34,15 +34,15 @@ export function activate(app) {
     if (now && was) {
       set(n)(was).clear();
       was.render();
-      if (was.id === b.id && line(b, now.pos) === line(b, v.cursor)) { marks.delete(n); fresh.message(app, `Bookmark ${n} cleared`); return; }
+      if (was.id === b.id && line(b, now.pos) === line(b, v.cursor())) { marks.delete(n); fresh.message(app, `Bookmark ${n} cleared`); return; }
     }
     const L = b.lines();
-    const i = line(b, v.cursor);
-    const pos = L && i >= 0 ? L.starts[i] : v.cursor;
+    const i = line(b, v.cursor());
+    const pos = L && i >= 0 ? L.starts[i] : v.cursor();
     set(n)(b).gutter(pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
     b.render();
     // A virtual buffer's bookmark goes with it.
-    const path = b.path;
+    const path = b.path();
     if (path) marks.set(n, { path, pos });
     else marks.delete(n);
     fresh.message(app, `Bookmark ${n} set`);
@@ -62,7 +62,7 @@ export function activate(app) {
     if (!b) return;
     set(n)(b).gutter(m.pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
     const v = fresh.activeView(app);
-    if (v) await v.setCursor(Math.min(m.pos, b.length), { center: true });
+    if (v) await v.setCursor(Math.min(m.pos, b.length()), { center: true });
   };
   for (let n = 0; n <= 9; n++) {
     fresh.register(app, `bookmark.set${n}`, { title: `Bookmark: Toggle ${n}`, hidden: true, run: () => toggle(n) });
@@ -81,7 +81,7 @@ export function activate(app) {
         const at = where(n);
         const open = at ? fresh.bufferById(app, at.buffer) : null;
         const m = marks.get(n);
-        const name = open ? open.name : m ? m.path.slice(m.path.lastIndexOf("/") + 1) : null;
+        const name = open ? open.name() : m ? m.path.slice(m.path.lastIndexOf("/") + 1) : null;
         if (name !== null) items.push({ label: `${n}  ${name}`, detail: open ? "open" : "closed file", value: n });
       }
       if (!items.length) items.push({ label: "No bookmarks (Ctrl+Shift+0…9 sets one)", detail: "", value: null });

@@ -340,7 +340,7 @@ export function activate(app) {
     render();
   };
 
-  fresh.onBuffer(app, "buffer.activated", (buffer) => reveal(buffer.path));
+  fresh.onBuffer(app, "buffer.activated", (buffer) => reveal(buffer.path()));
   fresh.onBuffer(app, "buffer.saved", refresh);
   fresh.register(app, "explorer.focus", { title: "Explorer: Focus", hidden: false, run: () => panel.focus("tree") });
   fresh.register(app, "explorer.toggle", { title: "View: Toggle File Explorer", hidden: false, run: () => fresh.run(app, "view.toggleSidebar") });
@@ -355,7 +355,7 @@ export function activate(app) {
   fresh.register(app, "explorer.reveal", { title: "Explorer: Reveal Active File", hidden: false, run: async () => {
     fresh.run(app, "view.showSidebar");
     const b = fresh.activeBuffer(app);
-    if (b) await reveal(b.path);
+    if (b) await reveal(b.path());
     panel.focus("tree");
   } });
   const setShow = (next) => {

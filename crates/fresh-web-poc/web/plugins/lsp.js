@@ -37,7 +37,7 @@ export function activate(app) {
   };
   // A request about the cursor's position. A refused one throws; each
   // command shows the server's reason (see `reg`).
-  const ask = (v, method, params) => fresh.lspRequest(app, v.buffer, method, params, v.cursor);
+  const ask = (v, method, params) => fresh.lspRequest(app, v.buffer, method, params, v.cursor());
   const rel = (p) => (p.startsWith(fresh.root(app) + "/") ? p.slice(fresh.root(app).length + 1) : p);
 
   // Open a location: `preview` as for OpenOptions (a list's selection
@@ -108,7 +108,7 @@ export function activate(app) {
     items: async (q) => {
       const v = active();
       if (!v) return [note("No language server for this file")];
-      const key = `${v.buffer.id}:${v.buffer.length}`;
+      const key = `${v.buffer.id}:${v.buffer.length()}`;
       const cached = symCache.get(key);
       /** let list: LspSymbol[] */
       let list = [];
@@ -210,8 +210,8 @@ export function activate(app) {
   // The identifier around the cursor.
   const currentWord = (v) => {
     const b = v.buffer;
-    const left = b.text(Math.max(0, v.cursor - 100), v.cursor) || "";
-    const right = b.text(v.cursor, Math.min(b.length, v.cursor + 100)) || "";
+    const left = b.text(Math.max(0, v.cursor() - 100), v.cursor()) || "";
+    const right = b.text(v.cursor(), Math.min(b.length(), v.cursor() + 100)) || "";
     return wordEnd(left) + wordStart(right);
   };
 
@@ -229,7 +229,7 @@ export function activate(app) {
   const codeActions = async () => {
     const v = active();
     if (!v) return;
-    const sel = v.selection || { start: v.cursor, end: v.cursor };
+    const sel = v.selection() ?? { start: v.cursor(), end: v.cursor() };
     const toPos = (p) => fresh.lspPosition(app, v.buffer, p);
     const diags = fresh.diagnostics(app, v.buffer).filter((d) => d.start <= sel.end && d.end >= sel.start);
     /** const r: LspAction[] */
@@ -266,7 +266,7 @@ export function activate(app) {
     /** const items: LspCompletion[] */
     const items = await ask(v, "textDocument/completion", {});
     if (!items.length) return fresh.message(app, "No completions");
-    const word = wordEnd(v.buffer.text(Math.max(0, v.cursor - 100), v.cursor) || "");
+    const word = wordEnd(v.buffer.text(Math.max(0, v.cursor() - 100), v.cursor()) || "");
     fresh.pick(app, {
       title: "Complete",
       value: word,
@@ -275,11 +275,11 @@ export function activate(app) {
         const vv = fresh.activeView(app);
         if (!vv) return;
         const b = vv.buffer;
-        const left = b.text(Math.max(0, vv.cursor - 100), vv.cursor) || "";
+        const left = b.text(Math.max(0, vv.cursor() - 100), vv.cursor()) || "";
         const w = wordEnd(left);
         const text = i.insert;
-        const start = vv.cursor - fresh.byteLen(w);
-        b.replace(start, vv.cursor, text);
+        const start = vv.cursor() - fresh.byteLen(w);
+        b.replace(start, vv.cursor(), text);
         vv.setCursor(start + fresh.byteLen(text), { center: false });
       },
     });
@@ -353,9 +353,9 @@ export function activate(app) {
       key: "diags",
       items,
       render: (it) => it.header
-        ? h("text", { bold: true }, [rel(it.b.path)])
+        ? h("text", { bold: true }, [rel(it.b.path())])
         : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [it.line]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
-      onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path, { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.activeView(app).setCursor(it.d.start, { center: true }); },
+      onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path(), { line: null, column: 1, place: "tab", preview: null, focus: true }); fresh.activeView(app).setCursor(it.d.start, { center: true }); },
     }));
   };
   const diagnosticsPanel = () => {
@@ -378,8 +378,9 @@ export function activate(app) {
   // The status bar: the active file's server, or `LSP (off)` when it was
   // stopped.
   const showStatus = (b) => {
-    const installed = b != null && b.language != null && fresh.lspLanguages(app).includes(b.language) && !b.isVirtual;
-    const text = !installed ? "" : fresh.lspAvailable(app, b) ? `LSP ${b.language}` : running.get(b.language) === false ? "LSP (off)" : "";
+    const lang = b === null ? null : b.language();
+    const installed = b !== null && lang !== null && fresh.lspLanguages(app).includes(lang) && !b.isVirtual;
+    const text = !installed || lang === null ? "" : fresh.lspAvailable(app, b) ? `LSP ${lang}` : running.get(lang) === false ? "LSP (off)" : "";
     status.set(text, { title: "Language servers: Show Status", onClick: () => fresh.run(app, "lsp.status") });
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
@@ -408,7 +409,7 @@ export function activate(app) {
   // The active file's language, when a server is found for it.
   const activeLanguage = () => {
     const b = fresh.activeBuffer(app);
-    const l = b === null ? null : b.language;
+    const l = b === null ? null : b.language();
     return l !== null && fresh.lspLanguages(app).includes(l) ? l : null;
   };
   // Restart or stop the active file's server (the list of them when it has
@@ -440,16 +441,16 @@ export function activate(app) {
   const hintTimers = new Map();
   const refreshHints = async (b) => {
     const deco = b.decorations("inlay");
-    if (!fresh.settings(app).inlay_hints || !fresh.lspAvailable(app, b) || !b.whole) { deco.clear(); b.render(); return; }
+    if (!fresh.settings(app).inlay_hints || !fresh.lspAvailable(app, b) || !b.whole()) { deco.clear(); b.render(); return; }
     const L = b.lines();
     if (!L) return;
-    const len = b.length, text0 = b.text(0, Math.min(len, 64));
+    const len = b.length(), text0 = b.text(0, Math.min(len, 64));
     /** let hints: LspHint[] */
     let hints = [];
     try {
       hints = await fresh.lspRequest(app, b, "textDocument/inlayHint", { range: { start: { line: 0, character: 0 }, end: { line: L.lines.length, character: 0 } } });
     } catch { return; }
-    if (b.length !== len || b.text(0, Math.min(len, 64)) !== text0) return;
+    if (b.length() !== len || b.text(0, Math.min(len, 64)) !== text0) return;
     deco.clear();
     for (const hnt of hints) {
       const pos = fresh.lspOffset(app, b, hnt.position.line, hnt.position.character);
@@ -498,7 +499,7 @@ export function activate(app) {
     if (!v) return;
     const ds = fresh.diagnostics(app, v.buffer).sort((a, b) => a.start - b.start || a.severity - b.severity);
     if (!ds.length) { fresh.message(app, "No problems in this file"); return; }
-    const at = v.cursor;
+    const at = v.cursor();
     const next = dir > 0 ? ds.find((x) => x.start > at) : [...ds].reverse().find((x) => x.start < at);
     const d = next !== undefined ? next : dir > 0 ? ds[0] : ds[ds.length - 1];
     await v.setCursor(d.start, { center: true });
