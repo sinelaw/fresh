@@ -1040,7 +1040,7 @@ export class Orchestrator {
         adding ? null : field("Folder", [
           h("row", { class: "orch-combo ui-joined" }, [
             h("input", { key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => go(false), onKey: launchKey }),
-            h("button", { class: "orch-combo-button", title: "Recent folders", onClick: recentMenu }, ["▾"]),
+            h("button", { field: true, title: "Recent folders", onClick: recentMenu }, ["▾"]),
           ]),
           h("button", { onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, ["Browse…"]),
         ]),

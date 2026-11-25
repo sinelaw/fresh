@@ -212,8 +212,8 @@
   border-radius: 0 10px 10px 0; }
 /* A box's ▾ continues its frame; a dropdown under a box or a button is
    framed as it is, the frame going round both. */
-.skin-bridge .orch-combo > .orch-combo-button { background: #000; color: var(--br-lav); border: 2px solid var(--br-lav); border-left: 0; padding: 0 10px; }
-.skin-bridge .ui-joined.open > .orch-combo-button, .skin-bridge .ui-joined.open > .ui-input { border-bottom-color: var(--br-dim); }
+.skin-bridge .ui-field-button { background: #000; color: var(--br-lav); border: 2px solid var(--br-lav); border-left: 0; padding: 0 10px; }
+.skin-bridge .ui-joined.open > .ui-field-button, .skin-bridge .ui-joined.open > .ui-input { border-bottom-color: var(--br-dim); }
 .skin-bridge :is(#popup, .ctxmenu).attached { border: 2px solid var(--br-lav); border-left-width: 6px; border-top: 0;
   border-radius: 0 0 10px 10px; padding: 2px 0 6px; }
 .skin-bridge .ctxmenu.attached { --attached-radius: 10px; }

@@ -155,7 +155,7 @@
 .skin-winamp .split.v > .sash { border-top: 3px solid #2c2019; }
 
 /* Floating windows: skin windows, metal around an inset LCD. */
-.skin-winamp :is(#prompt, #popup, .ctxmenu, .panel-dialog) { background: var(--wa-metal); color: #e9d9c2; border: 0; border-radius: 3px;
+.skin-winamp :is(#prompt, #popup, .panel-dialog), .skin-winamp .ctxmenu { background: var(--wa-metal); color: #e9d9c2; border: 0; border-radius: 3px;
   box-shadow: var(--wa-seam), var(--wa-out), 6px 8px 0 rgba(0, 0, 0, .5); }
 .skin-winamp #prompt { padding: 6px; }
 .skin-winamp #prompt .bar { padding: 2px 2px 6px; }
@@ -193,7 +193,11 @@
 .skin-winamp :is(.ui-button, #skin-btn):active { box-shadow: var(--wa-ctl-press); }
 .skin-winamp .ui-button.primary { background: var(--wa-olive); color: #f4f6df;
   box-shadow: var(--wa-ring), var(--wa-vbevel), inset 0 1px 0 rgba(255, 255, 255, .32), 0 2px 4px rgba(0, 0, 0, .45); }
-.skin-winamp :is(.ui-input, .ui-select) { background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #000; border-radius: 0; box-shadow: var(--wa-in); }
+.skin-winamp :is(.ui-input, .ui-select, .ui-field-button) { background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #000; border-radius: 0; box-shadow: var(--wa-in); }
+/* A box and its ▾ are one sunken well: no light edge between them. */
+.skin-winamp .ui-joined > .ui-input:not(:last-child) { box-shadow: inset 1px 1px 0 var(--wa-dk), inset 0 -1px 0 var(--wa-lt); }
+.skin-winamp .ui-joined > .ui-field-button { box-shadow: inset 0 1px 0 var(--wa-dk), inset -1px -1px 0 var(--wa-lt); }
+.skin-winamp .ui-field-button:hover { text-shadow: var(--wa-glow); }
 .skin-winamp .ui-toggle.on { color: var(--wa-green); border-color: var(--wa-green-dim); background: rgba(78, 240, 127, .12); }
 .skin-winamp .ui-badge { background: var(--wa-sunken); color: var(--wa-green); box-shadow: var(--wa-in); }
 
@@ -207,3 +211,9 @@
 .skin-winamp *::-webkit-scrollbar-thumb { background: var(--wa-plate-brush); border-radius: 0; box-shadow: var(--wa-out); }
 .skin-winamp *::-webkit-scrollbar-corner { background: #140c07; }
 .skin-winamp .ctxmenu.attached { --attached-radius: 3px; }
+/* A box's list of values is the box's LCD, continued. */
+.skin-winamp .ctxmenu.attached.of-field { background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #000; border-top: 0;
+  box-shadow: inset 1px 0 0 var(--wa-dk), inset -1px -1px 0 var(--wa-lt), 0 4px 12px rgba(0, 0, 0, .5); }
+.skin-winamp .ctxmenu.of-field .menu-item + .menu-item { box-shadow: none; }
+.skin-winamp .ctxmenu.of-field .menu-item.hi { background: var(--wa-green); color: #000; box-shadow: none; text-shadow: none; }
+.skin-winamp .ctxmenu.of-field .menu-item .keys { color: inherit; opacity: .7; }

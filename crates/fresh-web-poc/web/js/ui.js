@@ -75,6 +75,8 @@ export class UIKit {
     const m = new Menu(items, { app: this.app, onClose: () => { group.classList.remove("open"); if (this.context === m) this.context = null; } }).build();
     this.context = m;
     m.el.classList.add("attached");
+    // Under a box, the menu is that box's list of values, drawn as the box is.
+    if (group.querySelector(".ui-input")) m.el.classList.add("of-field");
     const r = group.getBoundingClientRect();
     m.el.style.minWidth = `${r.width}px`;
     group.classList.add("open");
@@ -279,7 +281,9 @@ class Panel {
         break;
       case "button":
         el = kids(document.createElement("button"));
-        el.className = "ui-button" + (p.primary ? " primary" : "");
+        // A `field` button is part of a box beside it (a ▾ for its values):
+        // drawn as the box is, not as a button.
+        el.className = p.field ? "ui-field-button" : "ui-button" + (p.primary ? " primary" : "");
         el.disabled = !!p.disabled;
         el.title = p.title || "";
         el.onclick = (e) => p.onClick?.(e);

@@ -67,10 +67,11 @@
 .skin-compact .ctxmenu .menu-item.hi { background: var(--tint); color: inherit; }
 .skin-compact .ui-button { border-radius: 3px; padding: 2px 12px; background: var(--well); border: 1px solid var(--hairline-strong); }
 .skin-compact .ui-button.primary { background: var(--accent); border-color: var(--accent); }
-.skin-compact :is(.ui-input, .ui-select) { background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: 3px; }
+.skin-compact :is(.ui-input, .ui-select, .ui-field-button) { background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: 3px; }
 
 /* ---- scrollbar: thin and square, the accent under the pointer ---- */
 .skin-compact .scrollbar { width: 8px; background: transparent; box-shadow: inset 1px 0 0 var(--hairline); }
 .skin-compact .thumb { left: 2px; right: 1px; border-radius: 0; background: color-mix(in srgb, var(--fg) 22%, transparent); }
 .skin-compact .thumb:hover { background: var(--accent); }
 .skin-compact .ctxmenu.attached { --attached-radius: 4px; }
+.skin-compact .ctxmenu.attached.of-field { background: var(--bg); }

@@ -322,13 +322,15 @@ body .ui-row.ui-joined > :not(:last-child) { border-top-right-radius: 0; border-
 body .ui-row.ui-joined > :not(:first-child) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 body .ui-row.ui-joined.open > * { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 body .ctxmenu.attached { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -1px; }
+body .ctxmenu.attached.of-field { background: var(--control-bg); color: var(--control-fg); font-family: var(--mono); }
 body .ctxmenu.attached.overhang-left { border-top-left-radius: var(--attached-radius, 0); }
 body .ctxmenu.attached.overhang-right { border-top-right-radius: var(--attached-radius, 0); }
 /* An editable box with a ▾ for its recent values, joined to it. */
 .orch-combo { flex: 1; gap: 0; min-width: 0; align-items: stretch; }
 body .orch-combo > .ui-input { border-right: 0; }
-.orch-combo > .orch-combo-button { padding: 0 8px; border: 1px solid var(--border); background: var(--control-bg); color: var(--control-fg); }
-.orch-combo:focus-within > .orch-combo-button { border-color: var(--accent); }
+.ui-field-button { padding: 0 8px; border: 1px solid var(--border); background: var(--control-bg); color: var(--control-fg); cursor: pointer; font: var(--ui-font-sm) var(--ui-font); }
+body .ui-joined > .ui-field-button { border-left: 0; }
+.ui-joined:focus-within > .ui-field-button { border-color: var(--accent); }
 .orch-label { width: 90px; flex-shrink: 0; color: var(--muted); }
 .orch-note { font-size: var(--ui-font-xs); padding-left: 96px; }
 .orch-import .orch-import-list { min-height: 260px; }
