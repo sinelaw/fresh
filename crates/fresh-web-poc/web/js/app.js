@@ -1284,6 +1284,7 @@ export class App {
     cmd("view.zoomOut", "View: Zoom Out", () => zoom(this.settings.zoom - 0.1));
     cmd("view.zoomReset", "View: Reset Zoom", () => zoom(1));
     cmd("view.toggleSidebar", "View: Toggle Sidebar", () => { $("#sidebar").classList.toggle("hidden"); this.renderAll(); this.rememberLayout(); });
+    cmd("view.showSidebar", "View: Show Sidebar", () => { $("#sidebar").classList.remove("hidden"); this.renderAll(); this.rememberLayout(); }, true);
     cmd("file.recent", "File: Open Recent…", () => {
       const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
       const list = this.recentFiles();

@@ -108,7 +108,8 @@ export const statusItem = (app, id) => app.statusItem(id);
 export const message = (app, text) => app.setStatus(text);
 // A failure's text in the status bar: a refused request's detail (the
 // server's own words), else the error as written.
-export const showError = (app, e) => app.setStatus(e instanceof RpcError ? e.detail : String(e));
+export const errorText = (e) => (e instanceof RpcError ? e.detail : String(e));
+export const showError = (app, e) => app.setStatus(errorText(e));
 export const popup = (app, text, at) => app.popup(text, at);
 // Colours: {"--var": css} for the page's colour variables (style.css).
 export const setTheme = (app, vars) => app.applyTheme(vars);
