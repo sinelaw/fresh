@@ -532,17 +532,51 @@ It checks every module under `web/js` and `web/plugins` (not the vendored
 xterm.js) in one run, with two declaration files: `types/browser.d.js`
 (browser APIs inty's DOM library leaves out) and `types/fresh.d.js` (the
 shapes modules share: edit primitives, the server's events, documents,
-diagnostics, colours, syntax spans).
+diagnostics, colours, syntax spans, and the plugin API's records).
 
 `ot.js`, `rpc.js`'s functions, `diff.js`, `mdstruct.js` and `highlight.js`
 are typed. The client keeps to what inty takes by design: no class
 inheritance (a `Buffer` holds its kind's source), no rest parameters (`h`
 takes its children as one array), no setters or dynamic import, and a
 constructor only sets fields (whatever needs `this`, such as event
-listeners, is set up by a `listen()` its creator calls). The rest does not
-check yet: a record's optional field (`fg?: Color`) can't be read, so option
-bags and partial styles — decorations, the UI kit's properties, most of the
-plugin API — have no type yet.
+listeners, is set up by a `listen()` its creator calls).
+
+inty's records are closed: a key left out of an object literal is not in
+its type, so an option bag whose callers each pass some of its keys does
+not check. So a record lists every field, at every place one is made:
+
+- A named record type (in `types/fresh.d.js` when modules share it)
+  declares every field. A field that may genuinely have no value is
+  nullable (`T | Null`, written `null`: this code's "none"; `T?`, which is
+  `T | Undefined`, works alike); any other has a real default instead —
+  `bold: false`, `when: "always"`, `title: ""`, `center: false`.
+- Each construction site writes every key: a full literal, or a named
+  constant of the type for one used repeatedly (`MATCH`, `PLAIN`). A
+  constant is annotated with its type (`/** const MATCH: Style */`), as
+  inty does not take a value already typed `{fg: Null}` where a
+  `Color | Null` is wanted.
+- No spread overrides a field of a typed record (`{...defaults, bold:
+  true}`, `{...st, fg}`): inty types the result's field as the new value's
+  type, not the record's. Write the record out, or use a function that
+  does (`restyler`, `withWavy` in `paint.js`).
+- An option record has no default (`opts = {}`): every caller passes one
+  (`{ center: false }`). A helper's trailing argument is passed too, as its
+  "none" value where it has one (`reg(id, title, run, "")`: no key) —
+  inty counts one left out as an arity error.
+- A class's fields are all set in its constructor, at their defaults.
+
+The records so far: decorations (`Style`, `OverlayOptions`,
+`ConcealOptions`, `InlineOptions`, `LineOptions`, `Block`,
+`GutterOptions`), a drawn style (`Drawn`, in `paint.js`), navigation
+(`OpenOptions`, `CursorOptions`), panels (`PanelOptions`) and virtual
+buffers (`Entry`, `VirtualOptions`). Command specs are `{title, hidden,
+run}`. What does not check yet: the UI kit's `h()` trees (a node's props
+differ by its type, and a tree's children are one array), a language
+server request's params (a record per method through one function), menu
+item lists (`null` separators among items whose `run`s return different
+types), pick items whose `value` may be `null`, and what inty's own limits
+leave (a value narrowed from `null` or `undefined`, a key known only at
+run time, DOM declarations it lacks).
 
 ## Limits
 
