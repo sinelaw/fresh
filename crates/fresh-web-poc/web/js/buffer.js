@@ -180,8 +180,6 @@ export class Buffer {
     this.discard = false; // closing gives up its unsaved changes
     this.keepMine = false; // the next save overwrites a change on disk
     this.foldRanges = null; // a language server's, as line ranges
-    this.struct = null; // Markdown structure of the held lines, at `structGen`
-    this.structGen = -1;
   }
   emit(what, data) { for (const f of this.listeners) f(what, data); }
   get isVirtual() { return this.source.kind === "virtual"; }

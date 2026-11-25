@@ -8,6 +8,7 @@ import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
 import { EMPTY, NO_SPANS, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
 import { DocView } from "./doc.js";
+import { poolOf, take, sameDrawn } from "./pool.js";
 
 
 let nextPaneId = 1;
@@ -58,6 +59,46 @@ function rainbowDepths(buf, lang, synFor) {
   return depths;
 }
 
+// A buffer's Markdown structure, for the text it was found in.
+const structureCache = new WeakMap();
+function markdownStructure(buf) {
+  const hit = structureCache.get(buf);
+  if (hit !== undefined && hit.gen === buf.textGen) return hit.struct;
+  const struct = classify(buf.text.lines);
+  structureCache.set(buf, { gen: buf.textGen, struct });
+  return struct;
+}
+
+// `make()` for `key`, remembered while `key` is the last one asked.
+/** function remember<K, V>(memo: Map<K, V>, key: K, make: () => V) => V */
+function remember(memo, key, make) {
+  if (memo.has(key)) {
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+  }
+  const v = make();
+  memo.clear();
+  memo.set(key, v);
+  return v;
+}
+
+// A row's HTML: its cells in runs of one style, each run a span.
+function rowHtml(cls, fill, cells) {
+  const runs = [];
+  for (const c of cells) {
+    const key = c.style === EMPTY ? "" : styleKey(c.style);
+    const last = runs.length ? runs[runs.length - 1] : null;
+    if (last !== null && last.key === key) last.text += c.ch;
+    else runs.push({ key, style: c.style, text: c.ch });
+  }
+  const spans = runs.map((x) => (x.key ? `<span style="${cssFor(x.style, x.key)}">${esc(x.text)}</span>` : esc(x.text))).join("");
+  return `<div class="${cls}"${fill ? ` style="background:${fill}"` : ""}>${cells.length ? spans : "\u200b"}</div>`;
+}
+
+// A list's first item, if it has one.
+/** function first<T>(xs: T[]) => T | Undefined */
+function first(xs) { return xs.at(0); }
+
 // No draw asked for yet (a pane's `pending` frame).
 /** const NO_FRAME: Number | Null */
 const NO_FRAME = null;
@@ -72,6 +113,13 @@ function div(cls, kids) {
 
 /** function cursorWith(pos: Number, anchor: Number | Null, goalX: Number | Null) => Cursor */
 export function cursorWith(pos, anchor, goalX) { return { pos, anchor, goalX }; }
+// `c` moved by an edit: `move(p, after)` is where position `p` goes
+// (`after`: a position at the edit's place goes after its insertion).
+/** function shiftCursor(c: Cursor, move: (Number, Boolean) => Number) => Cursor */
+export function shiftCursor(c, move) {
+  const a = c.anchor;
+  return cursorWith(move(c.pos, true), a === null ? null : move(a, false), c.goalX);
+}
 /** function cursorAt(pos: Number) => Cursor */
 export function cursorAt(pos) { return { pos, anchor: null, goalX: null }; }
 // A cursor at `pos` selecting from `anchor` (none when they meet).
@@ -113,10 +161,7 @@ export class View {
       if (p >= op.pos + op.len) return p - op.len;
       return p > op.pos ? op.pos : p;
     };
-    this.cursors = this.cursors.map((c) => {
-      const a = c.anchor;
-      return cursorWith(sp(c.pos, true), a === null ? null : sp(a, false), c.goalX);
-    });
+    this.cursors = this.cursors.map((c) => shiftCursor(c, sp));
     this._top = sp(this._top, false);
   }
   selection() { return sel(this.cursors[0]); }
@@ -143,7 +188,7 @@ export class Pane {
     this.app = app;
     this.id = nextPaneId++;
     this.views = []; // tabs
-    this.view = null;
+    this.shown = []; // the view shown: one of `views`, or none
     // The tabs over the surface: rulers, gutter, text and carets, then (in
     // a compose view) the document, then the scrollbar.
     this.tabsEl = div("tabs", []);
@@ -160,16 +205,25 @@ export class Pane {
     this.el = div("pane", [this.tabsEl, this.surfaceEl]);
     this.marksSig = "";
     this.rows = [];
+    // The rows and gutter rows on screen (pool.js), and the rulers' and
+    // carets' HTML.
+    this.rowsDrawn = [];
+    this.gutterDrawn = [];
+    this.drawn = { rulers: "", carets: "" };
     this.lastWidth = new Map();
     // Sizes come from a ResizeObserver, never read while drawing: reading
     // layout after writing rows would force a synchronous reflow.
     this.size = { w: 0, h: 0, sb: 0 };
     this.wantX = false; // keep the cursor in view sideways at the next draw
-    this.bracketKey = ""; // the cursor position and text the bracket pair was found for
-    this.bracketPair = null;
+    // The bracket pair at the cursor, by the cursor position and text it
+    // was found for (the last one only).
+    this.brackets = new Map();
     this.maxCols = 0; // the widest row drawn, in columns
     this.frame = { id: NO_FRAME }; // the frame the next draw is asked for
   }
+
+  // The view shown, if any.
+  get view() { return first(this.shown); }
 
   // Take the surface's resizes and mouse (once, after `new`).
   listen() {
@@ -221,7 +275,7 @@ export class Pane {
       }
       v.preview = !!preview;
     } else if (preview === false) v.preview = false;
-    this.view = v;
+    this.shown = [v];
     this.app().onViewShown(this, v);
     this.renderTabs();
     this.scheduleRender();
@@ -232,7 +286,7 @@ export class Pane {
     if (i < 0) return;
     this.views.splice(i, 1);
     v.dispose();
-    if (this.view === v) this.view = this.views.length ? this.views[Math.max(0, i - 1)] : null;
+    if (this.view === v) this.shown = this.views.slice(Math.max(0, i - 1), Math.max(0, i - 1) + 1);
     if (this.view) this.app().onViewShown(this, this.view);
     this.renderTabs();
     this.scheduleRender();
@@ -296,43 +350,38 @@ export class Pane {
   layoutOpts(v, width) {
     const buf = v.buf;
     const L = buf.text;
-    const lang = buf.language || (/\.(md|markdown)$/.test(buf.path || "") && "markdown");
+    const lang = buf.language ?? (/\.(md|markdown)$/.test(buf.path ?? "") ? "markdown" : null);
     const sels = v.selections();
     const s = this.app().settings;
     // Fenced blocks in markdown are highlighted in the fence's language.
-    let struct = null;
-    if (lang === "markdown" && buf.full) {
-      if (buf.structGen !== buf.textGen) { buf.struct = classify(L.lines); buf.structGen = buf.textGen; }
-      struct = buf.struct;
-    }
-    const fenceLang = (li) => {
+    const struct = lang === "markdown" && buf.full ? markdownStructure(buf) : null;
+    // The language of the fenced block holding line `li` (its opening
+    // line's word).
+    const fenceLang = (regions, li) => {
       let k = li;
-      while (k > 0 && struct.region[k] !== "open") k--;
-      return fenceLanguage((/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]) || [])[1]);
+      while (k > 0 && regions[k] !== "open") k--;
+      const m = /^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]);
+      return fenceLanguage(m ? m[1] : "");
     };
     const synFor = (li) => {
-      const region = struct && struct.region[li];
-      const l = region === "body" ? fenceLang(li) : lang;
-      return region === "body" && !l ? NO_SPANS : spansFor(l, L.lines[li]);
+      const regions = struct ? struct.region : [];
+      const inFence = li < regions.length && regions[li] === "body";
+      const l = inFence ? fenceLang(regions, li) : lang;
+      return inFence && !l ? NO_SPANS : spansFor(l, L.lines[li]);
     };
     // Each line's decorations, gathered when the layout first reaches the
     // line (the interval index makes that cost what the line has), in order
     // of precedence: overlays, occurrences, diagnostics, selection, then
     // the overlays drawn above the selection.
-    let occ = null;
-    if (s.highlight_occurrences) {
-      const w = v.selection() || this.app().editing.wordAt(buf, v.primary.pos);
-      const t = w ? buf.textRange(w.start, w.end) : null;
-      if (t && t.length >= 2 && !t.includes("\n")) occ = t;
-    }
+    const w = s.highlight_occurrences ? v.selection() ?? this.app().editing.wordAt(buf, v.primary.pos) : null;
+    const t = w ? buf.textRange(w.start, w.end) : null;
+    /** const occ: String | Null */
+    const occ = t !== null && t.length >= 2 && !t.includes("\n") ? t : null;
     // The bracket at the cursor and its match, drawn bold in the theme's
     // colour for them (found once per cursor position and text).
-    let brackets = null;
-    if (s.highlight_brackets) {
-      const key = `${buf.id}:${buf.textGen}:${v.primary.pos}`;
-      if (this.bracketKey !== key) { this.bracketKey = key; this.bracketPair = this.app().editing.bracketPair(buf, v.primary.pos); }
-      brackets = this.bracketPair;
-    }
+    const brackets = s.highlight_brackets
+      ? remember(this.brackets, `${buf.id}:${buf.textGen}:${v.primary.pos}`, () => this.app().editing.bracketPair(buf, v.primary.pos))
+      : null;
     // Rainbow brackets: each bracket in the colour of its nesting depth,
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
@@ -340,9 +389,9 @@ export class Pane {
     const DIAG = ["", THEME["diagnostic.error"], THEME["diagnostic.warning"], THEME["diagnostic.info"], THEME["diagnostic.hint"]];
     const lineCache = new Map();
     const lineDecos = (li) => {
-      let out = lineCache.get(li);
-      if (out) return out;
-      out = [];
+      const hit = lineCache.get(li);
+      if (hit !== undefined) return hit;
+      const out = [];
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
       const above = [];
       for (const o of buf.decor.query("overlays", ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
@@ -428,8 +477,8 @@ export class Pane {
     this.textEl.textContent = "";
     this.gutterEl.textContent = "";
     this.caretsEl.textContent = "";
-    this.rowEls = [];
-    this.gutEls = [];
+    this.rowsDrawn = [];
+    this.gutterDrawn = [];
     this.rows = [];
     this.doc.clear();
   }
@@ -471,8 +520,8 @@ export class Pane {
     else {
       if (this.wantX) {
         const at = this.caretXY(v.primary.pos);
-        if (at && at.x < v.left) v.left = Math.max(0, at.x - 4);
-        else if (at && at.x > v.left + g.width - 2) v.left = at.x - g.width + 6;
+        if (at !== null && at.x < v.left) v.left = Math.max(0, at.x - 4);
+        else if (at !== null && at.x > v.left + g.width - 2) v.left = at.x - g.width + 6;
       }
       v.left = Math.max(0, Math.min(v.left, this.maxCols - 1));
     }
@@ -483,73 +532,49 @@ export class Pane {
     const marks = new Map();
     for (const m of buf.decor.gutters) { const i = L.indexOf(m.start); if (i >= 0) marks.set(i, m); }
     const dline = new Map();
-    for (const d of buf.decor.diags) { const i = L.indexOf(d.start); if (i >= 0 && !(dline.get(i) <= d.severity)) dline.set(i, d.severity); }
+    for (const d of buf.decor.diags) {
+      const i = L.indexOf(d.start), was = dline.get(i);
+      if (i >= 0 && (was === undefined || d.severity < was)) dline.set(i, d.severity);
+    }
     const curLines = new Set(v.cursors.map((c) => L.indexOf(c.pos)));
     const folded = new Set(v.folds.map((f) => f.start));
-    // Rows are drawn from HTML strings (as Monaco draws its view lines) into
-    // a pool of row elements; a row's DOM is written only when its HTML
-    // changed, so a keystroke touches the rows it changed and no others.
-    // Rows are drawn from HTML strings (as Monaco draws its view lines) and
-    // kept by content: a row whose HTML is already on screen is reused, just
-    // moved (scrolling moves every row but rewrites only the new ones), and
-    // the children are swapped in with one replaceChildren.
-    if (!this.rowEls || this.textEl.firstChild?.nodeType === 3) this.clearRows();
-    const reuse = (pool, html) => {
-      const list = pool.get(html);
-      if (list && list.length) return list.pop();
-      const t = document.createElement("template");
-      t.innerHTML = html;
-      const el = t.content.firstChild;
-      el._html = html;
-      return el;
-    };
-    const textPool = new Map(), gutPool = new Map();
-    for (const el of this.rowEls) (textPool.get(el._html) || textPool.set(el._html, []).get(el._html)).push(el);
-    for (const el of this.gutEls) (gutPool.get(el._html) || gutPool.set(el._html, []).get(el._html)).push(el);
+    // Rows are drawn from HTML strings and kept by content (pool.js): a
+    // keystroke rewrites the rows it changed, scrolling only the new ones,
+    // and the children are swapped in with one replaceChildren.
+    if (this.textEl.firstChild?.nodeType === 3) this.clearRows();
+    const textPool = poolOf(this.rowsDrawn), gutPool = poolOf(this.gutterDrawn);
     const textEls = [], gutEls = [];
     let lastLine = -1;
     for (const r of rows) {
       const current = s.highlight_current_line && r.kind === "text" && curLines.has(r.lineIdx) && !v.selection();
       const cls = "row" + (r.kind === "virtual" ? " virtual" : "") + (current && !r.fill ? " current" : "");
-      let html = `<div class="${cls}"${r.fill ? ` style="background:${r.fill}"` : ""}>`;
-      let run = "", key = null, cssText = "";
-      for (const c of r.cells) {
-        const k2 = c.style === EMPTY ? "" : styleKey(c.style);
-        if (k2 !== key) {
-          if (key !== null) html += cssText ? `<span style="${cssText}">${esc(run)}</span>` : esc(run);
-          key = k2; cssText = k2 ? cssFor(c.style, k2) : ""; run = "";
-        }
-        run += c.ch;
-      }
-      if (key !== null) html += cssText ? `<span style="${cssText}">${esc(run)}</span>` : esc(run);
-      if (!r.cells.length) html += "\u200b";
-      html += "</div>";
-      textEls.push(reuse(textPool, html));
+      textEls.push(take(textPool, rowHtml(cls, r.fill, r.cells)));
       // The gutter: line number and one mark (fold, diagnostic or plugin).
-      let ghtml;
+      let ghtml = `<div class="row">\u200b</div>`;
       if (r.kind === "text" && !r.cont && r.lineIdx !== lastLine) {
         lastLine = r.lineIdx;
         const m = marks.get(r.lineIdx);
         const sev = dline.get(r.lineIdx);
-        const mark = folded.has(r.lineIdx) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m ? m.glyph : " ";
-        const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] : m && m.color ? color(m.color) : "";
-        const num = g.nums ? String(L.firstLine + r.lineIdx + 1).padStart(g.digits) + " " : "";
-        ghtml = `<div class="row${current ? " current" : ""}" data-line="${r.lineIdx}"${m && !sev && m.title ? ` title="${esc(m.title)}"` : ""}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
-      } else ghtml = `<div class="row">\u200b</div>`;
-      gutEls.push(reuse(gutPool, ghtml));
+        const mark = folded.has(r.lineIdx) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m !== undefined ? m.glyph : " ";
+        const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] : m !== undefined && m.color ? color(m.color) : "";
+        const num = g.nums && L.firstLine !== null ? String(L.firstLine + r.lineIdx + 1).padStart(g.digits) + " " : "";
+        const title = m !== undefined && !sev && m.title ? ` title="${esc(m.title)}"` : "";
+        ghtml = `<div class="row${current ? " current" : ""}" data-line="${r.lineIdx}"${title}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
+      }
+      gutEls.push(take(gutPool, ghtml));
     }
-    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-    if (!same(textEls, this.rowEls)) this.textEl.replaceChildren(...textEls);
-    if (!same(gutEls, this.gutEls)) this.gutterEl.replaceChildren(...gutEls);
-    this.rowEls = textEls;
-    this.gutEls = gutEls;
+    if (!sameDrawn(textEls, this.rowsDrawn)) this.textEl.replaceChildren(...textEls.map((d) => d.el));
+    if (!sameDrawn(gutEls, this.gutterDrawn)) this.gutterEl.replaceChildren(...gutEls.map((d) => d.el));
+    this.rowsDrawn = textEls;
+    this.gutterDrawn = gutEls;
     // Rulers, and indentation guides: a line at each indent level inside a
     // line's leading whitespace (a blank line takes the next line's).
     let guides = "";
     for (const col of s.rulers) guides += `<div class="ruler" style="left:${(col - 1) * cw}px"></div>`;
     if (s.show_indent_guides) {
       const indentOf = (li) => {
-        const m = /^[ \t]*/.exec(L.lines[li])[0];
+        const lead = /^[ \t]*/.exec(L.lines[li]);
+        const m = lead ? lead[0] : "";
         if (m.length === L.lines[li].length) return -1;
         let w = 0;
         for (const ch of m) w = ch === "\t" ? w + 4 - (w % 4) : w + 1;
@@ -568,16 +593,16 @@ export class Pane {
         for (let c = 0; c < ind[r]; c += 4) guides += `<div class="guide" style="left:${c * cw}px;top:${r * lh}px;height:${lh}px"></div>`;
       });
     }
-    if (this.rulersEl._html !== guides) { this.rulersEl.innerHTML = guides; this.rulersEl._html = guides; }
+    if (this.drawn.rulers !== guides) { this.rulersEl.innerHTML = guides; this.drawn.rulers = guides; }
     // Carets: absolutely placed, so moving one never touches the rows.
     let html = "";
     if (this.app().activePane === this) {
       for (const c of v.cursors) {
         const at = this.caretXY(c.pos);
-        if (at) html += `<div class="caret" style="left:${at.x * cw}px;top:${at.r * lh}px;height:${lh}px"></div>`;
+        if (at !== null) html += `<div class="caret" style="left:${at.x * cw}px;top:${at.r * lh}px;height:${lh}px"></div>`;
       }
     }
-    if (this.caretsEl._html !== html) { this.caretsEl.innerHTML = html; this.caretsEl._html = html; }
+    if (this.drawn.carets !== html) { this.caretsEl.innerHTML = html; this.drawn.carets = html; }
     this.finishRender(v, g);
   }
 
