@@ -45,8 +45,34 @@ function setting(key) { return { kind: "setting", key }; }
 function state(name) { return { kind: "state", name }; }
 
 // A menu bar menu: its title, its Alt+letter (null: none) and its rows.
-/** function menuOf(label: String, key: String | Null, items: MenuRow[]) => {label: String, key: String | Null, items: MenuRow[]} */
+/** type MenuDef = {label: String, key: String | Null, items: MenuRow[]} */
+/** function menuOf(label: String, key: String | Null, items: MenuRow[]) => MenuDef */
 function menuOf(label, key, items) { return { label, key, items }; }
+// The rows of menu `i`.
+/** function rowsOf(menus: MenuDef[], i: Number) => MenuRow[] */
+function rowsOf(menus, i) { return menus[i].items; }
+// A menu's title's tooltip: its name and its key.
+/** function titleOf(m: MenuDef) => String */
+function titleOf(m) {
+  const key = m.key;
+  return key ? `${m.label} (Alt+${key.toUpperCase()})` : m.label;
+}
+// The menus with `row` at the end of menu `label` (a new menu when there
+// is none by that name).
+/** function withRow(menus: MenuDef[], label: String, row: MenuRow) => MenuDef[] */
+function withRow(menus, label, row) {
+  return menus.some((m) => m.label === label)
+    ? menus.map((m) => (m.label === label ? menuOf(m.label, m.key, [...m.items, row]) : m))
+    : [...menus, menuOf(label, null, [row])];
+}
+// A submenu row's rows (null for another row).
+/** function subRows(r: MenuRow) => MenuRow[] | Null */
+function subRows(r) { return r.kind === "submenu" ? r.items : null; }
+// A command row's parts (null for another row).
+/** function commandRow(r: MenuRow) => {command: String, label: String | Null, keys: String | Null, checked: Check | Null} | Null */
+function commandRow(r) { return r.kind === "command" ? { command: r.command, label: r.label, keys: r.keys, checked: r.checked } : null; }
+/** function subLabel(r: MenuRow) => String */
+function subLabel(r) { return r.kind === "submenu" ? r.label : ""; }
 export const MENUS = [
   menuOf("File", "f", [
     cmd("file.new", "New File"),
@@ -288,8 +314,7 @@ export class MenuBar {
       b.dataset.i = String(i);
       b.tabIndex = -1;
       b.textContent = m.label;
-      const key = m.key;
-      b.title = key ? `${m.label} (Alt+${key.toUpperCase()})` : m.label;
+      b.title = titleOf(m);
       b.setAttribute("aria-haspopup", "true");
       b.setAttribute("aria-expanded", String(this.isOpen(i)));
       return b;
@@ -299,9 +324,7 @@ export class MenuBar {
   // A plugin's row at the end of menu `label` (a new menu when there is
   // none by that name).
   add(label, row) {
-    const m = this.menus.find((x) => x.label === label);
-    if (m) m.items.push(row);
-    else this.menus.push(menuOf(label, null, [row]));
+    this.menus = withRow(this.menus, label, row);
     this.render();
   }
 
@@ -314,16 +337,18 @@ export class MenuBar {
     const lastIsRow = () => out.length > 0 && out[out.length - 1].kind !== "separator";
     for (const r of rows) {
       if (r.kind === "separator") { if (lastIsRow()) out.push(SEPARATOR); continue; }
-      if (r.kind === "submenu") {
-        const items = this.resolve(r.items);
-        if (items.length) out.push(submenu(r.label, items));
+      const rows2 = subRows(r);
+      if (rows2 !== null) {
+        const items = this.resolve(rows2);
+        if (items.length) out.push(submenu(subLabel(r), items));
         continue;
       }
-      const c = app.commands.get(r.command);
-      if (!c) continue;
-      const checked = r.checked;
-      const command = r.command;
-      out.push(actionOf(r.label ?? c.title, r.keys ?? app.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => app.run(command)));
+      const row = commandRow(r);
+      const c = row === null ? undefined : app.commands.get(row.command);
+      if (row === null || !c) continue;
+      const checked = row.checked;
+      const command = row.command;
+      out.push(actionOf(row.label ?? c.title, row.keys ?? app.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => app.run(command)));
     }
     return lastIsRow() || !out.length ? out : out.slice(0, -1);
   }
@@ -362,7 +387,7 @@ export class MenuBar {
     this.opened = [];
     for (const o of prev) o.menu.close();
     const n = this.menus.length;
-    const menu = makeMenu(this.resolve(this.menus[i].items), menuSpec(() => { const app = this.app(); app.focusPane(app.activePane); }, ["#menubar"],
+    const menu = makeMenu(this.resolve(rowsOf(this.menus, i)), menuSpec(() => { const app = this.app(); app.focusPane(app.activePane); }, ["#menubar"],
       (d) => { this.show((i + d + n) % n, true); },
       () => { if (this.opened.some((o) => o.menu === menu)) { this.opened = []; this.render(); } }, null), []);
     this.opened = [{ i, menu }];
@@ -370,7 +395,7 @@ export class MenuBar {
     // A menu bar's menu: a skin may join it to its title.
     menu.el.classList.add("of-bar");
     const title = this.host.children[i].getBoundingClientRect();
-    menu.openUnder(title, getComputedStyle(this.host).flexDirection.startsWith("column"));
+    menu.openUnder(title, getComputedStyle(this.host).getPropertyValue("flex-direction").startsWith("column"));
     if (keys) menu.enter();
   }
 

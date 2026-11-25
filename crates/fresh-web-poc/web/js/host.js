@@ -47,6 +47,12 @@ class DecorationSet {
   overlays() { return this.d.overlays.filter((o) => o.ns === this.ns).map((o) => ({ start: o.start, end: o.end })); }
 }
 
+// An insertion, a deletion.
+/** function insOp(pos: Number, text: String) => Op */
+function insOp(pos, text) { return { t: "ins", pos, text }; }
+/** function delOp(pos: Number, len: Number) => Op */
+function delOp(pos, len) { return { t: "del", pos, len }; }
+
 export class BufferHandle {
   constructor(app, buf) {
     this.app = app;
@@ -67,9 +73,9 @@ export class BufferHandle {
   // The held lines: {lines, starts, firstLine}.
   lines() { const L = this.b.text; return L ? { lines: L.lines, starts: L.starts, firstLine: L.firstLine } : null; }
   edit(ops) { this.app.applyEdit(this.b, ops); }
-  insert(pos, text) { this.edit([{ t: "ins", pos, text }]); }
-  delete(start, end) { if (end > start) this.edit([{ t: "del", pos: start, len: end - start }]); }
-  replace(start, end, text) { const ops = []; if (end > start) ops.push({ t: "del", pos: start, len: end - start }); if (text) ops.push({ t: "ins", pos: start, text }); this.edit(ops); }
+  insert(pos, text) { this.edit([insOp(pos, text)]); }
+  delete(start, end) { if (end > start) this.edit([delOp(start, end - start)]); }
+  replace(start, end, text) { this.edit([...(end > start ? [delOp(start, end - start)] : []), ...(text ? [insOp(start, text)] : [])]); }
   save() { return this.app.saveBuffer(this.b); }
   // The decoration set `name` of this buffer (each plugin names its own).
   decorations(name) { return new DecorationSet(this.b, name); }
@@ -119,7 +125,7 @@ export class Host {
   }
 
   // A handler that threw is reported; the others still run.
-  failed(event, e) { this.app().report(`${event}: ${String(e)}`); }
+  failed(event, what) { this.app().report(`${event}: ${what}`); }
 
   on(event, f) {
     const list = this.plain.get(event);
@@ -140,23 +146,23 @@ export class Host {
 
   emit(event) {
     for (const f of this.plain.get(event) || []) {
-      try { f(); } catch (e) { this.failed(event, e); }
+      try { f(); } catch (e) { this.failed(event, String(e)); }
     }
   }
   // `ops`: what changed ("buffer.changed"), `local`: typed here.
   emitBuffer(event, b, ops, local) {
     for (const f of this.bufferEvents.get(event) || []) {
-      try { f(b, { ops, local }); } catch (e) { this.failed(event, e); }
+      try { f(b, { ops, local }); } catch (e) { this.failed(event, String(e)); }
     }
   }
   emitView(event, v) {
     for (const f of this.viewEvents.get(event) || []) {
-      try { f(v); } catch (e) { this.failed(event, e); }
+      try { f(v); } catch (e) { this.failed(event, String(e)); }
     }
   }
   emitStatus(status) {
     for (const f of this.statusHandlers) {
-      try { f(status); } catch (e) { this.failed("lsp.status", e); }
+      try { f(status); } catch (e) { this.failed("lsp.status", String(e)); }
     }
   }
 
@@ -168,7 +174,7 @@ export class Host {
         await activate(this.app());
         this.plugins.push(name);
       } catch (e) {
-        this.failed(`plugin ${name}`, e);
+        this.failed(`plugin ${name}`, String(e));
       }
     }
   }

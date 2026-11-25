@@ -95,6 +95,7 @@ export class Palette {
       const rel = (p) => (p.startsWith(app.root + "/") ? p.slice(app.root.length + 1) : p);
       return app.recentFiles().map((p) => ({ label: rel(p), detail: "recent", run: () => app.openFile(p, { line: null, column: 1, place: "tab", preview: null, focus: true }) }));
     }
+    if (!m) return [];
     const files = (await rpc("fs.find", { query: m[1] })).files;
     return files.map((f) => ({
       label: f,

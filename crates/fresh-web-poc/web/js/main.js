@@ -28,7 +28,7 @@ async function main() {
   const hello = await rpc("hello", { workspace: asked === null ? null : Number(asked) });
   session.client = hello.client;
   const ws = hello.workspace;
-  if (ws && params.get("ws") !== String(ws.id)) {
+  if (ws !== null && params.get("ws") !== String(ws.id)) {
     params.set("ws", String(ws.id));
     history.replaceState(null, "", `?${params}`);
   }

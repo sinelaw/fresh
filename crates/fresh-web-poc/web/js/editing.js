@@ -246,12 +246,12 @@ export class Editing {
       from = open;
     }
     // The line's text, then the line with its break.
-    const text0 = ls + byteLen(/^\s*/.exec(line)[0]);
+    const text0 = ls + byteLen((/^\s*/.exec(line) ?? [""])[0]);
     add(text0, ls + byteLen(line.replace(/\s+$/, "")));
     add(ls, li + 1 < L.count ? L.starts[li + 1] : L.lineEnd(li));
     // Indentation blocks: the lines around it indented at least as deep,
     // then with the line that opens them, outwards.
-    const indent = (k) => (L.lines[k].trim() === "" ? Infinity : /^\s*/.exec(L.lines[k])[0].length);
+    const indent = (k) => (L.lines[k].trim() === "" ? Infinity : L.lines[k].length - L.lines[k].trimStart().length);
     let lo = li, hi = L.indexOf(s.end);
     if (hi < 0) hi = L.count - 1;
     for (let guard = 0; guard < 64; guard++) {

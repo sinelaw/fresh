@@ -1578,7 +1578,7 @@ export class App {
         add(L.firstLine != null ? `Ln ${L.firstLine + i + 1}, Col ${col}` : `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
       }
       if (v.cursors.length > 1) add(`${v.cursors.length} cursors`, titled("Remove the other cursors", "edit.escape"), cmd("edit.escape"));
-      if (this.macros?.recording) add(`● REC ${this.macros.recording.register}`, titled("Recording a macro: Stop Recording Macro", "macro.stop"), cmd("macro.stop"));
+      for (const r of this.macros.recording) add(`● REC ${r.register}`, titled("Recording a macro: Stop Recording Macro", "macro.stop"), cmd("macro.stop"));
       if (b.readOnly && !b.isVirtual) add("[RO]", "Read-only: click to allow editing", cmd("file.toggleReadOnly"));
       if (b.large) add("large file", "Read from disk as it is viewed; lines are counted in the background");
       if (b.doc) {
