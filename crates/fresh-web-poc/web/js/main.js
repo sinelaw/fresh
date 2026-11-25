@@ -120,6 +120,17 @@ async function main() {
     wordAt: (buf, pos) => app.editing.wordAt(buf, pos),
     bracketPair: (buf, pos) => app.editing.bracketPair(buf, pos),
   };
+  // Editing: say something, apply an edit (as typed, or not), hear that a
+  // cursor moved, the auto-close setting, and language server positions.
+  const editingEditor = {
+    say: (text) => { app.setStatus(text); },
+    edit: (b, ops, typing) => { app.applyTyped(b, ops, typing); },
+    moved: (v, old) => { app.cursorMoved(v, old); },
+    autoClose: () => app.settings.auto_close,
+    lspAvailable: (b) => app.lspAvailable(b),
+    lspPosition: (b, pos) => app.lspPosition(b, pos),
+    lspOffset: (b, line, character) => app.lspOffset(b, line, character),
+  };
   // The parts not yet given their own ports each get their own getter for
   // the application: one function shared by all of them would make the
   // checker take their classes for one type (each calls it as its method,
@@ -132,7 +143,7 @@ async function main() {
     params,
     orchestrator: new Orchestrator(() => app, hello.workspaces, hello.folders, hello.machines),
     skins: new Skins(skinsEditor, ws === null ? null : ws.id),
-    editing: new Editing(() => app),
+    editing: new Editing(editingEditor),
     ui: new UIKit(uiEditor),
     prompt: new Palette(paletteEditor),
     term: new TerminalPanel(terminalEditor, $("#terminal")),
