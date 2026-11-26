@@ -1088,8 +1088,9 @@ export class Pane {
   onGutter(e) {
     e.preventDefault();
     this.editor.focus(this);
-    const row = e.target.closest(".row");
-    if (row?.dataset.line != null) this.editor.toggleFold(this, +row.dataset.line);
+    for (const row of listOf(e.target.closest(".row"))) {
+      for (const line of found(row.dataset.line)) this.editor.toggleFold(this, Number(line));
+    }
   }
 
   onHover(e) {

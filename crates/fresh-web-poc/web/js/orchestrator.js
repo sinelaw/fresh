@@ -80,6 +80,8 @@ function jumpedFrom() {
  *   | {kind: "repo", toplevel: String}
  *   | {kind: "unknown", why: String}
  */
+/** function unknownWhere(why: String) => Where */
+function unknownWhere(why) { return { kind: "unknown", why }; }
 /** const ASKING: Where */
 const ASKING = { kind: "asking" };
 /** function whereOf(r: {repo: Boolean, folder: Boolean, toplevel: String}) => Where */
@@ -396,7 +398,7 @@ export class Orchestrator {
     const text = [waiting ? `● ${waiting} need${waiting === 1 ? "s" : ""} you` : "", done ? `✓ ${done} done` : ""].filter(Boolean).join("  ");
     this.editor.status(text, {
       title: n.map((w) => `${displayName(w)}: ${attentionOf(w) !== "" ? attentionOf(w) : "finished"}`).join("\n") + "\n(click: Jump to Attention)",
-      onClick: () => this.jump(),
+      onClick: () => { this.jump(); },
     });
   }
 
@@ -525,7 +527,7 @@ export class Orchestrator {
     const total = this.list.length, shown = this.list.filter((w) => this.matches(w)).length;
     panel.render(ui.col({ ...ui.BOX, class: "orch-dock" }, [
       ui.row({ ...ui.BOX, class: "orch-dock-head" }, [
-        ui.button({ ...ui.BUTTON, primary: true, title: "New Workspace…", onClick: () => this.newWorkspace(this.lastForm()) }, "+ New"),
+        ui.button({ ...ui.BUTTON, primary: true, title: "New Workspace…", onClick: () => { this.newWorkspace(this.lastForm()); } }, "+ New"),
         ui.spacer(),
         ui.button({ ...ui.BUTTON, title: "View, group, folders", onClick: (e) => this.dockMenu(e.currentTarget) }, "Menu ▾"),
       ]),
@@ -784,8 +786,8 @@ export class Orchestrator {
       const lens = this.prefs.lens === "board" ? "board" : "inbox";
       const ws = this.list;
       const tabs = ui.row({ ...ui.BOX, class: "wb-lenses" }, [
-        ui.toggle({ ...ui.TOGGLE, on: lens === "inbox", onChange: () => { this.prefs.lens = "inbox"; this.savePrefs(); render(); } }, "1 Inbox"),
-        ui.toggle({ ...ui.TOGGLE, on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, "2 Board"),
+        ui.toggle({ ...ui.TOGGLE, key: "lens-inbox", on: lens === "inbox", onChange: () => { this.prefs.lens = "inbox"; this.savePrefs(); render(); } }, "1 Inbox"),
+        ui.toggle({ ...ui.TOGGLE, key: "lens-board", on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, "2 Board"),
         ui.spacer(),
         ui.text({ ...ui.TEXT, dim: true }, "Tab: lens · Enter: open · n: next that needs you · Esc: close"),
         ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Close"),
@@ -902,7 +904,7 @@ export class Orchestrator {
         ui.row(ui.BOX, [
           ui.text({ ...ui.TEXT, class: "orch-label" }, "Machine"),
           ui.select({ key: "machine", value: st.machine, options: this.machineOptions(false), onChange: (v) => { st.machine = v; render(); } }),
-          ui.button({ ...ui.BUTTON, primary: true, disabled: st.busy, onClick: scan }, st.busy ? "Scanning…" : "Scan"),
+          ui.button({ ...ui.BUTTON, primary: true, disabled: st.busy, onClick: () => { scan(); } }, st.busy ? "Scanning…" : "Scan"),
           ui.spacer(),
           ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
         ]),
@@ -1032,7 +1034,7 @@ export class Orchestrator {
         let next = { kind: "missing" };
         if (path && f.machine !== "add") {
           try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); next = whereOf({ repo: r.repo, folder: r.folder, toplevel: r.toplevel || "" }); }
-          catch (e) { next = { kind: "unknown", why: failure(e) }; }
+          catch (e) { next = unknownWhere(failure(e)); }
         }
         if (asked !== key) return;
         where = next;
@@ -1123,7 +1125,7 @@ export class Orchestrator {
     }
     const labelled = (label, control) => ui.row({ ...ui.BOX, class: "orch-opt" }, [ui.text({ ...ui.TEXT, dim: true }, label), control]);
     const field = (label, controls) => ui.row({ ...ui.BOX, class: "orch-field" }, [ui.text({ ...ui.TEXT, class: "orch-label" }, label), ...controls]);
-    const addInput = (key, placeholder, value, set) => ui.input({ ...ui.INPUT, key: `add-${key}`, value, placeholder, onInput: set, onEnter: addMachine });
+    const addInput = (key, placeholder, value, set) => ui.input({ ...ui.INPUT, key: `add-${key}`, value, placeholder, onInput: set, onEnter: () => { addMachine(); } });
     const machineChanged = (v) => {
       if (v === "add") add.back = f.machine;
       f.machine = v;
@@ -1142,7 +1144,7 @@ export class Orchestrator {
       field("Options", [addInput("options", "more ssh options, e.g. -J jump (optional)", add.options, (v) => { add.options = v; })]),
       ...(add.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, add.error)] : []),
       field("", [
-        ui.button({ ...ui.BUTTON, primary: true, disabled: add.busy, onClick: addMachine }, add.busy ? "Connecting…" : "Add"),
+        ui.button({ ...ui.BUTTON, primary: true, disabled: add.busy, onClick: () => { addMachine(); } }, add.busy ? "Connecting…" : "Add"),
         ui.button({ ...ui.BUTTON, disabled: add.busy, onClick: () => { f.machine = add.back; add.error = ""; render(); } }, "Cancel"),
       ]),
     ]);
@@ -1209,7 +1211,7 @@ export class Orchestrator {
         ...(adding ? [addSection()] : []),
         ...(adding ? [] : [field("Folder", [
           ui.row({ ...ui.BOX, class: "orch-combo ui-joined" }, [
-            ui.input({ ...ui.INPUT, key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => go(false), onKey: launchKey }),
+            ui.input({ ...ui.INPUT, key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => { go(false); }, onKey: launchKey }),
             ui.button({ ...ui.BUTTON, field: true, title: "Recent folders", onClick: recentMenu }, "▾"),
           ]),
           ui.button({ ...ui.BUTTON, onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, "Browse…"),
@@ -1223,7 +1225,7 @@ export class Orchestrator {
           ui.spacer(),
           ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
           ui.row({ ...ui.BOX, class: "orch-split-button ui-joined" }, [
-            ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, onClick: () => go(false) }, "Launch"),
+            ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, onClick: () => { go(false); } }, "Launch"),
             ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, title: "More ways to launch", onClick: launchMenu }, "▾"),
           ]),
         ]),

@@ -17,7 +17,7 @@
 // each).
 
 import * as fresh from "../js/api.js";
-import { insOp, delOp, listOf } from "../js/api.js";
+import { insOp, delOp, found } from "../js/api.js";
 import * as ui from "../js/ui.js";
 
 // An inlay hint.
@@ -146,7 +146,7 @@ export function activate(app) {
   /** const statusOf: (Dict<LspState>) => Map<String, LspState> */
   const statusOf = (d) => new Map(Object.entries(d));
   /** const isUp: (String) => Boolean */
-  const isUp = (l) => listOf(running.get(l)).some((s) => s.kind === "running");
+  const isUp = (l) => found(running.get(l)).some((s) => s.kind === "running");
   const runningLanguages = async () => {
     try { running = statusOf(await fresh.lspStatus(app)); } catch { running = new Map(); }
     return [...running].filter(([, s]) => s.kind === "running").map(([l]) => l).sort();
@@ -415,7 +415,7 @@ export function activate(app) {
     const langs = [...new Set([...fresh.lspLanguages(app), ...running.keys()])].sort();
     /** const state: (String) => String */
     const state = (l) => {
-      for (const s of listOf(running.get(l))) return s.kind === "failed" ? `failed to start: ${s.why}` : s.kind;
+      for (const s of found(running.get(l))) return s.kind === "failed" ? `failed to start: ${s.why}` : s.kind;
       return fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started";
     };
     if (!langs.length) { fresh.message(app, "No language server found on the host"); return; }

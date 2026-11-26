@@ -49,7 +49,7 @@ export function activate(app) {
   const render = (panel) => {
     panel.render(ui.col(ui.BOX, [
       ui.row(ui.BOX, [
-        ui.input({ ...ui.INPUT, key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: ["keys"], onInput: (q) => { query = q; selected = 0; refresh(); }, onEnter: () => record(rows()[selected]) }),
+        ui.input({ ...ui.INPUT, key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: ["keys"], onInput: (q) => { query = q; selected = 0; refresh(); }, onEnter: () => { record(rows()[selected]); } }),
         ui.text({ ...ui.TEXT, dim: true }, recording !== null ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"),
         ui.button({ ...ui.BUTTON, onClick: () => record(rows()[selected]) }, "Add Key"),
         ui.button({ ...ui.BUTTON, onClick: () => remove(rows()[selected]) }, "Remove Mine"),
