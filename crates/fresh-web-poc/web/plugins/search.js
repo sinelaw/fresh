@@ -53,6 +53,9 @@ function wordIn(L, pos) {
 /** const match: (Number, Number, String | Null) => Match */
 const match = (pos, len, text) => ({ pos, len, text });
 
+// The most matches looked for in a buffer.
+const MATCH_LIMIT = 20000;
+
 export function activate(app) {
   const opts = { case: false, word: false, regex: false };
   let query = "";
@@ -73,6 +76,9 @@ export function activate(app) {
   // The find bar, if it is on screen.
   const findBar = () => fresh.shown(app, "find");
 
+  // Whether the toggles ask for plain text, case and all (what a huge
+  // file's search on the server finds).
+  const plainOnly = () => opts.case && !opts.word && !opts.regex;
   const toRegex = (q, global = true) => {
     let src = opts.regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (opts.word) src = `\\b(?:${src})\\b`;
@@ -98,7 +104,8 @@ export function activate(app) {
     b.render();
   };
 
-  // All matches in a buffer held whole, as byte ranges.
+  // All matches in a buffer held whole, as byte ranges: the first
+  // MATCH_LIMIT (more are not looked for; the bar says so).
   /** const findAll: (BufferHandle) => Match[] */
   const findAll = (b) => {
     const L = b.lines();
@@ -122,7 +129,7 @@ export function activate(app) {
         const len = fresh.byteLen(found);
         if (scope != null && (pos < scope.start || pos + len > scope.end)) continue;
         out.push(match(pos, len, found));
-        if (out.length > 20000) return;
+        if (out.length >= MATCH_LIMIT) return;
       }
     });
     return out;
@@ -153,7 +160,9 @@ export function activate(app) {
     const v = fresh.activeView(app);
     if (!b || !v || !query) return;
     if (!b.whole()) {
-      // A huge file: the server finds the next match (plain text).
+      // A huge file: the server finds the next match, as plain text with
+      // case: the toggles would be ignored, so it isn't asked.
+      if (!plainOnly()) { fresh.message(app, "In a huge file, find looks for plain text, case and all: turn off Aa, ab and .*"); return; }
       const sel = v.selection();
       const start = dir > 0 ? (sel ? sel.end : v.cursor()) : (sel ? sel.start : v.cursor());
       const res = await fresh.searchDocument(app, b, query, start, dir < 0);
@@ -289,7 +298,8 @@ export function activate(app) {
     const n = matches.length;
     b.edit(ops);
     update();
-    fresh.message(app, `Replaced ${n} occurrence${n === 1 ? "" : "s"}`);
+    const more = n >= MATCH_LIMIT ? " (the first ones found: Replace All again for more)" : "";
+    fresh.message(app, `Replaced ${n} occurrence${n === 1 ? "" : "s"}${more}`);
   };
 
   // The match case / whole word / regex toggles; `after` runs on a change.
@@ -331,7 +341,8 @@ export function activate(app) {
     if (!bar) return;
     const b = buffer();
     const q = questionIn(b);
-    const count = !query ? "" : error || (b != null && !b.whole() ? "huge file: Enter searches" : matches.length ? `${current + 1} of ${matches.length}` : "no results");
+    const huge = b != null && !b.whole();
+    const count = !query ? "" : error || (huge ? (plainOnly() ? "huge file: Enter searches" : "huge file: plain text only (turn off Aa, ab, .*)") : matches.length ? `${current + 1} of ${matches.length}${matches.length >= MATCH_LIMIT ? "+" : ""}` : "no results");
     const cur = matches[current];
     const shown = q != null && cur != null ? replacementFor(cur) : "";
     bar.render(ui.col(ui.BOX, [

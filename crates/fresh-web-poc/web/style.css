@@ -126,6 +126,7 @@ body {
 #prompt .item { display: flex; justify-content: space-between; gap: 12px; padding: 3px 10px; cursor: pointer; font-family: var(--mono); font-size: var(--ui-font-sm); }
 #prompt .item .d { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #prompt .item.sel { background: var(--sel-bg); color: var(--sel-fg); }
+#prompt .item.more { color: var(--muted); cursor: default; }
 #prompt .item.sel .d { color: inherit; opacity: .75; }
 #popup { position: fixed; max-width: 600px; max-height: 300px; overflow: auto; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 6px 8px; white-space: pre-wrap; font: var(--ui-font-sm) var(--mono); z-index: 9; }
 #input { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }

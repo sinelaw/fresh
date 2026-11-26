@@ -100,6 +100,9 @@ function commonPrefix(list) {
   return p;
 }
 
+// The most rows the palette shows (the rest are narrowed to by typing).
+const ROWS_SHOWN = 300;
+
 export class Palette {
   // `editor` (main.js): where the active view is (to put it back), and the
   // commands, buffers, recent files and files the palette lists.
@@ -264,20 +267,27 @@ export class Palette {
 
   render() {
     this.list.innerHTML = "";
-    this.items.slice(0, 300).forEach((it, i) => {
+    this.items.slice(0, ROWS_SHOWN).forEach((it, i) => {
       const d = document.createElement("div");
       d.className = "item" + (i === this.sel ? " sel" : "");
       d.innerHTML = `<span class="t">${escapeHtml(it.label)}</span><span class="d">${escapeHtml(it.detail ?? "")}</span>`;
       d.onmousedown = (e) => { e.preventDefault(); this.sel = i; this.accept(); };
       this.list.appendChild(d);
     });
+    // More than are shown: typing narrows them.
+    if (this.items.length > ROWS_SHOWN) {
+      const more = document.createElement("div");
+      more.className = "item more";
+      more.textContent = `${this.items.length - ROWS_SHOWN} more: type to narrow`;
+      this.list.appendChild(more);
+    }
     const sel = this.list.querySelector(".sel");
     if (sel !== null) sel.scrollIntoView({ block: "nearest" });
   }
 
   key(e) {
     const move = (d) => {
-      this.sel = Math.max(0, Math.min(this.items.length - 1, this.sel + d));
+      this.sel = Math.max(0, Math.min(Math.min(this.items.length, ROWS_SHOWN) - 1, this.sel + d));
       this.render();
       for (const s of this.specs) s.onSelect(this.items[this.sel]);
     };

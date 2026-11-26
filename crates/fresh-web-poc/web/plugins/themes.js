@@ -140,21 +140,14 @@ export function themeVars(theme) {
   return out;
 }
 
-const STORE = "fresh-poc:theme";
-
-// The theme chosen last in this browser.
-/** function savedTheme() => String | Null */
-function savedTheme() {
-  try { return localStorage.getItem(STORE); } catch { return null; }
-}
-
 export function activate(app) {
   const cache = new Map();
   const load = (key) => {
     if (!cache.has(key)) cache.set(key, fresh.theme(app, key).then(themeVars));
     return cache.get(key);
   };
-  let current = "dark";
+  // The theme shown: the settings' (chosen last, kept with them).
+  let current = fresh.settings(app).theme;
   // The theme's name at the end of the status bar opens the picker.
   const item = fresh.statusItem(app, "theme");
   // Applying in order: a slow fetch for an earlier preview never lands
@@ -164,14 +157,14 @@ export function activate(app) {
   const choose = (key) => {
     current = key;
     fresh.settings(app).theme = key;
-    try { localStorage.setItem(STORE, key); } catch {}
+    fresh.saveSettings(app);
     item.set(key.replace(/^skin\//, ""), { title: "Theme: Select Theme…", onClick: () => { fresh.run(app, "theme.select"); } });
     return show(key);
   };
-  fresh.on(app, "app.ready", () => { choose(savedTheme() ?? "dark"); });
+  fresh.on(app, "app.ready", () => { choose(fresh.settings(app).theme); });
   // A theme chosen by another part of the client: a skin's editor theme
   // comes with the skin when it is picked.
-  fresh.registerWith(app, "theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key ?? "") });
+  fresh.registerWith(app, "theme.use", { title: "Use Theme", hidden: true, run: async (key) => { for (const k of fresh.found(key)) await choose(k); } });
   fresh.register(app, "theme.select", {
     title: "Select Theme…",
     hidden: false,
