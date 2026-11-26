@@ -73,7 +73,7 @@ Quote the argument so the shell keeps the `@"..."` part intact. Together with `-
 
 ## First Launch: the Welcome Screen
 
-When you start Fresh with a bare `fresh`, a **Welcome** tab opens behind your other tabs (opening a file, or `fresh --simple`, skips it). It shows what's new in this release, the essential keys (command palette, open and new file, file explorer, settings, terminal, help, quit), a switch for Nerd Font icons, and the Auto Attach setting.
+When you start Fresh with a bare `fresh`, a **Welcome** tab opens behind your other tabs (opening a file, or `fresh --simple`, skips it). It shows this release's notes (the same Features and Bug Fixes as the published release notes), a switch for Nerd Font icons, the essential keys (command palette, open and new file, file explorer, settings, terminal, help, quit), and the startup options.
 
 ![The Welcome tab: what's new in this release, a Nerd Font switch, the essential keys and the startup options](/images/welcome-screen.png)
 

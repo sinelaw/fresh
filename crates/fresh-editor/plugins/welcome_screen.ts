@@ -18,19 +18,20 @@ const editor = getEditor();
 // ═════════════════════════════════════════════════════════════════════
 //   WELCOME SCREEN
 //
-//   One short page, in three parts:
+//   One page, in this order:
 //
-//   1. What's new — the latest release's changes, compiled in from
-//      CHANGELOG.md at build time (`editor.releaseNotes()`), so every
-//      release's page is current with no manual step. A build without
-//      the changelog has no such section.
+//   1. What's new — the latest release's notes as written, compiled in
+//      from CHANGELOG.md at build time (`editor.releaseNotes()`), so every
+//      release's page is current with no manual step: the same headings
+//      and bullets as the published release notes, nothing shortened. A
+//      build without the changelog has no such section.
 //   2. Nerd Font icons — a checkbox for `editor.nerd_font_icons`, with
 //      sample glyphs beside it so the reader can tell whether their
 //      terminal's font has them. It saves the setting the way Settings
 //      does and takes effect on the next frame.
 //   3. The essentials — the palette, opening files, the explorer,
 //      settings, a terminal, help, and how to quit — each with the
-//      reader's own keybinding.
+//      reader's own keybinding — and the startup checkboxes.
 //
 //   Lifecycle, unchanged from the page this replaces: when Fresh
 //   launches, the page opens as a tab *behind* whatever is already
@@ -51,22 +52,13 @@ const C = {
   gutter: "editor.line_number_fg",
   key: "ui.help_key_fg",
   mark: "syntax.type",
+  /** A bold lead in the release notes: the headline of each change. */
+  strong: "syntax.type",
   hoverFg: "ui.menu_hover_fg",
 };
 
 const LINK = { underline: true };
 const HOVER_LINK = { fg: C.hoverFg, bold: true, underline: true };
-
-/** At most this many changelog bullets before "…and N more": enough to
- *  show what a release was about. */
-const MAX_NEWS = 8;
-
-/** Rows the page needs above and around the list (title, headings, the
- *  "more" lines, and the Nerd Font checkbox with its hint), so the list
- *  can be cut to keep the checkbox on the first screen. */
-const NEWS_CHROME_ROWS = 13;
-/** Rows of bullets shown however short the pane. */
-const MIN_NEWS_ROWS = 3;
 
 const RELEASES_URL = "github.com/sinelaw/fresh/releases";
 
@@ -83,7 +75,7 @@ let bufferId: number | null = null;
 let panel: WidgetPanel | null = null;
 let opening = false;
 let paneWidth = 0;
-/** The pane shape the page was last laid out for: `width,height`. */
+/** The pane width the page was last laid out for. */
 let lastShape = "";
 
 /** What the page last asked a setting to become, while the editor is
@@ -159,10 +151,6 @@ function line(segments: StyledSegment[]): WidgetSpec {
   return raw([styledRow(segments)]);
 }
 
-function plain(t: string, fg: string = C.body): WidgetSpec {
-  return line([{ text: t, style: { fg } }]);
-}
-
 function blank(): WidgetSpec {
   return line([{ text: "" }]);
 }
@@ -211,14 +199,6 @@ function viewportWidth(): number {
   return vp && vp.width > 0 ? vp.width : 100;
 }
 
-/** Rows the page has on screen. Measured from the terminal rather than
- *  `getViewport()`, which for a page panel reports the whole document;
- *  less the menu bar, tab bar and status bar. */
-function viewportHeight(): number {
-  const h = editor.getScreenSize().height;
-  return h > 0 ? Math.max(1, h - 3) : 40;
-}
-
 function measure(): number {
   return Math.min(Math.max(20, viewportWidth() - 4), MEASURE);
 }
@@ -252,34 +232,147 @@ function title(): WidgetSpec[] {
   return [
     blank(),
     line([{ text: t, style: { fg: C.title, bold: true } }]),
-    plain(editor.t("tagline"), C.muted),
+    ...para(editor.t("tagline"), C.muted),
   ];
 }
 
+/** The release notes as written, from their first heading on (the lines
+ *  above it are the changelog's own preamble — where to follow the
+ *  project, where settings live — not news), drawn the way they read: `###` headings,
+ *  bullets (nested ones indented) with their continuation lines, quotes,
+ *  and paragraphs; inside them **bold**, `code` and [links](url). Nothing
+ *  is shortened, reordered or dropped. */
 function whatsNew(): WidgetSpec[] {
   const notes = editor.releaseNotes();
-  if (!notes || notes.items.length === 0) return [];
-  // As many bullets as fit above the Nerd Font checkbox, up to MAX_NEWS.
-  const budget = Math.max(MIN_NEWS_ROWS, viewportHeight() - NEWS_CHROME_ROWS);
-  const bullets: WidgetSpec[][] = [];
-  let used = 0;
-  for (const item of notes.items.slice(0, MAX_NEWS)) {
-    const rows = para(item, C.body, "  • ", "    ");
-    if (bullets.length > 0 && used + rows.length > budget) break;
-    bullets.push(rows);
-    used += rows.length;
-  }
-  const more = notes.items.length - bullets.length;
+  if (!notes || !notes.markdown.trim()) return [];
   const out: WidgetSpec[] = [
     blank(),
     heading(editor.t("news.heading", { version: notes.version })),
   ];
-  for (const rows of bullets) out.push(...rows);
-  if (more > 0) {
-    out.push(plain("    " + editor.t("news.more", { count: String(more) }), C.muted));
+  const blocks = noteBlocks(notes.markdown);
+  const first = blocks.findIndex((b) => b.kind === "heading");
+  for (const block of first > 0 ? blocks.slice(first) : blocks) {
+    if (block.kind === "blank") {
+      out.push(blank());
+    } else if (block.kind === "heading") {
+      out.push(line([{ text: "  " + block.text, style: { fg: C.heading, bold: true } }]));
+    } else if (block.kind === "bullet") {
+      const pad = "  ".repeat(block.depth + 1);
+      out.push(...richPara(inline(block.text, C.body), pad + "• ", pad + "  "));
+    } else {
+      const fg = block.kind === "quote" ? C.muted : C.body;
+      out.push(...richPara(inline(block.text, fg), "  ", "  "));
+    }
   }
-  out.push(plain("  " + editor.t("news.full", { url: RELEASES_URL }), C.muted));
+  out.push(blank());
+  out.push(...para(editor.t("news.full", { url: RELEASES_URL }), C.muted, "  ", "  "));
   return out;
+}
+
+type NoteBlock =
+  | { kind: "blank" }
+  | { kind: "heading"; text: string }
+  | { kind: "bullet"; depth: number; text: string }
+  | { kind: "quote" | "para"; text: string };
+
+/** The markdown's lines grouped into blocks: an indented line that is not
+ *  a bullet continues the block above it, as markdown reads it. */
+function noteBlocks(markdown: string): NoteBlock[] {
+  const out: NoteBlock[] = [];
+  let open: Extract<NoteBlock, { text: string }> | null = null;
+  for (const raw of markdown.split("\n")) {
+    const text = raw.trim();
+    const indent = raw.length - raw.trimStart().length;
+    const bullet = /^[*-] (.*)$/.exec(text);
+    const head = /^#{1,6} (.*)$/.exec(text);
+    if (!text) {
+      // One blank row between blocks, however many the source has.
+      if (out.length > 0 && out[out.length - 1].kind !== "blank") out.push({ kind: "blank" });
+      open = null;
+    } else if (head) {
+      open = null;
+      out.push({ kind: "heading", text: head[1] });
+    } else if (bullet) {
+      open = { kind: "bullet", depth: indent >= 2 ? 1 : 0, text: bullet[1] };
+      out.push(open);
+    } else if (open && (indent > 0 || open.kind !== "bullet")) {
+      open.text += " " + text.replace(/^> ?/, "");
+    } else if (text.startsWith(">")) {
+      open = { kind: "quote", text: text.replace(/^> ?/, "") };
+      out.push(open);
+    } else {
+      open = { kind: "para", text };
+      out.push(open);
+    }
+  }
+  return out;
+}
+
+/** Markdown's inline marks as styled segments: **bold**, `code`, and
+ *  [text](url) as underlined text, nested as the notes nest them (code in
+ *  a bold lead). The marks themselves are not shown; the words are. */
+function inline(text: string, fg: string, bold = false): StyledSegment[] {
+  const out: StyledSegment[] = [];
+  const re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  let at = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > at) out.push({ text: text.slice(at, m.index), style: { fg, bold } });
+    if (m[1] !== undefined) out.push(...inline(m[1], C.strong, true));
+    else if (m[2] !== undefined) out.push({ text: m[2], style: { fg: C.key, bold } });
+    else out.push(...inline(m[3], fg, bold).map((seg) => ({ ...seg, style: { ...seg.style, underline: true } })));
+    at = re.lastIndex;
+  }
+  if (at < text.length) out.push({ text: text.slice(at), style: { fg, bold } });
+  return out;
+}
+
+/** Styled text wrapped to the measure at spaces, with a hanging indent.
+ *  A word keeps its styles across the break. */
+function richPara(segs: StyledSegment[], first: string, rest: string): WidgetSpec[] {
+  type Word = { parts: StyledSegment[]; width: number };
+  const words: Word[] = [];
+  let word: Word = { parts: [], width: 0 };
+  for (const seg of segs) {
+    const pieces = seg.text.split(" ");
+    pieces.forEach((piece, i) => {
+      if (i > 0) {
+        if (word.parts.length) words.push(word);
+        word = { parts: [], width: 0 };
+      }
+      if (piece) {
+        word.parts.push({ text: piece, style: seg.style });
+        word.width += cols(piece);
+      }
+    });
+  }
+  if (word.parts.length) words.push(word);
+
+  const rows: StyledSegment[][] = [];
+  let cur: StyledSegment[] = [];
+  let used = 0;
+  const width = (r: number) => Math.max(16, measure() - cols(r === 0 ? first : rest));
+  for (const w of words) {
+    if (used > 0 && used + 1 + w.width > width(rows.length)) {
+      rows.push(cur);
+      cur = [];
+      used = 0;
+    }
+    if (used > 0) {
+      // A space inside a link is part of the link's underline.
+      const before = cur[cur.length - 1]?.style;
+      const after = w.parts[0]?.style;
+      const linked = before?.underline && after?.underline;
+      cur.push(linked ? { text: " ", style: before } : { text: " " });
+      used += 1;
+    }
+    cur.push(...w.parts);
+    used += w.width;
+  }
+  if (cur.length || rows.length === 0) rows.push(cur);
+  return rows.map((r, i) =>
+    line([{ text: i === 0 ? first : rest, style: { fg: C.gutter } }, ...r])
+  );
 }
 
 function nerdFont(): WidgetSpec[] {
@@ -387,7 +480,8 @@ function footer(): WidgetSpec[] {
     segs.push(keySeg(k), { text: " " + editor.t("close.closes") + " · ", style: { fg: C.muted } });
   }
   segs.push({ text: editor.t("close.reopen"), style: { fg: C.muted } });
-  out.push(line(segs), blank());
+  // Wrapped, not cut: on a narrow pane it is longer than the measure.
+  out.push(...richPara(segs.slice(1), "  ", "  "), blank());
   return out;
 }
 
@@ -486,7 +580,7 @@ registerHandler("welcomeOnBufferClosed", (e: { buffer_id: number }) => {
 /** Re-lay the page when its size changes. A page created behind a file
  *  hears no resize, so coming to the front re-measures too. */
 function shape(): string {
-  return `${viewportWidth()},${viewportHeight()}`;
+  return `${viewportWidth()}`;
 }
 
 function relayout(): void {

@@ -1984,8 +1984,10 @@ pub struct MacroSnapshot {
 pub struct ReleaseNotes {
     /// The release's version, e.g. `"0.5.8"`.
     pub version: String,
-    /// One short plain-text line per change, features first.
-    pub items: Vec<String>,
+    /// The release notes as written, in markdown: the section headings
+    /// (`### Features`, `### Bug Fixes`, …) and their bullets, exactly as
+    /// the published release notes have them.
+    pub markdown: String,
 }
 
 /// Total terminal size in cells. Returned by `editor.getScreenSize()`.

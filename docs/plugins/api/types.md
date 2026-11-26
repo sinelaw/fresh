@@ -4042,9 +4042,11 @@ type ReleaseNotes = {
   */
   version: string;
   /**
-  * One short plain-text line per change, features first.
+  * The release notes as written, in markdown: the section headings
+  * (`### Features`, `### Bug Fixes`, …) and their bullets, exactly as
+  * the published release notes have them.
   */
-  items: Array<string>;
+  markdown: string;
 };
 ```
 
