@@ -140,8 +140,9 @@ function positionIn(L, i, pos) {
 }
 
 // A process's exit: its code and output.
-/** type ProcResult = {code: Number, stdout: String, stderr: String} */
-/** function procResult(code: Number, stdout: String, stderr: String) => ProcResult */
+// (`code`: none when a signal ended it, or it was stopped.)
+/** type ProcResult = {code: Number | Null, stdout: String, stderr: String} */
+/** function procResult(code: Number | Null, stdout: String, stderr: String) => ProcResult */
 function procResult(code, stdout, stderr) { return { code, stdout, stderr }; }
 // A part's item in the status bar.
 /** type StatusFact = {text: String, title: String, onClick: (() => Undefined) | Null} */

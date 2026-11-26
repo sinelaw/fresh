@@ -288,13 +288,44 @@ struct Term {
 }
 
 impl Term {
-    fn describe(&self, id: u64, now: Instant) -> Value {
+    fn snapshot(&self, id: u64, now: Instant) -> Snapshot {
         let o = self.out.lock().unwrap();
-        let state = o.activity.state(o.exited, &o.replay, now);
+        Snapshot {
+            id,
+            name: self.name.clone(),
+            command: self.command.clone(),
+            resume: self.resume.clone(),
+            title: o.activity.title.clone(),
+            state: o.activity.state(o.exited, &o.replay, now),
+            bells: o.activity.bells,
+        }
+    }
+}
+
+/// A terminal as it is now: its name, the agent command it runs (none: a
+/// shell), how to resume it, its title, state and bells rung.
+pub struct Snapshot {
+    pub id: u64,
+    pub name: String,
+    pub command: Option<String>,
+    pub resume: Option<String>,
+    pub title: String,
+    pub state: State,
+    pub bells: u64,
+}
+
+impl Snapshot {
+    /// Whether it runs an agent (not a shell).
+    pub fn agent(&self) -> bool {
+        self.command.is_some()
+    }
+
+    /// As `term.list` and the workspace status give it.
+    pub fn json(&self) -> Value {
         json!({
-            "id": id, "name": self.name, "command": self.command, "agent": self.command.is_some(),
+            "id": self.id, "name": self.name, "command": self.command, "agent": self.agent(),
             "resume": self.resume,
-            "title": o.activity.title, "state": state.as_str(), "bells": o.activity.bells,
+            "title": self.title, "state": self.state.as_str(), "bells": self.bells,
         })
     }
 }
@@ -419,7 +450,7 @@ impl Terms {
     pub fn attach(&self, id: u64) -> Result<Value> {
         let m = self.map.lock().unwrap();
         let t = m.get(&id).ok_or_else(|| not_found(id))?;
-        let mut v = t.describe(id, Instant::now());
+        let mut v = t.snapshot(id, Instant::now()).json();
         let o = t.out.lock().unwrap();
         let (a, b) = o.replay.as_slices();
         let mut bytes = a.to_vec();
@@ -499,12 +530,17 @@ impl Terms {
 
     /// Every terminal, in the order opened: `{id, name, command, agent,
     /// title, state, bells}`.
-    pub fn list(&self) -> Vec<Value> {
+    /// Every terminal as it is now, by id.
+    pub fn snapshots(&self) -> Vec<Snapshot> {
         let now = Instant::now();
         let m = self.map.lock().unwrap();
         let mut ids: Vec<&u64> = m.keys().collect();
         ids.sort();
-        ids.into_iter().map(|id| m[id].describe(*id, now)).collect()
+        ids.into_iter().map(|id| m[id].snapshot(*id, now)).collect()
+    }
+
+    pub fn list(&self) -> Vec<Value> {
+        self.snapshots().iter().map(Snapshot::json).collect()
     }
 }
 

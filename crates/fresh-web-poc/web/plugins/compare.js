@@ -95,9 +95,12 @@ export function activate(app) {
   const compareHead = async () => {
     const cur = fresh.activeBuffer(app);
     if (!cur || !cur.path()) return;
-    const rel = cur.path().slice(fresh.root(app).length + 1);
-    const r = await fresh.runProcess(app, "git", ["show", `HEAD:./${rel}`], { cwd: fresh.root(app) });
-    if (r.code !== 0) return fresh.message(app, "Not in the last commit");
+    const root = fresh.root(app);
+    if (!cur.path().startsWith(root + "/")) return fresh.message(app, `${cur.name()} is not in the workspace`);
+    const rel = cur.path().slice(root.length + 1);
+    // (A restricted workspace refuses git: the command says so.)
+    const r = await fresh.runProcess(app, "git", ["show", `HEAD:./${rel}`], { cwd: root });
+    if (r.code !== 0) return fresh.message(app, `Not compared with HEAD: ${r.stderr.trim()}`);
     const head = fresh.createVirtual(app, {
       name: `${cur.name()} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
       mode: null, readOnly: true, language: cur.language(), keep: false, place: null, lineNumbers: true,

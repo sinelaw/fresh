@@ -451,7 +451,8 @@ export function activate(app) {
 
   // ---------------------------------------------------------------- the workspace
 
-  const pq = { query: "", replace: "", results: [], files: 0, truncated: false, busy: false, error: "" };
+  // (`unsearched`: files that could not be searched, with why.)
+  const pq = { query: "", replace: "", results: [], files: 0, truncated: false, unsearched: [], busy: false, error: "" };
   const runSearch = async () => {
     if (!pq.query) { pq.results = []; renderPanel(); return; }
     pq.busy = true;
@@ -461,6 +462,7 @@ export function activate(app) {
       pq.results = r.matches;
       pq.files = r.files;
       pq.truncated = r.truncated;
+      pq.unsearched = r.unsearched;
       pq.error = "";
     } catch (e) {
       pq.results = [];
@@ -531,7 +533,8 @@ export function activate(app) {
   const renderPanel = () => {
     const panel = fresh.shown(app, "project-search");
     if (!panel) return;
-    const status = pq.busy ? "searching…" : pq.error ? pq.error : pq.query ? `${pq.results.length}${pq.truncated ? "+" : ""} matches in ${pq.files} files` : "";
+    const unsearched = pq.unsearched.length === 0 ? "" : ` · ${pq.unsearched.length} file(s) not searched (${pq.unsearched[0].path}: ${pq.unsearched[0].why})`;
+    const status = pq.busy ? "searching…" : pq.error ? pq.error : pq.query ? `${pq.results.length}${pq.truncated ? "+" : ""} matches in ${pq.files} files${unsearched}` : "";
     panel.render(ui.col(ui.BOX, [
       ui.row(ui.BOX, [
         ui.input({

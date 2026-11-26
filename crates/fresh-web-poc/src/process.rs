@@ -73,16 +73,8 @@ impl Procs {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                room.send(
-                    client,
-                    &json!({"ev": "proc.exit", "proc": id, "code": -1, "stdout": "", "stderr": e.to_string()}),
-                );
-                return Ok(id);
-            }
-        };
+        // A program that can't be started fails the request itself.
+        let mut child = cmd.spawn().map_err(|e| anyhow::anyhow!("{program}: {e}"))?;
         let mut out = child.stdout.take();
         let mut err = child.stderr.take();
         let out_t = std::thread::spawn(move || {
@@ -111,16 +103,17 @@ impl Procs {
         );
         let running = self.running.clone();
         std::thread::spawn(move || {
-            let code = loop {
+            // Its exit code; none when a signal ended it, or it was stopped.
+            let code: Option<i32> = loop {
                 let status = {
                     let mut m = running.lock().unwrap();
                     match m.get_mut(&id) {
                         Some(r) => r.child.try_wait().ok().flatten(),
-                        None => break -1,
+                        None => break None,
                     }
                 };
                 if let Some(s) = status {
-                    break s.code().unwrap_or(-1);
+                    break s.code();
                 }
                 std::thread::sleep(Duration::from_millis(10));
             };

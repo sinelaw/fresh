@@ -415,6 +415,9 @@ impl Workspace {
         let mut out = Vec::new();
         let mut files = 0usize;
         let mut truncated = false;
+        // Files that could not be searched (unreadable, gone meanwhile),
+        // with why: reported, not passed over.
+        let mut unsearched = Vec::new();
         for (abs, rel) in paths {
             let left = max.saturating_sub(out.len());
             if left == 0 {
@@ -427,8 +430,12 @@ impl Workspace {
                 whole_word: whole,
                 max_matches: left,
             };
-            let Ok(found) = fs.search_file(host(&abs).as_host_path(), pattern, &opts) else {
-                continue;
+            let found = match fs.search_file(host(&abs).as_host_path(), pattern, &opts) {
+                Ok(found) => found,
+                Err(e) => {
+                    unsearched.push(json!({"path": rel, "why": e.to_string()}));
+                    continue;
+                }
             };
             if !found.is_empty() {
                 files += 1;
@@ -440,7 +447,9 @@ impl Workspace {
                 }));
             }
         }
-        Ok(json!({ "matches": out, "files": files, "truncated": truncated }))
+        Ok(
+            json!({ "matches": out, "files": files, "truncated": truncated, "unsearched": unsearched }),
+        )
     }
 }
 

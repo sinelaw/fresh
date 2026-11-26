@@ -891,7 +891,7 @@
  *   | {ev: "doc.index_failed", doc: Number, why: String}
  *   | {ev: "lsp.diagnostics", doc: Number, version: Number, items: Diagnostic[]}
  *   | TermEvent
- *   | {ev: "proc.exit", proc: Number, code: Number, stdout: String, stderr: String}
+ *   | {ev: "proc.exit", proc: Number, code: Number | Null, stdout: String, stderr: String}
  *   | {ev: "fs.changed", watch: Number, path: String}
  *   | {ev: "workspace.trusted", lsp: String[]}
  */

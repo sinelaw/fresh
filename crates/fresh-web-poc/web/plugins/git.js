@@ -11,6 +11,7 @@
 
 import { diffLines, mapLines, unifiedDiff } from "../js/diff.js";
 import * as fresh from "../js/api.js";
+import { found } from "../js/api.js";
 import * as ui from "../js/ui.js";
 
 // `path` from `root`, when it is under it.
@@ -56,14 +57,30 @@ function parseBlame(text) {
   return out;
 }
 
+// A file as it is at HEAD: its lines, not in HEAD, or not known (git
+// could not say: why).
+/** type Baseline =
+ *   | {kind: "lines", lines: String[]}
+ *   | {kind: "untracked"}
+ *   | {kind: "unknown", why: String}
+ */
+/** const UNTRACKED: Baseline */
+const UNTRACKED = { kind: "untracked" };
+/** function baseLines(lines: String[]) => Baseline */
+function baseLines(lines) { return { kind: "lines", lines }; }
+/** function unknownBase(why: String) => Baseline */
+function unknownBase(why) { return { kind: "unknown", why }; }
+
 export function activate(app) {
   const root = fresh.root(app);
   const rel = (p) => relative(root, p);
-  // A restricted workspace runs no processes: git answers as a failure.
-  const git = (args) => fresh.trusted(app)
-    ? fresh.runProcess(app, "git", args, { cwd: root })
-    : Promise.resolve({ code: 1, stdout: "", stderr: "The workspace is restricted: trust it to use git" });
-  const baselines = new Map(); // path -> lines at HEAD (null: not tracked)
+  // git in the workspace (a restricted workspace refuses it: the command
+  // that asked says so).
+  const git = (args) => fresh.runProcess(app, "git", args, { cwd: root });
+  /** const baselines: Map<String, Baseline> */
+  const baselines = new Map(); // path -> the file at HEAD, once known
+  /** const told: Set<String> */
+  const told = new Set(); // paths whose baseline git could not give, said once
 
   // ---------------------------------------------------------------- branch
 
@@ -83,14 +100,16 @@ export function activate(app) {
     unwatchRef = null;
     if (before) before();
     if (ref.code === 0) {
-      const p = await git(["rev-parse", "--git-path", ref.stdout.trim()]);
-      if (p.code === 0) unwatchRef = await fresh.watch(app, `${root}/${p.stdout.trim()}`, () => { refreshBranch(); const b = fresh.activeBuffer(app); if (b) schedule(b); });
+      const p = await git(["rev-parse", "--path-format=absolute", "--git-path", ref.stdout.trim()]);
+      if (p.code === 0) unwatchRef = await fresh.watch(app, p.stdout.trim(), () => { refreshBranch(); const b = fresh.activeBuffer(app); if (b) schedule(b); });
     }
   };
   const start = async () => {
     await refreshBranch();
-    const head = await git(["rev-parse", "--git-path", "HEAD"]);
-    if (head.code === 0) fresh.watch(app, `${root}/${head.stdout.trim()}`, async () => { await refreshBranch(); await watchRefs(); });
+    // (Absolute: in a linked worktree HEAD is under the main repository's
+    // .git, not this folder.)
+    const head = await git(["rev-parse", "--path-format=absolute", "--git-path", "HEAD"]);
+    if (head.code === 0) fresh.watch(app, head.stdout.trim(), async () => { await refreshBranch(); await watchRefs(); });
     await watchRefs();
     const b = fresh.activeBuffer(app);
     if (b) schedule(b);
@@ -103,12 +122,23 @@ export function activate(app) {
   // A whole buffer's lines, without the empty one after a final newline.
   /** const held: (HeldLines) => String[] */
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
+  // The file at HEAD: its lines, not in HEAD, or git could not say (not
+  // kept: asked again next time).
+  /** const baseline: (String) => Promise<Baseline> */
   const baseline = async (path) => {
-    if (!baselines.has(path)) {
+    for (const known of found(baselines.get(path))) return known;
+    if (!fresh.trusted(app)) return unknownBase("the workspace is restricted");
+    const there = await git(["ls-tree", "--name-only", "HEAD", "--", `./${rel(path)}`]);
+    if (there.code !== 0) return unknownBase(there.stderr.trim());
+    /** let b: Baseline */
+    let b = UNTRACKED;
+    if (there.stdout.trim() !== "") {
       const r = await git(["show", `HEAD:./${rel(path)}`]);
-      baselines.set(path, r.code === 0 ? r.stdout.replace(/\n$/, "").split("\n") : null);
+      if (r.code !== 0) return unknownBase(r.stderr.trim());
+      b = baseLines(r.stdout.replace(/\n$/, "").split("\n"));
     }
-    return baselines.get(path);
+    baselines.set(path, b);
+    return b;
   };
 
   const timers = new Map();
@@ -120,8 +150,9 @@ export function activate(app) {
     const L = b.lines();
     const d = b.decorations("gutter");
     d.clear();
-    if (!base || L === null) { b.render(); return; }
-    const edits = diffLines(base, held(L));
+    if (base.kind === "unknown" && !told.has(b.path())) { told.add(b.path()); fresh.message(app, `git: no changes shown for ${rel(b.path())}: ${base.why}`); }
+    if (base.kind !== "lines" || L === null) { b.render(); return; }
+    const edits = diffLines(base.lines, held(L));
     if (!edits) { b.render(); return; }
     // An inserted line where a line was also deleted is a modified line.
     const added = new Set(), deletedAt = new Set();
@@ -224,8 +255,9 @@ export function activate(app) {
     if (file === null || L === null) return;
     if (!b.whole()) { fresh.message(app, "Diff needs the whole file"); return; }
     const base = await baseline(b.path());
-    if (!base) { fresh.message(app, "Not in HEAD"); return; }
-    const text = unifiedDiff(base, held(L), `a/${file}`, `b/${file}`);
+    if (base.kind === "untracked") { fresh.message(app, "Not in HEAD"); return; }
+    if (base.kind === "unknown") { fresh.message(app, `git: ${base.why}`); return; }
+    const text = unifiedDiff(base.lines, held(L), `a/${file}`, `b/${file}`);
     if (text === null) { fresh.message(app, "Too many changes to diff here"); return; }
     if (!text) { fresh.message(app, "No changes against HEAD"); return; }
     showDiff(`diff ${b.name()}`, text);

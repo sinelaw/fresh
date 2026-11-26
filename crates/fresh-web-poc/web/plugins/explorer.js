@@ -105,7 +105,9 @@ export function activate(app) {
   const panel = fresh.panel(app, { id: "explorer", title: "Explorer", place: "sidebar", onClose: null });
 
   const load = async (dir) => {
-    try { children.set(dir, await fresh.list(app, dir)); } catch (e) { children.set(dir, []); }
+    // A folder that can't be listed shows nothing in it, and says why.
+    try { children.set(dir, await fresh.list(app, dir)); }
+    catch (e) { children.set(dir, []); fresh.message(app, `Explorer: ${dir} can't be listed: ${fresh.errorText(e)}`); }
   };
   // Every shown folder is watched, so files made or removed outside the
   // editor (a terminal, git, another client) appear: dir -> the watch's

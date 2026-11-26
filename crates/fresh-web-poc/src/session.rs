@@ -56,7 +56,8 @@ type DiagCounts = Arc<Mutex<HashMap<u64, (usize, usize)>>>;
 /// (to see what changed), and the status last sent.
 #[derive(Default)]
 struct Seen {
-    terms: HashMap<u64, (String, u64)>,
+    /// Each terminal's state and bells when last looked at.
+    terms: HashMap<u64, (terminal::State, u64)>,
     sent: Option<Value>,
 }
 
@@ -240,32 +241,29 @@ impl Session {
     /// differs from the last one sent.
     pub fn publish_status(&self) {
         let mut seen = self.seen.lock().unwrap();
-        let terms = self.terms.list();
+        let terms = self.terms.snapshots();
         for t in &terms {
-            let id = t["id"].as_u64().unwrap_or(0);
-            let state = t["state"].as_str().unwrap_or("").to_string();
-            let bells = t["bells"].as_u64().unwrap_or(0);
-            let name = t["name"].as_str().unwrap_or("");
-            let before = seen.terms.get(&id).cloned();
-            let reason = match before {
-                Some((_, b)) if bells > b => Some(format!("{name} rang the bell")),
+            let name = &t.name;
+            let reason = match seen.terms.get(&t.id).copied() {
+                Some((_, b)) if t.bells > b => Some(format!("{name} rang the bell")),
                 // An agent stopped working: it asks, it finished work, or
                 // it ended.
-                Some((s, _)) if t["agent"] == true && s != state => match state.as_str() {
-                    "waiting" => Some(format!("{name} is waiting for you")),
-                    "done" => Some(format!("{name} finished")),
-                    "exited" => Some(format!("{name} exited")),
-                    _ => None,
+                Some((s, _)) if t.agent() && s != t.state => match t.state {
+                    terminal::State::Waiting => Some(format!("{name} is waiting for you")),
+                    terminal::State::Done => Some(format!("{name} finished")),
+                    terminal::State::Exited => Some(format!("{name} exited")),
+                    terminal::State::Working | terminal::State::Idle | terminal::State::Unknown => {
+                        None
+                    }
                 },
                 _ => None,
             };
             if let Some(r) = reason {
                 *self.attention.lock().unwrap() = Some(r);
             }
-            seen.terms.insert(id, (state, bells));
+            seen.terms.insert(t.id, (t.state, t.bells));
         }
-        seen.terms
-            .retain(|id, _| terms.iter().any(|t| t["id"] == *id));
+        seen.terms.retain(|id, _| terms.iter().any(|t| t.id == *id));
         let status = self.status();
         if seen.sent.as_ref() != Some(&status) {
             self.hub.broadcast(
