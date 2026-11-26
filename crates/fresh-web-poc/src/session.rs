@@ -422,7 +422,7 @@ impl Session {
                 let mut docs = self.docs.lock().unwrap();
                 let d = docs.get(u(m, "doc")?)?;
                 let fs = ws.fs();
-                let Some(path) = d.path.clone() else {
+                let Some(path) = d.origin.path().map(Path::to_path_buf) else {
                     fail!(NotFound, "{} has no file", d.display());
                 };
                 let now = workspace::signature(&fs, &path);
@@ -711,7 +711,7 @@ impl Session {
                 .filter_map(|d| {
                     Some((
                         d.id,
-                        d.path.clone()?,
+                        d.origin.path()?.to_path_buf(),
                         d.disk,
                         d.buffer.is_large_file() || !d.buffer.is_modified(),
                     ))
@@ -732,7 +732,7 @@ impl Session {
             let mut docs = self.docs.lock().unwrap();
             let Ok(d) = docs.get(id) else { continue };
             // Renamed or saved meanwhile: look again next time.
-            if d.path.as_ref() != Some(&path) || d.disk != disk {
+            if d.origin.path() != Some(path.as_path()) || d.disk != disk {
                 continue;
             }
             self.disk_changed(d, now, fresh);
@@ -910,7 +910,7 @@ impl Session {
         let overwrite = m.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
         let id = u(m, "doc")?;
         let mut docs = self.docs.lock().unwrap();
-        if docs.get(id)?.path.as_deref() == Some(path.as_path()) {
+        if docs.get(id)?.origin.path() == Some(path.as_path()) {
             fail!(
                 BadRequest,
                 "{} is the document's own file: save it",

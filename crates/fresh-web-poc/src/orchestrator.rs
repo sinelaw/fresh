@@ -868,10 +868,9 @@ impl Orchestrator {
 
     /// The session `client` views, for an operation on it.
     fn viewed(&self, client: u64) -> Result<Arc<Session>> {
-        match self.hub.workspace_of(client) {
-            None => fail!(UnknownClient, "unknown client {client}: say hello first"),
-            Some(None) => fail!(NotFound, "no workspace: open one"),
-            Some(Some(id)) => self
+        match self.hub.workspace_of(client)? {
+            None => fail!(NotFound, "no workspace: open one"),
+            Some(id) => self
                 .session(id)
                 .ok_or_else(|| err(Code::NotFound, format!("workspace {id} was closed"))),
         }
@@ -999,16 +998,13 @@ impl Orchestrator {
     }
 
     fn known(&self, client: u64) -> Result<()> {
-        if self.hub.workspace_of(client).is_none() {
-            fail!(UnknownClient, "unknown client {client}: say hello first");
-        }
-        Ok(())
+        self.hub.workspace_of(client).map(|_| ())
     }
 
     /// A client's event stream ended: what it opened in its workspace is
     /// released, and it is forgotten.
     pub fn drop_client(&self, client: u64) {
-        if let Some(Some(id)) = self.hub.workspace_of(client) {
+        if let Ok(Some(id)) = self.hub.workspace_of(client) {
             if let Some(s) = self.session(id) {
                 s.drop_client(client);
             }

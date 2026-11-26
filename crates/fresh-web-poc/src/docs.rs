@@ -41,14 +41,36 @@ pub struct LogEntry {
     pub prims: Vec<Prim>,
 }
 
+/// What a document is of: a file (its path), or an untitled document (its
+/// number, `Untitled-N`, made by `doc.new`) until it is saved as a file
+/// (`doc.save_as`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    File(PathBuf),
+    Untitled(u64),
+}
+
+impl Origin {
+    /// Its file's path; none while untitled.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Origin::File(p) => Some(p),
+            Origin::Untitled(_) => None,
+        }
+    }
+
+    /// Its number while untitled.
+    pub fn untitled(&self) -> Option<u64> {
+        match self {
+            Origin::File(_) => None,
+            Origin::Untitled(n) => Some(*n),
+        }
+    }
+}
+
 pub struct Doc {
     pub id: u64,
-    /// The file the document is bound to; `None` for an untitled document
-    /// (made by `doc.new`), until it is saved as a file (`doc.save_as`).
-    pub path: Option<PathBuf>,
-    /// An untitled document's number (`Untitled-N`); `None` once it has a
-    /// file.
-    pub untitled: Option<u64>,
+    pub origin: Origin,
     pub buffer: Buffer,
     /// Log version: the number of edit batches sequenced so far.
     pub version: u64,
@@ -224,26 +246,26 @@ impl Doc {
 
     /// How messages name it: its path, or `Untitled-N`.
     pub fn display(&self) -> String {
-        match &self.path {
-            Some(p) => p.display().to_string(),
-            None => format!("Untitled-{}", self.untitled.unwrap_or(0)),
+        match &self.origin {
+            Origin::File(p) => p.display().to_string(),
+            Origin::Untitled(n) => format!("Untitled-{n}"),
         }
     }
 
     /// The document's URI for a language server: its file's, or an
     /// `untitled:` one.
     pub fn uri(&self) -> String {
-        match &self.path {
-            Some(p) => crate::lsp::uri_of(p),
-            None => format!("untitled:Untitled-{}", self.untitled.unwrap_or(0)),
+        match &self.origin {
+            Origin::File(p) => crate::lsp::uri_of(p),
+            Origin::Untitled(n) => format!("untitled:Untitled-{n}"),
         }
     }
 
     pub fn info(&self) -> Value {
         json!({
             "doc": self.id,
-            "path": self.path.as_ref().map(|p| p.to_string_lossy()),
-            "untitled": self.untitled,
+            "path": self.origin.path().map(|p| p.to_string_lossy()),
+            "untitled": self.origin.untitled(),
             "len": self.len(),
             "version": self.version,
             "lines": self.buffer.line_count(),
@@ -541,7 +563,7 @@ impl Doc {
     /// recovery folder. Refused when the file changed on disk since it was
     /// loaded or last saved, unless `force`.
     pub fn save(&mut self, recovery: &Path, force: bool) -> Result<()> {
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.origin.path().map(Path::to_path_buf) else {
             fail!(
                 BadRequest,
                 "{} has no file: save it as one (doc.save_as)",
@@ -619,8 +641,7 @@ impl Docs {
             Doc {
                 id,
                 language: language_of(&path),
-                path: Some(path.clone()),
-                untitled: None,
+                origin: Origin::File(path.clone()),
                 buffer,
                 version: 0,
                 log: VecDeque::new(),
@@ -637,7 +658,11 @@ impl Docs {
     /// A new untitled document for `client`: empty, bound to no file,
     /// numbered with the smallest number no open untitled document has.
     pub fn create(&mut self, client: u64, fs: Fs) -> u64 {
-        let taken: HashSet<u64> = self.docs.values().filter_map(|d| d.untitled).collect();
+        let taken: HashSet<u64> = self
+            .docs
+            .values()
+            .filter_map(|d| d.origin.untitled())
+            .collect();
         let n = (1..).find(|n| !taken.contains(n)).unwrap_or(1);
         self.next_id += 1;
         let id = self.next_id;
@@ -646,8 +671,7 @@ impl Docs {
             Doc {
                 id,
                 language: None,
-                path: None,
-                untitled: Some(n),
+                origin: Origin::Untitled(n),
                 buffer: Buffer::empty(fs),
                 version: 0,
                 log: VecDeque::new(),
@@ -663,7 +687,11 @@ impl Docs {
     /// `client` joins untitled document `n` (one kept for its unsaved text
     /// after its last client went: a page reloaded).
     pub fn join_untitled(&mut self, client: u64, n: u64) -> Result<u64> {
-        let Some(d) = self.docs.values_mut().find(|d| d.untitled == Some(n)) else {
+        let Some(d) = self
+            .docs
+            .values_mut()
+            .find(|d| d.origin == Origin::Untitled(n))
+        else {
             fail!(NotFound, "no document Untitled-{n}");
         };
         d.clients.insert(client);
@@ -688,7 +716,7 @@ impl Docs {
         }
         let d = self.get(id)?;
         let fs = d.buffer.filesystem().clone();
-        if d.path.as_deref() != Some(path) && signature(&fs, path).is_some() && !overwrite {
+        if d.origin.path() != Some(path) && signature(&fs, path).is_some() && !overwrite {
             fail!(Exists, "{} exists", path.display());
         }
         if let Some(parent) = path.parent() {
@@ -702,8 +730,9 @@ impl Docs {
         d.disk = signature(&fs, &path);
         d.reported = None;
         d.language = language_of(&path).or(d.language.take());
-        d.untitled = None;
-        let old = d.path.replace(path.clone());
+        let old = std::mem::replace(&mut d.origin, Origin::File(path.clone()))
+            .path()
+            .map(Path::to_path_buf);
         if let Some(o) = &old {
             self.by_path.remove(o);
         }
@@ -727,7 +756,7 @@ impl Docs {
         d.clients.remove(&client);
         if d.clients.is_empty() && (discard || !d.buffer.is_modified()) {
             let d = self.docs.remove(&id)?;
-            if let Some(p) = &d.path {
+            if let Some(p) = d.origin.path() {
                 self.by_path.remove(p);
             }
             return Some(d);
@@ -757,7 +786,9 @@ impl Docs {
             let Some(d) = self.docs.get_mut(&id) else {
                 continue;
             };
-            let Some(old) = d.path.clone() else { continue };
+            let Some(old) = d.origin.path().map(Path::to_path_buf) else {
+                continue;
+            };
             let np = match old.strip_prefix(from) {
                 Ok(rel) if !rel.as_os_str().is_empty() => to.join(rel),
                 _ => to.to_path_buf(),
@@ -765,7 +796,7 @@ impl Docs {
             self.by_path.remove(&old);
             self.by_path.insert(np.clone(), id);
             d.buffer.rename_file_path(np.clone());
-            d.path = Some(np.clone());
+            d.origin = Origin::File(np.clone());
             out.push(Moved {
                 id,
                 path: old,
@@ -785,7 +816,7 @@ impl Docs {
                 continue;
             };
             let fs = d.buffer.filesystem().clone();
-            if d.path.as_ref().is_some_and(|p| signature(&fs, p).is_none()) {
+            if d.origin.path().is_some_and(|p| signature(&fs, p).is_none()) {
                 d.disk = None;
                 d.buffer.set_modified(true);
                 out.push(id);
@@ -890,7 +921,7 @@ mod tests {
     #[test]
     fn a_document_goes_when_its_last_client_closes_it_unmodified() {
         let (_d, mut docs, id) = doc_with("text\n");
-        let p = docs.get(id).unwrap().path.clone().unwrap();
+        let p = docs.get(id).unwrap().origin.path().unwrap().to_path_buf();
         let fs: Fs = std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem);
         let (again, new) = docs.open(2, &p, fs.clone()).unwrap();
         assert_eq!((again, new), (id, false), "the second client joins it");

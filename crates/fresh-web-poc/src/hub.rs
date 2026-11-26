@@ -52,14 +52,20 @@ impl Hub {
         self.clients.lock().unwrap().get_mut(&client)?.rx.take()
     }
 
-    /// The workspace `client` views: `None` for an unknown client,
-    /// `Some(None)` for one viewing none.
-    pub fn workspace_of(&self, client: u64) -> Option<Option<u64>> {
+    /// The workspace `client` views (none: it views none); an unknown
+    /// client is an error.
+    pub fn workspace_of(&self, client: u64) -> anyhow::Result<Option<u64>> {
         self.clients
             .lock()
             .unwrap()
             .get(&client)
             .map(|s| s.workspace)
+            .ok_or_else(|| {
+                crate::error::err(
+                    crate::error::Code::UnknownClient,
+                    format!("unknown client {client}: say hello first"),
+                )
+            })
     }
 
     /// How many clients view `workspace`.
@@ -113,7 +119,7 @@ impl Room {
 
     /// Whether `client` is registered and views this workspace.
     pub fn has(&self, client: u64) -> bool {
-        self.hub.workspace_of(client) == Some(Some(self.workspace))
+        matches!(self.hub.workspace_of(client), Ok(Some(w)) if w == self.workspace)
     }
 
     pub fn send(&self, client: u64, ev: &Value) {
