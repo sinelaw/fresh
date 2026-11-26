@@ -544,16 +544,20 @@
 
 // A buffer's replica of a server document (buffer.js): the log version
 // seen; this client's edits sent and not yet sequenced (a batch at most),
-// and those not yet sent; the log as sequenced lately (for a window
-// fetched late); the window being fetched (at most one).
+// and those not yet sent; the log as sequenced lately (for a window or
+// diagnostics read at an earlier version), the version its first entry
+// follows (`from`); the window being fetched (at most one); and the waits
+// on its log (each true once over).
 /** type LogEntry = {version: Number, ops: LoggedOp[]} */
 /** type Replica = {
  *   doc: Number,
  *   version: Number,
  *   inflight: Op[][],
  *   pending: Op[],
+ *   from: Number,
  *   recent: LogEntry[],
  *   fetching: Promise<Undefined>[],
+ *   waiting: (() => Boolean)[],
  * } */
 // A plugin's entry in its buffer: its bytes, properties and style.
 /** type EntryRange = {start: Number, end: Number, props: Dict<String>, style: Style | Null} */
@@ -845,7 +849,8 @@
  *   | {ev: "term.data", term: Number, at: Number, data: String}
  *   | {ev: "term.exit", term: Number}
  *   | {ev: "term.size", term: Number, cols: Number, rows: Number} */
-// Edits the server sequenced, as a document's log pushes them.
+// Edits the server sequenced, as a document's log pushes them, with the
+// document's length and line count (none: not counted yet) after them.
 /** type DocOps = {
  *   ev: "doc.ops",
  *   doc: Number,
@@ -853,6 +858,7 @@
  *   client: Number,
  *   ops: LoggedOp[],
  *   len: Number,
+ *   lines: Number | Null,
  *   modified: Boolean,
  * } */
 /** type ServerEvent =

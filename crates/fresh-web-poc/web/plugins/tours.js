@@ -59,8 +59,7 @@ export function activate(app) {
       if (!line) return;
       for (const L of listOf(b.lines())) {
         marked = path;
-        const li = line - 1 - (L.firstLine ?? 0);
-        if (li >= 0 && li < L.starts.length) {
+        for (const li of fresh.heldIndex(L, line - 1)) {
           const d = b.decorations("tour");
           d.overlay(L.starts[li], L.starts[li] + fresh.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
           d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });

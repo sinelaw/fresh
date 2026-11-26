@@ -18,6 +18,17 @@ import { found, listOf } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand, asArgCommand } from "./commands.js";
 export { byteLen, insOp, delOp } from "./ot.js";
+
+// File line `line` (0-based) among held lines `L`: its index there (a list
+// of at most one: none when the lines' place in the file is not known yet,
+// or that line is not held).
+/** function heldIndex(L: HeldLines, line: Number) => Number[] */
+export function heldIndex(L, line) {
+  const first = L.firstLine;
+  if (first === null) return [];
+  const i = line - first;
+  return i >= 0 && i < L.starts.length ? [i] : [];
+}
 // A value that may be missing (null) as a list of at most one, to act on
 // it if it is there.
 export { listOf } from "./maybe.js";

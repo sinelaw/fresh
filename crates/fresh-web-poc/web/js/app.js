@@ -6,7 +6,7 @@
 
 import { rpc, attempt, session, connectEvents, failure } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
-import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, byteToIdx, ENSURE_AFTER, synced, opsSince } from "./buffer.js";
+import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, byteToIdx, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
 import { THEME } from "./highlight.js";
@@ -131,10 +131,12 @@ function offsetIn(held, line, character) {
   }
   return null;
 }
+// (none also when the lines' place in the file is not known yet).
 /** function positionIn(L: HeldLines, i: Number, pos: Number) => LspPos | Null */
 function positionIn(L, i, pos) {
-  if (i < 0) return null;
-  return { line: (L.firstLine ?? 0) + i, character: byteToIdx(L.lines[i], pos - L.starts[i]) };
+  const first = L.firstLine;
+  if (i < 0 || first === null) return null;
+  return { line: first + i, character: byteToIdx(L.lines[i], pos - L.starts[i]) };
 }
 
 // A process's exit: its code and output.
@@ -949,6 +951,7 @@ export class App {
       if (news.kind === "edit") this.afterEdit(b, news.op, news.local);
       else if (news.kind === "text") { this.bufferEvent("buffer.changed", b, [], false); this.renderBuffer(b.id); }
       else if (news.kind === "error") this.setStatus(news.message);
+      else if (news.kind === "refused") { this.setStatus(news.message); this.reloadedDoc(b, news.info); }
     });
   }
 
@@ -1115,7 +1118,7 @@ export class App {
     try {
       if (b.file.length > 0) {
         const f = b.file[0];
-        while (!synced(f)) await new Promise((r) => { setTimeout(() => { r(undefined); }, 20); });
+        await whenSynced(f);
         const info = await rpc("doc.save_as", { doc: b.doc, path, overwrite: st.exists });
         b.setInfo(info);
         b.modified = info.modified;
@@ -1320,10 +1323,13 @@ export class App {
       const b = this.docs.get(ev.doc);
       if (!b) return;
       // Anchored at the version they describe, then carried through every
-      // edit applied since, ours included.
+      // edit applied since, ours included. Diagnostics older than the log
+      // kept here can't be placed: the next ones replace them.
+      const since = b.file.flatMap((f) => opsSince(f, ev.version));
+      if (since.length === 0) return;
       const items = ev.items.map((d) => ({ ...d }));
       const move = (op) => { for (const d of items) { d.start = shiftPos(d.start, op, true); d.end = Math.max(d.start, shiftPos(d.end, op, false)); } };
-      for (const op of b.file.flatMap((f) => opsSince(f, ev.version))) move(op);
+      for (const ops of since) for (const op of ops) move(op);
       b.decor.setDiagnostics(items);
       this.renderBuffer(b.id);
       this.bufferEvent("diagnostics.changed", b, [], false);

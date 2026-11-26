@@ -251,14 +251,17 @@ pub fn theme(ws: Option<&Workspace>, key: &str) -> Result<Value> {
     Ok(serde_json::to_value(ThemeFile::from(theme))?)
 }
 
+/// A host's CPU counters (total and idle jiffies) as last read: none
+/// before the first reading.
+#[derive(Default)]
+pub struct CpuSample(std::sync::Mutex<Option<(u64, u64)>>);
+
 /// `host.stats`: the workspace host's load, for the live readouts a skin's
 /// furniture shows. Read from the host's `/proc` through the authority's
 /// filesystem, so it describes the machine the workspace is on (over SSH,
 /// the remote one); a host without `/proc` reports nothing. CPU use is the
-/// busy share since the previous call.
-pub fn host_stats(ws: &Workspace) -> Value {
-    use std::sync::Mutex;
-    static LAST_CPU: Mutex<Option<(u64, u64)>> = Mutex::new(None);
+/// busy share since the previous call for the same workspace (`last`).
+pub fn host_stats(ws: &Workspace, last: &CpuSample) -> Value {
     let fs = ws.fs();
     let read = |p: &str| {
         fs.read_file(host(std::path::Path::new(p)).as_host_path())
@@ -317,7 +320,7 @@ pub fn host_stats(ws: &Workspace) -> Value {
         if f.len() >= 4 {
             let total: u64 = f.iter().sum();
             let idle = f[3] + f.get(4).copied().unwrap_or(0);
-            let mut last = LAST_CPU.lock().unwrap();
+            let mut last = last.0.lock().unwrap();
             if let Some((t0, i0)) = *last {
                 let (dt, di) = (total.saturating_sub(t0), idle.saturating_sub(i0));
                 if let Some(cpu) = ((dt - di.min(dt)) * 100).checked_div(dt) {

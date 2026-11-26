@@ -352,7 +352,8 @@ export function activate(app) {
     const L = b.lines();
     if (L === null) return "?";
     const i = L.starts.findIndex((s, k) => pos >= s && (k + 1 >= L.starts.length || pos < L.starts[k + 1]));
-    return i >= 0 ? String((L.firstLine ?? 0) + i + 1) : "?";
+    const first = L.firstLine;
+    return i >= 0 && first !== null ? String(first + i + 1) : "?";
   };
   const renderDiagnostics = () => {
     const diagPanel = fresh.shown(app, "diagnostics");

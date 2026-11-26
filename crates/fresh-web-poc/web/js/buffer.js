@@ -11,7 +11,7 @@
 // A virtual buffer is local to this client (a plugin's panel): its text and
 // per-entry properties live here and nowhere else.
 
-import { rpc, attempt } from "./rpc.js";
+import { rpc, attempt, failure } from "./rpc.js";
 import { some, none } from "./maybe.js";
 import { byteLen, transformSeqs, insOp, delOp } from "./ot.js";
 import { Decor } from "./decor.js";
@@ -189,23 +189,30 @@ function noLog() { return []; }
 // undoes `op` (`gone`: the text it deleted).
 /** function deletedRanges(op: Op) => Range[] */
 function deletedRanges(op) { return op.t === "del" ? [{ start: op.pos, end: op.pos + op.len }] : []; }
-/** function inverseOf(op: Op, gone: String | Null) => Op */
-function inverseOf(op, gone) { return op.t === "ins" ? delOp(op.pos, byteLen(op.text)) : insOp(op.pos, gone ?? ""); }
+// (none: a deletion whose text was not held, which nothing can undo).
+/** function inverseOf(op: Op, gone: String | Null) => Op[] */
+function inverseOf(op, gone) {
+  if (op.t === "ins") return [delOp(op.pos, byteLen(op.text))];
+  return gone === null ? [] : [insOp(op.pos, gone)];
+}
 // The newlines a logged op deleted.
 /** function deletedLines(o: LoggedOp) => Number */
 function deletedLines(o) { return o.t === "del" ? o.nl : 0; }
-// A copy of `o` (the pending ops are moved through others' in place).
+// An op as such: a copy (the pending ops are moved through others' in
+// place), and what is sent; a logged op without its newline count.
 /** function copyOp(o: Op) => Op */
 function copyOp(o) { return o.t === "ins" ? insOp(o.pos, o.text) : delOp(o.pos, o.len); }
 /** function plainOp(o: LoggedOp) => Op */
 function plainOp(o) { return o.t === "ins" ? insOp(o.pos, o.text) : delOp(o.pos, o.len); }
 // What a buffer tells its listeners: its held text changed (fetched or
 // replaced), an edit (here or another client's) and what it deleted
-// where the text was held, or a failure.
+// where the text was held, a failure, or an edit the server refused (the
+// document as the server has it, to start again from).
 /** type BufferNews =
  *   | {kind: "text"}
  *   | {kind: "edit", op: Op, gone: String | Null, local: Boolean}
  *   | {kind: "error", message: String}
+ *   | {kind: "refused", message: String, info: DocInfo}
  */
 /** const TEXT_NEWS: BufferNews */
 const TEXT_NEWS = { kind: "text" };
@@ -213,8 +220,52 @@ const TEXT_NEWS = { kind: "text" };
 function editNews(op, gone, local) { return { kind: "edit", op, gone, local }; }
 /** function errorNews(message: String) => BufferNews */
 function errorNews(message) { return { kind: "error", message }; }
-/** function wireOp(o: Op) => Op */
-function wireOp(o) { return o.t === "ins" ? insOp(o.pos, o.text) : delOp(o.pos, o.len); }
+/** function refusedNews(message: String, info: DocInfo) => BufferNews */
+function refusedNews(message, info) { return { kind: "refused", message, info }; }
+
+// A primitive applied to held lines `L` of a document `len` bytes long
+// (before it; `deleted`: a deletion's newlines, for one before the
+// window): what it deleted there (none: not held), or the window lost (the
+// op straddles its edge).
+/** type Spliced = {kind: "held", gone: String | Null} | {kind: "lost"} */
+/** const LOST: Spliced */
+const LOST = { kind: "lost" };
+/** function heldGone(gone: String | Null) => Spliced */
+function heldGone(gone) { return { kind: "held", gone }; }
+function spliceHeld(L, op, deleted, len) {
+  const r = reachOf(op, deleted);
+  const ws = L.start, we = L.eof ? len : L.heldEnd();
+  if (r.ins ? r.pos < ws : r.end <= ws) {
+    // Wholly before the window.
+    L.move(r.bytes);
+    L.firstLine = movedBy(L.firstLine, r.lines);
+    return heldGone(NO_TEXT);
+  }
+  if (r.pos > we || (r.pos === we && !L.eof)) return heldGone(NO_TEXT); // wholly after it
+  if (r.pos >= ws && (r.end < we || (r.end <= we && L.eof))) {
+    const gone = r.ins ? NO_TEXT : L.text(r.pos, r.end);
+    L.splice(op);
+    return heldGone(gone);
+  }
+  return LOST;
+}
+// Log entries applied to held lines `L` of a document `len` bytes long at
+// the version they follow (a list of at most one: none to apply when not
+// kept): whether the lines still hold their window.
+function replayOnto(L, len, since) {
+  let n = len;
+  for (const log of since) {
+    for (const e of log) {
+      for (const o of e.ops) {
+        const op = plainOp(o);
+        if (spliceHeld(L, op, o.nl, n).kind === "lost") return false;
+        n += reachOf(op, o.nl).bytes;
+      }
+    }
+    return true;
+  }
+  return false;
+}
 
 // A count, if known, moved by `d`.
 /** function movedBy(n: Number | Null, d: Number) => Number | Null */
@@ -307,19 +358,9 @@ export class Buffer {
     const r = reachOf(op, deleted);
     let gone = NO_TEXT;
     for (const L of heldList(this.text)) {
-      const ws = L.start, we = L.eof ? this.len : L.heldEnd();
-      if (r.ins ? r.pos < ws : r.end <= ws) {
-        // Wholly before the window.
-        L.move(r.bytes);
-        L.firstLine = movedBy(L.firstLine, r.lines);
-      } else if (r.pos > we || (r.pos === we && !L.eof)) {
-        // Wholly after it.
-      } else if (r.pos >= ws && (r.end < we || (r.end <= we && L.eof))) {
-        if (!r.ins) gone = L.text(r.pos, r.end);
-        L.splice(op);
-      } else {
-        this.text = none(); // straddles the edge: fetch again
-      }
+      const s = spliceHeld(L, op, deleted, this.len);
+      if (s.kind === "lost") this.text = none(); // straddles the edge: fetch again
+      else gone = s.gone;
     }
     this.len += r.bytes;
     this.totalLines = movedBy(this.totalLines, r.ins ? r.lines : -linesGone(gone, deleted));
@@ -365,20 +406,35 @@ export class Buffer {
   // A local edit: applied now, and passed to the source (a file's goes to
   // the server). `undoable`: an undo step (typing joins the last when
   // `typing` is "continue"; "start" begins a run; "none": not typing).
+  // Returns the ops that undo it: none when it deleted text not held here,
+  // which cannot be undone (the undo history then ends before it).
   edit(ops, undoable, typing) {
+    /** const inverse: Op[] */
     const inverse = [];
+    let invertible = true;
     if (this.doc) this.modified = true; // before the edit events, which redraw the tabs
     for (const op of ops) {
       const gone = deletedRanges(op).map((r) => this.textRange(r.start, r.end)).at(0) ?? NO_TEXT;
       this.applyText(op, linesGone(gone, 0));
       this.moveThrough(op);
-      inverse.unshift(inverseOf(op, gone));
+      const inv = inverseOf(op, gone);
+      if (inv.length === 0) invertible = false;
+      inverse.unshift(...inv);
       this.emit(editNews(op, gone, true));
     }
-    if (undoable) { pushUndo(this, inverse, typing); this.redo = []; }
+    if (undoable) {
+      if (invertible) pushUndo(this, inverse, typing);
+      else this.forgetUndo();
+      this.redo = [];
+    }
     this.lastEdit = Date.now();
     for (const f of fileOf(this.source)) { f.pending.push(...ops.map(copyOp)); this.flush(f); }
-    return inverse;
+    return invertible ? [inverse] : [];
+  }
+  // The undo history ends here: an edit removed text not held here.
+  forgetUndo() {
+    this.undo = [];
+    this.emit(errorNews(`${this.name}: an edit removed text not loaded here, so it cannot be undone (undo history cleared)`));
   }
 
   // Undo the last step (redo: from the redo stack): the ops it undid (none
@@ -390,7 +446,9 @@ export class Buffer {
   undoFrom(stack, other) {
     for (const ops of stack.splice(-1)) {
       this.typingRun = false;
-      other.push(this.edit(ops.map(wireOp), false, "none"));
+      const inverse = this.edit(ops.map(copyOp), false, "none");
+      for (const inv of inverse) other.push(inv);
+      if (inverse.length === 0) other.splice(0);
       return ops;
     }
     return [];
@@ -446,26 +504,18 @@ export class Buffer {
     const args = { doc: f.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2) };
     const fetching = (async () => {
       for (;;) {
-        while (!synced(f)) await new Promise((r) => { setTimeout(() => { r(undefined); }, 20); });
+        await until(f, () => synced(f));
         const w = await rpc("doc.window", args);
+        // The log entries after the window's version arrive (they may come
+        // after the answer); edits made here meanwhile: ask again.
+        await until(f, () => f.version >= w.version);
         if (!synced(f)) continue;
-        while (w.version > f.version) await new Promise((r) => { setTimeout(() => { r(undefined); }, 10); });
-        const L2 = some(new Lines({ start: w.start, text: w.text, bof: w.bof, eof: w.eof, firstLine: w.first_line }));
-        const savedLen = this.len;
-        this.len = w.len;
-        for (const e of f.recent) {
-          if (e.version <= w.version) continue;
-          for (const op of e.ops) {
-            const tmp = this.text;
-            this.text = L2;
-            const tl = this.totalLines;
-            this.applyText(plainOp(op), op.nl);
-            this.totalLines = tl;
-            this.text = tmp;
-          }
-        }
-        this.len = savedLen;
-        this.text = L2;
+        const L2 = new Lines({ start: w.start, text: w.text, bof: w.bof, eof: w.eof, firstLine: w.first_line });
+        // Bring it to this replica's version: the entries sequenced since
+        // it was read (none known that far back, or one crossing its edge:
+        // ask again).
+        if (!replayOnto(L2, w.len, logSince(f, w.version))) continue;
+        this.text = some(L2);
         this.textGen++;
         break;
       }
@@ -482,9 +532,12 @@ export class Buffer {
     const batch = f.pending;
     f.inflight = [batch];
     f.pending = [];
-    rpc("doc.edit", { doc: f.doc, base: f.version, ops: batch.map(wireOp) }).catch((e) => {
-      console.error(e);
-      this.emit(errorNews(String(e)));
+    rpc("doc.edit", { doc: f.doc, base: f.version, ops: batch.map(copyOp) }).catch(async (e) => {
+      // Refused: this replica has edits the document never will. It starts
+      // again from the document as the server has it.
+      const message = `${this.name}: the server refused an edit (${failure(e)}); reloaded`;
+      try { this.emit(refusedNews(message, await rpc("doc.info", { doc: f.doc }))); }
+      catch (e2) { this.emit(errorNews(`${message}; and could not reload it: ${failure(e2)}`)); }
     });
   }
 
@@ -493,6 +546,9 @@ export class Buffer {
   // sequenced (theirs win ties) and applied.
   onOps(ev /*: DocOps */, me /*: Number */) {
     for (const f of fileOf(this.source)) {
+      // An entry from before this replica's version (it started again
+      // from a later one) is in it already.
+      if (ev.version <= f.version) continue;
       if (ev.client === me) {
         f.version = ev.version;
         f.recent.push({ version: ev.version, ops: ev.ops });
@@ -526,7 +582,12 @@ export class Buffer {
         f.recent.push({ version: ev.version, ops: ev.ops });
         this.modified = ev.modified;
       }
-      if (f.recent.length > 2000) f.recent = f.recent.slice(-2000);
+      // With nothing of ours unsequenced, the text is the log's at this
+      // version: its line count is the server's (a deletion counted here
+      // without its text is set right).
+      if (synced(f)) this.totalLines = ev.lines;
+      prune(f);
+      wake(f);
     }
   }
 
@@ -535,7 +596,7 @@ export class Buffer {
   // changed on disk since it was loaded.
   async save(force) {
     for (const f of fileOf(this.source)) {
-      while (!synced(f)) await new Promise((r) => { setTimeout(() => { r(undefined); }, 20); });
+      await whenSynced(f);
       const o = await attempt("doc.save", { doc: f.doc, force });
       if (o.kind === "refused") return [o];
       this.modified = o.value.modified;
@@ -574,24 +635,55 @@ export function fileBuffer(info) {
 
 // A new replica of document `doc` at log version `version`.
 /** function replicaAt(doc: Number, version: Number) => Replica */
-function replicaAt(doc, version) { return { doc, version, inflight: [], pending: [], recent: noLog(), fetching: [] }; }
+function replicaAt(doc, version) { return { doc, version, inflight: [], pending: [], from: version, recent: noLog(), fetching: [], waiting: noWaiting() }; }
+/** function noWaiting() => (() => Boolean)[] */
+function noWaiting() { return []; }
 // Every local edit has been sequenced by the server.
 /** function synced(f: Replica) => Boolean */
 export function synced(f) { return f.inflight.length === 0 && f.pending.length === 0; }
+// Resolves once `ready()` holds of replica `f` (checked again each time its
+// log moves).
+/** function until(f: Replica, ready: () => Boolean) => Promise<Undefined> */
+function until(f, ready) {
+  if (ready()) return Promise.resolve(undefined);
+  return new Promise((resolve) => { f.waiting.push(() => { if (!ready()) return false; resolve(undefined); return true; }); });
+}
+// Resolves once every local edit is sequenced.
+/** function whenSynced(f: Replica) => Promise<Undefined> */
+export function whenSynced(f) { return until(f, () => synced(f)); }
+// The replica's log moved: the waits it satisfies end.
+/** function wake(f: Replica) => Undefined */
+function wake(f) { f.waiting = f.waiting.filter((w) => !w()); }
+// The log entries kept: those a window or diagnostics read at a version
+// this client may still be sent could need (the last LOG_KEPT); `from` is
+// the version the first kept one follows.
+const LOG_KEPT = 2000;
+/** function prune(f: Replica) => Undefined */
+function prune(f) {
+  for (const e of f.recent.slice(0, Math.max(0, f.recent.length - LOG_KEPT))) f.from = e.version;
+  f.recent = f.recent.slice(-LOG_KEPT);
+}
+// The entries sequenced after log version `version` (a list of at most
+// one: none when they are no longer kept).
+/** function logSince(f: Replica, version: Number) => LogEntry[][] */
+function logSince(f, version) { return version >= f.from ? [f.recent.filter((e) => e.version > version)] : []; }
 // A new log from `version` (the document was reloaded): edits not yet
 // sequenced are dropped (the server refuses them as based on the old log).
 /** function restart(f: Replica, version: Number) => Undefined */
 function restart(f, version) {
   f.version = version;
+  f.from = version;
   f.inflight = [];
   f.pending = [];
   f.recent = noLog();
+  wake(f);
 }
 // The edits applied here since log version `version`, in order: those
-// sequenced after it, then this client's not yet sequenced.
-/** function opsSince(f: Replica, version: Number) => Op[] */
+// sequenced after it, then this client's not yet sequenced (a list of at
+// most one: none when the entries after it are no longer kept).
+/** function opsSince(f: Replica, version: Number) => Op[][] */
 export function opsSince(f, version) {
-  return [...f.recent.filter((e) => e.version > version).flatMap((e) => e.ops.map(plainOp)), ...f.inflight.flatMap((b) => b), ...f.pending];
+  return logSince(f, version).map((log) => [...log.flatMap((e) => e.ops.map(plainOp)), ...f.inflight.flatMap((b) => b), ...f.pending]);
 }
 
 // The three kinds of Source, and a source's parts by kind (each a list of

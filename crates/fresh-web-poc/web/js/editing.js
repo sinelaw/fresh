@@ -274,10 +274,10 @@ function foldRangeAt(v, li) {
   if (v.mode === "compose") return listOf(docFoldRange(v, li));
   const b = v.buf;
   const L = b.held;
-  const first = L.firstLine ?? 0;
-  // The language server's range, else the lines indented past this one.
-  const lsp = b.foldRanges.filter((r) => r.start === li + first && r.end > r.start).slice(0, 1);
-  if (lsp.length > 0) return lsp.map((r) => ({ start: li, end: Math.min(L.count - 1, r.end - first) }));
+  // The language server's range (its lines are the file's: known once the
+  // window's place in the file is), else the lines indented past this one.
+  const lsp = listOf(L.firstLine).flatMap((first) => b.foldRanges.filter((r) => r.start === li + first && r.end > r.start).slice(0, 1).map((r) => ({ start: li, end: Math.min(L.count - 1, r.end - first) })));
+  if (lsp.length > 0) return lsp;
   const ind = (t) => t.length - t.trimStart().length;
   if (L.lines[li].trim() === "") return noFold();
   const base = ind(L.lines[li]);

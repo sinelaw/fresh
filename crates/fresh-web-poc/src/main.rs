@@ -171,7 +171,7 @@ fn main() -> Result<()> {
         slow,
         Some(orchestrator::Store::local(port)?),
     ));
-    orch.restore();
+    orch.restore()?;
     let (first, _) = orch
         .open(&Open::new(host, &given, trusted))
         .map_err(|e| anyhow!("{given}: {e}"))?;

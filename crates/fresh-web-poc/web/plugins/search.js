@@ -484,11 +484,13 @@ export function activate(app) {
   // tab of its own.
   const openMatch = async (m, preview) => {
     if (!m || m.header) return;
-    for (const b of listOf(await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview, focus: !preview }))) {
+    for (const b of listOf(await fresh.open(app, m.path, { line: m.line + 1, column: 1, place: "tab", preview, focus: !preview }))) {
       for (const v of listOf(fresh.activeView(app))) {
         for (const L of listOf(b.lines())) {
-          const start = L.starts[m.line - (L.firstLine ?? 0)] + m.col;
-          await v.select(start, start + m.len, { center: true });
+          for (const i of fresh.heldIndex(L, m.line)) {
+            const start = L.starts[i] + m.col;
+            await v.select(start, start + m.len, { center: true });
+          }
         }
       }
     }
@@ -500,7 +502,7 @@ export function activate(app) {
       if (list) list.push(m);
       else byFile.set(m.path, [m]);
     }
-    let n = 0;
+    let n = 0, unheld = 0;
     const re = toRegex(pq.query, false);
     for (const [path, list] of byFile) {
       const b = await fresh.load(app, path);
@@ -509,17 +511,21 @@ export function activate(app) {
       /** const ops: Op[] */
       const ops = [];
       for (const m of [...list].reverse()) {
-        const start = L.starts[m.line - (L.firstLine ?? 0)] + m.col;
-        const old = b.text(start, start + m.len);
-        if (old == null) continue;
-        ops.push(delOp(start, m.len));
-        const text = opts.regex ? old.replace(re, pq.replace) : pq.replace;
-        if (text) ops.push(insOp(start, text));
-        n++;
+        // A match in a part of a huge file not held here is left alone.
+        const found = fresh.heldIndex(L, m.line).map((i) => L.starts[i] + m.col)
+          .flatMap((start) => listOf(b.text(start, start + m.len)).map((old) => ({ start, old })));
+        if (found.length === 0) unheld++;
+        for (const { start, old } of found) {
+          ops.push(delOp(start, m.len));
+          const text = opts.regex ? old.replace(re, pq.replace) : pq.replace;
+          if (text) ops.push(insOp(start, text));
+          n++;
+        }
       }
       b.edit(ops);
     }
-    fresh.message(app, `Replaced ${n} match${n === 1 ? "" : "es"} in ${byFile.size} file(s); not saved yet (Save All)`);
+    const left = unheld > 0 ? `; ${unheld} in parts of huge files not loaded were left` : "";
+    fresh.message(app, `Replaced ${n} match${n === 1 ? "" : "es"} in ${byFile.size} file(s)${left}; not saved yet (Save All)`);
     runSearch();
   };
   const renderPanel = () => {

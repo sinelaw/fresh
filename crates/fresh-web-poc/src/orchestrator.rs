@@ -186,12 +186,21 @@ impl Store {
         })
     }
 
-    fn read(&self) -> Saved {
-        self.fs
+    /// The registry as kept: none kept yet is an empty one. One that can't
+    /// be read or understood is an error, never taken for an empty one
+    /// (the next save would write over it).
+    fn read(&self) -> Result<Saved> {
+        let at = || self.path.display().to_string();
+        match self
+            .fs
             .read_file(workspace::host(&self.path).as_host_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        {
+            Ok(b) => {
+                serde_json::from_slice(&b).map_err(|e| anyhow!("{}: not a registry: {e}", at()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Saved::default()),
+            Err(e) => Err(anyhow!("{}: {e}", at())),
+        }
     }
 
     fn write(&self, saved: &Saved) {
@@ -481,10 +490,14 @@ impl Orchestrator {
     }
 
     /// Open the workspaces the registry kept, as they were (ids, names,
-    /// folders, trust); one that cannot be opened stays listed with why.
-    pub fn restore(&self) {
-        let Some(store) = &self.store else { return };
-        let saved = store.read();
+    /// folders, trust); one that cannot be opened stays listed with why. A
+    /// registry that can't be read is an error: nothing is opened, so
+    /// nothing is saved over it.
+    pub fn restore(&self) -> Result<()> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let saved = store.read()?;
         *self.folders.lock().unwrap() = saved.folders;
         *self.machines.lock().unwrap() = saved.machines;
         for r in saved.workspaces {
@@ -493,6 +506,7 @@ impl Orchestrator {
                 self.failed.lock().unwrap().insert(r.id, (r, e.to_string()));
             }
         }
+        Ok(())
     }
 
     /// Reach a record's host, find its root there and start following it.
@@ -1491,7 +1505,7 @@ mod tests {
         let d2_path = d2.path().to_path_buf();
         drop(d2);
         let orch = Orchestrator::new(false, store(state.path()));
-        orch.restore();
+        orch.restore().unwrap();
         assert_eq!(orch.folders(), ["Work", "Work/Login"]);
         let list = orch.list();
         assert_eq!(list.len(), 2);
@@ -1649,7 +1663,7 @@ mod tests {
             w.id
         };
         let orch = Orchestrator::new(false, store(state.path()));
-        orch.restore();
+        orch.restore().unwrap();
         let w = orch.session(id).unwrap();
         let terms = w.status()["terminals"].clone();
         let commands: Vec<&str> = terms

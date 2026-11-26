@@ -78,6 +78,9 @@ pub struct Session {
     /// What the user gave it (name, folder, pin), its host, when it was
     /// made and last worked in, its worktree.
     meta: Mutex<Meta>,
+    /// Its host's CPU counters at the last `host.stats` (none before the
+    /// first), which the next one's CPU use is measured from.
+    cpu: crate::skins::CpuSample,
 }
 
 impl Session {
@@ -116,6 +119,7 @@ impl Session {
             attention: Mutex::new(None),
             seen: Mutex::default(),
             meta: Mutex::new(meta),
+            cpu: crate::skins::CpuSample::default(),
         });
         session.watches.start(room, ws);
         Session::follow_disk(&session);
@@ -320,7 +324,7 @@ impl Session {
                 self.seen();
                 json!({})
             }
-            "host.stats" => crate::skins::host_stats(ws),
+            "host.stats" => crate::skins::host_stats(ws, &self.cpu),
             "fs.list" => {
                 let p = m
                     .get("path")
@@ -674,7 +678,7 @@ impl Session {
     fn broadcast_ops(&self, d: &docs::Doc, client: u64, ops: Vec<Value>) {
         let ev = json!({
             "ev": "doc.ops", "doc": d.id, "version": d.version, "client": client,
-            "ops": ops, "len": d.len(), "modified": d.buffer.is_modified(),
+            "ops": ops, "len": d.len(), "lines": d.buffer.line_count(), "modified": d.buffer.is_modified(),
         });
         for c in &d.clients {
             self.room.send(*c, &ev);
