@@ -76,7 +76,13 @@ function lineStarts(start, lens) {
 // A window of a document's text: it starts at byte `start`, at the
 // document's start (`bof`) or end (`eof`) or not, at document line
 // `firstLine` (null: the document has no line index).
-/** type Window = {start: Number, text: String, bof: Boolean, eof: Boolean, firstLine: Number | Null} */
+/** type Window = {
+ *   start: Number,
+ *   text: String,
+ *   bof: Boolean,
+ *   eof: Boolean,
+ *   firstLine: Number | Null,
+ * } */
 /** function windowOf(w: Window) => Window */
 function windowOf(w) { return w; }
 /** function asOp(o: Op) => Op */
@@ -196,7 +202,11 @@ function plainOp(o) { return o.t === "ins" ? insOp(o.pos, o.text) : delOp(o.pos,
 // What a buffer tells its listeners: its held text changed (fetched or
 // replaced), an edit (here or another client's) and what it deleted
 // where the text was held, or a failure.
-/** type BufferNews = {kind: "text"} | {kind: "edit", op: Op, gone: String | Null, local: Boolean} | {kind: "error", message: String} */
+/** type BufferNews =
+ *   | {kind: "text"}
+ *   | {kind: "edit", op: Op, gone: String | Null, local: Boolean}
+ *   | {kind: "error", message: String}
+ */
 /** const TEXT_NEWS: BufferNews */
 const TEXT_NEWS = { kind: "text" };
 /** function editNews(op: Op, gone: String | Null, local: Boolean) => BufferNews */
@@ -602,7 +612,12 @@ function rangesOf(s) { return s.kind === "virtual" ? [s.ranges] : []; }
 // id.
 /** function terminalOf(s: Source) => Number[] */
 export function terminalOf(s) { return s.kind === "terminal" ? [s.term] : []; }
-/** function entryRange(start: Number, end: Number, props: Dict<String>, style: Style | Null) => EntryRange */
+/** function entryRange(
+ *   start: Number,
+ *   end: Number,
+ *   props: Dict<String>,
+ *   style: Style | Null,
+ * ) => EntryRange */
 function entryRange(start, end, props, style) { return { start, end, props, style }; }
 
 // ---------------------------------------------------------------- terminal

@@ -18,7 +18,12 @@ const innerHeight;
 
 // The vendored xterm.js (vendor/xterm.js, its fit addon): what the
 // terminal panel uses of it. `E` is the element it opens in.
-/** type XtermTheme = {background: String, foreground: String, cursor: String, selectionBackground: String} */
+/** type XtermTheme = {
+ *   background: String,
+ *   foreground: String,
+ *   cursor: String,
+ *   selectionBackground: String,
+ * } */
 /** type XtermOptions = {
  *   fontFamily: String,
  *   fontSize: Number,

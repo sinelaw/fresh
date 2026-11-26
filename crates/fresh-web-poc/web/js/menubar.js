@@ -25,7 +25,12 @@ import { listOf } from "./maybe.js";
  *   | {kind: "command", command: String, label: String | Null, keys: String | Null, checked: Check | Null}
  *   | {kind: "submenu", label: String, items: MenuRow[]}
  *   | {kind: "separator"} */
-/** function rowOf(command: String, label: String | Null, keys: String | Null, checked: Check | Null) => MenuRow */
+/** function rowOf(
+ *   command: String,
+ *   label: String | Null,
+ *   keys: String | Null,
+ *   checked: Check | Null,
+ * ) => MenuRow */
 export function rowOf(command, label, keys, checked) { return { kind: "command", command, label, keys, checked }; }
 /** function cmd(command: String, label: String | Null) => MenuRow */
 export function cmd(command, label) { return rowOf(command, label, null, null); }
@@ -70,7 +75,12 @@ function withRow(menus, label, row) {
 /** function subRows(r: MenuRow) => MenuRow[] | Null */
 function subRows(r) { return r.kind === "submenu" ? r.items : null; }
 // A command row's parts (null for another row).
-/** function commandRow(r: MenuRow) => {command: String, label: String | Null, keys: String | Null, checked: Check | Null} | Null */
+/** function commandRow(r: MenuRow) => {
+ *   command: String,
+ *   label: String | Null,
+ *   keys: String | Null,
+ *   checked: Check | Null,
+ * } | Null */
 function commandRow(r) { return r.kind === "command" ? { command: r.command, label: r.label, keys: r.keys, checked: r.checked } : null; }
 /** function subLabel(r: MenuRow) => String */
 function subLabel(r) { return r.kind === "submenu" ? r.label : ""; }

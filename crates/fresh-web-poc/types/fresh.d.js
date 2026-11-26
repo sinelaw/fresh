@@ -5,7 +5,10 @@
 /** type Op = {t: "ins", pos: Number, text: String} | {t: "del", pos: Number, len: Number} */
 // An op as a document's log has it: with the newlines it inserted or
 // deleted (`doc.ops`).
-/** type LoggedOp = {t: "ins", pos: Number, text: String, nl: Number} | {t: "del", pos: Number, len: Number, nl: Number} */
+/** type LoggedOp =
+ *   | {t: "ins", pos: Number, text: String, nl: Number}
+ *   | {t: "del", pos: Number, len: Number, nl: Number}
+ */
 
 // A colour as plugins and themes give it: a theme key ("syntax.keyword"), a
 // CSS colour, a colour name, "Indexed:N", or [r, g, b].
@@ -44,7 +47,12 @@
 /** type Clicks = {t: Number, x: Number, y: Number, n: Number} */
 // What a sash does (sash.js): measure as a drag starts (its context `C`),
 // apply a move of so many pixels, finish, and put the default size back.
-/** type SashOptions<C> = {begin: () => C, drag: (C, Number) => Undefined, end: () => Undefined, reset: () => Undefined} */
+/** type SashOptions<C> = {
+ *   begin: () => C,
+ *   drag: (C, Number) => Undefined,
+ *   end: () => Undefined,
+ *   reset: () => Undefined,
+ * } */
 // A block selection's corner: a line and a screen column (perhaps past
 // the line's end).
 /** type Corner = {line: Number, col: Number} */
@@ -116,10 +124,42 @@
 
 // The decorations a buffer holds (js/decor.js), each in a plugin's
 // namespace `ns`: the options above, placed.
-/** type Overlay = {ns: String, start: Number, end: Number, style: Style, when: String, mark: Boolean, above: Boolean} */
-/** type Conceal = {ns: String, start: Number, end: Number, text: String, style: Style, reveal: Range | Null, when: String} */
-/** type InlineText = {ns: String, pos: Number, text: String, style: Style, side: String, edge: Boolean, when: String} */
-/** type VirtualLine = {ns: String, pos: Number, text: String, style: Style, above: Boolean, order: Number, when: String} */
+/** type Overlay = {
+ *   ns: String,
+ *   start: Number,
+ *   end: Number,
+ *   style: Style,
+ *   when: String,
+ *   mark: Boolean,
+ *   above: Boolean,
+ * } */
+/** type Conceal = {
+ *   ns: String,
+ *   start: Number,
+ *   end: Number,
+ *   text: String,
+ *   style: Style,
+ *   reveal: Range | Null,
+ *   when: String,
+ * } */
+/** type InlineText = {
+ *   ns: String,
+ *   pos: Number,
+ *   text: String,
+ *   style: Style,
+ *   side: String,
+ *   edge: Boolean,
+ *   when: String,
+ * } */
+/** type VirtualLine = {
+ *   ns: String,
+ *   pos: Number,
+ *   text: String,
+ *   style: Style,
+ *   above: Boolean,
+ *   order: Number,
+ *   when: String,
+ * } */
 /** type DocNode = {
  *   ns: String,
  *   start: Number,
@@ -134,7 +174,14 @@
  *   delimiter: Boolean,
  *   when: String,
  * } */
-/** type GutterMark = {ns: String, start: Number, end: Number, glyph: String, color: Color, title: String} */
+/** type GutterMark = {
+ *   ns: String,
+ *   start: Number,
+ *   end: Number,
+ *   glyph: String,
+ *   color: Color,
+ *   title: String,
+ * } */
 
 // ---------------------------------------------------------------- navigation
 
@@ -143,7 +190,13 @@
 // or "right"), as the split's preview tab (`preview` true), in a tab of its
 // own (false) or as it is shown already (null); `focus: false` leaves the
 // keyboard where it is (a list previewing what it selects).
-/** type OpenOptions = {line: Number | Null, column: Number, place: String, preview: Boolean | Null, focus: Boolean} */
+/** type OpenOptions = {
+ *   line: Number | Null,
+ *   column: Number,
+ *   place: String,
+ *   preview: Boolean | Null,
+ *   focus: Boolean,
+ * } */
 
 // A view's cursor: its position, its selection's anchor (null: no
 // selection) and the column vertical motion aims for (null: its own).
@@ -154,7 +207,11 @@
 // their cursor and scroll and the one shown, the splits' directions and
 // ratios, the active split, and whether the sidebar and terminal show.
 // What a remembered tab shows: a file, an untitled document, a terminal.
-/** type TabRef = {kind: "file", path: String} | {kind: "untitled", n: Number} | {kind: "terminal", term: Number} */
+/** type TabRef =
+ *   | {kind: "file", path: String}
+ *   | {kind: "untitled", n: Number}
+ *   | {kind: "terminal", term: Number}
+ */
 /** type SavedTab = {ref: TabRef, pos: Number, top: Number, preview: Boolean} */
 /** type SavedNode =
  *   | {kind: "pane", tabs: SavedTab[], active: String | Null}
@@ -170,7 +227,12 @@
 // A panel (`fresh.ui.panel`) in `place`: "bottom" (the dock), "sidebar",
 // "left" (a column before the sidebar), "right", "bar" (above the editor)
 // or "dialog"; `onClose` runs when it is closed.
-/** type PanelOptions = {id: String, title: String, place: String, onClose: (() => Undefined) | Null} */
+/** type PanelOptions = {
+ *   id: String,
+ *   title: String,
+ *   place: String,
+ *   onClose: (() => Undefined) | Null,
+ * } */
 
 // ---------------------------------------------------------------- buffers
 
@@ -305,7 +367,13 @@
  *   | {kind: "terminal", term: Number} */
 
 // A language server's diagnostic, at byte offsets.
-/** type Diagnostic = {start: Number, end: Number, severity: Number, message: String, source: String | Null} */
+/** type Diagnostic = {
+ *   start: Number,
+ *   end: Number,
+ *   severity: Number,
+ *   message: String,
+ *   source: String | Null,
+ * } */
 
 // ---------------------------------------------------------------- language servers
 
@@ -316,9 +384,21 @@
 // definition, declaration, typeDefinition, implementation, references:
 /** type LspLocation = {path: String, range: LspRange} */
 // documentSymbol (the range is the name's):
-/** type LspSymbol = {name: String, kind: Number, container: String | Null, range: LspRange, children: LspSymbol[]} */
+/** type LspSymbol = {
+ *   name: String,
+ *   kind: Number,
+ *   container: String | Null,
+ *   range: LspRange,
+ *   children: LspSymbol[],
+ * } */
 // workspace/symbol:
-/** type LspWorkspaceSymbol = {name: String, kind: Number, container: String | Null, path: String, range: LspRange} */
+/** type LspWorkspaceSymbol = {
+ *   name: String,
+ *   kind: Number,
+ *   container: String | Null,
+ *   path: String,
+ *   range: LspRange,
+ * } */
 // formatting, and each file's edits in a rename or a code action:
 /** type LspTextEdit = {range: LspRange, newText: String} */
 /** type LspFileEdit = {path: String, edits: LspTextEdit[]} */
@@ -326,7 +406,12 @@
 // they came (workspace/executeCommand).
 /** type LspCommand = {command: String, arguments: String} */
 // codeAction:
-/** type LspAction = {title: String, kind: String | Null, edit: LspFileEdit[] | Null, command: LspCommand | Null} */
+/** type LspAction = {
+ *   title: String,
+ *   kind: String | Null,
+ *   edit: LspFileEdit[] | Null,
+ *   command: LspCommand | Null,
+ * } */
 // completion:
 /** type LspCompletion = {label: String, detail: String | Null, insert: String} */
 // signatureHelp (the active signature; null for none):
@@ -419,7 +504,16 @@
 
 // A workspace as the orchestrator lists it (src/session.rs: entry,
 // status; src/terminal.rs: a terminal).
-/** type TermInfo = {id: Number, name: String, command: String | Null, agent: Boolean, resume: String | Null, title: String, state: String, bells: Number} */
+/** type TermInfo = {
+ *   id: Number,
+ *   name: String,
+ *   command: String | Null,
+ *   agent: Boolean,
+ *   resume: String | Null,
+ *   title: String,
+ *   state: String,
+ *   bells: Number,
+ * } */
 /** type WorkspaceStatus = {
  *   trusted: Boolean,
  *   docs: Number,
@@ -436,7 +530,11 @@
 /** type Worktree = {repo: String, branch: String} */
 // The document formats the server knows (`doc.formats`): languages,
 // encodings (a name and what it is) and line endings.
-/** type DocFormats = {languages: String[], encodings: {name: String, description: String}[], line_endings: String[]} */
+/** type DocFormats = {
+ *   languages: String[],
+ *   encodings: {name: String, description: String}[],
+ *   line_endings: String[],
+ * } */
 // A machine a workspace is on (src/authority.rs HostSpec): this one,
 // another over ssh (with an identity file and more ssh options), a
 // container, or the remote agent here.
@@ -464,13 +562,24 @@
 /** type CommandArg = String | Undefined */
 // A command: its title, what it does, where it came from (a plugin's
 // name, "core"), and whether the palette leaves it out.
-/** type Command = {title: String, run: (CommandArg) => Promise<Undefined>, source: String, hidden: Boolean} */
+/** type Command = {
+ *   title: String,
+ *   run: (CommandArg) => Promise<Undefined>,
+ *   source: String,
+ *   hidden: Boolean,
+ * } */
 // A command as the plugin API lists it.
 /** type CommandInfo = {id: String, title: String, source: String, hidden: Boolean} */
 // The palette's rows for commands (`key`: its keys, "" for none) and open
 // buffers (`stored`: the server keeps it; `path` "" for none).
 /** type PaletteCommand = {title: String, key: String, source: String, run: () => Undefined} */
-/** type PaletteBuffer = {name: String, path: String, modified: Boolean, stored: Boolean, show: () => Undefined} */
+/** type PaletteBuffer = {
+ *   name: String,
+ *   path: String,
+ *   modified: Boolean,
+ *   stored: Boolean,
+ *   show: () => Undefined,
+ * } */
 // What skins ask of the editor (skins.js): report a failure, say
 // something, measure the cell again, put an editor theme on, pick from a
 // list, and count the open files and their problems.
@@ -539,7 +648,15 @@
  *   | {ev: "term.exit", term: Number}
  *   | {ev: "term.size", term: Number, cols: Number, rows: Number} */
 // Edits the server sequenced, as a document's log pushes them.
-/** type DocOps = {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: LoggedOp[], len: Number, modified: Boolean} */
+/** type DocOps = {
+ *   ev: "doc.ops",
+ *   doc: Number,
+ *   version: Number,
+ *   client: Number,
+ *   ops: LoggedOp[],
+ *   len: Number,
+ *   modified: Boolean,
+ * } */
 /** type ServerEvent =
  *   | DocOps
  *   | {ev: "doc.saved", doc: Number, info: DocInfo}

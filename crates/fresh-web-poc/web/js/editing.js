@@ -52,7 +52,14 @@ function openerIn(lines, starts, li, k) {
 
 // The partner of bracket `ch` at index `k` of line `li` (byte offset `at`),
 // scanning forward from an opener and back from a closer.
-/** function partnerOf(lines: String[], starts: Number[], li: Number, k: Number, ch: String, at: Number) => {at: Number, match: Number} | Null */
+/** function partnerOf(
+ *   lines: String[],
+ *   starts: Number[],
+ *   li: Number,
+ *   k: Number,
+ *   ch: String,
+ *   at: Number,
+ * ) => {at: Number, match: Number} | Null */
 function partnerOf(lines, starts, li, k, ch, at) {
   const opener = OPEN.get(ch), closer = CLOSE.get(ch);
   const fwd = opener !== undefined, want = opener ?? closer ?? ch;
@@ -133,8 +140,20 @@ function noLine() { return []; }
 // What a cursor's text becomes: [start, end) replaced by `text`, the caret
 // `caret` into it (null: at its end) and the selection's anchor `anchor`
 // into it (null: no selection).
-/** type Replacement = {start: Number, end: Number, text: String, caret: Number | Null, anchor: Number | Null} */
-/** function putWith(start: Number, end: Number, text: String, caret: Number | Null, anchor: Number | Null) => Replacement | Null */
+/** type Replacement = {
+ *   start: Number,
+ *   end: Number,
+ *   text: String,
+ *   caret: Number | Null,
+ *   anchor: Number | Null,
+ * } */
+/** function putWith(
+ *   start: Number,
+ *   end: Number,
+ *   text: String,
+ *   caret: Number | Null,
+ *   anchor: Number | Null,
+ * ) => Replacement | Null */
 export function putWith(start, end, text, caret, anchor) { return { start, end, text, caret, anchor }; }
 // [start, end) replaced by `text`, the caret after it.
 /** function put(start: Number, end: Number, text: String) => Replacement | Null */
@@ -144,7 +163,10 @@ export function put(start, end, text) { return putWith(start, end, text, null, n
 export const KEEP = null;
 
 // Each cursor's replacement, last in the text first.
-/** function replacements(cursors: Cursor[], fn: (Cursor) => Replacement | Null) => {cursor: Cursor, r: Replacement}[] */
+/** function replacements(
+ *   cursors: Cursor[],
+ *   fn: (Cursor) => Replacement | Null,
+ * ) => {cursor: Cursor, r: Replacement}[] */
 function replacements(cursors, fn) {
   /** const out: {cursor: Cursor, r: Replacement}[] */
   const out = [];
@@ -169,7 +191,9 @@ function editsOf(reps) {
 }
 
 // Where each replacement leaves its cursor once all are made.
-/** function placesAfter(reps: {cursor: Cursor, r: Replacement}[]) => {cursor: Cursor, at: Cursor}[] */
+/** function placesAfter(
+ *   reps: {cursor: Cursor, r: Replacement}[],
+ * ) => {cursor: Cursor, at: Cursor}[] */
 function placesAfter(reps) {
   let delta = 0;
   return [...reps].reverse().map(({ cursor, r }) => {

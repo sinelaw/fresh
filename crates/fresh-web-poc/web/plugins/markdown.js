@@ -40,7 +40,12 @@ function matchLength(m) { return m ? m[0].length : 0; }
 
 // Run `f` once `ms` after the last call for `key` (`timers` holds each
 // key's pending run).
-/** function later(timers: Map<String, Number>, key: String, ms: Number, f: () => Undefined) => Undefined */
+/** function later(
+ *   timers: Map<String, Number>,
+ *   key: String,
+ *   ms: Number,
+ *   f: () => Undefined,
+ * ) => Undefined */
 function later(timers, key, ms, f) {
   const before = timers.get(key);
   if (before !== undefined) clearTimeout(before);

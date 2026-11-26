@@ -18,7 +18,13 @@ import { escapeHtml } from "./dom.js";
 
 // A row that runs `run`, with `keys` shown beside it, a check when
 // `checked` is true or false, greyed out when `disabled`.
-/** function actionOf<R>(label: String, keys: String | Null, checked: Boolean | Null, disabled: Boolean, run: () => R) => MenuItem */
+/** function actionOf<R>(
+ *   label: String,
+ *   keys: String | Null,
+ *   checked: Boolean | Null,
+ *   disabled: Boolean,
+ *   run: () => R,
+ * ) => MenuItem */
 export function actionOf(label, keys, checked, disabled, run) {
   return { kind: "action", label, keys, checked, disabled, run: () => { run(); } };
 }
@@ -48,7 +54,12 @@ function cells(it) {
 function checkedOf(it) { return it.kind === "action" ? it.checked : null; }
 // The next row from `from` in direction `d` (round the ends) that can be
 // chosen and that `ok` accepts; null when none is.
-/** function nextRow(items: MenuItem[], from: Number | Null, d: Number, ok: (MenuItem) => Boolean) => Number | Null */
+/** function nextRow(
+ *   items: MenuItem[],
+ *   from: Number | Null,
+ *   d: Number,
+ *   ok: (MenuItem) => Boolean,
+ * ) => Number | Null */
 function nextRow(items, from, d, ok) {
   const n = items.length;
   const start = from === null ? (d > 0 ? -1 : n) : from;
@@ -85,7 +96,13 @@ const NO_ROW = null;
  *   onClose: (() => Undefined) | Null,
  *   from: Number | Null,
  * } */
-/** function menuSpec(refocus: () => Undefined, ignore: El[], onSide: ((Number) => Undefined) | Null, onClose: (() => Undefined) | Null, from: Number | Null) => MenuSpec */
+/** function menuSpec(
+ *   refocus: () => Undefined,
+ *   ignore: El[],
+ *   onSide: ((Number) => Undefined) | Null,
+ *   onClose: (() => Undefined) | Null,
+ *   from: Number | Null,
+ * ) => MenuSpec */
 export function menuSpec(refocus, ignore, onSide, onClose, from) { return { refocus, ignore, onSide, onClose, from }; }
 
 

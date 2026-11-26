@@ -141,7 +141,11 @@ function procResult(code, stdout, stderr) { return { code, stdout, stderr }; }
 /** type StatusFact = {text: String, title: String, onClick: (() => Undefined) | Null} */
 /** function statusFact() => StatusFact */
 function statusFact() { return { text: "", title: "", onClick: null }; }
-/** function statusFactOf(text: String, title: String, onClick: (() => Undefined) | Null) => StatusFact */
+/** function statusFactOf(
+ *   text: String,
+ *   title: String,
+ *   onClick: (() => Undefined) | Null,
+ * ) => StatusFact */
 function statusFactOf(text, title, onClick) { return { text, title, onClick }; }
 /** function noFacts() => Map<String, StatusFact> */
 function noFacts() { return new Map(); }
@@ -176,7 +180,11 @@ const KEY_NAMES = new Map([["ArrowUp", "Up"], ["ArrowDown", "Down"], ["ArrowLeft
 
 // How a key's modifiers are written for people.
 const MODIFIERS = new Map([["C", "Ctrl"], ["M", "Alt"], ["S", "Shift"]]);
-/** function modeKey(modes: Map<String, ModeKey[]>, mode: String | Null, k: String) => ModeKey | Undefined */
+/** function modeKey(
+ *   modes: Map<String, ModeKey[]>,
+ *   mode: String | Null,
+ *   k: String,
+ * ) => ModeKey | Undefined */
 function modeKey(modes, mode, k) { return mode === null ? undefined : (modes.get(mode) ?? []).find((b) => b.key === k); }
 
 /** function spot(remember: () => Undefined, restore: () => Undefined) => Spot */

@@ -44,7 +44,11 @@ function decode(b64) {
 // given the offset written so far (`end`; null before the replay came):
 // wait in the queue, nothing (it is in the replay already), or write
 // its new part and move the offset on.
-/** type Arrival = {kind: "queue"} | {kind: "skip"} | {kind: "write", bytes: Uint8Array, end: Number} */
+/** type Arrival =
+ *   | {kind: "queue"}
+ *   | {kind: "skip"}
+ *   | {kind: "write", bytes: Uint8Array, end: Number}
+ */
 /** function arrival(end: Number | Null, at: Number, bytes: Uint8Array) => Arrival */
 function arrival(end, at, bytes) {
   if (end === null) return { kind: "queue" };

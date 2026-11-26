@@ -14,7 +14,11 @@ import { $, escapeHtml } from "./dom.js";
 import { some, none } from "./maybe.js";
 
 // A palette row that runs `run` when chosen (none: a note).
-/** function paletteItem(label: String, detail: String | Null, run: (() => Undefined) | Null) => PaletteItem */
+/** function paletteItem(
+ *   label: String,
+ *   detail: String | Null,
+ *   run: (() => Undefined) | Null,
+ * ) => PaletteItem */
 function paletteItem(label, detail, run) { return { label, detail, run, preview: null }; }
 
 // What the prompt shows and does: its label, first text and hint; where
@@ -32,7 +36,16 @@ function paletteItem(label, detail, run) { return { label, detail, run, preview:
  *   onAccept: (PaletteItem | Undefined, String) => Undefined,
  *   onCancel: () => Undefined,
  * } */
-/** function promptSpec(label: String, value: String, hint: String, source: (String) => Promise<PaletteItem[]>, onChange: (String) => Undefined, onSelect: (PaletteItem | Undefined) => Undefined, onAccept: (PaletteItem | Undefined, String) => Undefined, onCancel: () => Undefined) => PromptSpec */
+/** function promptSpec(
+ *   label: String,
+ *   value: String,
+ *   hint: String,
+ *   source: (String) => Promise<PaletteItem[]>,
+ *   onChange: (String) => Undefined,
+ *   onSelect: (PaletteItem | Undefined) => Undefined,
+ *   onAccept: (PaletteItem | Undefined, String) => Undefined,
+ *   onCancel: () => Undefined,
+ * ) => PromptSpec */
 function promptSpec(label, value, hint, source, onChange, onSelect, onAccept, onCancel) {
   return { label, value, hint, source, onChange, onSelect, onAccept, onCancel };
 }

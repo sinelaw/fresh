@@ -10,7 +10,14 @@
 //   resume  the arguments that take up its latest conversation in the
 //           folder again ("continue"): run when the server starts again.
 
-/** type Agent = {id: String, label: String, command: String, prompt: {style: String, flag: String}, auto: String[], resume: String[]} */
+/** type Agent = {
+ *   id: String,
+ *   label: String,
+ *   command: String,
+ *   prompt: {style: String, flag: String},
+ *   auto: String[],
+ *   resume: String[],
+ * } */
 
 /** const AGENTS: Agent[] */
 export const AGENTS = [

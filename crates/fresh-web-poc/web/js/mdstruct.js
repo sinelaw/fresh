@@ -24,7 +24,10 @@ function role(r) { return r; }
 /** function tableRow(k: Number, firstRow: Boolean, last: Boolean) => TableRow | Undefined */
 function tableRow(k, firstRow, last) { return { role: k === 0 ? "header" : k === 1 ? "delimiter" : "row", first_row: firstRow, last }; }
 
-/** function classify(lines: String[]) => {region: (FenceRole | Undefined)[], table: (TableRow | Undefined)[]} */
+/** function classify(lines: String[]) => {
+ *   region: (FenceRole | Undefined)[],
+ *   table: (TableRow | Undefined)[],
+ * } */
 export function classify(lines) {
   // (Filled by `push`: a `map` to the constant would widen its type.)
   /** const region: (FenceRole | Undefined)[] */

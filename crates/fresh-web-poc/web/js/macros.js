@@ -13,7 +13,10 @@ const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 // A macro's step: a command run (with its argument, if any), or text
 // typed (a run of keys, one step) or pasted.
-/** type Step = {kind: "command", command: String, arg: String | Undefined} | {kind: "text", text: String, typed: Boolean} */
+/** type Step =
+ *   | {kind: "command", command: String, arg: String | Undefined}
+ *   | {kind: "text", text: String, typed: Boolean}
+ */
 // A macro being recorded: its register and its steps so far.
 /** type Recording = {register: String, steps: Step[]} */
 
@@ -41,14 +44,23 @@ function describeStep(s, titleOf) {
 
 // A step's parts: the command it runs (null: text), or the text typed
 // (`typed`) or pasted.
-/** function stepParts(s: Step) => {command: String | Null, arg: String | Undefined, text: String, typed: Boolean} */
+/** function stepParts(s: Step) => {
+ *   command: String | Null,
+ *   arg: String | Undefined,
+ *   text: String,
+ *   typed: Boolean,
+ * } */
 function stepParts(s) {
   return s.kind === "command" ? { command: s.command, arg: s.arg, text: "", typed: false } : { command: null, arg: undefined, text: s.text, typed: s.typed };
 }
 
 // Every register's steps, as text (`last`: the register last recorded or
 // played).
-/** function describeMacros(registers: Map<String, Step[]>, last: String[], titleOf: (String) => String) => String */
+/** function describeMacros(
+ *   registers: Map<String, Step[]>,
+ *   last: String[],
+ *   titleOf: (String) => String,
+ * ) => String */
 function describeMacros(registers, last, titleOf) {
   const out = REGISTERS.flatMap((r) => {
     const steps = registers.get(r);
@@ -59,7 +71,11 @@ function describeMacros(registers, last, titleOf) {
 
 // A command macros offer: its id, title, and what it does.
 /** type MacroCommand = {id: String, title: String, run: () => Promise<Undefined>} */
-/** function macroCommand(id: String, title: String, run: () => Promise<Undefined>) => MacroCommand */
+/** function macroCommand(
+ *   id: String,
+ *   title: String,
+ *   run: () => Promise<Undefined>,
+ * ) => MacroCommand */
 function macroCommand(id, title, run) { return { id, title, run }; }
 
 /** function plural(n: Number, word: String) => String */

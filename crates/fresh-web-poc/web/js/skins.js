@@ -52,10 +52,22 @@ function chainOf(all, id, depth) {
 }
 // What a chain of skins comes to: the last to set each wins (`base(id)`:
 // where skin `id`'s files are served).
-/** type ResolvedSkin = {id: String, name: String, chain: String[], frame: String, scale: Number, furniture: String | Null, theme: String | Null} */
+/** type ResolvedSkin = {
+ *   id: String,
+ *   name: String,
+ *   chain: String[],
+ *   frame: String,
+ *   scale: Number,
+ *   furniture: String | Null,
+ *   theme: String | Null,
+ * } */
 /** function noShown() => ResolvedSkin[] */
 function noShown() { return []; }
-/** function resolvedSkin(id: String, chain: SkinInfo[], base: (String) => String) => ResolvedSkin */
+/** function resolvedSkin(
+ *   id: String,
+ *   chain: SkinInfo[],
+ *   base: (String) => String,
+ * ) => ResolvedSkin */
 function resolvedSkin(id, chain, base) {
   const scales = chain.flatMap((s) => { const x = s.scale; return x === null ? [] : [x]; });
   const furniture = chain.flatMap((s) => { const x = s.furniture; return x === null ? [] : [`${base(s.id)}${x}`]; });

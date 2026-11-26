@@ -40,7 +40,12 @@ import { action, actionOf, SEPARATOR } from "./menu.js";
 
 // What a dock row is: a group (pinned, a day), a folder, a workspace, or
 // one being made (by its key among those being made).
-/** type DockRow = {kind: "group"} | {kind: "folder", path: String} | {kind: "ws", w: WorkspaceEntry} | {kind: "pending", key: Number} */
+/** type DockRow =
+ *   | {kind: "group"}
+ *   | {kind: "folder", path: String}
+ *   | {kind: "ws", w: WorkspaceEntry}
+ *   | {kind: "pending", key: Number}
+ */
 /** const GROUP_ROW: DockRow */
 const GROUP_ROW = { kind: "group" };
 /** function folderData(path: String) => DockRow */
@@ -67,7 +72,12 @@ function jumpedFrom() {
 }
 // What a New Workspace folder is, as the machine's git says: being asked
 // about, not there, a folder outside git, or in a git work tree (its top).
-/** type Where = {kind: "asking"} | {kind: "missing"} | {kind: "plain"} | {kind: "repo", toplevel: String} */
+/** type Where =
+ *   | {kind: "asking"}
+ *   | {kind: "missing"}
+ *   | {kind: "plain"}
+ *   | {kind: "repo", toplevel: String}
+ */
 /** const ASKING: Where */
 const ASKING = { kind: "asking" };
 /** function whereOf(r: {repo: Boolean, folder: Boolean, toplevel: String}) => Where */
@@ -137,11 +147,24 @@ async function changeWorkspace(say, change) {
 // (a terminal's command), the machine, the folder, how git is used, the
 // name, an imported session's resume command, and whether it is being
 // launched and why that failed.
-/** type NewWorkspaceForm = {agent: String, prompt: String, machine: String, root: String, git: String, name: String, resume: String, busy: Boolean, error: String} */
+/** type NewWorkspaceForm = {
+ *   agent: String,
+ *   prompt: String,
+ *   machine: String,
+ *   root: String,
+ *   git: String,
+ *   name: String,
+ *   resume: String,
+ *   busy: Boolean,
+ *   error: String,
+ * } */
 
 // The inbox's rows: a column's heading, or a workspace (`header`: what
 // the list draws as a heading and the arrow keys pass over).
-/** type BoardItem = {kind: "header", header: true, label: String} | {kind: "ws", header: false, w: WorkspaceEntry} */
+/** type BoardItem =
+ *   | {kind: "header", header: true, label: String}
+ *   | {kind: "ws", header: false, w: WorkspaceEntry}
+ */
 /** function headerItem(label: String) => BoardItem */
 function headerItem(label) { return { kind: "header", header: true, label }; }
 /** function wsItem(w: WorkspaceEntry) => BoardItem */
