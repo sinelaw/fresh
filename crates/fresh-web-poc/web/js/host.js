@@ -4,6 +4,7 @@
 // change), view events and the language servers' status.
 
 import { insOp, delOp } from "./ot.js";
+import { listOf, some, none } from "./maybe.js";
 
 // A plugin's decorations in one buffer, cleared and replaced as a unit or by
 // range (`ns` names the set). Positions are byte offsets; every one moves
@@ -47,11 +48,14 @@ export function bufferHandle(app, buf) {
     whole: () => buf.full,
     text: (start, end) => buf.textRange(start, end),
     textAsync: (start, end) => buf.textAsync(start, end),
-    lines: () => { const L = buf.text; return L ? { lines: L.lines, starts: L.starts, firstLine: L.firstLine } : null; },
+    lines: () => {
+      for (const L of listOf(buf.text)) return some({ lines: L.lines, starts: L.starts, firstLine: L.firstLine });
+      return none();
+    },
     edit,
     insert: (pos, text) => { edit([insOp(pos, text)]); },
     delete: (start, end) => { if (end > start) edit([delOp(start, end - start)]); },
-    replace: (start, end, text) => { edit([...(end > start ? [delOp(start, end - start)] : []), ...(text ? [insOp(start, text)] : [])]); },
+    replace: (start, end, text) => { edit([...(end > start ? [delOp(start, end - start)] : []), ...(text !== "" ? [insOp(start, text)] : [])]); },
     save: () => app.saveBuffer(buf, true),
     decorations: (ns) => decorationSet(buf, ns),
     views: () => [...buf.views].map((v) => viewHandle(app, v)),

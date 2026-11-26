@@ -29,7 +29,7 @@ import { applies, cursorIn } from "./layout.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
 import { within } from "./dom.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
-import { some, listOf } from "./maybe.js";
+import { some, listOf, found } from "./maybe.js";
 
 // Node types that live inside a block rather than being one.
 const PART = new Set(["row", "cell"]);
@@ -299,23 +299,23 @@ function context(v) {
   // A line's active conceals (sorted, the longest first at one start),
   // the revealed ones (drawn dim) and its inline texts by position.
   const lineInfo = (li) => {
-    let x = lineCache.get(li);
-    if (x) return x;
+    const hit = lineCache.get(li);
+    if (hit !== undefined) return hit;
     const ls = L.starts[li], le = L.lineEnd(li);
     const act = [], rev = [];
     for (const c of d.concealsIn(ls, le + 1)) {
       if (c.end <= c.start || !applies(c, v.mode)) continue;
-      if (c.reveal && cursorIn(cursors, c.reveal)) rev.push(c);
+      if (listOf(c.reveal).some((r) => cursorIn(cursors, r))) rev.push(c);
       else act.push(c);
     }
-    act.sort((a, b) => a.start - b.start || b.end - a.end);
+    act.sort((a, b) => (a.start !== b.start ? a.start - b.start : b.end - a.end));
     const inl = noInlines();
     for (const t of d.inlinesIn(ls, le + 1)) {
       if (!applies(t, v.mode) || t.pos < ls || t.pos > le) continue;
       const k = `${t.pos}${t.side === "after" ? "a" : "b"}`;
       inl.set(k, [...(inl.get(k) ?? []), t]);
     }
-    x = { act, rev, inl };
+    const x = { act, rev, inl };
     lineCache.set(li, x);
     return x;
   };
@@ -364,13 +364,13 @@ function tableHTML(ctx, blk, n, tog) {
       html += `<tr class="raw"><td class="l" colspan="${ncol}">${t}${r.html}${r.shown ? "" : anchor(le)}</td></tr>`;
       continue;
     }
-    const tag = rows.get(k)?.header ? "th" : "td";
+    const tag = found(rows.get(k)).some((r) => r.header) ? "th" : "td";
     html += "<tr>";
     list.forEach((c, i) => {
       const a = i === 0 ? ls : c.start, z = i + 1 < list.length ? list[i + 1].start : le;
       const r = walk(ctx, a, z, NO_SYNTAX);
-      const al = n.align.at(i) ?? null;
-      html += `<${tag} class="l"${al ? ` style="text-align:${al}"` : ""}>${i === 0 ? t : ""}${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
+      const al = n.align.slice(i, i + 1).flatMap((x) => listOf(x)).map((x) => ` style="text-align:${x}"`).at(0) ?? "";
+      html += `<${tag} class="l"${al}>${i === 0 ? t : ""}${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
     });
     for (let i = list.length; i < ncol; i++) html += `<${tag}></${tag}>`;
     html += "</tr>";
@@ -417,6 +417,26 @@ function blockHTML(ctx, blk) {
   }
   if (type === "table") return tableHTML(ctx, blk, n, tog);
   return `<p class="l">${joined()}</p>`;
+}
+
+// Where a caret at byte `p` of piece `e` is drawn, in client coordinates
+// (`range`: one to measure text with): as tall as its line's box (the
+// line height of the line element holding it), centred on the glyphs.
+function caretRectOf(range, e, p) {
+  // Inside text: the range at the byte; else the piece's box.
+  const rects = [];
+  for (const tn of e.kind === "p" ? listOf(e.el.firstChild) : []) {
+    const idx = byteToIdx(tn.textContent, p - e.start);
+    range.setStart(tn, idx);
+    range.setEnd(tn, idx);
+    const rs = range.getClientRects();
+    if (rs.length > 0) rects.push(rs[rs.length > 1 && idx > 0 ? rs.length - 1 : 0]);
+  }
+  const b = e.el.getBoundingClientRect();
+  const r = rects.map((x) => ({ left: x.left, top: x.top, height: x.height })).at(0) ?? { left: e.kind === "at" && p > e.start ? b.right : b.left, top: b.top, height: b.height };
+  const box = e.el.closest(".l");
+  const lh = box !== null ? parseFloat(getComputedStyle(box).lineHeight) : NaN;
+  return lh > 0 ? { left: r.left, top: r.top + r.height / 2 - lh / 2, height: lh } : r;
 }
 
 export class DocView {
@@ -619,22 +639,8 @@ export class DocView {
   // it is not drawn: as tall as its line's box (the line height of the line
   // element holding it), centred on the glyphs there.
   caretRect(p) {
-    const e = this.find(p);
-    if (e === null) return NO_RECT;
-    // Inside text: the range at the byte; else the piece's box.
-    const rects = [];
-    for (const tn of e.kind === "p" ? listOf(e.el.firstChild) : []) {
-      const idx = byteToIdx(tn.textContent, p - e.start);
-      this.range.setStart(tn, idx);
-      this.range.setEnd(tn, idx);
-      const rs = this.range.getClientRects();
-      if (rs.length) rects.push(rs[rs.length > 1 && idx > 0 ? rs.length - 1 : 0]);
-    }
-    const b = e.el.getBoundingClientRect();
-    const r = rects.map((x) => ({ left: x.left, top: x.top, height: x.height })).at(0) ?? { left: e.kind === "at" && p > e.start ? b.right : b.left, top: b.top, height: b.height };
-    const box = e.el.closest(".l");
-    const lh = box !== null ? parseFloat(getComputedStyle(box).lineHeight) : NaN;
-    return some(lh > 0 ? { left: r.left, top: r.top + r.height / 2 - lh / 2, height: lh } : r);
+    for (const e of listOf(this.find(p))) return some(caretRectOf(this.range, e, p));
+    return NO_RECT;
   }
 
   // The byte at client point (x, y), held to the document's box.
@@ -707,21 +713,21 @@ export class DocView {
     const lh = v.pane.metrics().lh;
     const r = listOf(this.caretRect(p)).at(0);
     if (r === undefined) return NO_POS;
-    let top = r.top, bot = r.top + (r.height || lh);
+    let top = r.top, bot = r.top + (r.height > 0 ? r.height : lh);
     let y = dir > 0 ? bot : top;
     for (let guard = 0; guard < 2000; guard++) {
       y += dir * 3;
       const sr = v.pane.surfaceEl.getBoundingClientRect();
       if (y <= sr.top + 1 || y >= sr.bottom - 1) {
-        const shift = this.scrollBy(v, dir * Math.max(lh, (v.pane.size.h || sr.height) / 2));
-        if (!shift) return NO_POS;
+        const shift = this.scrollBy(v, dir * Math.max(lh, (v.pane.size.h > 0 ? v.pane.size.h : sr.height) / 2));
+        if (shift === 0) return NO_POS;
         y -= shift; top -= shift; bot -= shift;
         continue;
       }
-      const q = this.posFromPoint(v, this.content.getBoundingClientRect().left + goal, y);
-      if (q === null) continue;
-      const below = listOf(this.caretRect(q)).some((b) => (dir > 0 ? b.top >= bot - 2 : b.top + (b.height || lh) <= top + 2));
-      if (below) return q;
+      for (const q of listOf(this.posFromPoint(v, this.content.getBoundingClientRect().left + goal, y))) {
+        const below = listOf(this.caretRect(q)).some((b) => (dir > 0 ? b.top >= bot - 2 : b.top + (b.height > 0 ? b.height : lh) <= top + 2));
+        if (below) return some(q);
+      }
     }
     return NO_POS;
   }

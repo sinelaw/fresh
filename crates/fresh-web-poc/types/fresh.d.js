@@ -434,6 +434,9 @@
  *   attention: String | Null,
  * } */
 /** type Worktree = {repo: String, branch: String} */
+// The document formats the server knows (`doc.formats`): languages,
+// encodings (a name and what it is) and line endings.
+/** type DocFormats = {languages: String[], encodings: {name: String, description: String}[], line_endings: String[]} */
 // A machine a workspace is on (src/authority.rs HostSpec): this one,
 // another over ssh (with an identity file and more ssh options), a
 // container, or the remote agent here.

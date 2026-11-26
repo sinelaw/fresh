@@ -228,7 +228,7 @@ export function shrinkSelection(pane) {
   if (prev !== undefined) {
     v.cursors = prev.map((c) => selecting(c.pos, c.anchor));
     v.expansions.key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
-  } else for (const c of v.cursors) c.anchor = null;
+  } else for (const c of v.cursors) c.anchor = none();
   pane.reveal(false);
   pane.scheduleRender();
 }
@@ -252,7 +252,7 @@ function foldRangeAt(v, li) {
   const L = b.held;
   const first = L.firstLine ?? 0;
   // The language server's range, else the lines indented past this one.
-  const lsp = (b.foldRanges ?? []).filter((r) => r.start === li + first && r.end > r.start).slice(0, 1);
+  const lsp = b.foldRanges.filter((r) => r.start === li + first && r.end > r.start).slice(0, 1);
   if (lsp.length > 0) return lsp.map((r) => ({ start: li, end: Math.min(L.count - 1, r.end - first) }));
   const ind = (t) => t.length - t.trimStart().length;
   if (L.lines[li].trim() === "") return noFold();
@@ -343,7 +343,7 @@ export function toggleFoldAt(pane, li) {
     v.folds.push(r);
     // A cursor the fold hides moves to the end of the last line it keeps.
     const L = v.buf.held;
-    for (const c of v.cursors) for (const h of pane.foldHiding(v, L.indexOf(c.pos))) { c.pos = L.lineEnd(h.keep); c.anchor = null; }
+    for (const c of v.cursors) for (const h of pane.foldHiding(v, L.indexOf(c.pos))) { c.pos = L.lineEnd(h.keep); c.anchor = none(); }
   }
   pane.scheduleRender();
 }
@@ -380,7 +380,7 @@ export function selectLine(pane) {
   const L = b.held;
   for (const c of pane.view.cursors) {
     const [a, z] = lineSpan(b, c);
-    c.anchor = L.starts[a];
+    c.anchor = some(L.starts[a]);
     c.pos = z + 1 < L.count ? L.starts[z + 1] : L.lineEnd(z);
   }
   pane.scheduleRender();
@@ -463,7 +463,7 @@ export function blockSelect(pane, dl, dc) {
 export function selectWord(pane) {
   const v = pane.view;
   const w = wordAt(v.buf, v.primary.pos);
-  if (w) { v.primary.anchor = w.start; v.primary.pos = w.end; }
+  for (const x of listOf(w)) { v.primary.anchor = some(x.start); v.primary.pos = x.end; }
   pane.scheduleRender();
 }
 
@@ -530,10 +530,10 @@ export class Editing {
     for (const c of v.cursors) {
       const to = Math.max(0, Math.min(v.buf.len, fn(c)));
       const p = pane.settle(v, to, Math.sign(to - c.pos));
-      if (extend) { if (c.anchor == null) c.anchor = c.pos; }
-      else c.anchor = null;
+      if (extend) c.anchor = some(c.anchor ?? c.pos);
+      else c.anchor = none();
       c.pos = p;
-      c.goalX = null;
+      c.goalX = none();
     }
     v.normalize();
     pane.reveal(false);
@@ -547,10 +547,10 @@ export class Editing {
     const c = v.primary;
     const old = c.pos;
     v.cursors = [c];
-    if (extend) { if (c.anchor == null) c.anchor = old; }
-    else c.anchor = null;
+    if (extend) c.anchor = some(c.anchor ?? old);
+    else c.anchor = none();
     c.pos = Math.max(0, Math.min(v.buf.len, p));
-    c.goalX = null;
+    c.goalX = none();
     pane.reveal(false);
     if (old !== c.pos) this.editor.moved(v, old);
     pane.scheduleRender();
@@ -592,15 +592,15 @@ export class Editing {
     let grew = false;
     v.cursors.forEach((c, i) => {
       const s = sel(c) ?? { start: c.pos, end: c.pos };
-      const mine = lsp === null ? [] : lsp.at(i) ?? [];
+      const mine = listOf(lsp).map((l) => l.at(i) ?? []).at(0) ?? [];
       const ranges = (mine.length > 0 ? mine.concat(b.full ? [{ start: 0, end: b.len }] : []) : structureAround(b, s))
         .filter((r) => r.start <= s.start && r.end >= s.end && r.end - r.start > s.end - s.start);
-      const r = ranges.sort((x, y) => (x.end - x.start) - (y.end - y.start))[0];
-      if (!r) return;
-      c.anchor = r.start;
-      c.pos = r.end;
-      c.goalX = null;
-      grew = true;
+      for (const r of ranges.sort((x, y) => (x.end - x.start) - (y.end - y.start)).slice(0, 1)) {
+        c.anchor = some(r.start);
+        c.pos = r.end;
+        c.goalX = none();
+        grew = true;
+      }
     });
     if (!grew) return;
     const key = (cs) => cs.map((c) => `${c.anchor}:${c.pos}`).join();
@@ -656,16 +656,14 @@ export class Editing {
   left(pane, extend, word) {
     const b = pane.view.buf;
     this.move(pane, (c) => {
-      const s = sel(c);
-      if (!extend && !word && s) return s.start;
+      if (!extend && !word) for (const s of listOf(sel(c))) return s.start;
       return word ? wordEdge(b, c.pos, -1) : c.pos - lenOf(charBefore(b, c.pos));
     }, extend);
   }
   right(pane, extend, word) {
     const b = pane.view.buf;
     this.move(pane, (c) => {
-      const s = sel(c);
-      if (!extend && !word && s) return s.end;
+      if (!extend && !word) for (const s of listOf(sel(c))) return s.end;
       return word ? wordEdge(b, c.pos, 1) : c.pos + lenOf(charAtPos(b, c.pos));
     }, extend);
   }
@@ -696,8 +694,7 @@ export class Editing {
     }, extend);
   }
   paragraph(pane, dir, extend) {
-    const b = pane.view.buf;
-    const L = b.text;
+    const L = pane.view.buf.held;
     this.move(pane, (c) => {
       let i = L.indexOf(c.pos) + dir;
       while (i > 0 && i < L.count - 1 && L.lines[i].trim() !== "") i += dir;
@@ -916,23 +913,18 @@ export class Editing {
     if ((dir < 0 && a === 0) || (dir > 0 && z >= L.count - 1)) return;
     const block = L.lines.slice(a, z + 1).join("\n");
     const off = c.pos - L.starts[a];
-    const anchorAt = c.anchor;
-    const anchorOff = anchorAt !== null ? anchorAt - L.starts[a] : null;
-    let start, end, text, newStart;
-    if (dir < 0) {
-      const prev = L.lines[a - 1];
-      start = L.starts[a - 1]; end = L.lineEnd(z);
-      text = block + "\n" + prev;
-      newStart = start;
-    } else {
-      const next = L.lines[z + 1];
-      start = L.starts[a]; end = L.lineEnd(z + 1);
-      text = next + "\n" + block;
-      newStart = start + byteLen(next) + 1;
-    }
+    // The anchor's offset into the block (none: no selection).
+    const anchorOff = listOf(c.anchor).map((x) => x - L.starts[a]);
+    // The block and the line beside it swap: [start, end) becomes `text`,
+    // the block then starting at `newStart`.
+    const up = dir < 0;
+    const start = up ? L.starts[a - 1] : L.starts[a];
+    const end = up ? L.lineEnd(z) : L.lineEnd(z + 1);
+    const text = up ? block + "\n" + L.lines[a - 1] : L.lines[z + 1] + "\n" + block;
+    const newStart = up ? start : start + byteLen(L.lines[z + 1]) + 1;
     this.editor.edit(b, [delOp(start, end - start), insOp(start, text)], "none");
     c.pos = newStart + off;
-    c.anchor = anchorOff != null ? newStart + anchorOff : null;
+    c.anchor = anchorOff.length > 0 ? some(newStart + anchorOff[0]) : none();
     pane.reveal(false);
     pane.scheduleRender();
   }
@@ -980,7 +972,7 @@ export class Editing {
     const s = sel(v.cursors[0]);
     if (!s) {
       const w = wordAt(b, v.primary.pos);
-      if (w) { v.primary.anchor = w.start; v.primary.pos = w.end; }
+      for (const x of listOf(w)) { v.primary.anchor = some(x.start); v.primary.pos = x.end; }
       pane.scheduleRender();
       return;
     }

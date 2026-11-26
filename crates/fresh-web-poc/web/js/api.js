@@ -13,6 +13,7 @@
 // `onLspStatus`.
 
 import { rpc } from "./rpc.js";
+import { lspOffset as lspOffsetIn, lspPosition as lspPositionIn } from "./app.js";
 import { found, listOf } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand, asArgCommand } from "./commands.js";
@@ -176,8 +177,8 @@ export const lspRequestAt = (app, buffer, method, params, pos) => rpc("lsp.call"
 // A request about the workspace (`workspace/symbol`) to `language`'s server.
 export const lspWorkspaceRequest = (_app, language, method, params) => rpc("lsp.call", { language, method, params });
 // LSP (line, character) to a byte offset in a held buffer, and back.
-export const lspOffset = (app, buffer, line, character) => { const b = held(app, buffer); return b !== undefined ? app.lspOffset(b, line, character) : null; };
-export const lspPosition = (app, buffer, pos) => { const b = held(app, buffer); return b !== undefined ? app.lspPosition(b, pos) : null; };
+export const lspOffset = (app, buffer, line, character) => { const b = held(app, buffer); return b !== undefined ? lspOffsetIn(b, line, character) : null; };
+export const lspPosition = (app, buffer, pos) => { const b = held(app, buffer); return b !== undefined ? lspPositionIn(b, pos) : null; };
 export const diagnostics = (app, buffer) => (held(app, buffer)?.decor.diags ?? []).map((d) => ({ start: d.start, end: d.end, severity: d.severity, message: d.message, source: d.source }));
 // The languages with a server on the host.
 export const lspLanguages = (app) => [...app.lspLanguages];

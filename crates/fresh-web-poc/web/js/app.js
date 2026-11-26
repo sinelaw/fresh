@@ -14,7 +14,6 @@ import { sash, clamp } from "./sash.js";
 
 import { $, setClass } from "./dom.js";
 
-
 import { asCommand, asArgCommand } from "./commands.js";
 import { listOf, found, some, none } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
@@ -146,6 +145,8 @@ function statusFact() { return { text: "", title: "", onClick: null }; }
 function statusFactOf(text, title, onClick) { return { text, title, onClick }; }
 /** function noFacts() => Map<String, StatusFact> */
 function noFacts() { return new Map(); }
+/** function noFormats() => DocFormats[] */
+function noFormats() { return []; }
 /** function noBytes() => Number[] */
 function noBytes() { return []; }
 /** function noCommands() => Map<String, Command> */
@@ -181,12 +182,80 @@ function modeKey(modes, mode, k) { return mode === null ? undefined : (modes.get
 /** function spot(remember: () => Undefined, restore: () => Undefined) => Spot */
 function spot(remember, restore) { return { remember, restore }; }
 
+// A tab's key, to find it again (a list of at most one).
+function tabKeys(b) { return tabRef(b).map(refKey); }
+// A list's first string (none: it is empty).
+/** function firstOf(xs: String[]) => String | Null */
+function firstOf(xs) { return xs.length > 0 ? some(xs[0]) : none(); }
+
+// What a tab shows, to restore it: a file, an untitled document or a
+// terminal (none: a plugin's buffer).
+function tabRef(b) {
+  if (b.path !== "") return [tabFile(b.path)];
+  for (const n of listOf(b.untitled)) return [tabUntitled(n)];
+  for (const id of terminalOf(b.source)) return [tabTerminal(id)];
+  return [];
+}
+
+export async function scrollToFraction(pane, f) {
+  if (pane.shown.length === 0) return;
+  const v = pane.shown[0];
+  const b = v.buf;
+  // The document's line count, when its line index is built.
+  const lines = b.doc === null ? [] : listOf(b.totalLines).filter((n) => n > 0);
+  if (b.full) {
+    for (const L of listOf(b.text)) v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))], 0);
+  } else if (lines.length > 0) {
+    const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * lines[0]) });
+    if (r.pos !== null) { await b.ensure(r.pos, 200); v.setTop(r.pos, 0); }
+  } else {
+    const p = Math.floor(f * b.len);
+    await b.ensure(p, 200);
+    for (const L of listOf(b.text)) v.setTop(L.starts[Math.max(0, L.indexOf(p))], 0);
+  }
+  pane.scheduleRender();
+}
+
+// A language server's (line, UTF-16 column) as a byte offset in a held buffer.
+export function lspOffset(b, line, character) {
+  const L = b.text;
+  return offsetIn(L === null ? [] : [{ lines: L.lines, starts: L.starts, firstLine: L.firstLine }], line, character);
+}
+
+// Byte `pos` as a language server's (line, UTF-16 column), when held.
+export function lspPosition(b, pos) {
+  const L = b.text;
+  return L === null ? null : positionIn({ lines: L.lines, starts: L.starts, firstLine: L.firstLine }, L.indexOf(pos), pos);
+}
+
+/** function keyName(e: DomEvent<El>) => String */
+export function keyName(e) {
+  let k = found(KEY_NAMES.get(e.key)).at(0) ?? e.key;
+  // A digit is named by its key, shifted or not (Shift+1 is "S-1", not "!").
+  if (/^Digit\d$/.test(e.code)) k = e.code.slice(5);
+  if (k.length === 1) k = k.toLowerCase();
+  const shift = e.shiftKey && (k.length > 1 || /[a-z0-9]/.test(k));
+  return (e.ctrlKey || e.metaKey ? "C-" : "") + (e.altKey ? "M-" : "") + (shift ? "S-" : "") + k;
+}
+
+// `text` in the popup at `at`.
+export function popup(text, at) {
+  const h = $("#popup");
+  h.textContent = text;
+  h.style.left = `${Math.min(at.x, innerWidth - 420)}px`;
+  h.style.top = `${at.y}px`;
+  h.classList.remove("hidden");
+}
+
+export function hidePopup() { $("#popup").classList.add("hidden"); }
+
 export class App {
   constructor(c) {
     this.buffers = new Map();
     this.docs = new Map();
     this.commands = noCommands(); // by id
     this.navSeq = 0; // the latest navigation (gotoLine)
+    this.hoverTimer = 0; // the hover asked for, after a pause
     this.modes = noModes(); // buffer mode -> its keys
     this.keys = noKeys(); // key -> command, from plugins
     // Keys a focused terminal leaves to the editor: its toggle, moving
@@ -208,7 +277,7 @@ export class App {
     this.status = "";
     this.statusSig = ""; // what the status bar shows, to write it only when it changes
     this.statusRuns = []; // its items' actions
-    this.formats = null; // the server's languages, encodings and line endings
+    this.formats = noFormats(); // the server's languages, encodings and line endings, once asked (at most one)
     this.maximized = []; // the split filling the editor area: a list of at most one
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
     this.composing = false; // an input method is composing text
@@ -319,10 +388,10 @@ export class App {
   // document by its number) with their cursor and scroll, the active split
   // and tab, and whether the sidebar and the terminal show.
   layoutSnapshot() {
-    const tabs = (views) => views.flatMap((v) => this.tabRef(v.buf).map((ref) => savedTab(ref, v.primary.pos, v.top, v.preview)));
+    const tabs = (views) => views.flatMap((v) => tabRef(v.buf).map((ref) => savedTab(ref, v.primary.pos, v.top, v.preview)));
     const node = (n) => {
       const pane = paneAt(n), f = forkAt(n);
-      if (pane !== null) return savedPane(tabs(pane.views), pane.shown.map((v) => this.tabKey(v.buf)).at(0) ?? null);
+      if (pane !== null) return savedPane(tabs(pane.views), firstOf(pane.shown.flatMap((v) => tabKeys(v.buf))));
       return f !== null ? savedSplit(f.dir, f.size.ratio, node(f.a), node(f.b)) : savedPane([], null);
     };
     return { tree: node(this.layoutTree), active: panesOf(this.layoutTree).indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden") };
@@ -334,13 +403,6 @@ export class App {
   // What a tab shows, as the remembered layout names it: a file by its
   // path, an untitled document by its number, a terminal by its id (a
   // list of at most one: a plugin's buffer is not remembered).
-  tabRef(b) {
-    if (b.path) return [tabFile(b.path)];
-    for (const n of listOf(b.untitled)) return [tabUntitled(n)];
-    for (const id of terminalOf(b.source)) return [tabTerminal(id)];
-    return [];
-  }
-  tabKey(b) { return this.tabRef(b).map(refKey).at(0) ?? null; }
   // Put the remembered layout back: the splits, then each split's
   // documents (one that cannot be opened any more is left out — an
   // untitled one is there only while the server keeps it for its unsaved
@@ -366,8 +428,7 @@ export class App {
           v.setTop(Math.max(0, Math.min(t.top | 0, pos)), 0);
         }
       }
-      const active = pane.views.find((v) => this.tabKey(v.buf) === shown);
-      if (active) pane.show(active.buf, false);
+      for (const key of listOf(shown)) for (const v of pane.views.filter((x) => tabKeys(x.buf).includes(key)).slice(0, 1)) pane.show(v.buf, false);
     }
     for (const { pane } of specs) if (!pane.views.length && panesOf(this.layoutTree).length > 1) await this.closePane(pane);
     this.focusPane(this.activePane);
@@ -501,8 +562,8 @@ export class App {
   // Where the active view is, to go back to (a list of at most one):
   // remembered for Go Back, or restored.
   here() {
-    const v = this.view();
-    if (!v) return [];
+    if (this.activePane.shown.length === 0) return [];
+    const v = this.activePane.shown[0];
     const pos = v.primary.pos, top = v.top;
     return [spot(() => { this.pushHistory(v, pos); }, () => { v.setTop(top, 0); this.editing.place(v.pane, pos, false); })];
   }
@@ -870,10 +931,11 @@ export class App {
   // ------------------------------------------------------------- buffers
 
   watchBuffer(b) {
-    b.listeners.add((news) => {
+    b.listeners.add((told) => {
+      const news /*: BufferNews */ = told;
       if (news.kind === "edit") this.afterEdit(b, news.op, news.local);
-      if (news.kind === "text") { this.bufferEvent("buffer.changed", b, [], false); this.renderBuffer(b.id); }
-      if (news.kind === "error") this.setStatus(news.message);
+      else if (news.kind === "text") { this.bufferEvent("buffer.changed", b, [], false); this.renderBuffer(b.id); }
+      else if (news.kind === "error") this.setStatus(news.message);
     });
   }
 
@@ -923,9 +985,9 @@ export class App {
     this.opening = new Promise((r) => { done = () => { r(undefined); }; });
     try {
       await turn;
-      const from = this.view();
+      const from = this.activePane.shown;
       const b = await this.loadFile(path);
-      for (const f of listOf(from)) this.pushHistory(f, f.primary.pos);
+      for (const f of from) this.pushHistory(f, f.primary.pos);
       const v = this.showBuffer(b, place, { preview, focus });
       this.noteRecent(b.path);
       for (const l of listOf(line)) await this.gotoLine(l - 1, column - 1, false);
@@ -1030,16 +1092,16 @@ export class App {
   // panel) has its text written to the file, which then opens.
   async saveBufferAs(b) {
     const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
-    const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name, hint: "", select: true });
-    if (!name) return;
+    const name = (await this.prompt.ask({ title: "Save as", value: b.path !== "" ? rel(b.path) : b.name, hint: "", select: true })) ?? "";
+    if (name === "") return;
     const path = name.startsWith("/") ? name : `${this.root}/${name}`;
     if (path === b.path) { await this.saveBuffer(b, true); return; }
     const st = await rpc("fs.stat", { path });
     if (st.dir) { this.setStatus(`${name} is a folder`); return; }
     if (st.exists && !(await this.confirm(`${name} exists. Overwrite it?`, "Overwrite"))) return;
     try {
-      const f = b.file.at(0);
-      if (f !== undefined) {
+      if (b.file.length > 0) {
+        const f = b.file[0];
         while (!synced(f)) await new Promise((r) => { setTimeout(() => { r(undefined); }, 20); });
         const info = await rpc("doc.save_as", { doc: b.doc, path, overwrite: st.exists });
         b.setInfo(info);
@@ -1086,7 +1148,7 @@ export class App {
 
   cursorMoved(v, old) {
     this.viewEvent("cursor.moved", v);
-    this.hidePopup();
+    hidePopup();
     this.updateStatus();
   }
 
@@ -1104,8 +1166,8 @@ export class App {
   }
 
   async gotoByte(p, extend) {
-    const v = this.view();
-    if (!v) return;
+    if (this.activePane.shown.length === 0) return;
+    const v = this.activePane.shown[0];
     await this.moveTo(v, p, { center: !extend && Math.abs(p - v.primary.pos) > 5000, extend, history: false });
   }
 
@@ -1113,8 +1175,8 @@ export class App {
   // Go to line `line` and column `col` (both from 0); `history`: remember
   // where the cursor was.
   async gotoLine(line, col, history) {
-    const v = this.view();
-    if (v === null) return;
+    if (this.activePane.shown.length === 0) return;
+    const v = this.activePane.shown[0];
     // Only the latest navigation lands: a newer one (the palette previews a
     // jump on every keystroke) supersedes any still waiting on the server.
     this.navSeq += 1;
@@ -1141,25 +1203,6 @@ export class App {
     }
   }
 
-  async scrollToFraction(pane, f) {
-    if (pane.shown.length === 0) return;
-    const v = pane.shown[0];
-    const b = v.buf;
-    // The document's line count, when its line index is built.
-    const lines = b.doc === null ? [] : listOf(b.totalLines).filter((n) => n > 0);
-    if (b.full) {
-      for (const L of listOf(b.text)) v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))], 0);
-    } else if (lines.length > 0) {
-      const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * lines[0]) });
-      if (r.pos !== null) { await b.ensure(r.pos, 200); v.setTop(r.pos, 0); }
-    } else {
-      const p = Math.floor(f * b.len);
-      await b.ensure(p, 200);
-      for (const L of listOf(b.text)) v.setTop(L.starts[Math.max(0, L.indexOf(p))], 0);
-    }
-    pane.scheduleRender();
-  }
-
   // ------------------------------------------------------------- position history
 
   pushHistory(v, pos) {
@@ -1175,11 +1218,11 @@ export class App {
     const from = dir < 0 ? h.back : h.fwd, to = dir < 0 ? h.fwd : h.back;
     const e = from.pop();
     if (e === undefined) return;
-    const v = this.view();
+    const here = this.activePane.shown;
     // An entry for a closed buffer, or for where the view already is, is
     // passed over.
-    if (!this.buffers.has(e.buf.id) || (v !== null && v.buf === e.buf && v.primary.pos === e.pos)) { await this.historyStep(dir); return; }
-    if (v !== null) to.push({ buf: v.buf, pos: v.primary.pos });
+    if (!this.buffers.has(e.buf.id) || here.some((v) => v.buf === e.buf && v.primary.pos === e.pos)) { await this.historyStep(dir); return; }
+    for (const v of here) to.push({ buf: v.buf, pos: v.primary.pos });
     for (const nv of this.showBuffer(e.buf, "tab", { preview: null, focus: true })) await this.moveTo(nv, Math.min(e.pos, e.buf.len), { center: true, extend: false, history: false });
   }
 
@@ -1309,7 +1352,6 @@ export class App {
     if (ev.ev === "orchestrator.folders") { this.orchestrator.foldersChanged(ev.folders); return; }
   }
 
-
   // A process on the workspace's host; resolves with {code, stdout, stderr}.
   async runProcess(program /*: String */, args /*: String[] */, opts /*: {cwd: String} */) {
     const { proc } = await rpc("proc.run", { program, args, cwd: opts.cwd });
@@ -1331,25 +1373,15 @@ export class App {
     return b.doc !== null && lang !== null && !b.large && this.lspLanguages.has(lang) && this.lspStatus[lang] !== false;
   }
 
-  // A language server's (line, UTF-16 column) as a byte offset in a held buffer.
-  lspOffset(b, line, character) {
-    const L = b.text;
-    return offsetIn(L === null ? [] : [{ lines: L.lines, starts: L.starts, firstLine: L.firstLine }], line, character);
-  }
-  // Byte `pos` as a language server's (line, UTF-16 column), when held.
-  lspPosition(b, pos) {
-    const L = b.text;
-    return L === null ? null : positionIn({ lines: L.lines, starts: L.starts, firstLine: L.firstLine }, L.indexOf(pos), pos);
-  }
-
   // ------------------------------------------------------------- input
 
   onInput() {
     const t = this.input.value;
     this.input.value = "";
     if (!t) return;
-    const v = this.view();
-    if (!v || v.buf.readOnly) return;
+    if (this.activePane.shown.length === 0) return;
+    const v = this.activePane.shown[0];
+    if (v.buf.readOnly) return;
     // A buffer mode may claim printable keys (a panel's single-key commands).
     const bound = t.length === 1 ? modeKey(this.modes, v.buf.mode, t) : undefined;
     if (bound !== undefined) { bound.run(); return; }
@@ -1371,8 +1403,9 @@ export class App {
   }
 
   paste(text) {
-    const v = this.view();
-    if (!v || v.buf.readOnly) return;
+    if (this.activePane.shown.length === 0) return;
+    const v = this.activePane.shown[0];
+    if (v.buf.readOnly) return;
     this.macros.text(text, false);
     // One line per cursor when the counts match, as editors do.
     const parts = text.split("\n");
@@ -1392,8 +1425,8 @@ export class App {
   // without a view): its selections in document order, as paste hands
   // them out, or with nothing selected the cursor's line; a cut deletes it.
   copied(cut) {
-    const v = this.view();
-    if (v === null) return [];
+    if (this.activePane.shown.length === 0) return [];
+    const v = this.activePane.shown[0];
     const sels = v.selections().sort((x, y) => x.start - y.start);
     const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "") : [lineAt(v.buf, v.primary.pos).text + "\n"];
     if (cut && !v.buf.readOnly) {
@@ -1410,12 +1443,11 @@ export class App {
   panelKey(e) {
     const t = e.target;
     if (t === this.input || t.closest(".xterm") !== null) return false;
-    const k = this.keyName(e);
-    const cmd = this.keymap().get(k);
-    if (cmd === undefined || !(e.ctrlKey || e.altKey || e.metaKey || /^F\d+$/.test(e.key))) return false;
+    const k = keyName(e);
+    if (!(e.ctrlKey || e.altKey || e.metaKey || /^F\d+$/.test(e.key))) return false;
     if (t.matches("input, textarea, select, [contenteditable]") && FIELD_KEYS.has(k)) return false;
-    this.run(cmd, undefined);
-    return true;
+    for (const cmd of found(this.keymap().get(k))) { this.run(cmd, undefined); return true; }
+    return false;
   }
 
   // A key as the keymap names it: "C-S-k", "M-Up", "F12".
@@ -1423,31 +1455,18 @@ export class App {
   // ones it keeps (`terminalKeys`: the terminal's toggle, moving between
   // workspaces). True: it took the key.
   terminalKey(e) {
-    const k = e.type === "keydown" ? this.keyName(e) : "";
-    const cmd = this.keymap().get(k);
-    if (!this.terminalKeys.has(k) || cmd === undefined) return false;
-    e.preventDefault();
-    this.run(cmd, undefined);
-    return true;
-  }
-
-  keyName(e) {
-    let k = KEY_NAMES.get(e.key) ?? e.key;
-    // A digit is named by its key, shifted or not (Shift+1 is "S-1", not "!").
-    if (/^Digit\d$/.test(e.code)) k = e.code.slice(5);
-    if (k.length === 1) k = k.toLowerCase();
-    const shift = e.shiftKey && (k.length > 1 || /[a-z0-9]/.test(k));
-    return (e.ctrlKey || e.metaKey ? "C-" : "") + (e.altKey ? "M-" : "") + (shift ? "S-" : "") + k;
+    const k = e.type === "keydown" ? keyName(e) : "";
+    if (!this.terminalKeys.has(k)) return false;
+    for (const cmd of found(this.keymap().get(k))) { e.preventDefault(); this.run(cmd, undefined); return true; }
+    return false;
   }
 
   onKey(e) {
-    const v = this.view();
-    const k = this.keyName(e);
+    const k = keyName(e);
     // A buffer's mode (a plugin's panel buffer) takes its keys first.
-    const bound = v ? modeKey(this.modes, v.buf.mode, k) : undefined;
-    if (bound !== undefined) { e.preventDefault(); bound.run(); return; }
-    const cmd = this.keymap().get(k);
-    if (cmd !== undefined) { e.preventDefault(); this.run(cmd, undefined); }
+    const bound = this.activePane.shown.map((v) => modeKey(this.modes, v.buf.mode, k)).at(0);
+    for (const b of found(bound)) { e.preventDefault(); b.run(); return; }
+    for (const cmd of found(this.keymap().get(k))) { e.preventDefault(); this.run(cmd, undefined); }
   }
 
   bindKey(key, command) { this.keys.set(key, command); }
@@ -1460,7 +1479,7 @@ export class App {
         e.preventDefault();
         e.stopPropagation();
         window.removeEventListener("keydown", f, true);
-        resolve(e.key === "Escape" ? null : this.keyName(e));
+        resolve(e.key === "Escape" ? null : keyName(e));
       };
       window.addEventListener("keydown", f, true);
     });
@@ -1554,7 +1573,10 @@ export class App {
   registerCoreCommands() {
     const ed = () => this.editing;
     const P = () => this.activePane;
-    const V = () => this.view();
+    // The active view, for the commands that run only when there is one
+    // (vcmd, mv).
+    const V = () => this.activePane.shown[0];
+    const hasView = () => this.activePane.shown.length > 0;
     const ro = () => { const v = V(); return !v || v.buf.readOnly; };
     // A command, listed in the palette or not (`hiddenCmd`). Declared
     // functions, so each takes an action of its own kind.
@@ -1570,7 +1592,7 @@ export class App {
     const page = (dir, extend) => () => P().page(dir, extend);
     const mutate = (f) => () => { if (!ro()) f(); };
 
-    cmd("file.save", "File: Save", () => { for (const v of listOf(V())) if (v.buf.doc !== null) this.saveBuffer(v.buf, true); });
+    cmd("file.save", "File: Save", () => { for (const v of listOf(this.view())) if (v.buf.doc !== null) this.saveBuffer(v.buf, true); });
     cmd("file.saveAll", "File: Save All", async () => {
       const mod = [...this.buffers.values()].filter((b) => b.doc !== null && b.modified);
       for (const b of mod) await this.saveBuffer(b, true);
@@ -1579,7 +1601,7 @@ export class App {
     cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b.readOnly = !b.readOnly; this.renderAll(); } });
     // Save As: the text written to another file (through the server's
     // file operations), which then opens; the original stays as it is.
-    cmd("file.saveAs", "File: Save As…", () => { for (const v of listOf(V())) this.saveBufferAs(v.buf); });
+    cmd("file.saveAs", "File: Save As…", () => { for (const v of listOf(this.view())) this.saveBufferAs(v.buf); });
     cmd("file.new", "File: New File", () => this.newUntitled());
     cmd("file.language", "Set Language…", () => this.pickLanguage());
     cmd("file.encoding", "Set Encoding… (reopen or save with)", () => this.pickEncoding());
@@ -1597,8 +1619,8 @@ export class App {
     cmd("edit.paste", "Edit: Paste", async () => {
       try { this.paste(await navigator.clipboard.readText()); } catch { this.setStatus("The browser did not allow reading the clipboard here: paste with Ctrl+V"); }
     });
-    cmd("edit.undo", "Edit: Undo", () => { const v = V(); if (v) this.afterUndo(v, v.buf.doUndo()); });
-    cmd("edit.redo", "Edit: Redo", () => { const v = V(); if (v) this.afterUndo(v, v.buf.doRedo()); });
+    cmd("edit.undo", "Edit: Undo", () => { for (const v of listOf(this.view())) this.afterUndo(v, v.buf.doUndo()); });
+    cmd("edit.redo", "Edit: Redo", () => { for (const v of listOf(this.view())) this.afterUndo(v, v.buf.doRedo()); });
     cmd("palette.commands", "Command Palette", () => this.prompt.palette(">"));
     cmd("palette.files", "Open File…", () => this.prompt.palette(""));
     cmd("palette.buffers", "Switch Buffer…", () => this.prompt.palette("#"));
@@ -1632,7 +1654,7 @@ export class App {
     cmd("view.nextSplit", "View: Next Split", () => { const ps = panesOf(this.layoutTree); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
     cmd("view.prevSplit", "View: Previous Split", () => { const ps = panesOf(this.layoutTree); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
     cmd("view.closeTab", "View: Close Tab", () => { const p = P(); for (const v of p.shown) this.closeTab(p, v); });
-    cmd("view.keepOpen", "View: Keep Tab Open (preview tab)", () => { const v = V(); if (v) this.keep(v); });
+    cmd("view.keepOpen", "View: Keep Tab Open (preview tab)", () => { for (const v of listOf(this.view())) this.keep(v); });
     cmd("settings.previewTabs", "Settings: Toggle Preview Tabs", toggle("preview_tabs"));
     // Zoom: the editor's and the terminals' text, a tenth at a time.
     const zoom = (z) => {
@@ -1669,8 +1691,8 @@ export class App {
     cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of panesOf(this.layoutTree)) await this.closeTabs(p, (_x, _i) => true); });
     cmd("view.nextTab", "View: Next Tab", () => this.cycleTab(1));
     cmd("view.prevTab", "View: Previous Tab", () => this.cycleTab(-1));
-    cmd("view.toggleWrap", "View: Toggle Line Wrap (Current Buffer)", () => { const v = V(); if (v) { v.opts.wrap = !v.opts.wrap; P().scheduleRender(); } });
-    cmd("view.toggleLineNumbers", "View: Toggle Line Numbers (Current Buffer)", () => { const v = V(); if (v) { v.opts.lineNumbers = !v.opts.lineNumbers; P().scheduleRender(); } });
+    cmd("view.toggleWrap", "View: Toggle Line Wrap (Current Buffer)", () => { for (const v of listOf(this.view())) { v.opts.wrap = !v.opts.wrap; P().scheduleRender(); } });
+    cmd("view.toggleLineNumbers", "View: Toggle Line Numbers (Current Buffer)", () => { for (const v of listOf(this.view())) { v.opts.lineNumbers = !v.opts.lineNumbers; P().scheduleRender(); } });
     cmd("view.toggleCurrentLine", "View: Toggle Current Line Highlight", toggle("highlight_current_line"));
     cmd("view.toggleOccurrences", "View: Toggle Occurrence Highlight", toggle("highlight_occurrences"));
     cmd("view.toggleWhitespace", "View: Toggle Whitespace Indicators", toggle("show_whitespace"));
@@ -1704,8 +1726,8 @@ export class App {
 
     // Motion and selection: nothing to do without a view.
     // Commands on the active view (nothing without one); a motion's is hidden.
-    function vcmd(id, title, f) { commands.set(id, { title, run: asCommand(() => (V() ? f() : undefined)), source: "core", hidden: false }); }
-    function mv(id, title, f) { commands.set(id, { title, run: asCommand(() => (V() ? f() : undefined)), source: "core", hidden: true }); }
+    function vcmd(id, title, f) { commands.set(id, { title, run: asCommand(() => (hasView() ? f() : undefined)), source: "core", hidden: false }); }
+    function mv(id, title, f) { commands.set(id, { title, run: asCommand(() => (hasView() ? f() : undefined)), source: "core", hidden: true }); }
     mv("cursor.left", "Left", () => ed().left(P(), false)); mv("cursor.right", "Right", () => ed().right(P(), false));
     mv("select.left", "Select Left", () => ed().left(P(), true)); mv("select.right", "Select Right", () => ed().right(P(), true));
     mv("cursor.wordLeft", "Word Left", () => ed().left(P(), false, true)); mv("cursor.wordRight", "Word Right", () => ed().right(P(), false, true));
@@ -1714,8 +1736,8 @@ export class App {
     mv("select.up", "Select Up", () => ed().vertical(P(), -1, true)); mv("select.down", "Select Down", () => ed().vertical(P(), 1, true));
     mv("cursor.home", "Line Start", () => ed().home(P(), false)); mv("cursor.end", "Line End", () => ed().end(P(), false));
     mv("select.home", "Select to Line Start", () => ed().home(P(), true)); mv("select.end", "Select to Line End", () => ed().end(P(), true));
-    mv("cursor.docStart", "Document Start", () => { for (const v of listOf(V())) this.pushHistory(v, v.primary.pos); return this.gotoByte(0, false); });
-    mv("cursor.docEnd", "Document End", () => { for (const v of listOf(V())) this.pushHistory(v, v.primary.pos); return this.gotoByte(V().buf.len, false); });
+    mv("cursor.docStart", "Document Start", () => { for (const v of listOf(this.view())) this.pushHistory(v, v.primary.pos); return this.gotoByte(0, false); });
+    mv("cursor.docEnd", "Document End", () => { for (const v of listOf(this.view())) this.pushHistory(v, v.primary.pos); return this.gotoByte(V().buf.len, false); });
     mv("select.docStart", "Select to Document Start", () => this.gotoByte(0, true));
     mv("select.docEnd", "Select to Document End", () => this.gotoByte(V().buf.len, true));
     mv("cursor.pageUp", "Page Up", page(-1, false)); mv("cursor.pageDown", "Page Down", page(1, false));
@@ -1727,7 +1749,7 @@ export class App {
     vcmd("cursor.matchingBracket", "Go to Matching Bracket", () => ed().matchingBracket(P()));
     vcmd("cursor.addAbove", "Add Cursor Above", () => addCursorVertical(P(), -1));
     vcmd("cursor.addBelow", "Add Cursor Below", () => addCursorVertical(P(), 1));
-    cmd("select.all", "Select All", () => { const v = V(); if (v) { v.cursors = [selecting(v.buf.len, 0)]; P().scheduleRender(); } });
+    cmd("select.all", "Select All", () => { for (const v of listOf(this.view())) { v.cursors = [selecting(v.buf.len, 0)]; P().scheduleRender(); } });
     vcmd("select.line", "Select Line", () => selectLine(P()));
     vcmd("select.nextOccurrence", "Select Next Occurrence", () => ed().selectNextOccurrence(P()));
     vcmd("select.allOccurrences", "Select All Occurrences", () => ed().selectAllOccurrences(P()));
@@ -1745,7 +1767,7 @@ export class App {
     mv("edit.deleteWordForward", "Delete Word Forward", mutate(() => ed().del(P(), true)));
     mv("edit.indent", "Indent", mutate(() => ed().indent(P(), 1)));
     mv("edit.dedent", "Dedent", mutate(() => ed().indent(P(), -1)));
-    mv("edit.escape", "Escape", () => { const v = V(); if (!v) return; v.cursors = [v.primary]; v.primary.anchor = null; this.hidePopup(); this.host.emit("escape"); P().scheduleRender(); });
+    mv("edit.escape", "Escape", () => { for (const v of listOf(this.view())) { v.cursors = [v.primary]; v.primary.anchor = none(); } hidePopup(); this.host.emit("escape"); P().scheduleRender(); });
     cmd("edit.deleteLine", "Delete Line", mutate(() => ed().deleteLine(P())));
     cmd("edit.duplicateLine", "Duplicate Line", mutate(() => ed().duplicateLine(P())));
     cmd("edit.moveLineUp", "Move Line Up", mutate(() => ed().moveLines(P(), -1)));
@@ -1761,7 +1783,7 @@ export class App {
     vcmd("fold.all", "Fold All", () => foldAll(P()));
     vcmd("fold.none", "Unfold All", () => unfoldAll(P()));
     // Emacs: mark and kill ring.
-    mv("edit.setMark", "Set Mark", () => { const v = V(); v.primary.anchor = v.primary.pos; this.setStatus("Mark set"); });
+    mv("edit.setMark", "Set Mark", () => { const v = V(); v.primary.anchor = some(v.primary.pos); this.setStatus("Mark set"); });
     mv("edit.killLine", "Kill Line", mutate(() => {
       const v = V();
       const ln = lineAt(v.buf, v.primary.pos);
@@ -1775,7 +1797,7 @@ export class App {
       this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? "");
       ed().replace(P(), (c) => (c === V().primary ? { ...s, text: "" } : null));
     }));
-    mv("edit.copyRegion", "Copy Region", () => { for (const s of listOf(V().selection())) { this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? ""); V().primary.anchor = null; P().scheduleRender(); } });
+    mv("edit.copyRegion", "Copy Region", () => { for (const s of listOf(V().selection())) { this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? ""); V().primary.anchor = none(); P().scheduleRender(); } });
     mv("edit.yank", "Yank", mutate(() => { for (const text of this.killRing.slice(0, 1)) ed().type(P(), text); }));
   }
 
@@ -1784,12 +1806,14 @@ export class App {
   // A document's language, line ending and encoding, as the server names
   // them (asked once).
   async docFormats() {
-    if (!this.formats) this.formats = await rpc("doc.formats", {});
-    return this.formats;
+    for (const f of this.formats) return f;
+    const f /*: DocFormats */ = await rpc("doc.formats", {});
+    this.formats = [f];
+    return f;
   }
   // The active view's buffer, when it is a document's (a list of at most
   // one).
-  activeFile() { const v = this.view(); return v !== null && v.buf.doc !== null ? [v.buf] : []; }
+  activeFile() { return this.activePane.shown.filter((v) => v.buf.doc !== null).map((v) => v.buf); }
   // Pick one of `choices` ({label, detail, value}): the current one is
   // marked and first selected. Resolves with the value picked (a list of at
   // most one: none when given up).
@@ -1887,26 +1911,17 @@ export class App {
       for (const f of this.hoverProviders) {
         try { const t = await f(b, p); if (t) parts.push(t); } catch {}
       }
-      if (parts.length) this.popup(parts.join("\n\n"), { x, y: y + this.metrics.lh });
+      if (parts.length) popup(parts.join("\n\n"), { x, y: y + this.metrics.lh });
     }, 600);
   }
 
-  // `text` in the popup at `at`.
-  popup(text, at) {
-    const h = $("#popup");
-    h.textContent = text;
-    h.style.left = `${Math.min(at.x, innerWidth - 420)}px`;
-    h.style.top = `${at.y}px`;
-    h.classList.remove("hidden");
-  }
   // `text` in the popup under the active view's caret.
   popupAtCaret(text) {
     const pane = this.activePane;
     const r = pane.surfaceEl.getBoundingClientRect();
     const under = pane.shown.flatMap((v) => pane.caretBox(v.primary.pos)).map((c) => ({ x: c.x, y: c.y + c.h }));
-    this.popup(text, under.at(0) ?? { x: r.left, y: r.top });
+    popup(text, under.at(0) ?? { x: r.left, y: r.top });
   }
-  hidePopup() { $("#popup").classList.add("hidden"); }
 
   // Ask a question with a few answers [{label, value}]: resolves with the
   // value of the one picked, or null when cancelled.
@@ -1942,7 +1957,6 @@ export class App {
   // tooltip names it and its key. The bar is written only when what it
   // shows changed.
   updateStatus() {
-    const v = this.view();
     const left = $("#status-left"), right = $("#status-right");
     if (!left) return;
     if (left.textContent !== this.status) left.textContent = this.status;
@@ -1950,32 +1964,32 @@ export class App {
     // A fact, its tooltip and what clicking it does (none: not clickable).
     const add = (text, title, run) => { items.push(statusFactOf(text, title, run)); };
     const cmd = (id) => () => { this.run(id, undefined); };
-    const titled = (what, id) => { const k = this.keyLabel(id); return k ? `${what} (${k})` : what; };
+    const titled = (what, id) => { const k = this.keyLabel(id); return k !== "" ? `${what} (${k})` : what; };
     // A document's facts (a terminal's tab has none).
-    if (v !== null && terminalOf(v.buf.source).length === 0) {
+    for (const v of listOf(this.view()).filter((x) => terminalOf(x.buf.source).length === 0)) {
       const b = v.buf;
-      const L = b.text;
       const c = v.primary;
-      const i = L ? L.indexOf(c.pos) : -1;
-      if (i >= 0) {
+      for (const L of listOf(b.text)) {
+        const i = L.indexOf(c.pos);
+        if (i < 0) continue;
         const col = [...L.lines[i].slice(0, byteToIdx(L.lines[i], c.pos - L.starts[i]))].length + 1;
-        add(L.firstLine != null ? `Ln ${L.firstLine + i + 1}, Col ${col}` : `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
+        add(listOf(L.firstLine).map((f) => `Ln ${f + i + 1}, Col ${col}`).at(0) ?? `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
       }
       if (v.cursors.length > 1) add(`${v.cursors.length} cursors`, titled("Remove the other cursors", "edit.escape"), cmd("edit.escape"));
       for (const r of this.macros.recording) add(`● REC ${r.register}`, titled("Recording a macro: Stop Recording Macro", "macro.stop"), cmd("macro.stop"));
       if (b.readOnly && !b.isVirtual) add("[RO]", "Read-only: click to allow editing", cmd("file.toggleReadOnly"));
       if (b.large) add("large file", "Read from disk as it is viewed; lines are counted in the background", null);
-      if (b.doc) {
-        if (b.lineEnding) add(b.lineEnding, titled("Line ending: Set Line Ending", "file.lineEnding"), cmd("file.lineEnding"));
-        if (b.encoding) add(b.encoding, titled("Encoding: Reopen or Save with Encoding", "file.encoding"), cmd("file.encoding"));
-        add(b.language || "plain text", titled("Language: Set Language", "file.language"), cmd("file.language"));
-      } else if (b.language) add(b.language, "", null);
+      if (b.doc !== null) {
+        for (const e of listOf(b.lineEnding)) add(e, titled("Line ending: Set Line Ending", "file.lineEnding"), cmd("file.lineEnding"));
+        for (const e of listOf(b.encoding)) add(e, titled("Encoding: Reopen or Save with Encoding", "file.encoding"), cmd("file.encoding"));
+        add(b.language ?? "plain text", titled("Language: Set Language", "file.language"), cmd("file.language"));
+      } else for (const l of listOf(b.language)) add(l, "", null);
       const ds = b.decor.diags;
-      if (ds.length) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
+      if (ds.length > 0) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
       if (v.mode === "compose") add("compose", titled("Markdown: Toggle Compose", "markdown.toggleCompose"), cmd("markdown.toggleCompose"));
       for (const f of b.file) add(synced(f) ? `v${f.version}` : `v${f.version}…`, "Document log version", null);
     }
-    for (const it of this.statusItems.values()) if (it.text) add(it.text, it.title, it.onClick);
+    for (const it of this.statusItems.values()) if (it.text !== "") add(it.text, it.title, it.onClick);
     add(this.hostName, "Workspace host", null);
     const sig = items.map((x) => `${x.text}\u0001${x.title || ""}\u0001${x.onClick ? 1 : 0}`).join("\u0002");
     this.statusRuns = items.map((x) => x.onClick);

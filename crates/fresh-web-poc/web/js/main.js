@@ -3,7 +3,7 @@
 // is made last, from them) and starts it with the built-in plugins.
 
 import { rpc, session } from "./rpc.js";
-import { App, loadSettings, loadUserKeys } from "./app.js";
+import { App, loadSettings, loadUserKeys, scrollToFraction, lspPosition, lspOffset } from "./app.js";
 import { Editing, selectWord, selectLine, setBlock, toggleFoldAt, wordAt, bracketPair } from "./editing.js";
 import { Terminals } from "./terminal.js";
 import { UIKit } from "./ui.js";
@@ -107,7 +107,7 @@ async function main() {
     resized: (v) => { app.viewEvent("view.resized", v); },
     updateStatus: () => { app.updateStatus(); },
     syncScroll: (pane, v) => { app.syncScroll(pane, v); },
-    scrollTo: (pane, f) => { app.scrollToFraction(pane, f); },
+    scrollTo: (pane, f) => { scrollToFraction(pane, f); },
     hover: (pane, pos, x, y) => { app.onHover(pane, pos, x, y); },
     editorMenu: (pane, at) => { app.editorMenu(pane, at); },
     tabMenu: (pane, v, at) => { app.tabMenu(pane, v, at); },
@@ -131,8 +131,8 @@ async function main() {
     moved: (v, old) => { app.cursorMoved(v, old); },
     autoClose: () => app.settings.flags.auto_close === true,
     lspAvailable: (b) => app.lspAvailable(b),
-    lspPosition: (b, pos) => app.lspPosition(b, pos),
-    lspOffset: (b, line, character) => app.lspOffset(b, line, character),
+    lspPosition: (b, pos) => lspPosition(b, pos),
+    lspOffset: (b, line, character) => lspOffset(b, line, character),
   };
   // The orchestrator: the workspace this page views (its id, root and
   // trust, and that it was closed); saying, asking and confirming; the keys

@@ -217,6 +217,9 @@ function heldList(L) { return L === null ? [] : [L]; }
 // How much text past a position is fetched when nothing else says.
 export const ENSURE_AFTER = 200;
 
+/** function noFoldRanges() => LspFold[] */
+function noFoldRanges() { return []; }
+
 export class Buffer {
   // `source`: where its text comes from (a Source).
   constructor(source) {
@@ -250,7 +253,7 @@ export class Buffer {
     this.keep = false; // stays open while no view shows it
     this.discard = false; // closing gives up its unsaved changes
     this.keepMine = false; // the next save overwrites a change on disk
-    this.foldRanges = none(); // a language server's, as line ranges
+    this.foldRanges = noFoldRanges(); // a language server's, as line ranges (none known: empty)
   }
   emit(news) { for (const f of this.listeners) f(news); }
   // Not a document: a plugin's text, or a terminal.
@@ -364,15 +367,18 @@ export class Buffer {
 
   // Undo the last step (redo: from the redo stack): the ops it undid (none
   // when there was nothing to undo).
-  doUndo(stack = this.undo, other = this.redo) {
-    const ops = stack.pop();
-    if (ops === undefined) return [];
-    this.typingRun = false;
-    const inv = this.edit(ops.map(wireOp), false, "none");
-    other.push(inv);
-    return ops;
+  doUndo() { return this.undoFrom(this.undo, this.redo); }
+  doRedo() { return this.undoFrom(this.redo, this.undo); }
+  // Undo the last edit on `stack`, its inverse going on `other`; the ops
+  // undone (none: nothing to undo).
+  undoFrom(stack, other) {
+    for (const ops of stack.splice(-1)) {
+      this.typingRun = false;
+      other.push(this.edit(ops.map(wireOp), false, "none"));
+      return ops;
+    }
+    return [];
   }
-  doRedo() { return this.doUndo(this.redo, this.undo); }
 
   // The properties of the entries at `pos` (a virtual buffer's; a file
   // has none).
@@ -535,7 +541,7 @@ export class Buffer {
     this.redo = [];
     this.text = none();
     for (const v of this.views) {
-      for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = null; }
+      for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = none(); }
       v.setTop(0, 0);
     }
     const v = [...this.views][0];
