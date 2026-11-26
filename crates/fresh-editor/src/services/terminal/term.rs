@@ -514,6 +514,14 @@ pub struct TerminalState {
     /// lifecycle, OSC 9;4 progress) — the emulator drops these, so we sniff
     /// them from the raw stream too. Drives the workspace working/idle dot.
     osc_activity: OscActivityScanner,
+    /// OSC 7577 (Program Resume): the pane's token and the resume commands
+    /// its programs reported, when the terminal offered the protocol (a
+    /// local PTY — see `TerminalManager::build_terminal`). `None` otherwise,
+    /// and then reports are not even scanned for.
+    program_resume: Option<crate::services::program_resume::ResumeTracker>,
+    /// Scanner for OSC 7577 reports in the raw stream; the emulator drops
+    /// the sequence.
+    program_resume_scanner: crate::services::program_resume::ReportScanner,
 }
 
 /// What `append_visible_screen` re-attached ahead of the first visible
@@ -643,7 +651,40 @@ impl TerminalState {
             cwd: None,
             osc7: Osc7Scanner::default(),
             osc_activity: OscActivityScanner::default(),
+            program_resume: None,
+            program_resume_scanner: Default::default(),
         }
+    }
+
+    /// Accept OSC 7577 resume reports signed with `tracker`'s token from now
+    /// on.
+    pub fn enable_program_resume(
+        &mut self,
+        tracker: crate::services::program_resume::ResumeTracker,
+    ) {
+        self.program_resume = Some(tracker);
+    }
+
+    /// Hand `command` to `pid`, the program this terminal was just started
+    /// with to resume it (see
+    /// [`crate::services::program_resume::ResumeTracker::adopt`]).
+    pub fn adopt_program_resume(
+        &mut self,
+        pid: u32,
+        command: crate::services::program_resume::ResumeCommand,
+    ) {
+        if let Some(tracker) = self.program_resume.as_mut() {
+            tracker.adopt(pid, command);
+        }
+    }
+
+    /// The command a program running in this terminal reported for resuming
+    /// it (OSC 7577), if one is still running. See
+    /// [`crate::services::program_resume::ResumeTracker::current`].
+    pub fn program_resume_command(
+        &mut self,
+    ) -> Option<crate::services::program_resume::ResumeCommand> {
+        self.program_resume.as_mut()?.current()
     }
 
     /// The terminal's current working directory as last reported by the shell
@@ -702,6 +743,18 @@ impl TerminalState {
         // Sniff activity markers (OSC 133 / OSC 9;4) out of the same raw
         // stream — the emulator discards them too.
         self.osc_activity.feed(data);
+
+        // And OSC 7577 resume reports, where this terminal offers them.
+        if let Some(tracker) = self.program_resume.as_mut() {
+            let mut reports = Vec::new();
+            self.program_resume_scanner.feed(data, &mut reports);
+            if !reports.is_empty() {
+                let now = crate::services::program_resume::unix_now();
+                for report in &reports {
+                    tracker.handle_payload(report, now);
+                }
+            }
+        }
 
         self.parser.advance(&mut self.term, data);
         // The parser may have emitted OSC title events (0/1/2) into the

@@ -2028,6 +2028,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "ターミナル内のプログラムにマウスイベントを渡す条件。`requested`（既定）: マウスを要求したプログラムのみ（全画面アプリにはホイールも渡します）。Shift+ドラッグでは引き続き選択できます。`alt_screen`: 全画面のプログラムにはすべてのイベントを渡します。",
   "settings.field.terminal.resume_agents": "エージェントを再開",
   "settings.field.terminal.resume_agents_desc": "Orchestrator のエージェントセッションを復元するとき、新しく開始せずに前回の会話を再開します（例: `claude --resume`）。既定: true",
+  "settings.field.terminal.resume_programs": "プログラムを再開",
+  "settings.field.terminal.resume_programs_desc": "ワークスペースの復元時に、各ターミナルで実行中だったプログラムが再開方法を通知していれば（OSC 7577 Program Resume プロトコル。例: セッションを開き直すエディタ）、そのプログラムを実行した状態で復元します。プログラムが終了するとシェルに戻ります。既定値: true",
   "settings.field.terminal.shell": "シェル",
   "settings.field.terminal.shell_desc": "ターミナルで使うシェル。未設定（既定）の場合は `$SHELL` またはシステムの既定を使用します。他の機能に対する `$SHELL` は変更せず、リモートやコンテナのターミナルには適用されません。",
   "settings.field.terminal.shell.args": "引数",

@@ -2035,6 +2035,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "Quand les programmes du terminal reçoivent les événements de la souris. `requested` (par défaut) : seulement les programmes qui demandent la souris (plus la molette pour les applications plein écran) ; Shift+glisser sélectionne toujours. `alt_screen` : tout programme plein écran reçoit tous les événements.",
   "settings.field.terminal.resume_agents": "Reprendre les agents",
   "settings.field.terminal.resume_agents_desc": "Lors de la restauration des sessions d'agents de l'orchestrateur, reprendre la conversation précédente (p. ex. `claude --resume`) au lieu de repartir de zéro. Par défaut : true",
+  "settings.field.terminal.resume_programs": "Reprendre les programmes",
+  "settings.field.terminal.resume_programs_desc": "À la restauration d'un espace de travail, rouvrir chaque terminal sur le programme qu'il exécutait, si celui-ci a indiqué comment le reprendre (protocole OSC 7577 Program Resume, p. ex. un éditeur qui rouvre sa session). Le shell revient quand le programme se termine. Par défaut : true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "Shell du terminal. Non défini (par défaut), `$SHELL` ou le shell par défaut du système est utilisé. Ne modifie pas `$SHELL` pour les autres fonctionnalités et ne s'applique pas aux terminaux distants ou de conteneur.",
   "settings.field.terminal.shell.args": "Arguments",

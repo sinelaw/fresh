@@ -218,6 +218,7 @@
         "shell": null,
         "skip_app_execution_alias": true,
         "resume_agents": true,
+        "resume_programs": true,
         "mouse_drag_selects": true,
         "mouse_forwarding": "requested",
         "close_on_exit": false,
@@ -1436,6 +1437,11 @@
         },
         "resume_agents": {
           "description": "When restoring Orchestrator agent sessions, resume the previous\nconversation (e.g. `claude --resume`) instead of starting clean. Default: true",
+          "type": "boolean",
+          "default": true
+        },
+        "resume_programs": {
+          "description": "When restoring a workspace, bring each terminal back running the\nprogram it was running, if that program said how to resume it (the\nOSC 7577 Program Resume protocol, e.g. an editor reopening its\nsession). The shell returns when the program quits. Default: true",
           "type": "boolean",
           "default": true
         },

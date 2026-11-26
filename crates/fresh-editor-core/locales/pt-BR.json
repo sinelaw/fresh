@@ -2035,6 +2035,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "Quando os programas no terminal recebem eventos do mouse. `requested` (padrão): só os programas que pedem o mouse (além da roda para apps de tela cheia); Shift+arrastar continua selecionando. `alt_screen`: todo programa de tela cheia recebe todos os eventos.",
   "settings.field.terminal.resume_agents": "Retomar agentes",
   "settings.field.terminal.resume_agents_desc": "Ao restaurar sessões de agentes do orquestrador, retoma a conversa anterior (ex.: `claude --resume`) em vez de começar do zero. Padrão: true",
+  "settings.field.terminal.resume_programs": "Retomar programas",
+  "settings.field.terminal.resume_programs_desc": "Ao restaurar um espaço de trabalho, trazer cada terminal de volta executando o programa que rodava nele, se ele informou como ser retomado (protocolo OSC 7577 Program Resume, p. ex. um editor que reabre sua sessão). O shell volta quando o programa termina. Padrão: true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "Shell do terminal. Não definido (padrão), usa `$SHELL` ou o padrão do sistema. Não altera `$SHELL` para outros recursos e não se aplica a terminais remotos ou de contêiner.",
   "settings.field.terminal.shell.args": "Argumentos",

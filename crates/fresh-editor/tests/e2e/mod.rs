@@ -433,6 +433,7 @@ pub mod terminal_close;
 pub mod terminal_cwd_restore;
 pub mod terminal_link;
 pub mod terminal_pane_navigation_live;
+pub mod terminal_program_resume;
 pub mod terminal_resize;
 pub mod terminal_resume_mode_after_close;
 pub mod terminal_split_focus_live;

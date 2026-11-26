@@ -867,6 +867,14 @@ pub struct SerializedTerminalWorkspace {
     /// read back as `false`, i.e. no grant, the safe direction.
     #[serde(default, skip_serializing_if = "is_false")]
     pub script_access: bool,
+    /// The command a program running in this terminal reported for resuming
+    /// it (OSC 7577, "Program Resume") — `nvim -S <session>`, `lazygit` —
+    /// still running at save time. Restore runs it in place of a bare shell
+    /// (behind `terminal.resume_programs`), and the shell comes back once it
+    /// quits. Absent when nothing in the terminal reported, and in
+    /// workspaces written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_resume: Option<crate::services::program_resume::ResumeCommand>,
 }
 
 /// `skip_serializing_if` helper: keeps the default-`false` capability flag out

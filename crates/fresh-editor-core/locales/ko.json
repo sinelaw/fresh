@@ -2028,6 +2028,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "터미널 안의 프로그램이 마우스 이벤트를 받는 경우입니다. `requested`(기본값): 마우스를 요청한 프로그램만 받으며(전체 화면 앱은 휠 포함), Shift+드래그로는 여전히 선택할 수 있습니다. `alt_screen`: 모든 전체 화면 프로그램이 모든 이벤트를 받습니다.",
   "settings.field.terminal.resume_agents": "에이전트 재개",
   "settings.field.terminal.resume_agents_desc": "오케스트레이터 에이전트 세션을 복원할 때 새로 시작하지 않고 이전 대화를 이어 갑니다(예: `claude --resume`). 기본값: true",
+  "settings.field.terminal.resume_programs": "프로그램 재개",
+  "settings.field.terminal.resume_programs_desc": "작업 공간을 복원할 때, 각 터미널에서 실행 중이던 프로그램이 재개 방법을 알렸다면(OSC 7577 Program Resume 프로토콜, 예: 세션을 다시 여는 편집기) 그 프로그램을 실행한 상태로 복원합니다. 프로그램이 종료되면 셸로 돌아옵니다. 기본값: true",
   "settings.field.terminal.shell": "셸",
   "settings.field.terminal.shell_desc": "터미널에서 사용할 셸입니다. 설정하지 않으면(기본값) `$SHELL` 또는 시스템 기본 셸을 사용합니다. 다른 기능의 `$SHELL`은 바꾸지 않으며, 원격 또는 컨테이너 터미널에는 적용되지 않습니다.",
   "settings.field.terminal.shell.args": "인수",

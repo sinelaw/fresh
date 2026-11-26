@@ -22,6 +22,8 @@ pub use fresh_editor_core::log_dirs;
 pub mod lsp;
 pub use fresh_editor_core::packages;
 pub mod plugins;
+/// OSC 7577 Program Resume: fresh as a resumable program and as a terminal host.
+pub mod program_resume;
 /// The project's file list, shared by Quick Open and project search.
 pub mod project_files;
 pub use fresh_editor_core::process_hidden;

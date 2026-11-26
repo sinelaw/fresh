@@ -3148,6 +3148,15 @@ interface TerminalConfig {
     */
     resume_agents?: boolean;
     /**
+    * When restoring a workspace, bring each terminal back running the
+    * program it was running, if that program said how to resume it (the
+    * OSC 7577 Program Resume protocol, e.g. an editor reopening its
+    * session). The shell returns when the program quits. Default: true
+    *
+    * Default: `true`
+    */
+    resume_programs?: boolean;
+    /**
     * Dragging in a terminal selects text for Ctrl+C, switching to scrollback
     * (Ctrl+Space returns). A click only focuses. Default: true
     *

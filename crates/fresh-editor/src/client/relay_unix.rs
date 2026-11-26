@@ -242,6 +242,8 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
     }
     crate::services::stderr_redirect::redirect_to_log();
+    // Back in the foreground: say again how to resume this client (OSC 7577).
+    crate::services::program_resume::refresh_resume();
 
     // Echo our current size back so the server is guaranteed to tick a
     // render (Resize always flips `needs_render`) without waiting on input.

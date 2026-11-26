@@ -1588,8 +1588,24 @@ impl Editor {
                 .iter()
                 .find(|(_, tb)| tb.terminal_id == terminal_id)
                 .map(|(&id, _)| id);
+            // A shell pane restore brought back running its program (OSC
+            // 7577): with the program gone it is that shell again.
+            let back_to_shell = window.program_resumed_terminals.remove(&terminal_id);
             Self::teardown_exited_terminal(window, terminal_id, exit_code);
-            close_buffer = buffer_id.filter(|&id| Self::closes_on_exit(window, id, terminal_id));
+            match buffer_id {
+                Some(id) if back_to_shell => {
+                    if window.restart_terminal_buffer(id).is_none() {
+                        tracing::warn!(
+                            "Could not start the shell again after terminal {}'s resumed program exited",
+                            terminal
+                        );
+                    }
+                }
+                _ => {
+                    close_buffer =
+                        buffer_id.filter(|&id| Self::closes_on_exit(window, id, terminal_id));
+                }
+            }
         }
         // The self-update terminal is where its outcome is read.
         let close_buffer =
