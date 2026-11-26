@@ -219,8 +219,10 @@ export function activate(app) {
     for (const x of info) byLine.set(x.line, x);
     d.clear();
     held(L).forEach((text, i) => {
-      const x = map ? byLine.get(map[i]) : byLine.get(i);
-      const note = x === undefined || /^0+$/.test(x.hash) ? " (not committed)" : ` ${x.author}, ${x.time} · ${x.summary}`;
+      // The line on disk it is (none: changed since), and its blame.
+      const onDisk = map === null ? [i] : found(map.get(i));
+      const x = onDisk.flatMap((k) => found(byLine.get(k)));
+      const note = x.filter((y) => !/^0+$/.test(y.hash)).map((y) => ` ${y.author}, ${y.time} · ${y.summary}`).at(0) ?? " (not committed)";
       d.inline(L.starts[i] + fresh.byteLen(text), note, { style: BLAME, side: "before", edge: true, when: "always" });
     });
     blamed.add(b.id);

@@ -95,7 +95,9 @@ function noFoldSpans() { return []; }
 /** function noMarks() => Map<Number, Mark> */
 function noMarks() { return new Map(); }
 // A diagnostic's theme key by severity (1 error … 4 hint).
-const DIAG_KEYS = ["", "diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"];
+// The theme key of a diagnostic's severity (an unknown one: an error's).
+/** function diagKey(severity: Number) => String */
+function diagKey(severity) { return ["diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"].at(severity - 1) ?? "diagnostic.error"; }
 
 // A row's HTML: its cells in runs of one style, each run a span (a run
 // of no style, key "", plain text); `fill`: the background to its edge.
@@ -491,7 +493,6 @@ export class Pane {
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
     const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, lang, synFor) : null;
-    const DIAG = ["", THEME["diagnostic.error"] ?? "", THEME["diagnostic.warning"] ?? "", THEME["diagnostic.info"] ?? "", THEME["diagnostic.hint"] ?? ""];
     const lineCache = new Map();
     const lineDecos = (li) => {
       const hit = lineCache.get(li);
@@ -526,7 +527,7 @@ export class Pane {
         }
       }
       if (brackets) for (const x of [brackets.at, brackets.match]) if (x >= ls && x < le) out.push({ s: x, e: x + 1, f: BRACKET });
-      for (const g of buf.decor.diagsIn(ls, le)) { const wavy = (DIAG.at(g.severity) ?? "") || DIAG[1]; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => withWavy(st, wavy) }); }
+      for (const g of buf.decor.diagsIn(ls, le)) { const wavy = THEME[diagKey(g.severity)] ?? ""; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => withWavy(st, wavy) }); }
       for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: SELECTED });
       out.push(...above);
       lineCache.set(li, out);
@@ -781,7 +782,7 @@ export class Pane {
     };
     for (const m of d.gutters) put(0, m.start, 1, color(m.color));
     for (const o of d.overlays) { const bg = o.style.bg; if (o.mark && bg !== null) put(1, o.start, 1, color(bg)); }
-    for (const g of d.diags) put(2, g.start, g.severity, THEME[DIAG_KEYS.at(g.severity) || "diagnostic.error"] ?? null);
+    for (const g of d.diags) put(2, g.start, g.severity, THEME[diagKey(g.severity)] ?? null);
     const els = [];
     lanes.forEach((m, lane) => {
       m.forEach((mark, y) => {

@@ -157,8 +157,10 @@ export function layout(L, d, top, maxRows, o) {
     row = newRow(li, false);
     consumed.push(li);
     let cur = li, text = L.lines[cur], i = 0, b = L.starts[cur], last = li;
-    // Where the row may break: the cell index after the last space.
-    let breakAt = -1;
+    // Where the row may break: the cell index after the last space (a
+    // list of at most one: none yet).
+    /** let breakAt: Number[] */
+    let breakAt = [];
     const fold = foldAt.get(li);
     for (;;) {
       if (i >= text.length) {
@@ -174,7 +176,7 @@ export function layout(L, d, top, maxRows, o) {
           text = L.lines[cur];
           i = byteToIdx(text, c.end - L.starts[cur]);
           b = c.end;
-          breakAt = row.cells.length;
+          breakAt = [row.cells.length];
           continue;
         }
         if (fold !== undefined) putText(" ⋯", null, FOLD_MARK);
@@ -202,14 +204,17 @@ export function layout(L, d, top, maxRows, o) {
       const ch = String.fromCodePoint(cp);
       const w = cp === 9 ? o.tab - (row.col % o.tab) : charWidth(cp);
       if (o.wrap && row.col + w > width && row.cells.some((x) => x.src != null)) {
-        if (breakAt > 0 && breakAt < row.cells.length) {
-          // Move the word that does not fit onto the next row.
-          const tail = row.cells.splice(breakAt);
+        // Move the word that does not fit onto the next row (none to move:
+        // the row just ends).
+        const at = breakAt.filter((k) => k > 0 && k < row.cells.length);
+        for (const k of at) {
+          const tail = row.cells.splice(k);
           row.col = row.cells.reduce((n, x) => n + x.w, 0);
           wrapRow(cur);
           for (const x of tail) put(x.ch, x.src, x.style, x.w);
-        } else wrapRow(cur);
-        breakAt = -1;
+        }
+        if (at.length === 0) wrapRow(cur);
+        breakAt = [];
       }
       const st = o.styleAt(b, cur, i);
       if (cp === 9) {
@@ -218,7 +223,7 @@ export function layout(L, d, top, maxRows, o) {
       } else if (cp === 32 && o.whitespace) put("·", b, WHITESPACE(st), 1);
       else put(ch, b, st, w);
       inlineAt(b, "after");
-      if (cp === 32 || cp === 9) breakAt = row.cells.length;
+      if (cp === 32 || cp === 9) breakAt = [row.cells.length];
       i += ch.length;
       b += byteLen(ch);
     }

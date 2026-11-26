@@ -64,14 +64,16 @@ function walk(a, b, edits) {
   return out;
 }
 
-// For each line of `b`, the line of `a` it is unchanged from, or -1. Null
-// when the texts differ too much to say.
-/** function mapLines(a: String[], b: String[]) => Int32Array | Null */
+// The lines of `b` unchanged from a line of `a`: b's line to a's (a line
+// changed or added is not in it). Null when the texts differ too much to
+// say.
+/** function mapLines(a: String[], b: String[]) => Map<Number, Number> | Null */
 export function mapLines(a, b) {
   const edits = diffLines(a, b);
   if (!edits) return null;
-  const map = new Int32Array(b.length).fill(-1);
-  for (const [k, _line, i, j] of walk(a, b, edits)) if (k === " ") map[j] = i;
+  /** const map: Map<Number, Number> */
+  const map = new Map();
+  for (const [k, _line, i, j] of walk(a, b, edits)) if (k === " ") map.set(j, i);
   return map;
 }
 
