@@ -17,7 +17,7 @@
 // each).
 
 import * as fresh from "../js/api.js";
-import { insOp, delOp } from "../js/api.js";
+import { insOp, delOp, listOf } from "../js/api.js";
 import * as ui from "../js/ui.js";
 
 // An inlay hint.
@@ -141,13 +141,15 @@ export function activate(app) {
   // from every running server.
   // Each language's server: running (true) or stopped (false), from the
   // server; a language not in it has none started.
-  /** let running: Map<String, Boolean> */
+  /** let running: Map<String, LspState> */
   let running = new Map();
-  /** const statusOf: (Dict<Boolean>) => Map<String, Boolean> */
+  /** const statusOf: (Dict<LspState>) => Map<String, LspState> */
   const statusOf = (d) => new Map(Object.entries(d));
+  /** const isUp: (String) => Boolean */
+  const isUp = (l) => listOf(running.get(l)).some((s) => s.kind === "running");
   const runningLanguages = async () => {
     try { running = statusOf(await fresh.lspStatus(app)); } catch { running = new Map(); }
-    return [...running].filter(([, on]) => on).map(([l]) => l).sort();
+    return [...running].filter(([, s]) => s.kind === "running").map(([l]) => l).sort();
   };
   fresh.paletteMode(app, "%", {
     hint: "workspace symbols",
@@ -400,7 +402,7 @@ export function activate(app) {
   const statusText = (b) => {
     const lang = b.language();
     if (lang === null || b.isVirtual || !fresh.lspLanguages(app).includes(lang)) return "";
-    return fresh.lspAvailable(app, b) ? `LSP ${lang}` : running.get(lang) === false ? "LSP (off)" : "";
+    return fresh.lspAvailable(app, b) ? `LSP ${lang}` : running.has(lang) ? "LSP (off)" : "";
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => { showStatus(buffer); refreshFolds(buffer); refreshHints(buffer); });
   // Its language changed: another server, or none.
@@ -411,7 +413,11 @@ export function activate(app) {
   const lspStatus = async () => {
     await runningLanguages();
     const langs = [...new Set([...fresh.lspLanguages(app), ...running.keys()])].sort();
-    const state = (l) => { const on = running.get(l); return on === true ? "running" : on === false ? "stopped" : fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started"; };
+    /** const state: (String) => String */
+    const state = (l) => {
+      for (const s of listOf(running.get(l))) return s.kind === "failed" ? `failed to start: ${s.why}` : s.kind;
+      return fresh.lspLanguages(app).includes(l) ? "available (starts with a file)" : "not started";
+    };
     if (!langs.length) { fresh.message(app, "No language server found on the host"); return; }
     fresh.pick(app, {
       title: fresh.trusted(app) ? "Language servers" : "Language servers (the workspace is restricted: trust it to start them)",
@@ -420,8 +426,8 @@ export function activate(app) {
       onAccept: async (it) => {
         if (!fresh.trusted(app)) return;
         const what = await fresh.choose(app, `${it.value} language server (${state(it.value)})`, [
-          { label: running.get(it.value) ? "Restart" : "Start", value: "restart" },
-          ...(running.get(it.value) ? [{ label: "Stop", value: "stop" }] : []),
+          { label: isUp(it.value) ? "Restart" : "Start", value: "restart" },
+          ...(isUp(it.value) ? [{ label: "Stop", value: "stop" }] : []),
         ]);
         if (what) await serverOp(what, it.value);
       },

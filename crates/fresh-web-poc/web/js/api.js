@@ -138,6 +138,9 @@ export const shown = (app, id) => app.ui.shown(id);
 export const menu = (app, items, at) => app.ui.menu(items, at);
 // Pick from a list: {title, items: [{label, detail, value}], onAccept, onChange}.
 export const pick = (app, o) => app.prompt.open(o);
+// Pick a file of the workspace, searched as it is typed: its path (a list
+// of at most one: none when given up).
+export const pickFile = (app, title) => app.prompt.pickFile(title);
 // Ask for text: {title, value} -> Promise<string|null>.
 export const input = (app, o) => app.prompt.ask(o);
 // Ask yes or no: (title, yes label) -> Promise<boolean>.

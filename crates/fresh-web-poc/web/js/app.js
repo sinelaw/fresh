@@ -161,8 +161,11 @@ function noFormats() { return []; }
 function noBytes() { return []; }
 /** function noCommands() => Map<String, Command> */
 function noCommands() { return new Map(); }
-/** function noStatus() => Dict<Boolean> */
+/** function noStatus() => Dict<LspState> */
 function noStatus() { return {}; }
+// Whether a language's server may be asked (not stopped, nor failed).
+/** function serverUp(s: LspState | Undefined) => Boolean */
+function serverUp(s) { return s === undefined || s.kind === "running"; }
 /** function noWaiting() => Map<Number, (ProcResult) => Undefined> */
 function noWaiting() { return new Map(); }
 /** function noExits() => Map<Number, ProcResult> */
@@ -310,7 +313,7 @@ export class App {
     this.hostName = ws.map((w) => w.host).at(0) ?? "";
     this.trusted = ws.some((w) => w.trusted);
     this.lspLanguages = new Set(ws.flatMap((w) => w.lsp));
-    this.lspStatus = noStatus(); // {language: running}, as `lsp.status` events say
+    this.lspStatus = noStatus(); // each language's server, as `lsp.status` events say
     this.orchestrator = c.orchestrator;
     this.skins = c.skins;
     this.editing = c.editing;
@@ -1346,7 +1349,7 @@ export class App {
       return;
     }
     if (ev.ev === "lsp.status") {
-      // A language server was stopped or restarted: {language: running}.
+      // A language server was stopped, restarted or failed to start.
       this.lspStatus = ev.status;
       this.host.emitStatus(ev.status);
       this.updateStatus();
@@ -1389,7 +1392,7 @@ export class App {
   // and not stopped (`lsp.stop`).
   lspAvailable(b) {
     const lang = b.language;
-    return b.doc !== null && lang !== null && !b.large && this.lspLanguages.has(lang) && this.lspStatus[lang] !== false;
+    return b.doc !== null && lang !== null && !b.large && this.lspLanguages.has(lang) && serverUp(this.lspStatus[lang]);
   }
 
   // ------------------------------------------------------------- input

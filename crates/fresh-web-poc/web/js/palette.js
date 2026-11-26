@@ -214,6 +214,18 @@ export class Palette {
       () => { o.onCancel(); }));
   }
 
+  // Pick a file of the workspace, found on the server as it is typed
+  // (`title` asking for it): resolves with its path (a list of at most one:
+  // none when given up).
+  pickFile(title) {
+    return new Promise((resolve) => {
+      this.show(promptSpec(title, "", "", async (q) => (await rpc("fs.find", { query: q })).files.map((f) => paletteItem(f, null, () => { resolve([f]); })),
+        (_q) => {}, (_it) => {},
+        (it, _q) => { if (!ran(it)) resolve([]); },
+        () => { resolve([]); }));
+    });
+  }
+
   // Ask for text (`o`: an AskOptions): resolves with it, or null when
   // cancelled.
   ask(o) {

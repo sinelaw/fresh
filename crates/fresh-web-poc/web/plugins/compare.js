@@ -88,13 +88,9 @@ export function activate(app) {
     mark();
   };
   const compareFiles = async () => {
-    const files = await fresh.findFiles(app, "");
-    const pick = (title) => new Promise((resolve) => fresh.pick(app, { title, value: "", items: files.map((f) => ({ label: f, detail: "", value: f })), onAccept: (it) => { resolve(it.value); }, onChange: (_it) => {}, onCancel: () => { resolve(null); } }));
-    const a = await pick("Compare: first file");
-    if (!a) return;
-    const b = await pick("Compare: second file");
-    const A = await fresh.load(app, a), B = b ? await fresh.load(app, b) : null;
-    if (A && B) open(A, B);
+    for (const a of await fresh.pickFile(app, "Compare: first file")) {
+      for (const b of await fresh.pickFile(app, "Compare: second file")) open(await fresh.load(app, a), await fresh.load(app, b));
+    }
   };
   const compareHead = async () => {
     const cur = fresh.activeBuffer(app);

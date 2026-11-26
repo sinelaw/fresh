@@ -93,7 +93,7 @@ function noPlain() { return new Map(); }
 function noBufferHandlers() { return new Map(); }
 /** function noViewHandlers() => Map<String, ((ViewHandle) => Undefined)[]> */
 function noViewHandlers() { return new Map(); }
-/** function noStatusHandlers() => ((Dict<Boolean>) => Undefined)[] */
+/** function noStatusHandlers() => ((Dict<LspState>) => Undefined)[] */
 function noStatusHandlers() { return []; }
 
 export class Host {

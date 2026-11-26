@@ -260,11 +260,39 @@ impl Drop for Server {
     }
 }
 
+/// A language's server in a workspace, once first asked for: running,
+/// stopped by the user, or failed to start (why). A stopped or failed one
+/// stays so (no file of the language starts it) until restarted.
+#[derive(Clone)]
+enum Slot {
+    Running(Arc<Server>),
+    Stopped,
+    Failed(String),
+}
+
+impl Slot {
+    fn running(&self) -> Option<Arc<Server>> {
+        match self {
+            Slot::Running(s) => Some(s.clone()),
+            Slot::Stopped | Slot::Failed(_) => None,
+        }
+    }
+
+    /// As `lsp.status` reports it (`LspState`, types/fresh.d.js).
+    fn state(&self) -> Value {
+        match self {
+            Slot::Running(_) => json!({"kind": "running"}),
+            Slot::Stopped => json!({"kind": "stopped"}),
+            Slot::Failed(why) => json!({"kind": "failed", "why": why}),
+        }
+    }
+}
+
 /// The servers, one per language, started on first use, on the
 /// workspace's host.
 pub struct Lsp {
     ws: Arc<Workspace>,
-    servers: Mutex<HashMap<String, Option<Arc<Server>>>>,
+    servers: Mutex<HashMap<String, Slot>>,
     /// The programs of [`LANGUAGES`]' servers found on the host: probed once,
     /// with one command, the first time it is asked.
     installed: OnceLock<HashSet<String>>,
@@ -326,7 +354,14 @@ impl Lsp {
                         .map(str::to_string)
                         .collect()
                 })
-                .unwrap_or_default()
+                .unwrap_or_else(|e| {
+                    // No server can be found: say why, where it is seen.
+                    eprintln!(
+                        "{}: could not look for language servers: {e}",
+                        self.ws.root.display()
+                    );
+                    HashSet::new()
+                })
         })
     }
 
@@ -357,11 +392,15 @@ impl Lsp {
         }
         let mut m = self.servers.lock().unwrap();
         if let Some(s) = m.get(language) {
-            return s.clone();
+            return s.running();
         }
-        let s = command_for(language)
-            .and_then(|cmd| Server::start(language, &cmd, &self.ws, self.on_notify.clone()).ok());
-        m.insert(language.to_string(), s.clone());
+        let cmd = command_for(language)?;
+        let slot = match Server::start(language, &cmd, &self.ws, self.on_notify.clone()) {
+            Ok(s) => Slot::Running(s),
+            Err(e) => Slot::Failed(format!("{}: {e}", cmd.join(" "))),
+        };
+        let s = slot.running();
+        m.insert(language.to_string(), slot);
         s
     }
 
@@ -372,13 +411,14 @@ impl Lsp {
             .servers
             .lock()
             .unwrap()
-            .insert(language.to_string(), None);
+            .insert(language.to_string(), Slot::Stopped);
         // Stopped on the host as it is dropped, outside the lock.
         drop(old);
     }
 
     /// Start `language`'s server again (stopping the one running): the
-    /// new one, or `None` when it is not installed or did not start.
+    /// new one, or `None` when it is not installed or did not start (its
+    /// status then says why).
     pub fn restart(&self, language: &str) -> Option<Arc<Server>> {
         let old = self.servers.lock().unwrap().remove(language);
         drop(old);
@@ -397,15 +437,15 @@ impl Lsp {
             .lock()
             .unwrap()
             .get(language)
-            .cloned()
-            .flatten()
+            .and_then(Slot::running)
     }
 
+    /// Each language's server asked for so far: running, stopped or failed.
     pub fn status(&self) -> Value {
         let m = self.servers.lock().unwrap();
         json!(m
             .iter()
-            .map(|(k, v)| (k.clone(), json!(v.is_some())))
+            .map(|(k, v)| (k.clone(), v.state()))
             .collect::<serde_json::Map<_, _>>())
     }
 }

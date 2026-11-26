@@ -71,12 +71,14 @@ function jumpedFrom() {
   try { const s = sessionStorage.getItem(JUMPED); return s === null ? null : Number(s); } catch { return null; }
 }
 // What a New Workspace folder is, as the machine's git says: being asked
-// about, not there, a folder outside git, or in a git work tree (its top).
+// about, not there, a folder outside git, in a git work tree (its top), or
+// not known (the machine could not be asked: why).
 /** type Where =
  *   | {kind: "asking"}
  *   | {kind: "missing"}
  *   | {kind: "plain"}
  *   | {kind: "repo", toplevel: String}
+ *   | {kind: "unknown", why: String}
  */
 /** const ASKING: Where */
 const ASKING = { kind: "asking" };
@@ -845,9 +847,16 @@ export class Orchestrator {
   machineChoice(choice) {
     return choice && this.machines.some((m) => `m:${m.name}` === choice) ? choice : "local";
   }
-  // The host a choice names.
+  // The host a choice names (a list of at most one: none for "Add…", or
+  // a machine no longer declared).
+  hostsOf(choice) {
+    if (choice === "local") return [localHost()];
+    return this.machines.filter((x) => `m:${x.name}` === choice).map((m) => m.host);
+  }
+  // The host a choice names; it throws when there is none.
   hostOf(choice) {
-    return this.machines.filter((x) => `m:${x.name}` === choice).map((m) => m.host).at(0) ?? localHost();
+    for (const h of this.hostsOf(choice)) return h;
+    throw new Error(`${choice.slice(2)} is not a declared machine (removed?)`);
   }
 
   // ----------------------------------------------------------- import
@@ -859,11 +868,10 @@ export class Orchestrator {
     const st = { machine: this.machineChoice(this.prefs.machine), sessions: null, error: "", busy: false };
     const panel = this.editor.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog", onClose: null });
     const scan = async () => {
-      const host = this.hostOf(st.machine);
       st.busy = true;
       st.error = "";
       render();
-      try { st.sessions = (await rpc("agents.scan", { host })).sessions; } catch (e) { st.error = failure(e); }
+      try { st.sessions = (await rpc("agents.scan", { host: this.hostOf(st.machine) })).sessions; } catch (e) { st.error = failure(e); }
       st.busy = false;
       render();
       panel.focus("sessions");
@@ -985,7 +993,9 @@ export class Orchestrator {
     const worktree = () => f.git === "worktree" && where.kind === "repo";
     const go = async (background) => {
       if (f.busy || f.machine === "add" || !f.root.trim() || where.kind === "missing") return;
-      const host = this.hostOf(f.machine);
+      const hosts = this.hostsOf(f.machine);
+      if (hosts.length === 0) { f.error = `${f.machine.slice(2)} is not a declared machine (removed?)`; render(); return; }
+      const host = hosts[0];
       // The terminal runs the prompt box's command (none: a shell); an
       // agent gets the prompt.
       const command = f.prompt.trim();
@@ -1021,7 +1031,8 @@ export class Orchestrator {
         /** let next: Where */
         let next = { kind: "missing" };
         if (path && f.machine !== "add") {
-          try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); next = whereOf({ repo: r.repo, folder: r.folder, toplevel: r.toplevel || "" }); } catch {}
+          try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); next = whereOf({ repo: r.repo, folder: r.folder, toplevel: r.toplevel || "" }); }
+          catch (e) { next = { kind: "unknown", why: failure(e) }; }
         }
         if (asked !== key) return;
         where = next;
@@ -1140,7 +1151,7 @@ export class Orchestrator {
         ...ui.INPUT,
         key: "browse-q",
         value: browse.text,
-        placeholder: `filter, or a path (/… or ~/…) on ${hostText(this.hostOf(f.machine))}`,
+        placeholder: `filter, or a path (/… or ~/…) on ${this.hostsOf(f.machine).map(hostText).at(0) ?? "the machine"}`,
         onInput: (v) => {
           browse.text = v;
           clearTimeout(browse.timer);
@@ -1191,7 +1202,7 @@ export class Orchestrator {
             key: "worktree",
             checked: worktree(),
             disabled: w.kind !== "repo",
-            title: w.kind === "repo" ? `A new git worktree of ${w.toplevel}, on a new branch` : w.kind === "asking" ? "Asking git about the folder…" : w.kind === "missing" ? "No such folder" : "The folder is not in a git work tree",
+            title: w.kind === "repo" ? `A new git worktree of ${w.toplevel}, on a new branch` : w.kind === "asking" ? "Asking git about the folder…" : w.kind === "missing" ? "No such folder" : w.kind === "unknown" ? w.why : "The folder is not in a git work tree",
             onChange: (v) => { f.git = v ? "worktree" : "folder"; render(); },
           }, "New worktree")]),
         ]),
@@ -1204,6 +1215,7 @@ export class Orchestrator {
           ui.button({ ...ui.BUTTON, onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, "Browse…"),
         ])]),
         ...(missing ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `No folder ${f.root.trim()} on ${f.machine === "local" ? "this machine" : f.machine.slice(2)}`)])] : []),
+        ...(w.kind === "unknown" && f.root.trim() !== "" ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `Could not ask about ${f.root.trim()}: ${w.why}`)])] : []),
         ...(!adding && browse.shown ? [browser()] : []),
         ...(f.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, f.error)] : []),
         ui.row(ui.BOX, [

@@ -247,6 +247,10 @@
  *   onClose: (() => Undefined) | Null,
  * } */
 
+// A language's server in the workspace: running, stopped by the user, or
+// failed to start (why); stopped and failed stay so until restarted.
+/** type LspState = {kind: "running"} | {kind: "stopped"} | {kind: "failed", why: String} */
+
 // ---------------------------------------------------------------- panel UI
 //
 // What a panel shows (ui.js): a tree of elements, each built by its
@@ -869,7 +873,7 @@
  *   | {ev: "doc.deleted", doc: Number, info: DocInfo}
  *   | {ev: "doc.reloaded", doc: Number, info: DocInfo, lost: Boolean}
  *   | {ev: "doc.changed_on_disk", doc: Number}
- *   | {ev: "lsp.status", status: Dict<Boolean>}
+ *   | {ev: "lsp.status", status: Dict<LspState>}
  *   | {ev: "workspace.added", workspace: WorkspaceEntry}
  *   | {ev: "workspace.changed", workspace: WorkspaceEntry}
  *   | {ev: "workspace.removed", workspace: Number}
