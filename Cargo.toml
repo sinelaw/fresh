@@ -152,11 +152,21 @@ ts-rs = { version = "12.0", features = ["serde_json", "no-serde-warnings"] }
 [profile.dev]
 debug = 0
 
+# Rust 1.95's debuginfo stripping can misalign the Mach-O string table
+# in proc-macro libraries, which the macOS 27 loader rejects (rust-lang/rust#157750).
+# The test profile inherits this override from dev.
+[profile.dev.build-override]
+strip = "none"
+
 [profile.release]
 debug = 0
 lto = "fat"
 codegen-units = 1
 opt-level = "z"
+
+# Keep proc macros loadable on macOS 27 in release builds and cargo install.
+[profile.release.build-override]
+strip = "none"
 
 # The profile that 'dist' will build with
 [profile.dist]
