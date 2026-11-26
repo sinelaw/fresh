@@ -6096,6 +6096,58 @@ mod tests {
     }
 
     #[test]
+    fn test_macos_command_shortcuts() {
+        for map in ["macos", "macos-gui"] {
+            let config = Config {
+                active_keybinding_map: map.into(),
+                ..Config::default()
+            };
+            let resolver = KeybindingResolver::new(&config);
+            for (key, modifiers, context, action) in [
+                (
+                    'a',
+                    KeyModifiers::SUPER,
+                    KeyContext::Normal,
+                    Action::SelectAll,
+                ),
+                (
+                    'a',
+                    KeyModifiers::SUPER,
+                    KeyContext::SearchPrompt,
+                    Action::PromptSelectAll,
+                ),
+                ('c', KeyModifiers::SUPER, KeyContext::Normal, Action::Copy),
+                (
+                    'v',
+                    KeyModifiers::SUPER,
+                    KeyContext::Prompt,
+                    Action::PromptPaste,
+                ),
+                ('s', KeyModifiers::SUPER, KeyContext::Normal, Action::Save),
+                (
+                    'z',
+                    KeyModifiers::SUPER | KeyModifiers::SHIFT,
+                    KeyContext::Normal,
+                    Action::Redo,
+                ),
+                (
+                    'a',
+                    KeyModifiers::CONTROL,
+                    KeyContext::Normal,
+                    Action::MoveLineStart,
+                ),
+            ] {
+                let event = KeyEvent::new(KeyCode::Char(key), modifiers);
+                assert_eq!(
+                    resolver.resolve(&event, context.clone()),
+                    action,
+                    "{map}: {key} with {modifiers:?} in {context:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_no_duplicate_keybindings_in_keymaps() {
         // Load all keymaps and check for duplicate bindings within the same context
         // A duplicate is when the same key+modifiers+context is defined more than once
