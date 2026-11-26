@@ -3,7 +3,7 @@
 // bindings are kept in the browser and take precedence over the defaults.
 
 import * as fresh from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 export function activate(app) {
   // The command whose new key is being recorded ("" when none).
@@ -47,27 +47,25 @@ export function activate(app) {
     if (panel) render(panel);
   };
   const render = (panel) => {
-    panel.render(h("col", {}, [
-      h("row", {}, [
-        h("input", { key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: "keys", onInput: (q) => { query = q; selected = 0; refresh(); }, onEnter: () => record(rows()[selected]) }),
-        h("text", { dim: true }, [recording !== null ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"]),
-        h("button", { onClick: () => record(rows()[selected]) }, ["Add Key"]),
-        h("button", { onClick: () => remove(rows()[selected]) }, ["Remove Mine"]),
-        h("button", { onClick: () => panel.close() }, ["Close"]),
+    panel.render(ui.col(ui.BOX, [
+      ui.row(ui.BOX, [
+        ui.input({ ...ui.INPUT, key: "q", value: query, placeholder: "Search commands or keys", grow: true, list: ["keys"], onInput: (q) => { query = q; selected = 0; refresh(); }, onEnter: () => record(rows()[selected]) }),
+        ui.text({ ...ui.TEXT, dim: true }, recording !== null ? "Press the new key (Esc cancels)…" : "Enter: add a key · Delete in the list: remove yours"),
+        ui.button({ ...ui.BUTTON, onClick: () => record(rows()[selected]) }, "Add Key"),
+        ui.button({ ...ui.BUTTON, onClick: () => remove(rows()[selected]) }, "Remove Mine"),
+        ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Close"),
       ]),
-      h("list", {
-        key: "keys",
-        items: rows(),
-        selected,
+      ui.list({
+        ...ui.listProps("keys", rows(), (r) => ui.row(ui.BOX, [
+          ui.text({ ...ui.TEXT, bold: r.custom }, r.title),
+          ui.spacer(),
+          ui.text({ ...ui.TEXT, mono: true, color: ["ui.accent_fg"] }, recording === r.id ? "…" : r.keys.join(", ")),
+          ui.text({ ...ui.TEXT, dim: true }, r.source !== "core" ? r.source : ""),
+        ])),
+        selected: [selected],
         onSelect: (_r, i) => { selected = i; },
-        render: (r) => h("row", {}, [
-          h("text", { bold: r.custom }, [r.title]),
-          h("spacer", {}),
-          h("text", { mono: true, color: "ui.accent_fg" }, [recording === r.id ? "…" : r.keys.join(", ")]),
-          h("text", { dim: true }, [r.source !== "core" ? r.source : ""]),
-        ]),
         onActivate: record,
-        onKey: (e, r) => { if (e.key === "Delete") { e.preventDefault(); remove(r); } },
+        onKey: (e, r) => { if (e.key === "Delete") { e.preventDefault(); for (const x of r) remove(x); } },
       }),
     ]));
   };

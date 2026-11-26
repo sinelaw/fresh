@@ -8,7 +8,7 @@
 // cutting, dragging and the right-click menu act on all of them.
 
 import * as fresh from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 // A row of the tree.
 /** type Row = {name: String, path: String, dir: Boolean, ignored: Boolean, depth: Number} */
@@ -160,16 +160,14 @@ export function activate(app) {
   const render = () => {
     rows = tree();
     const idx = Math.max(0, rows.findIndex((r) => r.path === sel.cursor));
-    panel.render(h("list", {
-      key: "tree",
-      items: rows,
-      selected: idx,
-      // Folders of the top row stay pinned (the UI kit's tree rows).
-      depth: (r) => r.depth,
-      marked: (r) => marked(r.path),
+    panel.render(ui.list({
       // Files the ignore rules leave out, and what is cut and not yet
       // pasted, are shown dimmed.
-      render: (r) => h("text", { mono: true, dim: r.ignored || cutPending(r) }, [" ".repeat(r.depth * 2) + (r.dir ? (open.has(r.path) ? "▾ " : "▸ ") : "  ") + r.name]),
+      ...ui.listProps("tree", rows, (r) => ui.text({ ...ui.TEXT, mono: true, dim: r.ignored || cutPending(r) }, " ".repeat(r.depth * 2) + (r.dir ? (open.has(r.path) ? "▾ " : "▸ ") : "  ") + r.name)),
+      selected: [idx],
+      // Folders of the top row stay pinned (the UI kit's tree rows).
+      depth: [(r) => r.depth],
+      marked: (r) => marked(r.path),
       // Moving onto a file with the keys, or a click on it, shows it in the
       // preview tab; Enter or a double-click opens it for good. With Shift
       // or Ctrl held, the press or key selects instead.
@@ -190,14 +188,16 @@ export function activate(app) {
       },
       activateOnClick: true,
       onContext: (r, _i, at) => menu(r, at),
-      onKey: (e, r) => key(e, r),
+      onKey: (e, r) => key(e, r.at(0)),
       // Drag a file or folder (or the selection it is in) onto a folder (or
       // a file in it, or the space below: the root) to move it there.
-      canDrop: (r, onto) => {
-        const to = dirOf(root, onto);
-        return targets(r).every((x) => to !== parentOf(x.path) && to !== x.path && !to.startsWith(x.path + "/"));
-      },
-      onDrop: (r, onto) => ops.move(targets(r), dirOf(root, onto)),
+      drop: [{
+        canDrop: (r, onto) => {
+          const to = dirOf(root, onto.at(0));
+          return targets(r).every((x) => to !== parentOf(x.path) && to !== x.path && !to.startsWith(x.path + "/"));
+        },
+        onDrop: (r, onto) => { ops.move(targets(r), dirOf(root, onto.at(0))); },
+      }],
     }));
   };
   const refresh = async () => {

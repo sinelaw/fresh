@@ -18,7 +18,7 @@
 
 import * as fresh from "../js/api.js";
 import { insOp, delOp } from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 // An inlay hint.
 /** const HINT: Style */
@@ -86,10 +86,8 @@ export function activate(app) {
       return i === 0 || r[i - 1].path !== l.path ? [{ header: true, path: l.path, range: l.range, text: "" }, row] : [row];
     });
     const refsPanel = fresh.panel(app, { id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
-    refsPanel.render(h("list", {
-      key: "refs",
-      items,
-      render: (it) => it.header ? h("text", { bold: true }, [rel(it.path)]) : h("row", {}, [h("text", { dim: true }, [`  ${it.range.start.line + 1}:${it.range.start.character + 1}`]), h("text", { mono: true }, [it.text])]),
+    refsPanel.render(ui.list({
+      ...ui.listProps("refs", items, (it) => it.header ? ui.text({ ...ui.TEXT, bold: true }, rel(it.path)) : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, dim: true }, `  ${it.range.start.line + 1}:${it.range.start.character + 1}`), ui.text({ ...ui.TEXT, mono: true }, it.text)])),
       // Selected, a reference shows in the preview tab (the keyboard stays
       // in the list); Enter or a double-click opens it for good.
       onSelect: (it) => { if (!it.header) goto(it.path, it.range, true); },
@@ -365,12 +363,10 @@ export function activate(app) {
       const rows = ds.map((d) => ({ header: false, b, d, line: lineLabel(b, d.start) }));
       return ds.length ? [{ header: true, b, d: ds[0], line: "" }, ...rows] : [];
     });
-    diagPanel.render(h("list", {
-      key: "diags",
-      items,
-      render: (it) => it.header
-        ? h("text", { bold: true }, [rel(it.b.path())])
-        : h("row", {}, [h("text", { color: it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning" }, [it.d.severity === 1 ? "  ●" : "  ▲"]), h("text", { dim: true }, [it.line]), h("text", { mono: true }, [it.d.message.split("\n")[0]])]),
+    diagPanel.render(ui.list({
+      ...ui.listProps("diags", items, (it) => it.header
+        ? ui.text({ ...ui.TEXT, bold: true }, rel(it.b.path()))
+        : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, color: [it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning"] }, it.d.severity === 1 ? "  ●" : "  ▲"), ui.text({ ...ui.TEXT, dim: true }, it.line), ui.text({ ...ui.TEXT, mono: true }, it.d.message.split("\n")[0])])),
       onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path(), { line: null, column: 1, place: "tab", preview: null, focus: true }); const v = fresh.activeView(app); if (v !== null) v.setCursor(it.d.start, { center: true }); },
     }));
   };

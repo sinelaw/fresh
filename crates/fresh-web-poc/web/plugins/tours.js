@@ -5,7 +5,7 @@
 
 import * as fresh from "../js/api.js";
 import { listOf } from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 // The step's line.
 /** const STEP: Style */
@@ -75,20 +75,18 @@ export function activate(app) {
     if (!now || !panel || !panel.open) return;
     const { tour, step } = now;
     const s = tour.steps[step];
-    panel.render(h("col", {}, [
-      h("text", { bold: true }, [tour.title || "Tour"]),
-      h("row", {}, [
-        h("button", { onClick: () => { go(step - 1); }, disabled: step === 0 }, ["◀ Previous"]),
-        h("text", { dim: true }, [`${step + 1} / ${tour.steps.length}`]),
-        h("button", { primary: true, onClick: () => { go(step + 1); }, disabled: step >= tour.steps.length - 1 }, ["Next ▶"]),
+    panel.render(ui.col(ui.BOX, [
+      ui.text({ ...ui.TEXT, bold: true }, tour.title || "Tour"),
+      ui.row(ui.BOX, [
+        ui.button({ ...ui.BUTTON, onClick: () => { go(step - 1); }, disabled: step === 0 }, "◀ Previous"),
+        ui.text({ ...ui.TEXT, dim: true }, `${step + 1} / ${tour.steps.length}`),
+        ui.button({ ...ui.BUTTON, primary: true, onClick: () => { go(step + 1); }, disabled: step >= tour.steps.length - 1 }, "Next ▶"),
       ]),
-      h("text", { bold: true }, [label(s)]),
-      h("markdown", { text: s.description || "" }),
-      h("list", {
-        key: "steps",
-        items: tour.steps.map((x, i) => ({ ...x, i })),
-        selected: step,
-        render: (x) => h("text", { mono: true }, [`${x.i + 1}. ${label(x)}`]),
+      ui.text({ ...ui.TEXT, bold: true }, label(s)),
+      ui.markdown(s.description || ""),
+      ui.list({
+        ...ui.listProps("steps", tour.steps.map((x, i) => ({ ...x, i })), (x) => ui.text({ ...ui.TEXT, mono: true }, `${x.i + 1}. ${label(x)}`)),
+        selected: [step],
         onActivate: (x) => go(x.i),
         activateOnClick: true,
       }),

@@ -31,7 +31,7 @@
 // Viewing it clears that (`workspace.seen`).
 
 import { rpc, attempt, failure } from "./rpc.js";
-import { h } from "./ui.js";
+import * as ui from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
 import { listOf, found, some, none } from "./maybe.js";
@@ -189,11 +189,11 @@ function pageLooked() { return document.visibilityState === "visible" && documen
 function pendingRow(p) {
   const failed = p.error !== "";
   const state = failed ? "failed" : "pending";
-  return h("row", { class: "orch-row" }, [
-    h("text", { class: "orch-name keep", title: p.error }, [p.name]),
-    h("text", { dim: !failed, class: failed ? "orch-why" : "", title: p.error }, [failed ? p.error : "Creating…"]),
-    h("spacer", {}),
-    h("text", { class: `orch-mark ${state}` }, [markOf(state)]),
+  return ui.row({ ...ui.BOX, class: "orch-row" }, [
+    ui.text({ ...ui.TEXT, class: "orch-name keep", title: p.error }, p.name),
+    ui.text({ ...ui.TEXT, dim: !failed, class: failed ? "orch-why" : "", title: p.error }, failed ? p.error : "Creating…"),
+    ui.spacer(),
+    ui.text({ ...ui.TEXT, class: `orch-mark ${state}` }, markOf(state)),
   ]);
 }
 
@@ -201,11 +201,11 @@ function pendingRow(p) {
 function folderRow(label, items) {
   const waiting = items.filter((w) => stateOf(w) === "waiting").length;
   const done = items.filter((w) => stateOf(w) === "done").length;
-  return h("row", { class: "orch-row orch-folder" }, [
-    h("text", { bold: true }, [label]),
-    h("spacer", {}),
-    waiting ? h("text", { class: "orch-mark waiting" }, [`● ${waiting}`]) : null,
-    done ? h("text", { class: "orch-mark done" }, [`✓ ${done}`]) : null,
+  return ui.row({ ...ui.BOX, class: "orch-row orch-folder" }, [
+    ui.text({ ...ui.TEXT, bold: true }, label),
+    ui.spacer(),
+    ...(waiting ? [ui.text({ ...ui.TEXT, class: "orch-mark waiting" }, `● ${waiting}`)] : []),
+    ...(done ? [ui.text({ ...ui.TEXT, class: "orch-mark done" }, `✓ ${done}`)] : []),
   ]);
 }
 
@@ -465,14 +465,14 @@ export class Orchestrator {
     const kind = hostKind(w);
     const st = listOf(w.status);
     const title = [w.root, w.host, w.error ?? attentionOf(w), ...listOf(w.worktree).map((t) => `worktree of ${t.repo}`)].filter((x) => x !== "").join("\n");
-    return h("row", { class: "orch-row" + (here ? " current" : "") }, [
-      h("text", { class: "orch-name", bold: here, title }, [displayName(w)]),
-      ...[branchOf(w)].filter((b) => b !== "").map((b) => h("text", { dim: true, class: "orch-branch" }, [b])),
-      ...st.filter((s) => s.modified > 0).map((s) => h("text", { class: "orch-modified", title: "Unsaved files" }, [`●${s.modified}`])),
-      h("spacer", {}),
-      ...st.filter((s) => !s.trusted).map((_s) => h("text", { class: "orch-restricted", title: "Restricted: no processes, terminals or language servers" }, ["⊘"])),
-      ...found(HOST_MARK.get(kind)).map((m) => h("text", { dim: true, title: w.host }, [m])),
-      h("text", { class: `orch-mark ${state}`, title: state }, [markOf(state)]),
+    return ui.row({ ...ui.BOX, class: "orch-row" + (here ? " current" : "") }, [
+      ui.text({ ...ui.TEXT, class: "orch-name", bold: here, title }, displayName(w)),
+      ...[branchOf(w)].filter((b) => b !== "").map((b) => ui.text({ ...ui.TEXT, dim: true, class: "orch-branch" }, b)),
+      ...st.filter((s) => s.modified > 0).map((s) => ui.text({ ...ui.TEXT, class: "orch-modified", title: "Unsaved files" }, `●${s.modified}`)),
+      ui.spacer(),
+      ...st.filter((s) => !s.trusted).map((_s) => ui.text({ ...ui.TEXT, class: "orch-restricted", title: "Restricted: no processes, terminals or language servers" }, "⊘")),
+      ...found(HOST_MARK.get(kind)).map((m) => ui.text({ ...ui.TEXT, dim: true, title: w.host }, m)),
+      ui.text({ ...ui.TEXT, class: `orch-mark ${state}`, title: state }, markOf(state)),
     ]);
   }
 
@@ -521,34 +521,39 @@ export class Orchestrator {
     const others = this.needing();
     const waiting = others.filter((w) => stateOf(w) === "waiting").length, done = others.length - waiting;
     const total = this.list.length, shown = this.list.filter((w) => this.matches(w)).length;
-    panel.render(h("col", { class: "orch-dock" }, [
-      h("row", { class: "orch-dock-head" }, [
-        h("button", { primary: true, title: "New Workspace…", onClick: () => this.newWorkspace(this.lastForm()) }, ["+ New"]),
-        h("spacer", {}),
-        h("button", { title: "View, group, folders", onClick: (e) => this.dockMenu(e.currentTarget) }, ["Menu ▾"]),
+    panel.render(ui.col({ ...ui.BOX, class: "orch-dock" }, [
+      ui.row({ ...ui.BOX, class: "orch-dock-head" }, [
+        ui.button({ ...ui.BUTTON, primary: true, title: "New Workspace…", onClick: () => this.newWorkspace(this.lastForm()) }, "+ New"),
+        ui.spacer(),
+        ui.button({ ...ui.BUTTON, title: "View, group, folders", onClick: (e) => this.dockMenu(e.currentTarget) }, "Menu ▾"),
       ]),
-      h("row", {}, [h("input", {
-        key: "q", value: this.filter, placeholder: "/ search workspaces", list: "dock",
+      ui.row(ui.BOX, [
+        ui.input({
+        ...ui.INPUT,
+        key: "q",
+        value: this.filter,
+        placeholder: "/ search workspaces",
+        list: ["dock"],
         onInput: (v) => { this.filter = v; this.renderDock(); },
         onKey: (e) => { if (e.key === "Escape" && this.filter !== "") { this.filter = ""; this.renderDock(); panel.focus("dock"); return true; } return false; },
         onEnter: () => panel.focus("dock"),
-      })]),
-      waiting || done
-        ? h("row", { class: "orch-attention-line" }, [
-          waiting ? h("text", { class: "orch-mark waiting" }, [`● ${waiting} need${waiting === 1 ? "s" : ""} you`]) : null,
-          done ? h("text", { class: "orch-mark done" }, [`✓ ${done} done`]) : null,
-        ])
-        : null,
-      this.filter.trim() ? h("text", { dim: true }, [`${shown} of ${total}`]) : null,
-      h("tree", {
-        key: "dock",
-        nodes: this.nodes(),
+      }),
+]),
+      ...(waiting || done ? [ui.row({ ...ui.BOX, class: "orch-attention-line" }, [
+          ...(waiting ? [ui.text({ ...ui.TEXT, class: "orch-mark waiting" }, `● ${waiting} need${waiting === 1 ? "s" : ""} you`)] : []),
+          ...(done ? [ui.text({ ...ui.TEXT, class: "orch-mark done" }, `✓ ${done} done`)] : []),
+        ])] : []),
+      ...(this.filter.trim() ? [ui.text({ ...ui.TEXT, dim: true }, `${shown} of ${total}`)] : []),
+      ui.tree({
+        ...ui.treeProps("dock", this.nodes()),
         onActivate: (d) => this.activate(d),
         onContext: (d, _nd, at) => this.editor.menu(this.rowMenu(d), at),
-        onKey: (e, d) => {
-          if (e.key === "/") { e.preventDefault(); panel.focus("q"); }
-          else if (d !== undefined && (e.key === "F2" || e.key === "ContextMenu")) { e.preventDefault(); this.editor.menu(this.rowMenu(d), belowSelected(e.currentTarget)); }
-          else if (d !== undefined && d.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
+        onKey: (e, sel) => {
+          if (e.key === "/") { e.preventDefault(); panel.focus("q"); return; }
+          for (const d of sel) {
+            if (e.key === "F2" || e.key === "ContextMenu") { e.preventDefault(); this.editor.menu(this.rowMenu(d), belowSelected(e.currentTarget)); }
+            else if (d.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
+          }
         },
       }),
     ]));
@@ -761,52 +766,58 @@ export class Orchestrator {
         this.prefs.lens = e.key === "1" ? "inbox" : e.key === "2" ? "board" : this.prefs.lens === "board" ? "inbox" : "board";
         this.savePrefs();
         render();
-        panel.focus(this.prefs.lens === "board" ? "" : "cards");
+        if (this.prefs.lens === "board") panel.focusFirst(); else panel.focus("cards");
         return true;
       }
       if (e.key === "n") { e.preventDefault(); panel.close(); this.jump(); return true; }
       return false;
     };
     // A workspace on the board: its state, name, and what it needs.
-    const card = (w) => h("row", { class: "orch-row" }, [
-      h("text", { class: `orch-mark ${stateOf(w)}` }, [markOf(stateOf(w))]),
-      h("text", { class: "orch-name keep", bold: w.id === this.current, title: [w.root, w.folder, branchOf(w)].filter((x) => x !== "").join(" · ") }, [displayName(w)]),
-      h("text", { class: "wb-why" }, [why(w)]),
+    const card = (w) => ui.row({ ...ui.BOX, class: "orch-row" }, [
+      ui.text({ ...ui.TEXT, class: `orch-mark ${stateOf(w)}` }, markOf(stateOf(w))),
+      ui.text({ ...ui.TEXT, class: "orch-name keep", bold: w.id === this.current, title: [w.root, w.folder, branchOf(w)].filter((x) => x !== "").join(" · ") }, displayName(w)),
+      ui.text({ ...ui.TEXT, class: "wb-why" }, why(w)),
     ]);
     const render = () => {
       const lens = this.prefs.lens === "board" ? "board" : "inbox";
       const ws = this.list;
-      const tabs = h("row", { class: "wb-lenses" }, [
-        h("toggle", { on: lens === "inbox", onChange: () => { this.prefs.lens = "inbox"; this.savePrefs(); render(); } }, ["1 Inbox"]),
-        h("toggle", { on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, ["2 Board"]),
-        h("spacer", {}),
-        h("text", { dim: true }, ["Tab: lens · Enter: open · n: next that needs you · Esc: close"]),
-        h("button", { onClick: () => panel.close() }, ["Close"]),
+      const tabs = ui.row({ ...ui.BOX, class: "wb-lenses" }, [
+        ui.toggle({ ...ui.TOGGLE, on: lens === "inbox", onChange: () => { this.prefs.lens = "inbox"; this.savePrefs(); render(); } }, "1 Inbox"),
+        ui.toggle({ ...ui.TOGGLE, on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, "2 Board"),
+        ui.spacer(),
+        ui.text({ ...ui.TEXT, dim: true }, "Tab: lens · Enter: open · n: next that needs you · Esc: close"),
+        ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Close"),
       ]);
       if (lens === "inbox") {
         const items = lenses.inbox.flatMap(([key, label]) => {
           const group = ws.filter((w) => column(w) === key);
           return group.length === 0 ? [] : [headerItem(`${label}  ${group.length}`), ...group.map(wsItem)];
         });
-        panel.render(h("col", { class: "wb" }, [tabs, h("list", {
-          key: "cards", class: "wb-list", items,
-          render: (it) => {
-            if (it.kind === "header") return h("text", { bold: true }, [it.label]);
-            return h("row", { class: "orch-row" }, [
+        panel.render(ui.col({ ...ui.BOX, class: "wb" }, [
+          tabs,
+          ui.list({
+          ...ui.listProps("cards", items, (it) => {
+            if (it.kind === "header") return ui.text({ ...ui.TEXT, bold: true }, it.label);
+            return ui.row({ ...ui.BOX, class: "orch-row" }, [
               card(it.w),
-              h("text", { dim: true }, [[it.w.folder, branchOf(it.w)].filter((x) => x !== "").join(" · ")]),
+              ui.text({ ...ui.TEXT, dim: true }, [it.w.folder, branchOf(it.w)].filter((x) => x !== "").join(" · ")),
             ]);
-          },
+          }),
+          class: "wb-list",
           onActivate: (it) => { if (it !== undefined && it.kind === "ws") this.switchTo(it.w.id); },
-        })]));
+        }),
+]));
       } else {
-        panel.render(h("col", { class: "wb" }, [tabs, h("row", { class: "wb-board" }, lenses.board.map(([key, label]) => {
+        panel.render(ui.col({ ...ui.BOX, class: "wb" }, [
+          tabs,
+          ui.row({ ...ui.BOX, class: "wb-board" },  lenses.board.map(([key, label]) => {
           const group = ws.filter((w) => column(w) === key);
-          return h("col", { class: "wb-column" }, [
-            h("text", { bold: true }, [`${label}  ${group.length}`]),
-            h("list", { key: `column-${key}`, items: group, render: card, onActivate: (w) => { if (w !== undefined) this.switchTo(w.id); } }),
+          return ui.col({ ...ui.BOX, class: "wb-column" }, [
+            ui.text({ ...ui.TEXT, bold: true }, `${label}  ${group.length}`),
+            ui.list({ ...ui.listProps(`column-${key}`, group, card), onActivate: (w) => { if (w !== undefined) this.switchTo(w.id); } }),
           ]);
-        }))]));
+        })),
+]));
       }
     };
     if (!WIRED.has(panel)) {
@@ -815,7 +826,7 @@ export class Orchestrator {
     }
     this.boards = [() => { if (panel.open) render(); }];
     render();
-    panel.focus(this.prefs.lens === "board" ? "" : "cards");
+    if (this.prefs.lens === "board") panel.focusFirst(); else panel.focus("cards");
   }
 
   // ----------------------------------------------------------- machines
@@ -868,30 +879,30 @@ export class Orchestrator {
     };
     const row = (x) => {
       const open = this.list.find((w) => w.root === x.cwd);
-      return h("row", { class: "orch-row" }, [
-        h("text", { class: "orch-agent-name" }, [x.agent]),
-        h("text", { class: "orch-name", title: x.title || "" }, [x.title || x.id]),
-        h("spacer", {}),
-        open ? h("text", { dim: true }, [`open as ${displayName(open)}`]) : null,
-        h("text", { dim: true, class: "orch-branch", title: x.cwd }, [x.cwd]),
-        h("text", { dim: true }, [ago(x.mtime)]),
+      return ui.row({ ...ui.BOX, class: "orch-row" }, [
+        ui.text({ ...ui.TEXT, class: "orch-agent-name" }, x.agent),
+        ui.text({ ...ui.TEXT, class: "orch-name", title: x.title || "" }, x.title || x.id),
+        ui.spacer(),
+        ...(open ? [ui.text({ ...ui.TEXT, dim: true }, `open as ${displayName(open)}`)] : []),
+        ui.text({ ...ui.TEXT, dim: true, class: "orch-branch", title: x.cwd }, x.cwd),
+        ui.text({ ...ui.TEXT, dim: true }, ago(x.mtime)),
       ]);
     };
     const render = () => {
       const list = st.sessions || [];
-      panel.render(h("col", { class: "orch-import" }, [
-        h("row", {}, [
-          h("text", { class: "orch-label" }, ["Machine"]),
-          h("select", { key: "machine", value: st.machine, options: this.machineOptions(false), onChange: (v) => { st.machine = v; render(); } }),
-          h("button", { primary: true, disabled: st.busy, onClick: scan }, [st.busy ? "Scanning…" : "Scan"]),
-          h("spacer", {}),
-          h("button", { onClick: () => panel.close() }, ["Cancel"]),
+      panel.render(ui.col({ ...ui.BOX, class: "orch-import" }, [
+        ui.row(ui.BOX, [
+          ui.text({ ...ui.TEXT, class: "orch-label" }, "Machine"),
+          ui.select({ key: "machine", value: st.machine, options: this.machineOptions(false), onChange: (v) => { st.machine = v; render(); } }),
+          ui.button({ ...ui.BUTTON, primary: true, disabled: st.busy, onClick: scan }, st.busy ? "Scanning…" : "Scan"),
+          ui.spacer(),
+          ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
         ]),
-        st.error ? h("text", { class: "orch-error" }, [st.error]) : null,
+        ...(st.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, st.error)] : []),
         st.sessions
-          ? h("text", { dim: true }, [list.length ? `${plural(list.length, "session")} of Claude Code and Codex, newest first · Enter opens New Workspace to resume it` : "No Claude Code or Codex sessions on this machine"])
-          : h("text", { dim: true }, ["Finds Claude Code (~/.claude/projects) and Codex (~/.codex/sessions) sessions on the machine."]),
-        h("list", { key: "sessions", class: "orch-import-list", items: list, render: row, onActivate: open }),
+          ? ui.text({ ...ui.TEXT, dim: true }, list.length ? `${plural(list.length, "session")} of Claude Code and Codex, newest first · Enter opens New Workspace to resume it` : "No Claude Code or Codex sessions on this machine")
+          : ui.text({ ...ui.TEXT, dim: true }, "Finds Claude Code (~/.claude/projects) and Codex (~/.codex/sessions) sessions on the machine."),
+        ui.list({ ...ui.listProps("sessions", list, row), class: "orch-import-list", onActivate: open }),
       ]));
     };
     render();
@@ -1099,9 +1110,9 @@ export class Orchestrator {
       FORMS.add(panel);
       panel.el.addEventListener("keydown", (e) => { if (launchKey(e)) { e.preventDefault(); for (const g of this.formGo) g(e.altKey); } });
     }
-    const labelled = (label, control) => h("row", { class: "orch-opt" }, [h("text", { dim: true }, [label]), control]);
-    const field = (label, controls) => h("row", { class: "orch-field" }, [h("text", { class: "orch-label" }, [label]), ...controls]);
-    const addInput = (key, placeholder, value, set) => h("input", { key: `add-${key}`, value, placeholder, onInput: set, onEnter: addMachine });
+    const labelled = (label, control) => ui.row({ ...ui.BOX, class: "orch-opt" }, [ui.text({ ...ui.TEXT, dim: true }, label), control]);
+    const field = (label, controls) => ui.row({ ...ui.BOX, class: "orch-field" }, [ui.text({ ...ui.TEXT, class: "orch-label" }, label), ...controls]);
+    const addInput = (key, placeholder, value, set) => ui.input({ ...ui.INPUT, key: `add-${key}`, value, placeholder, onInput: set, onEnter: addMachine });
     const machineChanged = (v) => {
       if (v === "add") add.back = f.machine;
       f.machine = v;
@@ -1110,7 +1121,7 @@ export class Orchestrator {
       if (v === "add") panel.focus("add-target");
       else checkGit();
     };
-    const addSection = () => h("col", { class: "orch-add-machine" }, [
+    const addSection = () => ui.col({ ...ui.BOX, class: "orch-add-machine" }, [
       field("SSH host", [
         addInput("target", "[user@]host, or a Host of your ~/.ssh/config", add.target, (v) => { add.target = v; }),
         addInput("port", "port (22)", add.port, (v) => { add.port = v; }),
@@ -1118,15 +1129,18 @@ export class Orchestrator {
       field("Name", [addInput("name", "optional: the host", add.name, (v) => { add.name = v; })]),
       field("Identity", [addInput("identity", "identity file (optional)", add.identity, (v) => { add.identity = v; })]),
       field("Options", [addInput("options", "more ssh options, e.g. -J jump (optional)", add.options, (v) => { add.options = v; })]),
-      add.error ? h("text", { class: "orch-error" }, [add.error]) : null,
+      ...(add.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, add.error)] : []),
       field("", [
-        h("button", { primary: true, disabled: add.busy, onClick: addMachine }, [add.busy ? "Connecting…" : "Add"]),
-        h("button", { disabled: add.busy, onClick: () => { f.machine = add.back; add.error = ""; render(); } }, ["Cancel"]),
+        ui.button({ ...ui.BUTTON, primary: true, disabled: add.busy, onClick: addMachine }, add.busy ? "Connecting…" : "Add"),
+        ui.button({ ...ui.BUTTON, disabled: add.busy, onClick: () => { f.machine = add.back; add.error = ""; render(); } }, "Cancel"),
       ]),
     ]);
-    const browser = () => h("col", { class: "orch-browse" }, [
-      h("input", {
-        key: "browse-q", value: browse.text, placeholder: `filter, or a path (/… or ~/…) on ${hostText(this.hostOf(f.machine))}`,
+    const browser = () => ui.col({ ...ui.BOX, class: "orch-browse" }, [
+      ui.input({
+        ...ui.INPUT,
+        key: "browse-q",
+        value: browse.text,
+        placeholder: `filter, or a path (/… or ~/…) on ${hostText(this.hostOf(f.machine))}`,
         onInput: (v) => {
           browse.text = v;
           clearTimeout(browse.timer);
@@ -1136,11 +1150,10 @@ export class Orchestrator {
         },
         onEnter: choose,
       }),
-      h("text", { dim: true }, [browse.error || browse.base]),
-      h("list", {
-        key: "browse-tree", class: "orch-browse-list",
-        items: [{ name: "..", path: parentOf(browse.base), depth: 0, open: false, up: true }, ...browseRows()],
-        render: (r) => h("text", { mono: true }, [r.up ? "↑ .." : `${"  ".repeat(r.depth)}${r.open ? "▾" : "▸"} ${r.name}`]),
+      ui.text({ ...ui.TEXT, dim: true }, browse.error || browse.base),
+      ui.list({
+        ...ui.listProps("browse-tree", [{ name: "..", path: parentOf(browse.base), depth: 0, open: false, up: true }, ...browseRows()], (r) => ui.text({ ...ui.TEXT, mono: true }, r.up ? "↑ .." : `${"  ".repeat(r.depth)}${r.open ? "▾" : "▸"} ${r.name}`)),
+        class: "orch-browse-list",
         onSelect: (r) => { browse.sel = r.up ? browse.base : r.path; },
         onActivate: (r, _i, how) => {
           if (r.up) { load(r.path, true); return; }
@@ -1149,11 +1162,11 @@ export class Orchestrator {
         },
         activateOnClick: true,
       }),
-      h("row", {}, [
-        h("text", { dim: true }, [`Selected: ${browse.sel || browse.base}`]),
-        h("spacer", {}),
-        h("button", { onClick: () => { browse.shown = false; render(); } }, ["Cancel"]),
-        h("button", { primary: true, onClick: choose }, ["Choose"]),
+      ui.row(ui.BOX, [
+        ui.text({ ...ui.TEXT, dim: true }, `Selected: ${browse.sel || browse.base}`),
+        ui.spacer(),
+        ui.button({ ...ui.BUTTON, onClick: () => { browse.shown = false; render(); } }, "Cancel"),
+        ui.button({ ...ui.BUTTON, primary: true, onClick: choose }, "Choose"),
       ]),
     ]);
     const render = () => {
@@ -1161,39 +1174,45 @@ export class Orchestrator {
       const adding = f.machine === "add";
       const w = where;
       const missing = w.kind === "missing" && f.root.trim() !== "";
-      panel.render(h("col", { class: "orch-form orch-prompt-form" }, [
-        h("textarea", {
-          key: "prompt", rows: 6, value: f.prompt,
+      panel.render(ui.col({ ...ui.BOX, class: "orch-form orch-prompt-form" }, [
+        ui.textarea({
+          ...ui.TEXTAREA,
+          key: "prompt",
+          rows: 6,
+          value: f.prompt,
           placeholder: agent ? `What should ${agent.label} do? (optional)` : "Command to run in the terminal… (none: a shell)",
           onInput: (v) => { f.prompt = v; },
         }),
-        h("row", { class: "orch-opts" }, [
-          labelled("Agent", h("select", { key: "agent", value: f.agent, options: AGENT_CHOICES.filter((c) => c.value !== "custom"), onChange: (v) => { f.agent = v; render(); } })),
-          labelled("Machine", h("select", { key: "machine", value: f.machine, options: this.machineOptions(true), onChange: machineChanged })),
-          adding ? null : h("checkbox", {
-            key: "worktree", checked: worktree(), disabled: w.kind !== "repo",
+        ui.row({ ...ui.BOX, class: "orch-opts" }, [
+          labelled("Agent", ui.select({ key: "agent", value: f.agent, options: AGENT_CHOICES.filter((c) => c.value !== "custom"), onChange: (v) => { f.agent = v; render(); } })),
+          labelled("Machine", ui.select({ key: "machine", value: f.machine, options: this.machineOptions(true), onChange: machineChanged })),
+          ...(adding ? [] : [ui.checkbox({
+            ...ui.CHECKBOX,
+            key: "worktree",
+            checked: worktree(),
+            disabled: w.kind !== "repo",
             title: w.kind === "repo" ? `A new git worktree of ${w.toplevel}, on a new branch` : w.kind === "asking" ? "Asking git about the folder…" : w.kind === "missing" ? "No such folder" : "The folder is not in a git work tree",
             onChange: (v) => { f.git = v ? "worktree" : "folder"; render(); },
-          }, ["New worktree"]),
+          }, "New worktree")]),
         ]),
-        adding ? addSection() : null,
-        adding ? null : field("Folder", [
-          h("row", { class: "orch-combo ui-joined" }, [
-            h("input", { key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => go(false), onKey: launchKey }),
-            h("button", { field: true, title: "Recent folders", onClick: recentMenu }, ["▾"]),
+        ...(adding ? [addSection()] : []),
+        ...(adding ? [] : [field("Folder", [
+          ui.row({ ...ui.BOX, class: "orch-combo ui-joined" }, [
+            ui.input({ ...ui.INPUT, key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => go(false), onKey: launchKey }),
+            ui.button({ ...ui.BUTTON, field: true, title: "Recent folders", onClick: recentMenu }, "▾"),
           ]),
-          h("button", { onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, ["Browse…"]),
-        ]),
-        missing ? field("", [h("text", { class: "orch-error" }, [`No folder ${f.root.trim()} on ${f.machine === "local" ? "this machine" : f.machine.slice(2)}`])]) : null,
-        !adding && browse.shown ? browser() : null,
-        f.error ? h("text", { class: "orch-error" }, [f.error]) : null,
-        h("row", {}, [
-          h("text", { dim: true }, [f.busy ? "Opening…" : "Ctrl+Enter launches · Alt+Enter in the background"]),
-          h("spacer", {}),
-          h("button", { onClick: () => panel.close() }, ["Cancel"]),
-          h("row", { class: "orch-split-button ui-joined" }, [
-            h("button", { primary: true, disabled: f.busy || adding || missing, onClick: () => go(false) }, ["Launch"]),
-            h("button", { primary: true, disabled: f.busy || adding || missing, title: "More ways to launch", onClick: launchMenu }, ["▾"]),
+          ui.button({ ...ui.BUTTON, onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, "Browse…"),
+        ])]),
+        ...(missing ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `No folder ${f.root.trim()} on ${f.machine === "local" ? "this machine" : f.machine.slice(2)}`)])] : []),
+        ...(!adding && browse.shown ? [browser()] : []),
+        ...(f.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, f.error)] : []),
+        ui.row(ui.BOX, [
+          ui.text({ ...ui.TEXT, dim: true }, f.busy ? "Opening…" : "Ctrl+Enter launches · Alt+Enter in the background"),
+          ui.spacer(),
+          ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
+          ui.row({ ...ui.BOX, class: "orch-split-button ui-joined" }, [
+            ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, onClick: () => go(false) }, "Launch"),
+            ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, title: "More ways to launch", onClick: launchMenu }, "▾"),
           ]),
         ]),
       ]));

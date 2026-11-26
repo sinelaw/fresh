@@ -31,12 +31,14 @@ const DEFAULT_FLAGS = {
   auto_close: true, auto_save: false, highlight_current_line: true, highlight_occurrences: true, show_whitespace: false,
   show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rainbow_brackets: true, scroll_sync: false,
 };
+/** const DEFAULT_SETTINGS: Settings */
 export const DEFAULT_SETTINGS = { flags: DEFAULT_FLAGS, auto_save_seconds: 30, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1 };
 // The settings' storage key (it names their shape: settings kept in
 // another shape are left alone).
 const SETTINGS_KEY = "fresh-poc:settings2";
 
 // The settings and the user's own key bindings this browser remembers.
+/** function loadSettings() => Settings */
 export function loadSettings() {
   for (const k of kept(SETTINGS_KEY)) return { ...DEFAULT_SETTINGS, ...k, flags: flagsFrom(k.flags ?? DEFAULT_FLAGS) };
   return DEFAULT_SETTINGS;
@@ -54,9 +56,11 @@ function flagsFrom(kept) {
   for (const [k, v] of Object.entries(DEFAULT_FLAGS)) flags[k] = kept[k] ?? v;
   return flags;
 }
+/** function loadUserKeys() => Dict<String> */
 export function loadUserKeys() {
+  /** let keys: Dict<String> */
   let keys = {};
-  try { keys = JSON.parse(localStorage.getItem("fresh-poc:keys") || "{}"); } catch {}
+  try { keys = JSON.parse(localStorage.getItem("fresh-poc:keys") ?? "{}"); } catch {}
   return keys;
 }
 
@@ -290,7 +294,8 @@ export class App {
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
     this.composing = false; // an input method is composing text
     this.log = [];
-    this.settings = c.settings;
+    const settings /*: Settings */ = c.settings;
+    this.settings = settings;
     this.userKeys = c.userKeys;
     // What this browser remembers of the workspace (session.js).
     this.session = c.session;

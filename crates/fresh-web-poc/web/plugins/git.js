@@ -11,7 +11,7 @@
 
 import { diffLines, mapLines, unifiedDiff } from "../js/diff.js";
 import * as fresh from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 // `path` from `root`, when it is under it.
 /** function relative(root: String, path: String | Null) => String | Null */
@@ -204,10 +204,8 @@ export function activate(app) {
     if (r.code !== 0) { fresh.message(app, r.stderr.trim() || "git log failed"); return; }
     const items = r.stdout.trim().split("\n").filter(Boolean).map((l) => { const [hash, short, author, when, subject] = l.split("\x1f"); return { hash, short, author, when, subject }; });
     const logPanel = fresh.panel(app, { id: "git-log", title: of ? `Log: ${of}` : "Git Log", place: "bottom", onClose: null });
-    logPanel.render(h("list", {
-      key: "log",
-      items,
-      render: (c) => h("row", {}, [h("text", { color: "ui.accent_fg", mono: true }, [c.short]), h("text", {}, [c.subject]), h("spacer", {}), h("text", { dim: true }, [`${c.author}, ${c.when}`])]),
+    logPanel.render(ui.list({
+      ...ui.listProps("log", items, (c) => ui.row(ui.BOX, [ui.text({ ...ui.TEXT, color: ["ui.accent_fg"], mono: true }, c.short), ui.text(ui.TEXT, c.subject), ui.spacer(), ui.text({ ...ui.TEXT, dim: true }, `${c.author}, ${c.when}`)])),
       onActivate: async (c) => {
         const s = await git(["show", "--stat", "-p", "--format=commit %H%nAuthor: %an <%ae>%nDate:   %ad%n%n    %s%n%n%b", c.hash]);
         showDiff(`${c.short} ${c.subject}`.slice(0, 40), s.stdout);

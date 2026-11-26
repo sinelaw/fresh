@@ -219,6 +219,19 @@
 /** type SavedLayout = {tree: SavedNode, active: Number, sidebar: Boolean} */
 /** type SessionData = {layout: SavedLayout | Null, recent: String[], sizes: Dict<Number>} */
 
+// The editor's settings: those on or off by name (`flags`), the auto-save
+// delay, the columns ruled, a compose view's width, the keymap, the theme
+// and the zoom.
+/** type Settings = {
+ *   flags: Dict<Boolean>,
+ *   auto_save_seconds: Number,
+ *   rulers: Number[],
+ *   page_width: Number,
+ *   keymap: String,
+ *   theme: String,
+ *   zoom: Number,
+ * } */
+
 // A cursor moved (`setCursor`, `select`): `center` scrolls it to the middle.
 /** type CursorOptions = {center: Boolean} */
 
@@ -232,6 +245,191 @@
  *   title: String,
  *   place: String,
  *   onClose: (() => Undefined) | Null,
+ * } */
+
+// ---------------------------------------------------------------- panel UI
+//
+// What a panel shows (ui.js): a tree of elements, each built by its
+// kind's function from its props, every prop given (start from the kind's
+// defaults: `button({ ...BUTTON, onClick }, "Save")`). A `key` names a
+// control across renders: its focus, caret and (a list's or a tree's)
+// selection, scroll and expansion are kept by it. A list of at most one
+// is a prop that may be absent.
+
+/** type Point = {x: Number, y: Number} */
+
+/** type BoxProps = {class: String} */
+/** type TextProps = {
+ *   class: String,
+ *   dim: Boolean,
+ *   mono: Boolean,
+ *   bold: Boolean,
+ *   color: String[],
+ *   title: String,
+ * } */
+// `field`: part of a box beside it (a ▾ for its values), drawn as the box is.
+/** type ButtonProps = {
+ *   primary: Boolean,
+ *   field: Boolean,
+ *   disabled: Boolean,
+ *   title: String,
+ *   onClick: (DomEvent<El>) => Undefined,
+ * } */
+// A compact on/off button, as in find bars: [Aa] [ab] [.*].
+/** type ToggleProps = {
+ *   key: String,
+ *   on: Boolean,
+ *   title: String,
+ *   onChange: (Boolean) => Undefined,
+ * } */
+// `onKey` true: the key is taken (nothing else happens); `list`: the list
+// the arrow keys move; `onEnter` gets the text and the key.
+/** type InputProps = {
+ *   key: String,
+ *   value: String,
+ *   placeholder: String,
+ *   grow: Boolean,
+ *   list: String[],
+ *   onInput: (String) => Undefined,
+ *   onEnter: (String, DomEvent<El>) => Undefined,
+ *   onKey: (DomEvent<El>) => Boolean,
+ * } */
+// Text of several lines (Enter is a new line), `rows` tall.
+/** type TextareaProps = {
+ *   key: String,
+ *   rows: Number,
+ *   value: String,
+ *   placeholder: String,
+ *   onInput: (String) => Undefined,
+ *   onKey: (DomEvent<El>) => Boolean,
+ * } */
+/** type CheckboxProps = {
+ *   key: String,
+ *   checked: Boolean,
+ *   disabled: Boolean,
+ *   title: String,
+ *   onChange: (Boolean) => Undefined,
+ * } */
+/** type SelectOption = {value: String, label: String} */
+/** type SelectProps = {
+ *   key: String,
+ *   value: String,
+ *   options: SelectOption[],
+ *   onChange: (String) => Undefined,
+ * } */
+
+// A list of `items` (virtualised: any number), each row drawn by `render`;
+// the keys move its selection. `how` an item was selected: "mouse" (a
+// press) or "key" (the arrows); activated: "click" (`activateOnClick`, the
+// first click of one or more), "double" or "key" (Enter); the event says
+// which modifiers were held. `header` rows are skipped by the keys;
+// `marked` rows are in a multiple selection (drawn as selected). A tree's
+// rows (`depth` given) keep the rows of the folders holding the top
+// visible row pinned at the top. `onKey` gets the selected item (none in
+// an empty list). `drop`: rows can be dragged onto rows (or empty space
+// below them: none).
+/** type ListDrop<T> = {canDrop: (T, T[]) => Boolean, onDrop: (T, T[]) => Undefined} */
+/** type ListProps<T> = {
+ *   key: String,
+ *   class: String,
+ *   items: T[],
+ *   render: (T, Number) => UINode,
+ *   selected: Number[],
+ *   activateOnClick: Boolean,
+ *   depth: ((T) => Number)[],
+ *   header: (T) => Boolean,
+ *   marked: (T) => Boolean,
+ *   onSelect: (T, Number, String, DomEvent<El>) => Undefined,
+ *   onActivate: (T, Number, String, DomEvent<El>) => Undefined,
+ *   onContext: (T, Number, Point) => Undefined,
+ *   onKey: (DomEvent<El>, T[], Number) => Undefined,
+ *   drop: ListDrop<T>[],
+ * } */
+// A list as ui.js draws it: its rows by index (`count` of them).
+/** type RowDrop = {
+ *   canDrop: (Number, Number[]) => Boolean,
+ *   onDrop: (Number, Number[]) => Undefined,
+ * } */
+/** type Rows = {
+ *   key: String,
+ *   class: String,
+ *   count: Number,
+ *   row: (Number) => UINode,
+ *   selected: Number[],
+ *   activateOnClick: Boolean,
+ *   depth: ((Number) => Number)[],
+ *   header: (Number) => Boolean,
+ *   marked: (Number) => Boolean,
+ *   onSelect: (Number, String, DomEvent<El>) => Undefined,
+ *   onActivate: (Number, String, DomEvent<El>) => Undefined,
+ *   onContext: (Number, Point) => Undefined,
+ *   onKey: (DomEvent<El>, Number) => Undefined,
+ *   drop: RowDrop[],
+ * } */
+
+// A tree of nodes holding the plugin's `data` (a leaf has no children, a
+// folder may have none; `open` at first); which are open is kept by id.
+/** type TreeNode<D> = {
+ *   id: String,
+ *   label: UINode,
+ *   children: TreeNode<D>[],
+ *   open: Boolean,
+ *   leaf: Boolean,
+ *   data: D,
+ * } */
+/** type TreeProps<D> = {
+ *   key: String,
+ *   nodes: TreeNode<D>[],
+ *   onActivate: (D, TreeNode<D>) => Undefined,
+ *   onSelect: (D, TreeNode<D>) => Undefined,
+ *   onContext: (D, TreeNode<D>, Point) => Undefined,
+ *   onKey: (DomEvent<El>, D[]) => Undefined,
+ * } */
+// A tree as ui.js draws it: each node with what it does.
+/** type Branch = {
+ *   id: String,
+ *   label: UINode,
+ *   children: Branch[],
+ *   open: Boolean,
+ *   leaf: Boolean,
+ *   activate: () => Undefined,
+ *   select: () => Undefined,
+ *   context: (Point) => Undefined,
+ *   key: (DomEvent<El>) => Undefined,
+ * } */
+
+/** type UINode =
+ *   | {kind: "row", props: BoxProps, children: UINode[]}
+ *   | {kind: "col", props: BoxProps, children: UINode[]}
+ *   | {kind: "spacer"}
+ *   | {kind: "text", props: TextProps, text: String}
+ *   | {kind: "markdown", text: String}
+ *   | {kind: "button", props: ButtonProps, label: String}
+ *   | {kind: "toggle", props: ToggleProps, label: String}
+ *   | {kind: "checkbox", props: CheckboxProps, label: String}
+ *   | {kind: "input", props: InputProps}
+ *   | {kind: "textarea", props: TextareaProps}
+ *   | {kind: "select", props: SelectProps}
+ *   | {kind: "list", rows: Rows}
+ *   | {kind: "tree", key: String, nodes: Branch[], none: (DomEvent<El>) => Undefined} */
+
+// What the UI kit asks of the editor (ui.js): the keyboard back to it,
+// and its panes redrawn (the dock took or gave room).
+/** type UIKitEditor = {focus: () => Undefined, redraw: () => Undefined} */
+
+// A button in a panel's head: its icon, tooltip and what it does.
+/** type PanelAction = {icon: String, title: String, run: () => Undefined} */
+// A panel (`fresh.ui.panel`): `render` shows a tree of elements in it;
+// `focus` gives the keyboard to the control keyed `key`, `focusFirst` to
+// its first control; `open` while it is on screen.
+/** type UIPanel = {
+ *   render: (UINode) => Undefined,
+ *   focus: (String) => Undefined,
+ *   focusFirst: () => Undefined,
+ *   actions: (PanelAction[]) => Undefined,
+ *   close: () => Undefined,
+ *   show: () => Undefined,
+ *   open: Boolean,
  * } */
 
 // ---------------------------------------------------------------- buffers

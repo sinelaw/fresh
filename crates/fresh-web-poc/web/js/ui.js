@@ -2,11 +2,11 @@
 //
 // A plugin asks for a panel in a place — the sidebar, the bottom dock, a
 // column beside the editor, a bar above it, or a dialog — and renders a
-// declarative tree into it, built with `h(type, props, children)`:
+// tree of elements into it, each made by its kind's function:
 //
-//   panel.render(h("col", {}, [
-//     h("input", {key: "q", value: q, placeholder: "Search", onInput: (v) => ...}),
-//     h("list", {key: "hits", items, render: (it) => it.text, onActivate: (it) => ...}),
+//   panel.render(col(BOX, [
+//     input({ ...INPUT, key: "q", value: q, placeholder: "Search", onInput: (v) => ... }),
+//     list({ ...listProps("hits", items, (it, _i) => text(TEXT, it.text)), onActivate: (it, _i, _how, _e) => ... }),
 //   ]));
 //
 // Controls are real DOM controls, so focus, text editing, IME and
@@ -19,10 +19,114 @@ import { listOf, found } from "./maybe.js";
 import { color } from "./highlight.js";
 import { makeMenu, menuSpec } from "./menu.js";
 
-// `children` is one array of nodes and strings; arrays in it are
-// flattened, and null and false left out (for conditional parts).
-export function h(type, props, children = []) {
-  return { type, props: props || {}, children: children.flat().filter((c) => c != null && c !== false) };
+// ---------------------------------------------------------------- elements
+//
+// A panel's elements (types/fresh.d.js `UINode`), each made from its
+// kind's props. The defaults are each kind's props when nothing is said;
+// an element says what differs: `button({ ...BUTTON, onClick }, "Save")`.
+// A part shown only sometimes is spread in: `...(error ? [text(TEXT, error)] : [])`.
+
+/** const BOX: BoxProps */
+export const BOX = { class: "" };
+/** const TEXT: TextProps */
+export const TEXT = { class: "", dim: false, mono: false, bold: false, color: [], title: "" };
+/** const BUTTON: {primary: Boolean, field: Boolean, disabled: Boolean, title: String} */
+export const BUTTON = { primary: false, field: false, disabled: false, title: "" };
+/** const TOGGLE: {title: String} */
+export const TOGGLE = { title: "" };
+/** const INPUT: {
+ *   placeholder: String,
+ *   grow: Boolean,
+ *   list: String[],
+ *   onInput: (String) => Undefined,
+ *   onEnter: (String, DomEvent<El>) => Undefined,
+ *   onKey: (DomEvent<El>) => Boolean,
+ * } */
+export const INPUT = { placeholder: "", grow: false, list: [], onInput: (_v) => {}, onEnter: (_v, _e) => {}, onKey: (_e) => false };
+/** const TEXTAREA: {rows: Number, placeholder: String, onKey: (DomEvent<El>) => Boolean} */
+export const TEXTAREA = { rows: 4, placeholder: "", onKey: (_e) => false };
+/** const CHECKBOX: {disabled: Boolean, title: String} */
+export const CHECKBOX = { disabled: false, title: "" };
+
+/** function row(p: BoxProps, children: UINode[]) => UINode */
+export function row(p, children) { return { kind: "row", props: p, children }; }
+/** function col(p: BoxProps, children: UINode[]) => UINode */
+export function col(p, children) { return { kind: "col", props: p, children }; }
+// Room between: it takes what the row has left.
+/** function spacer() => UINode */
+export function spacer() { return { kind: "spacer" }; }
+/** function text(p: TextProps, s: String) => UINode */
+export function text(p, s) { return { kind: "text", props: p, text: s }; }
+// Markdown (`markdownHtml`): a tour step's description.
+/** function markdown(s: String) => UINode */
+export function markdown(s) { return { kind: "markdown", text: s }; }
+/** function button(p: ButtonProps, label: String) => UINode */
+export function button(p, label) { return { kind: "button", props: p, label }; }
+/** function toggle(p: ToggleProps, label: String) => UINode */
+export function toggle(p, label) { return { kind: "toggle", props: p, label }; }
+/** function checkbox(p: CheckboxProps, label: String) => UINode */
+export function checkbox(p, label) { return { kind: "checkbox", props: p, label }; }
+/** function input(p: InputProps) => UINode */
+export function input(p) { return { kind: "input", props: p }; }
+/** function textarea(p: TextareaProps) => UINode */
+export function textarea(p) { return { kind: "textarea", props: p }; }
+/** function select(p: SelectProps) => UINode */
+export function select(p) { return { kind: "select", props: p }; }
+
+// A list's props when nothing more is said: nothing selected, no rows
+// headers or marked, a row doing nothing when pressed.
+/** function listProps<T>(key: String, items: T[], render: (T, Number) => UINode) => ListProps<T> */
+export function listProps(key, items, render) {
+  return {
+    key, class: "", items, render, selected: [], activateOnClick: false, depth: [],
+    header: (_it) => false, marked: (_it) => false,
+    onSelect: (_it, _i, _how, _e) => {}, onActivate: (_it, _i, _how, _e) => {},
+    onContext: (_it, _i, _at) => {}, onKey: (_e, _it, _i) => {}, drop: [],
+  };
+}
+// A list's rows by index: what each does with its item.
+/** function rowsOf<T>(p: ListProps<T>) => Rows */
+function rowsOf(p) {
+  const items = p.items;
+  return {
+    key: p.key, class: p.class, count: items.length,
+    row: (i) => p.render(items[i], i),
+    selected: p.selected, activateOnClick: p.activateOnClick,
+    depth: p.depth.map((depth) => (i) => depth(items[i])),
+    header: (i) => p.header(items[i]),
+    marked: (i) => p.marked(items[i]),
+    onSelect: (i, how, e) => { p.onSelect(items[i], i, how, e); },
+    onActivate: (i, how, e) => { p.onActivate(items[i], i, how, e); },
+    onContext: (i, at) => { p.onContext(items[i], i, at); },
+    onKey: (e, i) => { p.onKey(e, items.slice(i, i + 1), i); },
+    drop: p.drop.map((d) => ({
+      canDrop: (i, onto) => d.canDrop(items[i], onto.map((j) => items[j])),
+      onDrop: (i, onto) => { d.onDrop(items[i], onto.map((j) => items[j])); },
+    })),
+  };
+}
+/** function list<T>(p: ListProps<T>) => UINode */
+export function list(p) { return { kind: "list", rows: rowsOf(p) }; }
+
+// A tree's props when nothing more is said: its nodes doing nothing.
+/** function treeProps<D>(key: String, nodes: TreeNode<D>[]) => TreeProps<D> */
+export function treeProps(key, nodes) {
+  return { key, nodes, onActivate: (_d, _nd) => {}, onSelect: (_d, _nd) => {}, onContext: (_d, _nd, _at) => {}, onKey: (_e, _d) => {} };
+}
+// A tree's node with what it does.
+/** function branchOf<D>(p: TreeProps<D>, nd: TreeNode<D>) => Branch */
+function branchOf(p, nd) {
+  return {
+    id: nd.id, label: nd.label, children: nd.children.map((c) => branchOf(p, c)), open: nd.open, leaf: nd.leaf,
+    activate: () => { p.onActivate(nd.data, nd); },
+    select: () => { p.onSelect(nd.data, nd); },
+    context: (at) => { p.onContext(nd.data, nd, at); },
+    key: (e) => { p.onKey(e, [nd.data]); },
+  };
+}
+/** function tree<D>(p: TreeProps<D>) => UINode */
+export function tree(p) {
+  return { kind: "tree", key: p.key, nodes: p.nodes.map((nd) => branchOf(p, nd)), none: (e) => { p.onKey(e, []); } };
 }
 
 const ROW_H = 22;
@@ -31,7 +135,8 @@ export class UIKit {
   // `editor` (main.js): focus back to the editor, and redraw its panes
   // (the dock took or gave room).
   constructor(editor) {
-    this.editor = editor;
+    const port /*: UIKitEditor */ = editor;
+    this.editor = port;
     this.panels = new Map();
     this.dock = $("#dock");
     this.dockTabs = this.dock.querySelector(".dock-tabs");
@@ -124,7 +229,7 @@ export class UIKit {
       const t = document.createElement("div");
       t.className = "tab" + (this.activeDock.includes(p) ? " active" : "");
       t.textContent = p.title;
-      t.onmousedown = (e) => { e.preventDefault(); this.dockShow([p]); p.focus(); };
+      t.onmousedown = (e) => { e.preventDefault(); this.dockShow([p]); p.focusFirst(); };
       const x = document.createElement("span");
       x.className = "x";
       x.textContent = "×";
@@ -141,6 +246,10 @@ export class UIKit {
 function noLists() { return new Map(); }
 /** function noExpanded() => Map<String, Set<String>> */
 function noExpanded() { return new Map(); }
+/** function noMovers() => Map<String, (Number, DomEvent<El>) => Undefined> */
+function noMovers() { return new Map(); }
+/** function noTree() => UINode[] */
+function noTree() { return []; }
 /** function noIds() => Set<String> */
 function noIds() { return new Set(); }
 
@@ -154,9 +263,9 @@ class Panel {
     // Per-key control state: a list's selection and scroll, how the arrow
     // keys move it, and a tree's expanded nodes.
     this.lists = noLists();
-    this.movers = new Map();
+    this.movers = noMovers();
     this.expanded = noExpanded();
-    this.tree = null;
+    this.shownTree = noTree(); // the tree shown: a list of at most one
     this.el = document.createElement("div");
     this.el.className = `panel panel-${place}`;
     this.el.tabIndex = -1;
@@ -246,332 +355,359 @@ class Panel {
     within(head, ".x").before(box);
   }
 
+  // The keyboard to the control keyed `key`, or to the first control.
   focus(key) {
-    const el = key ? this.body.querySelector(`[data-key="${CSS.escape(key)}"]`) : this.body.querySelector("input, select, button, .list");
-    (el || this.el).focus();
+    for (const el of listOf(this.body.querySelector(`[data-key="${CSS.escape(key)}"]`))) el.focus();
+  }
+  focusFirst() {
+    for (const el of [...listOf(this.body.querySelector("input, select, button, .ui-list")), this.el].slice(0, 1)) el.focus();
   }
 
   render(tree) {
-    this.tree = tree;
+    this.shownTree = [tree];
     const had = focusIn(this.body);
-    this.body.innerHTML = "";
-    this.body.appendChild(this.build(tree));
+    this.body.replaceChildren(this.build(tree));
     // The keyed control that had the keyboard has it again, its selection
     // as it was.
     for (const f of had) {
-      const el = this.body.querySelector(`[data-key="${CSS.escape(f.key)}"]`);
-      if (el === null) continue;
-      el.focus();
-      // (A control without a text selection refuses one.)
-      try { el.selectionStart = f.start; el.selectionEnd = f.end; } catch {}
+      for (const el of listOf(this.body.querySelector(`[data-key="${CSS.escape(f.key)}"]`))) {
+        el.focus();
+        // (A control without a text selection refuses one.)
+        try { el.selectionStart = f.start; el.selectionEnd = f.end; } catch {}
+      }
     }
   }
 
+  /** function build(n: UINode) => El */
   build(n) {
-    if (typeof n === "string" || typeof n === "number") return document.createTextNode(String(n));
-    const p = n.props;
-    const kids = (el) => { for (const c of n.children) el.appendChild(this.build(c)); return el; };
-    let el;
-    if (n.type === "row" || n.type === "col" || n.type === "box") {
-      el = kids(div(`ui-${n.type}`));
-    } else if (n.type === "text") {
-      el = kids(document.createElement("span"));
-      el.className = "ui-text" + (p.dim ? " dim" : "") + (p.mono ? " mono" : "") + (p.bold ? " bold" : "");
-      // A theme key ("syntax.type") or a CSS colour.
-      if (p.color) el.style.color = color(p.color) ?? p.color;
-      if (p.title) el.title = p.title;
-    } else if (n.type === "badge") {
-      el = kids(div("ui-badge"));
-      if (p.color) el.style.background = color(p.color) ?? p.color;
-    } else if (n.type === "input") {
-      el = document.createElement("input");
-      el.className = "ui-input";
-      el.value = p.value ?? "";
-      el.placeholder = p.placeholder || "";
-      el.setAttribute("spellcheck", "false");
-      el.oninput = () => p.onInput?.(el.value);
-      el.onkeydown = (e) => {
-        if (p.onKey && p.onKey(e) === true) { e.preventDefault(); return; }
-        if (e.key === "Enter") { e.preventDefault(); p.onEnter?.(el.value, e); }
-        if ((e.key === "ArrowDown" || e.key === "ArrowUp") && p.list) {
-          e.preventDefault();
-          this.listMove(p.list, e.key === "ArrowDown" ? 1 : -1);
-        }
-      };
-    } else if (n.type === "textarea") {
-      // Text of several lines (Enter is a new line); `rows` tall.
-      el = document.createElement("textarea");
-      el.className = "ui-textarea";
-      el.setAttribute("rows", String(p.rows || 4));
-      el.value = p.value ?? "";
-      el.placeholder = p.placeholder || "";
-      el.oninput = () => p.onInput?.(el.value);
-      el.onkeydown = (e) => { if (p.onKey && p.onKey(e) === true) e.preventDefault(); };
-    } else if (n.type === "button") {
-      el = kids(document.createElement("button"));
-      // A `field` button is part of a box beside it (a ▾ for its values):
-      // drawn as the box is, not as a button.
-      el.className = p.field ? "ui-field-button" : "ui-button" + (p.primary ? " primary" : "");
-      el.disabled = !!p.disabled;
-      el.title = p.title || "";
-      el.onclick = (e) => p.onClick?.(e);
-    } else if (n.type === "toggle") {
-      // A compact on/off button, as in find bars: [Aa] [ab] [.*]
-      el = kids(document.createElement("button"));
-      el.className = "ui-toggle" + (p.on ? " on" : "");
-      el.title = p.title || "";
-      el.onclick = () => p.onChange?.(!p.on);
-    } else if (n.type === "checkbox") {
-      el = document.createElement("label");
-      el.className = "ui-check";
-      const c = document.createElement("input");
-      c.type = "checkbox";
-      c.checked = !!p.checked;
-      c.disabled = !!p.disabled;
-      if (p.disabled) el.classList.add("disabled");
-      if (p.title) el.title = p.title;
-      c.onchange = () => p.onChange?.(c.checked);
-      el.append(c);
-      for (const x of n.children) el.append(this.build(x));
-    } else if (n.type === "select") {
-      el = document.createElement("select");
-      el.className = "ui-select";
-      for (const o of p.options || []) {
-        const op = document.createElement("option");
-        op.value = o.value;
-        op.textContent = o.label ?? o.value;
-        op.disabled = !!o.disabled;
-        el.appendChild(op);
-      }
-      el.value = p.value;
-      el.onchange = () => p.onChange?.(el.value);
-    } else if (n.type === "list") {
-      el = this.list(n);
-    } else if (n.type === "tree") {
-      el = this.treeView(n);
-    } else if (n.type === "table") {
-      el = this.table(n);
-    } else if (n.type === "spacer") {
-      el = div("ui-spacer");
-    } else if (n.type === "markdown") {
-      el = div("ui-markdown");
-      el.innerHTML = markdownHtml(p.text || "");
-    } else {
-      el = kids(div(`ui-${n.type}`));
-    }
-    if (p.key) el.dataset.key = p.key;
-    if (p.class) el.classList.add(...p.class.split(" "));
-    if (p.grow) el.style.flex = "1 1 0";
+    if (n.kind === "row") return withClass(this.kids(div("ui-row"), n.children), n.props.class);
+    if (n.kind === "col") return withClass(this.kids(div("ui-col"), n.children), n.props.class);
+    if (n.kind === "spacer") return div("ui-spacer");
+    if (n.kind === "text") return textEl(n.props, n.text);
+    if (n.kind === "markdown") return markdownEl(n.text);
+    if (n.kind === "button") return buttonEl(n.props, n.label);
+    if (n.kind === "toggle") return toggleEl(n.props, n.label);
+    if (n.kind === "checkbox") return checkboxEl(n.props, n.label);
+    if (n.kind === "input") return this.inputEl(n.props);
+    if (n.kind === "textarea") return textareaEl(n.props);
+    if (n.kind === "select") return selectEl(n.props);
+    if (n.kind === "list") return this.list(n.rows);
+    return this.treeView(n.key, n.nodes, n.none);
+  }
+  kids(el, children) {
+    for (const c of children) el.appendChild(this.build(c));
     return el;
   }
 
-  // A virtualised list. State (selection, scroll) lives in the panel by key.
-  list(n) {
-    const p = n.props;
-    const key = p.key || "list";
+  inputEl(p) {
+    const el = document.createElement("input");
+    el.className = "ui-input";
+    el.dataset.key = p.key;
+    el.value = p.value;
+    el.placeholder = p.placeholder;
+    el.setAttribute("spellcheck", "false");
+    if (p.grow) el.style.flex = "1 1 0";
+    el.oninput = (_e) => { p.onInput(el.value); };
+    el.onkeydown = (e) => {
+      if (p.onKey(e)) { e.preventDefault(); return; }
+      if (e.key === "Enter") { e.preventDefault(); p.onEnter(el.value, e); }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        for (const key of p.list) { e.preventDefault(); this.listMove(key, e.key === "ArrowDown" ? 1 : -1, e); }
+      }
+    };
+    return el;
+  }
+
+  // A virtualised list: only the rows in sight are drawn. Its selection and
+  // scroll live in the panel, by key.
+  list(r) {
+    const key = r.key;
+    const n = r.count;
     const st = this.lists.get(key) ?? { sel: 0, scroll: 0 };
     this.lists.set(key, st);
-    const items = p.items || [];
     // A selection the plugin moves (the explorer following the active file)
     // is scrolled into view.
-    const moved = p.selected != null && p.selected !== st.sel;
-    if (p.selected != null) st.sel = p.selected;
-    st.sel = Math.max(0, Math.min(items.length - 1, st.sel));
-    const el = div("ui-list");
+    const moved = r.selected.some((s) => s !== st.sel);
+    for (const s of r.selected) st.sel = s;
+    st.sel = Math.max(0, Math.min(n - 1, st.sel));
+    const el = withClass(div("ui-list"), r.class);
     el.tabIndex = 0;
     el.dataset.key = key;
     const inner = div("ui-list-inner");
-    inner.style.height = `${items.length * ROW_H}px`;
+    inner.style.height = `${n * ROW_H}px`;
     el.appendChild(inner);
-    // A tree's rows (`depth` given): the rows of the folders holding the
-    // top visible row stay pinned at the top, outermost first — each
-    // ancestor of the row just under the pinned ones.
-    const ancestors = (i) => {
-      const out = [];
-      let d = p.depth(items[i]);
-      for (let k = i - 1; k >= 0 && d > 0; k--) {
-        const dk = p.depth(items[k]);
-        if (dk < d) { out.unshift(k); d = dk; }
-      }
-      return out;
-    };
-    const pinned = (top) => {
-      let chain = [];
-      if (!p.depth) return chain;
-      for (let guard = 0; guard < 64; guard++) {
-        const i = top + chain.length;
-        if (i >= items.length) break;
-        const a = ancestors(i);
-        if (a.length <= chain.length) break;
-        chain = a.slice(0, chain.length + 1);
-      }
-      return chain;
-    };
-    const row = (i, at, cls) => {
-      const it = items[i];
-      // `marked(item)`: the row is in a multiple selection the plugin
-      // keeps (drawn as selected).
-      const r = div("ui-list-row" + (i === st.sel ? " sel" : "") + (it && p.marked && p.marked(it) ? " marked" : "") + (it && it.header ? " header" : "") + cls);
-      r.style.top = `${at}px`;
-      const content = p.render ? p.render(it, i) : String(it);
-      r.appendChild(typeof content === "string" ? document.createTextNode(content) : this.build(content));
-      r.dataset.i = i;
+    /** let drawn: DrawnRow[] */
+    let drawn = []; // the rows drawn, by index
+    // A row, at `at` px; `jump` runs first when it is pressed.
+    const rowEl = (i, at, cls, jump) => {
+      const rw = div("ui-list-row" + (i === st.sel ? " sel" : "") + (r.marked(i) ? " marked" : "") + (r.header(i) ? " header" : "") + cls);
+      rw.style.top = `${at}px`;
+      rw.appendChild(this.build(r.row(i)));
       // Mark the selection in place: redrawing here would replace the row
       // under the pointer, and its click would never arrive.
-      r.onmousedown = (e) => {
+      rw.onmousedown = (e) => {
+        jump();
         e.preventDefault();
         st.sel = i;
-        for (const x of inner.children) setClass(x, "sel", +x.dataset.i === i);
+        for (const d of drawn) setClass(d.el, "sel", d.i === i);
         el.focus({ preventScroll: true });
-        // `onSelect(item, index, how, event)`: how is "mouse" (a press) or
-        // "key" (the arrows); the event says which modifiers were held.
-        p.onSelect?.(it, i, "mouse", e);
-        if (e.button === 0 && p.onDrop) dragFrom(e, it);
+        r.onSelect(i, "mouse", e);
+        if (e.button === 0) for (const d of r.drop) dragFrom(e, i, d);
       };
-      // `onActivate(item, index, how, event)`: how is "click" (with
-      // `activateOnClick`, the first click of one or more), "double" or
-      // "key" (Enter).
-      r.ondblclick = (e) => p.onActivate?.(it, i, "double", e);
-      r.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); p.onContext?.(it, i, { x: e.clientX, y: e.clientY }); };
-      if (p.activateOnClick) r.onclick = (e) => { if (e.detail <= 1) p.onActivate?.(it, i, "click", e); };
-      return r;
+      rw.ondblclick = (e) => { r.onActivate(i, "double", e); };
+      rw.oncontextmenu = (e) => { e.preventDefault(); st.sel = i; draw(); r.onContext(i, { x: e.clientX, y: e.clientY }); };
+      if (r.activateOnClick) rw.onclick = (e) => { if (e.detail <= 1) r.onActivate(i, "click", e); };
+      return { i, el: rw };
     };
-    // Dragging a row (`onDrop(item, onto)` given): past a few pixels it
-    // drags; the row under the pointer that `canDrop(item, onto)` accepts
-    // is marked `.drop-target` (empty space below the rows: the list
-    // itself, `onto` null); letting go there drops.
-    const dragFrom = (e, it) => {
+    // Dragging row `i`: past a few pixels it drags; the row under the
+    // pointer that `canDrop` accepts (or the empty space below the rows: the
+    // list itself, onto none) is marked `.drop-target`; letting go there
+    // drops.
+    const dragFrom = (e, i, d) => {
       const x0 = e.clientX, y0 = e.clientY;
-      let dragging = false, onto, ok = false;
-      const mark = (row) => { for (const x of inner.children) setClass(x, "drop-target", x === row); setClass(el, "drop-target", ok && !row); };
+      let dragging = false;
+      /** let target: DropTarget[] */
+      let target = []; // where it would drop: a list of at most one
+      const mark = () => {
+        for (const x of drawn) setClass(x.el, "drop-target", target.some((t) => t.onto.includes(x.i)));
+        setClass(el, "drop-target", target.some((t) => t.onto.length === 0));
+      };
       const move = (ev) => {
         if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
         if (!dragging) { dragging = true; el.classList.add("dragging"); }
-        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
-        const row = hit && hit.closest(".ui-list-row");
-        onto = row && inner.contains(row) ? items[+row.dataset.i] : el.contains(hit) ? null : undefined;
-        ok = onto !== undefined && (!p.canDrop || p.canDrop(it, onto));
-        mark(ok && row ? row : null);
+        const hit = listOf(document.elementFromPoint(ev.clientX, ev.clientY));
+        const under = drawn.filter((x) => hit.some((h) => x.el.contains(h)));
+        const onto = under.length > 0 ? [{ onto: under.map((x) => x.i).slice(0, 1) }] : hit.some((h) => el.contains(h)) ? [{ onto: [] }] : [];
+        target = onto.filter((t) => d.canDrop(i, t.onto));
+        mark();
       };
-      const up = () => {
+      const up = (_ev) => {
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);
         el.classList.remove("dragging");
-        mark(null);
-        el.classList.remove("drop-target");
-        if (dragging && ok) p.onDrop(it, onto);
+        const dropped = dragging ? target : [];
+        target = [];
+        mark();
+        for (const t of dropped) d.onDrop(i, t.onto);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", up);
     };
     const draw = () => {
-      const h0 = el.clientHeight || 300;
+      const h0 = el.clientHeight > 0 ? el.clientHeight : 300;
       const scroll = el.scrollTop;
       const first = Math.max(0, Math.floor(scroll / ROW_H) - 5);
-      const last = Math.min(items.length, first + Math.ceil(h0 / ROW_H) + 10);
+      const last = Math.min(n, first + Math.ceil(h0 / ROW_H) + 10);
       const rows = [];
-      for (let i = first; i < last; i++) rows.push(row(i, i * ROW_H, ""));
-      // Pinned rows go over the rows they cover. A click on one scrolls
+      for (let i = first; i < last; i++) rows.push(rowEl(i, i * ROW_H, "", () => {}));
+      // Pinned rows go over the rows they cover. A press on one scrolls
       // its folder back to where it is (under the rows pinned above it).
-      const chain = pinned(Math.floor(scroll / ROW_H));
+      const chain = r.depth.flatMap((depth) => pinnedAt(depth, n, Math.floor(scroll / ROW_H)));
       chain.forEach((i, k) => {
-        const r = row(i, scroll + k * ROW_H, " sticky" + (k === chain.length - 1 ? " last" : ""));
-        const down = r.onmousedown;
-        r.onmousedown = (e) => { el.scrollTop = (i - k) * ROW_H; down(e); };
-        rows.push(r);
+        rows.push(rowEl(i, scroll + k * ROW_H, " sticky" + (k === chain.length - 1 ? " last" : ""), () => { el.scrollTop = (i - k) * ROW_H; }));
       });
-      inner.replaceChildren(...rows);
+      drawn = rows;
+      inner.replaceChildren(...rows.map((x) => x.el));
     };
-    el.onscroll = () => { st.scroll = el.scrollTop; draw(); };
+    el.onscroll = (_e) => { st.scroll = el.scrollTop; draw(); };
     el.onkeydown = (e) => {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); this.listMove(key, e.key === "ArrowDown" ? 1 : -1, e); }
       else if (e.key === "PageDown" || e.key === "PageUp") { e.preventDefault(); this.listMove(key, (e.key === "PageDown" ? 1 : -1) * Math.floor(el.clientHeight / ROW_H), e); }
-      else if (e.key === "Enter") { e.preventDefault(); p.onActivate?.(items[st.sel], st.sel, "key", e); }
-      else p.onKey?.(e, items[st.sel], st.sel);
+      else if (e.key === "Enter") { e.preventDefault(); if (n > 0) r.onActivate(st.sel, "key", e); }
+      else r.onKey(e, st.sel);
+    };
+    // In a tree, as many rows as the selected row has ancestors may be
+    // pinned over the top.
+    const show = () => {
+      const top = st.sel * ROW_H;
+      const pin = r.depth.filter((_d) => st.sel < n).map((depth) => depth(st.sel) * ROW_H).reduce((a, b) => a + b, 0);
+      if (top - pin < el.scrollTop) el.scrollTop = Math.max(0, top - pin);
+      else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
     };
     this.movers.set(key, (d, e) => {
       let i = st.sel + d;
       // Skip header rows.
-      while (items[i] && items[i].header && i > 0 && i < items.length - 1) i += Math.sign(d);
-      st.sel = Math.max(0, Math.min(items.length - 1, i));
+      while (i > 0 && i < n - 1 && r.header(i)) i += Math.sign(d);
+      st.sel = Math.max(0, Math.min(n - 1, i));
       show();
       draw();
-      p.onSelect?.(items[st.sel], st.sel, "key", e);
+      if (n > 0) r.onSelect(st.sel, "key", e);
     });
-    const show = () => {
-      const top = st.sel * ROW_H;
-      // In a tree, as many rows as the row has ancestors may be pinned
-      // over the top.
-      const pin = p.depth && items[st.sel] ? p.depth(items[st.sel]) * ROW_H : 0;
-      if (top - pin < el.scrollTop) el.scrollTop = Math.max(0, top - pin);
-      else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
-    };
-    requestAnimationFrame(() => { el.scrollTop = st.scroll; if (moved) show(); draw(); });
+    requestAnimationFrame((_t) => { el.scrollTop = st.scroll; if (moved) show(); draw(); });
     draw();
     return el;
   }
 
-  // Move a list's selection `d` rows (the key `e` that moved it, if any).
+  // Move a list's selection `d` rows (the key `e` that moved it).
   listMove(key, d, e) {
     for (const move of found(this.movers.get(key))) move(d, e);
   }
 
-  // A tree: nodes {id, label, children, open, leaf, data} (a leaf has no
-  // children, a folder may have none); expansion is kept by id.
-  treeView(n) {
-    const p = n.props;
-    const key = p.key || "tree";
+  // A tree: its open folders' children shown under them; which are open is
+  // kept by id (a folder closed by hand that started open: "!" and its id).
+  treeView(key, nodes, none) {
     const open = this.expanded.get(key) ?? noIds();
     this.expanded.set(key, open);
-    const rows = [];
-    const walk = (nodes, depth, path) => {
-      nodes.forEach((nd, i) => {
-        const id = nd.id ?? `${path}/${i}`;
-        const isOpen = !nd.leaf && (open.has(id) || (nd.open && !open.has("!" + id)));
-        rows.push({ nd, depth, id, isOpen });
-        if (isOpen) walk(nd.children, depth + 1, id);
-      });
-    };
-    walk(p.nodes || [], 0, "");
-    return this.list(h("list", {
-      key,
-      items: rows,
-      depth: (r) => r.depth,
-      render: (r) => h("row", { class: "ui-tree-row" }, [
-        h("text", { class: "ui-tree-indent" }, [" ".repeat(r.depth * 2) + (r.nd.leaf ? "  " : r.isOpen ? "▾ " : "▸ ")]),
-        typeof r.nd.label === "string" ? h("text", {}, [r.nd.label]) : r.nd.label,
-      ]),
-      onActivate: (r, _i, how) => {
-        if (!r.nd.leaf) {
-          // A folder opens or closes on its first click.
-          if (how === "double") return;
-          if (r.isOpen) { open.delete(r.id); open.add("!" + r.id); } else { open.add(r.id); open.delete("!" + r.id); }
-          this.render(this.tree);
-          this.focus(key);
-        } else p.onActivate?.(r.nd.data, r.nd);
-      },
-      onSelect: (r) => p.onSelect?.(r.nd.data, r.nd),
-      onKey: (e, r) => p.onKey?.(e, r?.nd.data, r?.nd),
-      onContext: (r, _i, at) => p.onContext?.(r.nd.data, r.nd, at),
+    const shown = treeRows(nodes, open, 0);
+    return this.list(rowsOf({
+      ...listProps(key, shown, (t, _i) => row({ ...BOX, class: "ui-tree-row" }, [
+        text({ ...TEXT, class: "ui-tree-indent" }, " ".repeat(t.depth * 2) + (t.b.leaf ? "  " : t.isOpen ? "▾ " : "▸ ")),
+        t.b.label,
+      ])),
+      depth: [(t) => t.depth],
       activateOnClick: true,
+      onActivate: (t, _i, how, _e) => {
+        if (t.b.leaf) { t.b.activate(); return; }
+        // A folder opens or closes on its first click.
+        if (how === "double") return;
+        if (t.isOpen) { open.delete(t.b.id); open.add("!" + t.b.id); } else { open.add(t.b.id); open.delete("!" + t.b.id); }
+        for (const n of this.shownTree) this.render(n);
+        this.focus(key);
+      },
+      onSelect: (t, _i, _how, _e) => { t.b.select(); },
+      onKey: (e, sel, _i) => { if (sel.length === 0) none(e); for (const t of sel) t.b.key(e); },
+      onContext: (t, _i, at) => { t.b.context(at); },
     }));
   }
+}
 
-  table(n) {
-    const p = n.props;
-    const t = document.createElement("table");
-    t.className = "ui-table";
-    const head = document.createElement("tr");
-    for (const c of p.columns || []) { const th = document.createElement("th"); th.textContent = c; head.appendChild(th); }
-    t.appendChild(head);
-    (p.rows || []).forEach((r, i) => {
-      const tr = document.createElement("tr");
-      for (const c of r.cells) { const td = document.createElement("td"); td.appendChild(this.build(typeof c === "object" ? c : String(c))); tr.appendChild(td); }
-      if (p.onActivate) tr.ondblclick = () => p.onActivate(r, i);
-      t.appendChild(tr);
-    });
-    return t;
+// A list row drawn: its index and element.
+/** type DrawnRow = {i: Number, el: El} */
+// Where a dragged row would drop: onto a row, or (none) below the rows.
+/** type DropTarget = {onto: Number[]} */
+// A tree's row: its node, how deep, and whether it is open.
+/** type TreeRow = {b: Branch, depth: Number, isOpen: Boolean} */
+
+// The rows of `nodes` at `depth`, each open folder's children under it.
+/** function treeRows(nodes: Branch[], open: Set<String>, depth: Number) => TreeRow[] */
+function treeRows(nodes, open, depth) {
+  return nodes.flatMap((b) => {
+    const isOpen = !b.leaf && (open.has(b.id) || (b.open && !open.has("!" + b.id)));
+    return [{ b, depth, isOpen }, ...(isOpen ? treeRows(b.children, open, depth + 1) : [])];
+  });
+}
+
+// The rows pinned over a tree list scrolled to row `top` (of `n`, each
+// `depth(i)` deep): the folders holding the row just under the pinned
+// ones, outermost first.
+/** function pinnedAt(depth: (Number) => Number, n: Number, top: Number) => Number[] */
+function pinnedAt(depth, n, top) {
+  /** let chain: Number[] */
+  let chain = [];
+  for (let guard = 0; guard < 64; guard++) {
+    const i = top + chain.length;
+    if (i >= n) break;
+    const a = ancestorsOf(depth, i);
+    if (a.length <= chain.length) break;
+    chain = a.slice(0, chain.length + 1);
   }
+  return chain;
+}
+// The rows of the folders holding row `i`, outermost first.
+/** function ancestorsOf(depth: (Number) => Number, i: Number) => Number[] */
+function ancestorsOf(depth, i) {
+  /** const out: Number[] */
+  const out = [];
+  let d = depth(i);
+  for (let k = i - 1; k >= 0 && d > 0; k--) {
+    const dk = depth(k);
+    if (dk < d) { out.unshift(k); d = dk; }
+  }
+  return out;
+}
+
+// `el` with the classes `cls` (space-separated) added.
+/** function withClass(el: El, cls: String) => El */
+function withClass(el, cls) {
+  for (const c of cls.split(" ")) if (c !== "") el.classList.add(c);
+  return el;
+}
+
+/** function textEl(p: TextProps, s: String) => El */
+function textEl(p, s) {
+  const el = document.createElement("span");
+  el.className = "ui-text" + (p.dim ? " dim" : "") + (p.mono ? " mono" : "") + (p.bold ? " bold" : "");
+  el.textContent = s;
+  // A theme key ("syntax.type") or a CSS colour.
+  for (const c of p.color) el.style.color = color(c) ?? c;
+  el.title = p.title;
+  return withClass(el, p.class);
+}
+
+/** function markdownEl(s: String) => El */
+function markdownEl(s) {
+  const el = div("ui-markdown");
+  el.innerHTML = markdownHtml(s);
+  return el;
+}
+
+/** function buttonEl(p: ButtonProps, label: String) => El */
+function buttonEl(p, label) {
+  const el = document.createElement("button");
+  // A `field` button is part of a box beside it (a ▾ for its values):
+  // drawn as the box is, not as a button.
+  el.className = p.field ? "ui-field-button" : "ui-button" + (p.primary ? " primary" : "");
+  el.textContent = label;
+  el.disabled = p.disabled;
+  el.title = p.title;
+  el.onclick = (e) => { p.onClick(e); };
+  return el;
+}
+
+/** function toggleEl(p: ToggleProps, label: String) => El */
+function toggleEl(p, label) {
+  const el = document.createElement("button");
+  el.className = "ui-toggle" + (p.on ? " on" : "");
+  el.dataset.key = p.key;
+  el.textContent = label;
+  el.title = p.title;
+  el.onclick = (_e) => { p.onChange(!p.on); };
+  return el;
+}
+
+/** function checkboxEl(p: CheckboxProps, label: String) => El */
+function checkboxEl(p, label) {
+  const el = document.createElement("label");
+  el.className = "ui-check" + (p.disabled ? " disabled" : "");
+  el.title = p.title;
+  const c = document.createElement("input");
+  c.type = "checkbox";
+  c.dataset.key = p.key;
+  c.checked = p.checked;
+  c.disabled = p.disabled;
+  c.onchange = (_e) => { p.onChange(c.checked); };
+  el.appendChild(c);
+  el.appendChild(document.createTextNode(label));
+  return el;
+}
+
+/** function textareaEl(p: TextareaProps) => El */
+function textareaEl(p) {
+  const el = document.createElement("textarea");
+  el.className = "ui-textarea";
+  el.dataset.key = p.key;
+  el.setAttribute("rows", String(p.rows));
+  el.value = p.value;
+  el.placeholder = p.placeholder;
+  el.oninput = (_e) => { p.onInput(el.value); };
+  el.onkeydown = (e) => { if (p.onKey(e)) e.preventDefault(); };
+  return el;
+}
+
+/** function selectEl(p: SelectProps) => El */
+function selectEl(p) {
+  const el = document.createElement("select");
+  el.className = "ui-select";
+  el.dataset.key = p.key;
+  for (const o of p.options) {
+    const op = document.createElement("option");
+    op.value = o.value;
+    op.textContent = o.label;
+    el.appendChild(op);
+  }
+  el.value = p.value;
+  el.onchange = (_e) => { p.onChange(el.value); };
+  return el;
 }
 
 // Markdown as HTML, for text a plugin shows (a tour step's description):

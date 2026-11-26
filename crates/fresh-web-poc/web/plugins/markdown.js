@@ -12,7 +12,7 @@
 
 import { classify } from "../js/mdstruct.js";
 import * as fresh from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 /** const isMarkdown: (BufferHandle) => Boolean */
 const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path() || b.name());
@@ -293,14 +293,12 @@ export function activate(app) {
       });
     }
     contents.render(items.length
-      ? h("list", {
-        key: "toc",
-        items,
-        render: (it) => h("text", { bold: it.level === 1 }, ["  ".repeat(it.level - 1) + it.text]),
+      ? ui.list({
+        ...ui.listProps("toc", items, (it) => ui.text({ ...ui.TEXT, bold: it.level === 1 }, "  ".repeat(it.level - 1) + it.text)),
         onActivate: (it) => fresh.activeView(app)?.setCursor(it.pos, { center: true }),
         activateOnClick: true,
       })
-      : h("text", { dim: true }, ["No headings"]));
+      : ui.text({ ...ui.TEXT, dim: true }, "No headings"));
   };
   const showContents = () => {
     fresh.panel(app, { id: "md-contents", title: "Contents", place: "sidebar", onClose: null });

@@ -18,7 +18,7 @@
 
 import * as fresh from "../js/api.js";
 import { byteLen, listOf, insOp, delOp } from "../js/api.js";
-import { h } from "../js/ui.js";
+import * as ui from "../js/ui.js";
 
 // The searched range, the matches and the current match.
 /** const SCOPE: Style */
@@ -294,15 +294,18 @@ export function activate(app) {
 
   // The match case / whole word / regex toggles; `after` runs on a change.
   const toggles = (after) => [
-    h("toggle", { key: "case", on: opts.case, title: "Match case", onChange: (on) => { opts.case = on; after(); } }, ["Aa"]),
-    h("toggle", { key: "word", on: opts.word, title: "Whole word", onChange: (on) => { opts.word = on; after(); } }, ["ab"]),
-    h("toggle", { key: "regex", on: opts.regex, title: "Regular expression", onChange: (on) => { opts.regex = on; after(); } }, [".*"]),
+    ui.toggle({ ...ui.TOGGLE, key: "case", on: opts.case, title: "Match case", onChange: (on) => { opts.case = on; after(); } }, "Aa"),
+    ui.toggle({ ...ui.TOGGLE, key: "word", on: opts.word, title: "Whole word", onChange: (on) => { opts.word = on; after(); } }, "ab"),
+    ui.toggle({ ...ui.TOGGLE, key: "regex", on: opts.regex, title: "Regular expression", onChange: (on) => { opts.regex = on; after(); } }, ".*"),
   ];
   // Search the selection only (on: the selection now becomes the range).
   const scopeToggle = () => {
     const b = buffer();
-    return h("toggle", {
-      key: "scope", on: !!scopeOf(b), title: "Find in selection",
+    return ui.toggle({
+      ...ui.TOGGLE,
+      key: "scope",
+      on: !!scopeOf(b),
+      title: "Find in selection",
       onChange: (on) => {
         if (!b) return;
         const av = fresh.activeView(app);
@@ -312,7 +315,7 @@ export function activate(app) {
         else clearScope(b);
         update();
       },
-    }, ["⊂"]);
+    }, "⊂");
   };
   // While asking: the replace field takes y, n, a, !, q, c and Escape as
   // answers (and types nothing).
@@ -331,41 +334,49 @@ export function activate(app) {
     const count = !query ? "" : error || (b != null && !b.whole() ? "huge file: Enter searches" : matches.length ? `${current + 1} of ${matches.length}` : "no results");
     const cur = matches[current];
     const shown = q != null && cur != null ? replacementFor(cur) : "";
-    bar.render(h("col", {}, [
-      h("row", {}, [
-        h("input", {
-          key: "find", value: query, placeholder: "Find", grow: true,
+    bar.render(ui.col(ui.BOX, [
+      ui.row(ui.BOX, [
+        ui.input({
+          ...ui.INPUT,
+          key: "find",
+          value: query,
+          placeholder: "Find",
+          grow: true,
           onInput: (q) => { query = q; update(); },
-          onEnter: (_q, e) => go(e.shiftKey ? -1 : 1),
-          onKey: (e) => { if (e.key === "Escape") { close(); return true; } },
+          onEnter: (_q, e) => { go(e.shiftKey ? -1 : 1); },
+          onKey: (e) => { if (e.key !== "Escape") return false; close(); return true; },
         }),
         ...toggles(update),
         scopeToggle(),
-        h("text", { dim: true }, [count]),
-        h("button", { title: "Previous (Shift+Enter)", onClick: () => go(-1) }, ["↑"]),
-        h("button", { title: "Next (Enter)", onClick: () => go(1) }, ["↓"]),
-        h("button", { title: "Toggle replace", onClick: () => { showReplace = !showReplace; renderBar(); } }, ["⇄"]),
-        h("button", { title: "Close (Esc)", onClick: close }, ["×"]),
+        ui.text({ ...ui.TEXT, dim: true }, count),
+        ui.button({ ...ui.BUTTON, title: "Previous (Shift+Enter)", onClick: () => go(-1) }, "↑"),
+        ui.button({ ...ui.BUTTON, title: "Next (Enter)", onClick: () => go(1) }, "↓"),
+        ui.button({ ...ui.BUTTON, title: "Toggle replace", onClick: () => { showReplace = !showReplace; renderBar(); } }, "⇄"),
+        ui.button({ ...ui.BUTTON, title: "Close (Esc)", onClick: close }, "×"),
       ]),
-      showReplace ? h("row", {}, [
-        h("input", {
-          key: "replace", value: replacement, placeholder: q ? "y n a q" : "Replace", grow: true,
+      ...(showReplace ? [ui.row(ui.BOX, [
+        ui.input({
+          ...ui.INPUT,
+          key: "replace",
+          value: replacement,
+          placeholder: q ? "y n a q" : "Replace",
+          grow: true,
           onInput: (r) => { if (!q) replacement = r; },
           onEnter: () => { if (q) return; if (confirmEach) startAsking(); else replaceOne(); },
-          onKey: (e) => { if (askKey(e)) return true; if (e.key === "Escape") { close(); return true; } },
+          onKey: (e) => { if (askKey(e)) return true; if (e.key !== "Escape") return false; close(); return true; },
         }),
-        h("toggle", { key: "ask", on: confirmEach, title: "Ask at each match (Query Replace): y, n, a, q", onChange: (on) => { confirmEach = on; renderBar(); } }, ["?"]),
-        h("button", { onClick: () => (confirmEach ? startAsking() : replaceOne()), disabled: !!q }, [confirmEach ? "Replace…" : "Replace"]),
-        h("button", { onClick: replaceAll, disabled: !matches.length || !!q }, ["Replace All"]),
-      ]) : null,
-      q ? h("row", { class: "search-ask" }, [
-        h("text", {}, [`Replace with “${shown}”?`]),
-        h("button", { title: "Replace this one (y)", onClick: () => answer("y") }, ["Yes  y"]),
-        h("button", { title: "Skip this one (n)", onClick: () => answer("n") }, ["No  n"]),
-        h("button", { title: "Replace this and the rest (a, !)", onClick: () => answer("a") }, ["All  a"]),
-        h("button", { title: "Stop (q, c, Esc)", onClick: () => answer("q") }, ["Quit  q"]),
-        h("text", { dim: true }, [`${q.done} replaced`]),
-      ]) : null,
+        ui.toggle({ ...ui.TOGGLE, key: "ask", on: confirmEach, title: "Ask at each match (Query Replace): y, n, a, q", onChange: (on) => { confirmEach = on; renderBar(); } }, "?"),
+        ui.button({ ...ui.BUTTON, onClick: () => (confirmEach ? startAsking() : replaceOne()), disabled: !!q }, confirmEach ? "Replace…" : "Replace"),
+        ui.button({ ...ui.BUTTON, onClick: replaceAll, disabled: !matches.length || !!q }, "Replace All"),
+      ])] : []),
+      ...(q ? [ui.row({ ...ui.BOX, class: "search-ask" }, [
+        ui.text(ui.TEXT, `Replace with “${shown}”?`),
+        ui.button({ ...ui.BUTTON, title: "Replace this one (y)", onClick: () => answer("y") }, "Yes  y"),
+        ui.button({ ...ui.BUTTON, title: "Skip this one (n)", onClick: () => answer("n") }, "No  n"),
+        ui.button({ ...ui.BUTTON, title: "Replace this and the rest (a, !)", onClick: () => answer("a") }, "All  a"),
+        ui.button({ ...ui.BUTTON, title: "Stop (q, c, Esc)", onClick: () => answer("q") }, "Quit  q"),
+        ui.text({ ...ui.TEXT, dim: true }, `${q.done} replaced`),
+      ])] : []),
     ]));
   };
 
@@ -515,24 +526,27 @@ export function activate(app) {
     const panel = fresh.shown(app, "project-search");
     if (!panel) return;
     const status = pq.busy ? "searching…" : pq.error ? pq.error : pq.query ? `${pq.results.length}${pq.truncated ? "+" : ""} matches in ${pq.files} files` : "";
-    panel.render(h("col", {}, [
-      h("row", {}, [
-        h("input", {
-          key: "q", value: pq.query, placeholder: "Search the workspace", grow: true, list: "results",
+    panel.render(ui.col(ui.BOX, [
+      ui.row(ui.BOX, [
+        ui.input({
+          ...ui.INPUT,
+          key: "q",
+          value: pq.query,
+          placeholder: "Search the workspace",
+          grow: true,
+          list: ["results"],
           onInput: (q) => { pq.query = q; clearTimeout(timer); timer = setTimeout(() => { runSearch(); }, 250); },
           onEnter: runSearch,
         }),
         ...toggles(() => { update(); runSearch(); }),
-        h("input", { key: "r", value: pq.replace, placeholder: "Replace with", grow: true, onInput: (r) => { pq.replace = r; } }),
-        h("button", { onClick: replaceEverywhere, disabled: !pq.results.length }, ["Replace All"]),
-        h("text", { dim: true }, [status]),
+        ui.input({ ...ui.INPUT, key: "r", value: pq.replace, placeholder: "Replace with", grow: true, onInput: (r) => { pq.replace = r; } }),
+        ui.button({ ...ui.BUTTON, onClick: replaceEverywhere, disabled: !pq.results.length }, "Replace All"),
+        ui.text({ ...ui.TEXT, dim: true }, status),
       ]),
-      h("list", {
-        key: "results",
-        items: rows(),
-        render: (m) => m.header
-          ? h("text", { bold: true }, [m.path])
-          : h("row", {}, [h("text", { dim: true }, [`  ${m.line + 1}:${m.col + 1}`]), h("text", { mono: true }, [m.text.trim()])]),
+      ui.list({
+        ...ui.listProps("results", rows(), (m) => m.header
+          ? ui.text({ ...ui.TEXT, bold: true }, m.path)
+          : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, dim: true }, `  ${m.line + 1}:${m.col + 1}`), ui.text({ ...ui.TEXT, mono: true }, m.text.trim())])),
         onSelect: (m) => openMatch(m, true),
         onActivate: (m) => openMatch(m, false),
       }),
