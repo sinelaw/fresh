@@ -540,8 +540,9 @@ export class Pane {
   computeRows(v, extra) {
     const L = v.buf.held;
     const g = this.geometry(v);
-    const r = layout(v.buf, Math.max(0, L.indexOf(v.top)), g.rows + extra, this.layoutOpts(v, g.width));
-    return { ...r, g };
+    const d = v.buf.decor;
+    const r = layout(L, { conceals: d.conceals, inlines: d.inlines, lines: d.lines }, Math.max(0, L.indexOf(v.top)), g.rows + extra, this.layoutOpts(v, g.width));
+    return { rows: r.rows, g };
   }
 
   ready(v) {

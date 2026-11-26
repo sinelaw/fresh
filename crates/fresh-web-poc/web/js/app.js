@@ -1421,7 +1421,7 @@ export class App {
       // A line to each cursor, in the order they are in the text.
       const sorted = [...v.cursors].sort((a, b) => a.pos - b.pos);
       this.editing.replace(this.activePane, (c) => { const s = sel(c) ?? { start: c.pos, end: c.pos }; return put(s.start, s.end, parts[sorted.indexOf(c)]); });
-    } else this.editing.type(this.activePane, text);
+    } else this.editing.type(this.activePane, text, false);
   }
 
   // The browser's copy and cut (Ctrl+C, Ctrl+X): the text copied, as
@@ -1736,8 +1736,8 @@ export class App {
     // Commands on the active view (nothing without one); a motion's is hidden.
     function vcmd(id, title, f) { commands.set(id, { title, run: asCommand(() => (hasView() ? f() : undefined)), source: "core", hidden: false }); }
     function mv(id, title, f) { commands.set(id, { title, run: asCommand(() => (hasView() ? f() : undefined)), source: "core", hidden: true }); }
-    mv("cursor.left", "Left", () => ed().left(P(), false)); mv("cursor.right", "Right", () => ed().right(P(), false));
-    mv("select.left", "Select Left", () => ed().left(P(), true)); mv("select.right", "Select Right", () => ed().right(P(), true));
+    mv("cursor.left", "Left", () => ed().left(P(), false, false)); mv("cursor.right", "Right", () => ed().right(P(), false, false));
+    mv("select.left", "Select Left", () => ed().left(P(), true, false)); mv("select.right", "Select Right", () => ed().right(P(), true, false));
     mv("cursor.wordLeft", "Word Left", () => ed().left(P(), false, true)); mv("cursor.wordRight", "Word Right", () => ed().right(P(), false, true));
     mv("select.wordLeft", "Select Word Left", () => ed().left(P(), true, true)); mv("select.wordRight", "Select Word Right", () => ed().right(P(), true, true));
     mv("cursor.up", "Up", () => ed().vertical(P(), -1, false)); mv("cursor.down", "Down", () => ed().vertical(P(), 1, false));
@@ -1806,7 +1806,7 @@ export class App {
       ed().replace(P(), (c) => (c === V().primary ? { ...s, text: "" } : null));
     }));
     mv("edit.copyRegion", "Copy Region", () => { for (const s of listOf(V().selection())) { this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? ""); V().primary.anchor = none(); P().scheduleRender(); } });
-    mv("edit.yank", "Yank", mutate(() => { for (const text of this.killRing.slice(0, 1)) ed().type(P(), text); }));
+    mv("edit.yank", "Yank", mutate(() => { for (const text of this.killRing.slice(0, 1)) ed().type(P(), text, false); }));
   }
 
   // ------------------------------------------------------------- a document's format

@@ -91,14 +91,14 @@ function noLines() { return new Map(); }
 /** function noFolds() => Map<Number, Range> */
 function noFolds() { return new Map(); }
 
+// `L`: a buffer's held lines; `d`: its conceals, inline texts and virtual
+// lines.
 // o: {mode, wrap, width, tab, cursors, folds:[{start,end}] (line indices),
 //     styleAt(b, li, idx), styleAtByte(b), whitespace, extendAt(b)}
-export function layout(buf, top, maxRows, o) {
-  const L = buf.held;
-  const d = buf.decor;
+export function layout(L, d, top, maxRows, o) {
   const rows = [];
   const consumed = [];
-  if (!L || top < 0) return { rows, consumed, next: top };
+  if (top < 0) return { rows, consumed, next: top };
   const width = Math.max(8, o.width);
 
   // Index the active decorations by position.

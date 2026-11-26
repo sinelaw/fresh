@@ -737,7 +737,7 @@ export class Editing {
   // Insert `text` at every cursor. `typed`: it was typed (not pasted or
   // inserted by a command), so a run of it is one undo step: the run goes
   // on while each insert starts at the carets the last one left.
-  type(pane, text, typed = false) {
+  type(pane, text, typed) {
     const v = pane.view;
     const b = v.buf;
     const lang = languageOf(b);
@@ -841,7 +841,7 @@ export class Editing {
     const v = pane.view;
     const b = v.buf;
     const L = b.held;
-    if (dir > 0 && v.cursors.every((c) => !sel(c))) return this.type(pane, INDENT);
+    if (dir > 0 && v.cursors.every((c) => !sel(c))) return this.type(pane, INDENT, false);
     const sels = v.cursors.map((c) => ({ c, s: sel(c), span: lineSpan(b, c) }));
     const lines = new Set();
     for (const x of sels) for (let i = x.span[0]; i <= x.span[1]; i++) lines.add(i);
