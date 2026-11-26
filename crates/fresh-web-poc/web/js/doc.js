@@ -475,7 +475,7 @@ export class DocView {
     const { cw, lh } = pane.metrics();
     const g = pane.geometry(v);
     // The compose width, leaving a margin on each side for fold toggles.
-    const room = (pane.size.w || pane.surfaceEl.clientWidth) - 12 - 2 * FOLD_MARGIN;
+    const room = (pane.size.w > 0 ? pane.size.w : pane.surfaceEl.clientWidth) - 12 - 2 * FOLD_MARGIN;
     const w = `${Math.max(10 * cw, Math.min(g.width * cw, room))}px`;
     if (this.content.style.width !== w) this.content.style.width = w;
     const ctx = context(v);

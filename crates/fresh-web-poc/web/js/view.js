@@ -92,17 +92,22 @@ function noMarks() { return new Map(); }
 // A diagnostic's theme key by severity (1 error … 4 hint).
 const DIAG_KEYS = ["", "diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"];
 
-// A row's HTML: its cells in runs of one style, each run a span.
+// A row's HTML: its cells in runs of one style, each run a span (a run
+// of no style, key "", plain text); `fill`: the background to its edge.
+/** type Run = {key: String, style: Drawn, text: String} */
+/** function rowHtml(cls: String, fill: String | Null, cells: Cell[]) => String */
 function rowHtml(cls, fill, cells) {
+  /** const runs: Run[] */
   const runs = [];
   for (const c of cells) {
     const key = c.style === EMPTY ? "" : styleKey(c.style);
-    const last = runs.length ? runs[runs.length - 1] : null;
-    if (last !== null && last.key === key) last.text += c.ch;
+    const last = runs.at(-1);
+    if (last !== undefined && last.key === key) last.text += c.ch;
     else runs.push({ key, style: c.style, text: c.ch });
   }
-  const spans = runs.map((x) => (x.key ? `<span style="${cssFor(x.style, x.key)}">${esc(x.text)}</span>` : esc(x.text))).join("");
-  return `<div class="${cls}"${fill ? ` style="background:${fill}"` : ""}>${cells.length ? spans : "\u200b"}</div>`;
+  const spans = runs.map((x) => (x.key !== "" ? `<span style="${cssFor(x.style, x.key)}">${esc(x.text)}</span>` : esc(x.text))).join("");
+  const bg = fill === null ? "" : ` style="background:${fill}"`;
+  return `<div class="${cls}"${bg}>${cells.length > 0 ? spans : "\u200b"}</div>`;
 }
 
 // No screen place.
@@ -409,8 +414,8 @@ export class Pane {
 
   metrics() {
     const m = this.editor.metrics();
-    const w = (this.size.w || this.surfaceEl.clientWidth) - 12;
-    const h = this.size.h || this.surfaceEl.clientHeight;
+    const w = (this.size.w > 0 ? this.size.w : this.surfaceEl.clientWidth) - 12;
+    const h = this.size.h > 0 ? this.size.h : this.surfaceEl.clientHeight;
     return { cols: Math.max(10, Math.floor(w / m.cw)), rows: Math.max(1, Math.floor(h / m.lh)), cw: m.cw, lh: m.lh };
   }
 
