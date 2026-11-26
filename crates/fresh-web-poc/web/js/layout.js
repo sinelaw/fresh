@@ -14,7 +14,7 @@
 //  * A view's folds hide whole lines after a fold's first line.
 // A decoration with `when` applies only to a view in that mode.
 
-import { byteLen } from "./ot.js";
+import { byteLen, byteToIdx } from "./utf8.js";
 import { EMPTY, restyler, drawnOf } from "./paint.js";
 
 // A folded line's marker; a shown tab or space.
@@ -42,18 +42,6 @@ export function stringWidth(s) {
 export const applies = (d, mode) => d.when === "always" || d.when === mode;
 export const cursorIn = (cursors, r) => cursors.some((c) => c >= r.start && c < Math.max(r.end, r.start + 1));
 
-function idxOf(s, b) {
-  let n = 0, i = 0;
-  while (i < s.length && n < b) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c < 0xdc00) { n += 4; i++; }
-    else n += 3;
-    i++;
-  }
-  return i;
-}
 
 // A row's cell: its character, the byte it shows (none: text that is not
 // the buffer's), its style and its width in columns.
@@ -184,7 +172,7 @@ export function layout(L, d, top, maxRows, o) {
           for (let k = last + 1; k <= j; k++) consumed.push(k);
           last = cur = j;
           text = L.lines[cur];
-          i = idxOf(text, c.end - L.starts[cur]);
+          i = byteToIdx(text, c.end - L.starts[cur]);
           b = c.end;
           breakAt = row.cells.length;
           continue;
@@ -206,7 +194,7 @@ export function layout(L, d, top, maxRows, o) {
           last = cur = j;
           text = L.lines[cur];
         }
-        i = idxOf(text, c.end - L.starts[cur]);
+        i = byteToIdx(text, c.end - L.starts[cur]);
         b = c.end;
         continue;
       }

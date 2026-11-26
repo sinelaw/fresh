@@ -61,6 +61,20 @@ function revealsOf(cs) { return cs.flatMap((c) => { const rv = c.reveal; return 
 /** function startsIn(p: Number, start: Number, end: Number) => Boolean */
 function startsIn(p, start, end) { return p >= start && p < end; }
 
+// A kind's index as of generation `gen`: the one kept (`kept`, a list of
+// at most one) when it is that generation's, else made again of `items`.
+function currentIndex(kept, items, gen) {
+  for (const k of kept) if (k.gen === gen) return k;
+  return { gen, ix: indexOf(items) };
+}
+
+// A range (`o`'s start and end) moved through `op`: an insertion at its
+// start goes before it, one at its end after it.
+export function shiftRange(o, op) {
+  o.start = shiftPos(o.start, op, true);
+  o.end = Math.max(o.start, shiftPos(o.end, op, false));
+}
+
 export class Decor {
   constructor() {
     this.overlays = noOverlays();
@@ -80,22 +94,22 @@ export class Decor {
 
   // The items of a kind overlapping [start, end).
   overlaysIn(start, end) {
-    const ix = this.overlayIx.find((x) => x.gen === this.gen) ?? { gen: this.gen, ix: indexOf(this.overlays) };
+    const ix = currentIndex(this.overlayIx, this.overlays, this.gen);
     this.overlayIx = [ix];
     return overlapping(ix.ix, start, end);
   }
   concealsIn(start, end) {
-    const ix = this.concealIx.find((x) => x.gen === this.gen) ?? { gen: this.gen, ix: indexOf(this.conceals) };
+    const ix = currentIndex(this.concealIx, this.conceals, this.gen);
     this.concealIx = [ix];
     return overlapping(ix.ix, start, end);
   }
   nodesIn(start, end) {
-    const ix = this.nodeIx.find((x) => x.gen === this.gen) ?? { gen: this.gen, ix: indexOf(this.nodes) };
+    const ix = currentIndex(this.nodeIx, this.nodes, this.gen);
     this.nodeIx = [ix];
     return overlapping(ix.ix, start, end);
   }
   diagsIn(start, end) {
-    const ix = this.diagIx.find((x) => x.gen === this.gen) ?? { gen: this.gen, ix: indexOf(this.diags) };
+    const ix = currentIndex(this.diagIx, this.diags, this.gen);
     this.diagIx = [ix];
     return overlapping(ix.ix, start, end);
   }
@@ -136,7 +150,7 @@ export class Decor {
   shift(op) {
     const r = (p) => shiftPos(p, op, true);
     const l = (p) => shiftPos(p, op, false);
-    const range = (o) => { o.start = r(o.start); o.end = Math.max(o.start, l(o.end)); };
+    const range = (o) => { shiftRange(o, op); };
     for (const o of this.overlays) range(o);
     for (const o of this.conceals) range(o);
     for (const rv of revealsOf(this.conceals)) range(rv);

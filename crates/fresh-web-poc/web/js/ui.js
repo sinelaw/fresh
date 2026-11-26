@@ -714,7 +714,6 @@ function selectEl(p) {
 // headings, paragraphs, lists, quotes, fenced code, rules, and inline code,
 // bold, italic and links. Everything is escaped first; links keep only web,
 // mail and relative targets.
-const esc = escapeHtml;
 // `text` with each match of `re` (a global pattern) replaced by `f` of the
 // match and its groups (`m[0]` the match; a group that took no part is
 // undefined).
@@ -735,8 +734,8 @@ const SAFE_URL = /^(https?:|mailto:|#|\.{0,2}\/|[\w.-]+(\/|$|#))/i;
 /** function inline(t: String) => String */
 function inline(t) {
   return t.split(/(`[^`]+`)/).map((part, i) => {
-    if (i % 2) return `<code>${esc(part.slice(1, -1))}</code>`;
-    const links = replacing(esc(part), /\[([^\]]+)\]\(([^)\s]+)\)/g, (m) => (SAFE_URL.test(m[2]) ? `<a href="${m[2]}" target="_blank" rel="noopener">${m[1]}</a>` : m[1]));
+    if (i % 2) return `<code>${escapeHtml(part.slice(1, -1))}</code>`;
+    const links = replacing(escapeHtml(part), /\[([^\]]+)\]\(([^)\s]+)\)/g, (m) => (SAFE_URL.test(m[2]) ? `<a href="${m[2]}" target="_blank" rel="noopener">${m[1]}</a>` : m[1]));
     const strong = replacing(links, /\*\*([^*]+)\*\*|__([^_]+)__/g, (m) => `<strong>${m[1] || m[2]}</strong>`);
     return replacing(strong, /(^|[^\w*])\*([^*\s][^*]*)\*|(^|\W)_([^_\s][^_]*)_(?!\w)/g, (m) => `${m[1] ?? m[3]}<em>${m[2] ?? m[4]}</em>`);
   }).join("");
@@ -768,7 +767,7 @@ export function markdownHtml(text) {
       flush();
       const code = [];
       while (++i < lines.length && !lines[i].trimStart().startsWith(fence[1])) code.push(lines[i]);
-      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+      out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
     } else if (heading !== null) {
       flush();
       out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);

@@ -3,13 +3,14 @@
 
 import { listOf, found, some } from "./maybe.js";
 
-import { setClass } from "./dom.js";
+import { setClass, escapeHtml } from "./dom.js";
 import { layout, applies, cursorIn } from "./layout.js";
-import { byteLen } from "./ot.js";
-import { byteToIdx, ENSURE_AFTER, terminalOf } from "./buffer.js";
+import { byteLen, byteToIdx } from "./utf8.js";
+import { shiftPos } from "./ot.js";
+import { ENSURE_AFTER, terminalOf } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
-import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
+import { EMPTY, spansFor, synAt, fenceLanguage, cssFor, styleKey, restyler, withWavy } from "./paint.js";
 import { DocView, hiding } from "./doc.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
 
@@ -109,7 +110,7 @@ function rowHtml(cls, fill, cells) {
     if (last !== undefined && last.key === key) last.text += c.ch;
     else runs.push({ key, style: c.style, text: c.ch });
   }
-  const spans = runs.map((x) => (x.key !== "" ? `<span style="${cssFor(x.style, x.key)}">${esc(x.text)}</span>` : esc(x.text))).join("");
+  const spans = runs.map((x) => (x.key !== "" ? `<span style="${cssFor(x.style, x.key)}">${escapeHtml(x.text)}</span>` : escapeHtml(x.text))).join("");
   const bg = fill === null ? "" : ` style="background:${fill}"`;
   return `<div class="${cls}"${bg}>${cells.length > 0 ? spans : "\u200b"}</div>`;
 }
@@ -134,6 +135,10 @@ function nextClicks(last, t, x, y) {
   return { t, x, y, n: close ? last.n + 1 : 1 };
 }
 
+
+// The scrollbar's width, in px (style.css `.scrollbar`): text stops short
+// of it.
+const SCROLLBAR_WIDTH = 12;
 
 // No draw asked for yet (a pane's `pending` frame).
 /** const NO_FRAME: Number | Null */
@@ -220,11 +225,7 @@ export class View {
     return was;
   }
   shift(op) {
-    const sp = (p, r) => {
-      if (op.t === "ins") return p > op.pos || (p === op.pos && r) ? p + byteLen(op.text) : p;
-      if (p >= op.pos + op.len) return p - op.len;
-      return p > op.pos ? op.pos : p;
-    };
+    const sp = (p, r) => shiftPos(p, op, r);
     this.cursors = this.cursors.map((c) => shiftCursor(c, sp));
     this._top = sp(this._top, false);
   }
@@ -418,9 +419,12 @@ export class Pane {
 
   // ---------------------------------------------------------------- geometry
 
+  // The width text may take, in px: the surface's, less the scrollbar.
+  textWidth() { return (this.size.w > 0 ? this.size.w : this.surfaceEl.clientWidth) - SCROLLBAR_WIDTH; }
+
   metrics() {
     const m = this.editor.metrics();
-    const w = (this.size.w > 0 ? this.size.w : this.surfaceEl.clientWidth) - 12;
+    const w = this.textWidth();
     const h = this.size.h > 0 ? this.size.h : this.surfaceEl.clientHeight;
     return { cols: Math.max(10, Math.floor(w / m.cw)), rows: Math.max(1, Math.floor(h / m.lh)), cw: m.cw, lh: m.lh };
   }
@@ -670,8 +674,8 @@ export class Pane {
         const mark = folded.has(li) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m !== undefined ? m.glyph : " ";
         const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] ?? "" : m !== undefined ? color(m.color) ?? "" : "";
         const num = g.nums && L.firstLine !== null ? String(L.firstLine + li + 1).padStart(g.digits) + " " : "";
-        const title = m !== undefined && !sev && m.title ? ` title="${esc(m.title)}"` : "";
-        ghtml = `<div class="row${current ? " current" : ""}" data-line="${li}"${title}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
+        const title = m !== undefined && !sev && m.title ? ` title="${escapeHtml(m.title)}"` : "";
+        ghtml = `<div class="row${current ? " current" : ""}" data-line="${li}"${title}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${escapeHtml(mark)}</span></div>`;
       }
       gutEls.push(take(gutPool, ghtml));
     }

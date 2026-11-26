@@ -23,11 +23,10 @@
 // its lines after the first shown. A joined block holding a fold's first
 // line is drawn whole (its lines read as one).
 
-import { byteLen } from "./ot.js";
-import { byteToIdx } from "./buffer.js";
+import { byteLen, byteToIdx } from "./utf8.js";
 import { applies, cursorIn } from "./layout.js";
-import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
-import { within } from "./dom.js";
+import { EMPTY, spansFor, synAt, fenceLanguage, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
+import { within, escapeHtml } from "./dom.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
 import { some, listOf, found } from "./maybe.js";
 
@@ -150,12 +149,12 @@ function atLeastHeight(ctx, blk, lh, from) {
 
 function vline(x) {
   const st = cssOf(drawnOf(x.style));
-  return `<div class="vline"${st ? ` style="${st}"` : ""}>${esc(x.text || "")}​</div>`;
+  return `<div class="vline"${st ? ` style="${st}"` : ""}>${escapeHtml(x.text || "")}​</div>`;
 }
 
 function concealHTML(c) {
   const st = cssOf(drawnOf(c.style));
-  const body = c.text === "\n" ? "<br>" : esc(c.text);
+  const body = c.text === "\n" ? "<br>" : escapeHtml(c.text);
   return `<span class="cc" data-at="${c.start}" data-e="${c.end}"${st ? ` style="${st}"` : ""}>${body}</span>`;
 }
 
@@ -209,7 +208,7 @@ function walk(ctx, a, z, syn) {
     let run = "", at = 0, key = "", style = "";
     const flush = () => {
       if (!run) return;
-      out += `<span data-p="${at}"${style ? ` style="${style}"` : ""}>${esc(run)}</span>`;
+      out += `<span data-p="${at}"${style ? ` style="${style}"` : ""}>${escapeHtml(run)}</span>`;
       shown = true;
       run = "";
     };
@@ -222,7 +221,7 @@ function walk(ctx, a, z, syn) {
       for (const t of inl.get(`${p}${side}`) ?? []) {
         flush();
         const st = cssOf(drawnOf(t.style));
-        out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${esc(t.text)}</span>`;
+        out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${escapeHtml(t.text)}</span>`;
       }
     };
     const styleAt = (p, idx) => {
@@ -406,14 +405,14 @@ function blockHTML(ctx, blk) {
   if (type === "item") {
     const m = n.marker || "•";
     const cls = m === "☑" ? " done" : m === "☐" ? " todo" : /\d/.test(m) ? " num" : "";
-    return `<div class="doc-li" style="--depth:${n.depth || 0}"><div class="l"><span class="mk${cls}">${esc(m)}</span>${joined()}</div></div>`;
+    return `<div class="doc-li" style="--depth:${n.depth || 0}"><div class="l"><span class="mk${cls}">${escapeHtml(m)}</span>${joined()}</div></div>`;
   }
   if (type === "quote") return `<blockquote class="l" style="--depth:${n.depth || 1}">${joined()}</blockquote>`;
   if (type === "rule") return `<div class="doc-hr l">${joined()}</div>`;
   if (type === "code") {
       const lang = fenceLanguage(n.lang);
       const syn = lang ? (li) => spansFor(lang, L.lines[li]) : NO_SYNTAX;
-      let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>${tog}`;
+      let html = `<div class="doc-code"${n.lang ? ` data-lang="${escapeHtml(n.lang)}"` : ""}>${tog}`;
       for (let k = blk.first; k <= blk.last; k++) {
         if (ctx.hidden(k).length > 0) continue;
         const r = walk(ctx, L.starts[k], L.lineEnd(k), syn);
@@ -483,7 +482,7 @@ export class DocView {
     const { cw, lh } = pane.metrics();
     const g = pane.geometry(v);
     // The compose width, leaving a margin on each side for fold toggles.
-    const room = (pane.size.w > 0 ? pane.size.w : pane.surfaceEl.clientWidth) - 12 - 2 * FOLD_MARGIN;
+    const room = pane.textWidth() - 2 * FOLD_MARGIN;
     const w = `${Math.max(10 * cw, Math.min(g.width * cw, room))}px`;
     if (this.content.style.width !== w) this.content.style.width = w;
     const ctx = context(v);

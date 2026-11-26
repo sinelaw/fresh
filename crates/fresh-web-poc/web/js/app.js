@@ -5,8 +5,9 @@
 // keybindings, themes) are plugins in `web/plugins/`.
 
 import { rpc, attempt, clientId, connectEvents, failure } from "./rpc.js";
-import { byteLen, shiftPos } from "./ot.js";
-import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, byteToIdx, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
+import { shiftRange } from "./decor.js";
+import { byteLen, byteToIdx } from "./utf8.js";
+import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
 import { THEME } from "./highlight.js";
@@ -225,10 +226,10 @@ export async function scrollToFraction(pane, f) {
     for (const L of listOf(b.text)) v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))], 0);
   } else if (lines.length > 0) {
     const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * lines[0]) });
-    if (r.pos !== null) { await b.ensure(r.pos, 200); v.setTop(r.pos, 0); }
+    if (r.pos !== null) { await b.ensure(r.pos, ENSURE_AFTER); v.setTop(r.pos, 0); }
   } else {
     const p = Math.floor(f * b.len);
-    await b.ensure(p, 200);
+    await b.ensure(p, ENSURE_AFTER);
     for (const L of listOf(b.text)) v.setTop(L.starts[Math.max(0, L.indexOf(p))], 0);
   }
   pane.scheduleRender();
@@ -1337,8 +1338,7 @@ export class App {
       const since = b.file.flatMap((f) => opsSince(f, ev.version));
       if (since.length === 0) return;
       const items = ev.items.map((d) => ({ ...d }));
-      const move = (op) => { for (const d of items) { d.start = shiftPos(d.start, op, true); d.end = Math.max(d.start, shiftPos(d.end, op, false)); } };
-      for (const ops of since) for (const op of ops) move(op);
+      for (const ops of since) for (const op of ops) for (const d of items) shiftRange(d, op);
       b.decor.setDiagnostics(items);
       this.renderBuffer(b.id);
       this.bufferEvent("diagnostics.changed", b, [], false);

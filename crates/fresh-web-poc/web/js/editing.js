@@ -5,8 +5,8 @@
 // stay valid; each caret is then placed where its replacement says.
 
 import { listOf, found, some, none } from "./maybe.js";
-import { byteLen, insOp, delOp } from "./ot.js";
-import { byteToIdx } from "./buffer.js";
+import { insOp, delOp } from "./ot.js";
+import { byteLen, byteToIdx } from "./utf8.js";
 import { sel, cursorAt, selecting } from "./view.js";
 import { rpc } from "./rpc.js";
 import { charWidth } from "./layout.js";

@@ -18,7 +18,8 @@ import { lspOffset as lspOffsetIn, lspPosition as lspPositionIn } from "./app.js
 import { found, listOf } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand, asArgCommand } from "./commands.js";
-export { byteLen, insOp, delOp } from "./ot.js";
+export { insOp, delOp } from "./ot.js";
+export { byteLen } from "./utf8.js";
 
 // File line `line` (0-based) among held lines `L`: its index there (a list
 // of at most one: none when the lines' place in the file is not known yet,

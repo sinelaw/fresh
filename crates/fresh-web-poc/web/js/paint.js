@@ -38,10 +38,6 @@ export function synAt(spans, idx) {
 const FENCE = { bash: "shell", sh: "shell", shell: "shell", console: "shell", rust: "rust", rs: "rust", js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", python: "python", py: "python", json: "json", toml: "toml", go: "go", c: "c", cpp: "cpp" };
 export const fenceLanguage = (info) => FENCE[(info || "").toLowerCase()] || null;
 
-/** const ESC: Dict<String> */
-const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
-export const esc = (t) => t.replace(/[&<>"]/g, (c) => ESC[c] ?? c);
-
 // Theme keys and names resolve through the theme; CSS colours pass.
 /** const css: (Color | Null) => String | Null */
 export const css = (x) => (typeof x === "string" && /^(#|rgb|var\()/.test(x) ? x : color(x));

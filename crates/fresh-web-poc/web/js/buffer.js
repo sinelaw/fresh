@@ -13,7 +13,8 @@
 
 import { rpc, attempt, failure } from "./rpc.js";
 import { some, none } from "./maybe.js";
-import { byteLen, transformSeqs, insOp, delOp } from "./ot.js";
+import { transformSeqs, insOp, delOp } from "./ot.js";
+import { byteLen, byteToIdx } from "./utf8.js";
 import { Decor } from "./decor.js";
 
 // A window: this many lines before and after the line asked for. A file
@@ -42,19 +43,6 @@ export function nl(s) {
   return n;
 }
 
-// UTF-16 index of byte offset `b` within `s`.
-export function byteToIdx(s, b) {
-  let n = 0, i = 0;
-  while (i < s.length && n < b) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c < 0xdc00) { n += 4; i++; }
-    else n += 3;
-    i++;
-  }
-  return i;
-}
 export function idxToByte(s, idx) { return byteLen(s.slice(0, idx)); }
 
 // The byte start of each line, for lines of byte lengths `lens` starting

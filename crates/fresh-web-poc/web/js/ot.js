@@ -4,25 +4,13 @@
 // ones before it. Ties between inserts at one position go to the one
 // sequenced first.
 
+import { byteLen } from "./utf8.js";
+
 // An insertion, a deletion.
 /** function insOp(pos: Number, text: String) => Op */
 export function insOp(pos, text) { return { t: "ins", pos, text }; }
 /** function delOp(pos: Number, len: Number) => Op */
 export function delOp(pos, len) { return { t: "del", pos, len }; }
-
-export const enc = new TextEncoder();
-/** const byteLen: (String) => Number */
-export const byteLen = (s) => {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c < 0xdc00) { n += 4; i++; }
-    else n += 3;
-  }
-  return n;
-};
 
 /** function len(p: Op) => Number */
 function len(p) { return p.t === "ins" ? byteLen(p.text) : p.len; }
