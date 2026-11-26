@@ -17,7 +17,7 @@
 // clients and undo all see the change.
 
 import * as fresh from "../js/api.js";
-import { byteLen, listOf } from "../js/api.js";
+import { byteLen, listOf, insOp, delOp } from "../js/api.js";
 import { h } from "../js/ui.js";
 
 // The searched range, the matches and the current match.
@@ -249,9 +249,9 @@ export function activate(app) {
       /** const ops: Op[] */
       const ops = [];
       for (const x of [...rest].sort((p, q) => q.pos - p.pos)) {
-        ops.push({ t: "del", pos: x.pos, len: x.len });
+        ops.push(delOp(x.pos, x.len));
         const text = replacementFor(x);
-        if (text) ops.push({ t: "ins", pos: x.pos, text });
+        if (text) ops.push(insOp(x.pos, text));
       }
       if (ops.length) b.edit(ops);
       q.done += rest.length; q.of += rest.length;
@@ -281,10 +281,10 @@ export function activate(app) {
     /** const ops: Op[] */
     const ops = [];
     for (const m of [...matches].reverse()) {
-      ops.push({ t: "del", pos: m.pos, len: m.len });
+      ops.push(delOp(m.pos, m.len));
       const found = m.text;
       const text = opts.regex && found != null ? found.replace(re, replacement) : replacement;
-      if (text) ops.push({ t: "ins", pos: m.pos, text });
+      if (text) ops.push(insOp(m.pos, text));
     }
     const n = matches.length;
     b.edit(ops);
@@ -501,9 +501,9 @@ export function activate(app) {
         const start = L.starts[m.line - (L.firstLine ?? 0)] + m.col;
         const old = b.text(start, start + m.len);
         if (old == null) continue;
-        ops.push({ t: "del", pos: start, len: m.len });
+        ops.push(delOp(start, m.len));
         const text = opts.regex ? old.replace(re, pq.replace) : pq.replace;
-        if (text) ops.push({ t: "ins", pos: start, text });
+        if (text) ops.push(insOp(start, text));
         n++;
       }
       b.edit(ops);

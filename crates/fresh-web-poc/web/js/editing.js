@@ -4,8 +4,8 @@
 // (one undo step) from the last position to the first so earlier positions
 // stay valid; each caret is then placed where its replacement says.
 
-import { listOf } from "./maybe.js";
-import { byteLen } from "./ot.js";
+import { listOf, found } from "./maybe.js";
+import { byteLen, insOp, delOp } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { sel, cursorAt, selecting } from "./view.js";
 import { rpc } from "./rpc.js";
@@ -13,10 +13,10 @@ import { charWidth } from "./layout.js";
 
 const PAIRS = new Map([["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["`", "`"]]);
 const CLOSERS = new Set([")", "]", "}"]);
-const COMMENT = {
-  rust: "//", javascript: "//", typescript: "//", go: "//", c: "//", cpp: "//", java: "//", css: "/*",
-  python: "#", shell: "#", toml: "#", yaml: "#", ruby: "#", markdown: "<!--", html: "<!--",
-};
+const COMMENT = new Map([
+  ["rust", "//"], ["javascript", "//"], ["typescript", "//"], ["go", "//"], ["c", "//"], ["cpp", "//"], ["java", "//"], ["css", "/*"],
+  ["python", "#"], ["shell", "#"], ["toml", "#"], ["yaml", "#"], ["ruby", "#"], ["markdown", "<!--"], ["html", "<!--"],
+]);
 const INDENT = "    ";
 
 // Each bracket's partner.
@@ -139,8 +139,8 @@ function editsOf(reps) {
   /** const ops: Op[] */
   const ops = [];
   for (const { r } of reps) {
-    if (r.end > r.start) ops.push({ t: "del", pos: r.start, len: r.end - r.start });
-    if (r.text) ops.push({ t: "ins", pos: r.start, text: r.text });
+    if (r.end > r.start) ops.push(delOp(r.start, r.end - r.start));
+    if (r.text !== "") ops.push(insOp(r.start, r.text));
   }
   return ops;
 }
@@ -639,7 +639,7 @@ export class Editing {
 
   matchingBracket(pane) {
     const b = pane.view.buf;
-    this.move(pane, (c) => this.bracketPair(b, c.pos)?.match ?? c.pos, false);
+    this.move(pane, (c) => listOf(this.bracketPair(b, c.pos)).map((x) => x.match).at(0) ?? c.pos, false);
   }
 
   // ---------------------------------------------------------------- typing
@@ -695,14 +695,13 @@ export class Editing {
       const s = sel(c) ?? { start: c.pos, end: c.pos };
       const ln = this.lineAt(b, s.start);
       const before = ln.text.slice(0, byteToIdx(ln.text, s.start - ln.start));
-      let indent = /^[ \t]*/.exec(ln.text)[0];
+      const indent = ln.text.slice(0, ln.text.length - ln.text.replace(/^[ \t]+/, "").length);
       if (lang === "markdown") {
         // Continue a list item.
-        const m = /^(\s*)([-*+]|\d+[.)])\s+(\[[ x]\]\s+)?/.exec(before);
-        if (m) {
+        for (const m of listOf(/^(\s*)([-*+]|\d+[.)])\s+(\[[ x]\]\s+)?/.exec(before))) {
           if (before.trim() === m[0].trim()) return put(ln.start, s.end, "");
           const bullet = /\d/.test(m[2]) ? `${parseInt(m[2], 10) + 1}${m[2].slice(-1)}` : m[2];
-          return put(s.start, s.end, `\n${m[1]}${bullet} ${m[3] ? "[ ] " : ""}`);
+          return put(s.start, s.end, `\n${m[1]}${bullet} ${m[3] !== undefined ? "[ ] " : ""}`);
         }
         return put(s.start, s.end, "\n" + indent);
       }
@@ -767,10 +766,13 @@ export class Editing {
     for (const x of sels) for (let i = x.span[0]; i <= x.span[1]; i++) lines.add(i);
     const ops = [];
     for (const i of [...lines].sort((a, z) => z - a)) {
-      if (dir > 0) ops.push({ t: "ins", pos: L.starts[i], text: INDENT });
+      if (dir > 0) ops.push(insOp(L.starts[i], INDENT));
       else {
-        const n = /^ {0,4}/.exec(L.lines[i])[0].length || (L.lines[i].startsWith("\t") ? 1 : 0);
-        if (n) ops.push({ t: "del", pos: L.starts[i], len: n });
+        // An indent's spaces (up to four), else a tab.
+        const line = L.lines[i];
+        const spaces = Math.min(4, line.length - line.replace(/^ +/, "").length);
+        const n = spaces > 0 ? spaces : line.startsWith("\t") ? 1 : 0;
+        if (n > 0) ops.push(delOp(L.starts[i], n));
       }
     }
     if (ops.length) this.editor.edit(b, ops, "none");
@@ -846,11 +848,12 @@ export class Editing {
     if (!b.full) { this.editor.say("Only a file held whole can be trimmed"); return; }
     const ops = [];
     for (let i = L.count - 1; i >= 0; i--) {
-      const m = /[ \t]+$/.exec(L.lines[i]);
-      if (m) ops.push({ t: "del", pos: L.starts[i] + byteLen(L.lines[i].slice(0, m.index)), len: byteLen(m[0]) });
+      const line = L.lines[i];
+      const kept = line.replace(/[ \t]+$/, "");
+      if (kept.length < line.length) ops.push(delOp(L.starts[i] + byteLen(kept), byteLen(line) - byteLen(kept)));
     }
-    if (ops.length) this.editor.edit(b, ops, "none");
-    this.editor.say(ops.length ? `Trimmed ${ops.length} line${ops.length === 1 ? "" : "s"}` : "No trailing whitespace");
+    if (ops.length > 0) this.editor.edit(b, ops, "none");
+    this.editor.say(ops.length > 0 ? `Trimmed ${ops.length} line${ops.length === 1 ? "" : "s"}` : "No trailing whitespace");
     pane.scheduleRender();
   }
 
@@ -878,7 +881,7 @@ export class Editing {
       text = next + "\n" + block;
       newStart = start + byteLen(next) + 1;
     }
-    this.editor.edit(b, [{ t: "del", pos: start, len: end - start }, { t: "ins", pos: start, text }], "none");
+    this.editor.edit(b, [delOp(start, end - start), insOp(start, text)], "none");
     c.pos = newStart + off;
     c.anchor = anchorOff != null ? newStart + anchorOff : null;
     pane.reveal(false);
@@ -889,29 +892,29 @@ export class Editing {
     const v = pane.view;
     const b = v.buf;
     const L = b.held;
-    const prefix = COMMENT[this.lang(b)] || "//";
+    const prefix = listOf(this.lang(b)).flatMap((l) => found(COMMENT.get(l))).at(0) ?? "//";
     const close = prefix === "<!--" ? " -->" : prefix === "/*" ? " */" : "";
     const lines = new Set();
     for (const c of v.cursors) { const [a, z] = this.lineSpan(b, c); for (let i = a; i <= z; i++) lines.add(i); }
     const idx = [...lines].filter((i) => L.lines[i].trim() !== "");
-    if (!idx.length) return;
+    if (idx.length === 0) return;
     const commented = idx.every((i) => L.lines[i].trimStart().startsWith(prefix));
-    const minIndent = Math.min(...idx.map((i) => /^\s*/.exec(L.lines[i])[0].length));
+    const minIndent = idx.map((i) => L.lines[i].length - L.lines[i].trimStart().length).reduce((m, n) => Math.min(m, n), Infinity);
     const ops = [];
     for (const i of idx.sort((a, z) => z - a)) {
       const t = L.lines[i];
       if (commented) {
-        if (close && t.trimEnd().endsWith(close.trim())) {
+        if (close !== "" && t.trimEnd().endsWith(close.trim())) {
           const e = byteLen(t.trimEnd()) - byteLen(close.trim());
-          const sp = t[byteToIdx(t, e) - 1] === " " ? 1 : 0;
-          ops.push({ t: "del", pos: L.starts[i] + e - sp, len: byteLen(close.trim()) + sp });
+          const sp = t.charAt(byteToIdx(t, e) - 1) === " " ? 1 : 0;
+          ops.push(delOp(L.starts[i] + e - sp, byteLen(close.trim()) + sp));
         }
         const at = t.indexOf(prefix);
-        const n = prefix.length + (t[at + prefix.length] === " " ? 1 : 0);
-        ops.push({ t: "del", pos: L.starts[i] + byteLen(t.slice(0, at)), len: n });
+        const n = prefix.length + (t.charAt(at + prefix.length) === " " ? 1 : 0);
+        ops.push(delOp(L.starts[i] + byteLen(t.slice(0, at)), n));
       } else {
-        if (close) ops.push({ t: "ins", pos: L.lineEnd(i), text: close });
-        ops.push({ t: "ins", pos: L.starts[i] + byteLen(t.slice(0, minIndent)), text: prefix + " " });
+        if (close !== "") ops.push(insOp(L.lineEnd(i), close));
+        ops.push(insOp(L.starts[i] + byteLen(t.slice(0, minIndent)), prefix + " "));
       }
     }
     // Ops above are per line, last line first, so each stays valid.

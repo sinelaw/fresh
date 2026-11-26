@@ -33,7 +33,7 @@ export const AGENT_CHOICES = [
 
 /** function agentById(id: String) => Agent | Null */
 export function agentById(id) {
-  return AGENTS.find((a) => a.id === id) || null;
+  return AGENTS.find((a) => a.id === id) ?? null;
 }
 
 // A word for a POSIX shell, quoted when it needs to be.

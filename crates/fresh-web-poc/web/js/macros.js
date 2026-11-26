@@ -7,7 +7,7 @@
 // are left out; what is typed into a prompt or a panel is not recorded.
 // Registers last as long as the page.
 
-import { some, none } from "./maybe.js";
+import { some, none, listOf } from "./maybe.js";
 
 const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -73,10 +73,15 @@ function noRecording() { return []; }
 /** function noRegister() => String[] */
 function noRegister() { return []; }
 
+// A command's keys, or (it has none) what to call it.
+/** function keysOr(keys: String, name: String) => String */
+function keysOr(keys, name) { return keys !== "" ? keys : name; }
+
 export class Macros {
   // `editor`: what macros ask of the editor (js/main.js).
   constructor(editor) {
-    this.editor = editor;
+    const port /*: MacrosEditor */ = editor;
+    this.editor = port;
     this.registers = noMacros(); // register -> its steps
     this.recording = noRecording(); // the macro being recorded: a list of at most one
     this.playing = false;
@@ -97,17 +102,17 @@ export class Macros {
   start(register) {
     this.stop();
     this.recording = [{ register, steps: [] }];
-    this.editor.say(`Recording macro ${register}… (${this.editor.keyLabel("macro.stop") || "Stop Recording Macro"} stops)`);
+    this.editor.say(`Recording macro ${register}… (${keysOr(this.editor.keyLabel("macro.stop"), "Stop Recording Macro")} stops)`);
     this.editor.updateStatus();
   }
   stop() {
     const done = this.recording;
-    if (!done.length) { this.editor.say("Not recording a macro"); return; }
+    if (done.length === 0) { this.editor.say("Not recording a macro"); return; }
     this.recording = [];
     for (const r of done) {
       this.registers.set(r.register, r.steps);
       this.last = [r.register];
-      this.editor.say(`Macro ${r.register}: ${plural(r.steps.length, "step")} recorded (${this.editor.keyLabel("macro.playLast") || "Play Last Macro"} plays it)`);
+      this.editor.say(`Macro ${r.register}: ${plural(r.steps.length, "step")} recorded (${keysOr(this.editor.keyLabel("macro.playLast"), "Play Last Macro")} plays it)`);
     }
   }
 
@@ -145,17 +150,17 @@ export class Macros {
 
   // Every register's steps, as text.
   describe() {
-    return describeMacros(this.registers, this.last, this.editor.titleOf);
+    return describeMacros(this.registers, this.last, (id) => this.editor.titleOf(id));
   }
 
   // Its commands, for the editor to register.
   commands() {
     return [
-      macroCommand("macro.record", "Macro: Record Macro…", async () => { const r = await this.pick("Record macro into register"); if (r !== null) this.start(r); }),
+      macroCommand("macro.record", "Macro: Record Macro…", async () => { for (const r of listOf(await this.pick("Record macro into register"))) this.start(r); }),
       macroCommand("macro.stop", "Macro: Stop Recording Macro", async () => { this.stop(); }),
-      macroCommand("macro.play", "Macro: Play Macro…", async () => { const r = await this.pick("Play macro"); if (r !== null) await this.play(r); }),
+      macroCommand("macro.play", "Macro: Play Macro…", async () => { for (const r of listOf(await this.pick("Play macro"))) await this.play(r); }),
       macroCommand("macro.playLast", "Macro: Play Last Macro", async () => {
-        if (!this.last.length) { this.editor.say("No macro recorded yet"); return; }
+        if (this.last.length === 0) { this.editor.say("No macro recorded yet"); return; }
         for (const r of this.last) await this.play(r);
       }),
       macroCommand("macro.list", "Macro: List Macros", async () => { this.editor.showText("*Macros*", this.describe()); }),

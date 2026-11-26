@@ -19,8 +19,9 @@
 // The choice is per browser (localStorage); `?skin=<id>` overrides it, to
 // recover from a skin that hides the way back.
 
-import { rpc } from "./rpc.js";
+import { rpc, attempt } from "./rpc.js";
 import { $ } from "./dom.js";
+import { listOf, found } from "./maybe.js";
 
 const KEY = "fresh-poc:skin";
 
@@ -61,9 +62,9 @@ function resolvedSkin(id, chain, base) {
   const themes = chain.flatMap((s) => { const x = s.theme; return x === null ? [] : [x]; });
   return {
     id,
-    name: chain.at(-1)?.name ?? id,
+    name: chain.slice(-1).map((s) => s.name).at(0) ?? id,
     chain: chain.map((s) => s.id),
-    frame: chain.at(-1)?.frame ?? "full",
+    frame: chain.slice(-1).flatMap((s) => listOf(s.frame)).at(0) ?? "full",
     scale: scales.at(-1) ?? 1,
     furniture: furniture.at(-1) ?? null,
     theme: themes.at(-1) ?? null,
@@ -85,7 +86,8 @@ export class Skins {
   // `editor`: what skins ask of the editor (js/main.js); `workspace`: the
   // id of the workspace the page views (none: the dock alone).
   constructor(editor, workspace) {
-    this.editor = editor;
+    const port /*: SkinsEditor */ = editor;
+    this.editor = port;
     this.workspace = workspace;
     this.all = noSkins();
     this.current = noShown(); // the resolved skin on screen: a list of at most one
@@ -98,8 +100,9 @@ export class Skins {
   async load() {
     $("#skin-btn").addEventListener("click", () => { this.pick(); });
     try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
-    const id = new URLSearchParams(location.search).get("skin") ?? savedSkin();
-    await this.apply(id !== null && this.byId(id) !== null ? id : "default");
+    // The skin the URL names, else the one this browser chose; one known.
+    const asked = listOf(new URLSearchParams(location.search).get("skin") ?? savedSkin()).filter((id) => skinIn(this.all, id) !== null);
+    await this.apply(asked.at(0) ?? "default");
   }
 
   byId(id) { return skinIn(this.all, id); }
@@ -166,7 +169,9 @@ export class Skins {
   async furnish(url) {
     const host = $("#device");
     host.textContent = "";
-    if (!url) return;
+    for (const u of listOf(url)) await this.furnishFrom(host, u);
+  }
+  async furnishFrom(host, url) {
     let text = "";
     try { const r = await fetch(url); if (r.ok) text = await r.text(); } catch {}
     const doc = new DOMParser().parseFromString(`<body>${text}</body>`, "text/html");
@@ -175,15 +180,12 @@ export class Skins {
       for (const n of nodes) {
         if (budget-- <= 0) return;
         if (n.nodeType === Node.TEXT_NODE) {
-          if (n.textContent.trim()) parent.appendChild(document.createTextNode(n.textContent));
+          if (n.textContent.trim() !== "") parent.appendChild(document.createTextNode(n.textContent));
         } else if (n.nodeType === Node.ELEMENT_NODE && TAGS.has(n.tagName.toLowerCase())) {
           const e = document.createElement(n.tagName.toLowerCase());
-          const cls = n.getAttribute("class");
-          if (cls) e.className = cls;
-          const bind = n.getAttribute("data-bind");
-          if (VALUES.includes(bind)) e.dataset.bind = bind;
-          const bindVar = /^(--[a-z0-9-]+):([A-Za-z]+)$/.exec(n.getAttribute("data-bind-var") || "");
-          if (bindVar && VALUES.includes(bindVar[2])) e.dataset.bindVar = bindVar[0];
+          for (const cls of listOf(n.getAttribute("class"))) e.className = cls;
+          for (const bind of listOf(n.getAttribute("data-bind"))) if (VALUES.includes(bind)) e.dataset.bind = bind;
+          for (const m of listOf(/^(--[a-z0-9-]+):([A-Za-z]+)$/.exec(n.getAttribute("data-bind-var") ?? ""))) if (VALUES.includes(m[2])) e.dataset.bindVar = m[0];
           copy(n.childNodes, e);
           parent.appendChild(e);
         }
@@ -197,17 +199,20 @@ export class Skins {
   async refresh() {
     clearTimeout(this.timer);
     const bound = [...document.querySelectorAll("#device [data-bind], #device [data-bind-var]")];
-    if (!bound.length) return;
-    const names = bound.map((e) => e.dataset.bind || e.dataset.bindVar.split(":")[1]);
+    if (bound.length === 0) return;
+    // What each shows: a value (`data-bind`: its name), or a CSS variable
+    // set to one (`data-bind-var`: "--variable:name").
+    const names = bound.flatMap((e) => [...found(e.dataset.bind), ...found(e.dataset.bindVar).map((b) => b.split(":")[1])]);
     const v = this.localValues();
     if (names.some((n) => HOST_VALUES.has(n))) {
-      try { Object.assign(v, await rpc("host.stats", {})); } catch {}
+      const o = await attempt("host.stats", {});
+      if (o.kind === "ok") for (const [k, x] of Object.entries(o.value)) v.set(k, String(x));
     }
     for (const e of bound) {
-      if (e.dataset.bind && v[e.dataset.bind] != null) e.textContent = String(v[e.dataset.bind]);
-      if (e.dataset.bindVar) {
-        const [prop, name] = e.dataset.bindVar.split(":");
-        if (v[name] != null) e.style.setProperty(prop, String(v[name]));
+      for (const name of found(e.dataset.bind)) for (const x of found(v.get(name))) e.textContent = x;
+      for (const bv of found(e.dataset.bindVar)) {
+        const [prop, name] = bv.split(":");
+        for (const x of found(v.get(name))) e.style.setProperty(prop, x);
       }
     }
     this.timer = setTimeout(() => { this.refresh(); }, REFRESH_MS);
@@ -216,21 +221,21 @@ export class Skins {
   localValues() {
     const c = this.editor.counts();
     const d = new Date();
-    return {
-      buffers: c.files,
-      errors: c.errors,
-      warnings: c.warnings,
-      time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
-    };
+    return new Map([
+      ["buffers", String(c.files)],
+      ["errors", String(c.errors)],
+      ["warnings", String(c.warnings)],
+      ["time", `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`],
+    ]);
   }
 
   // Put a skin on and remember it; its editor theme comes with it.
   async choose(id) {
-    if (!this.byId(id)) return;
+    if (this.byId(id) === null) return;
     try { localStorage.setItem(KEY, id); } catch {}
     await this.apply(id);
     const sk = this.resolve(id);
-    if (sk.theme !== null) await this.editor.useTheme(sk.theme);
+    for (const theme of listOf(sk.theme)) await this.editor.useTheme(theme);
     this.editor.say(`Skin: ${sk.name}`);
   }
 
@@ -239,7 +244,7 @@ export class Skins {
   // the skins folder is there.
   async pick() {
     try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
-    const before = this.current.at(0)?.id ?? "default";
+    const before = this.current.map((s) => s.id).at(0) ?? "default";
     this.editor.pick({
       title: "Skin",
       value: "",

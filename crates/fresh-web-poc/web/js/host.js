@@ -3,6 +3,8 @@
 // handlers, on four channels: plain events, buffer events (with the ops of a
 // change), view events and the language servers' status.
 
+import { insOp, delOp } from "./ot.js";
+
 // A plugin's decorations in one buffer, cleared and replaced as a unit or by
 // range (`ns` names the set). Positions are byte offsets; every one moves
 // with edits. Each function is described with the DecorationSet type
@@ -24,11 +26,6 @@ function decorationSet(buf, ns) {
   });
 }
 
-// An insertion, a deletion.
-/** function insOp(pos: Number, text: String) => Op */
-function insOp(pos, text) { return { t: "ins", pos, text }; }
-/** function delOp(pos: Number, len: Number) => Op */
-function delOp(pos, len) { return { t: "del", pos, len }; }
 
 // What a plugin holds of a buffer and of a view (types/fresh.d.js:
 // BufferHandle, ViewHandle): functions over the application's own.

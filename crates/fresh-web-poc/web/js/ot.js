@@ -4,6 +4,12 @@
 // ones before it. Ties between inserts at one position go to the one
 // sequenced first.
 
+// An insertion, a deletion.
+/** function insOp(pos: Number, text: String) => Op */
+export function insOp(pos, text) { return { t: "ins", pos, text }; }
+/** function delOp(pos: Number, len: Number) => Op */
+export function delOp(pos, len) { return { t: "del", pos, len }; }
+
 export const enc = new TextEncoder();
 /** const byteLen: (String) => Number */
 export const byteLen = (s) => {
@@ -41,13 +47,13 @@ function moved(a, b, aFirst) {
     if (b.pos <= a.pos) return [{ ...a, pos: a.pos + bl }];
     if (b.pos >= a.pos + a.len) return [a];
     const before = b.pos - a.pos;
-    return [{ t: "del", pos: a.pos, len: before }, { t: "del", pos: a.pos + bl, len: a.len - before }];
+    return [delOp(a.pos, before), delOp(a.pos + bl, a.len - before)];
   }
   const a0 = a.pos, a1 = a.pos + a.len, b0 = b.pos, b1 = b.pos + b.len;
   if (a1 <= b0) return [a];
   if (a0 >= b1) return [{ ...a, pos: a0 - b.len }];
   const overlap = Math.min(a1, b1) - Math.max(a0, b0);
-  return [{ t: "del", pos: Math.min(a0, b0), len: a.len - overlap }];
+  return [delOp(Math.min(a0, b0), a.len - overlap)];
 }
 
 // Returns [a', b']: a' applies after b, b' after a.

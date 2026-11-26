@@ -13,7 +13,7 @@
 
 import { rpc, attempt } from "./rpc.js";
 import { some, none } from "./maybe.js";
-import { byteLen, transformSeqs } from "./ot.js";
+import { byteLen, transformSeqs, insOp, delOp } from "./ot.js";
 import { Decor } from "./decor.js";
 
 // A window: this many lines before and after the line asked for. A file
@@ -164,11 +164,7 @@ class Lines {
 /** function linesGone(gone: String | Null, counted: Number) => Number */
 function linesGone(gone, counted) { return gone === null ? counted : nl(gone); }
 
-// An insertion, a deletion; an op as the server takes it (no more).
-/** function insOp(pos: Number, text: String) => Op */
-function insOp(pos, text) { return { t: "ins", pos, text }; }
-/** function delOp(pos: Number, len: Number) => Op */
-function delOp(pos, len) { return { t: "del", pos, len }; }
+// An op as the server takes it (no more).
 // What an op does: whether it inserts, the range it covers in the text
 // before it, the bytes it adds (negative: removes) and the lines
 // (`deleted`: a deletion's newlines, counted elsewhere).

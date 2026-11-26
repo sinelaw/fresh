@@ -601,7 +601,7 @@ export class DocView {
       if (p < e.start || p > e.end) continue;
       ranked.push({ rank: e.kind === "p" ? (p < e.end ? 0 : 1) : e.kind === "a" ? 2 : p === e.start ? 3 : p === e.end ? 4 : 5, e });
     }
-    return ranked.sort((x, y) => x.rank - y.rank).at(0)?.e ?? NO_PIECE;
+    return ranked.sort((x, y) => x.rank - y.rank).map((x) => x.e).at(0) ?? NO_PIECE;
   }
 
   // Where a caret at byte `p` is drawn, in client coordinates, or null when

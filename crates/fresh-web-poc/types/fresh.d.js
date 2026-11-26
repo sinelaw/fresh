@@ -460,6 +460,30 @@
 // buffers (`stored`: the server keeps it; `path` "" for none).
 /** type PaletteCommand = {title: String, key: String, source: String, run: () => Undefined} */
 /** type PaletteBuffer = {name: String, path: String, modified: Boolean, stored: Boolean, show: () => Undefined} */
+// What skins ask of the editor (skins.js): report a failure, say
+// something, measure the cell again, put an editor theme on, pick from a
+// list, and count the open files and their problems.
+/** type SkinsEditor = {
+ *   report: (String) => Undefined,
+ *   say: (String) => Undefined,
+ *   remeasure: () => Undefined,
+ *   useTheme: (String) => Promise<Undefined>,
+ *   pick: (PickOptions<String>) => Undefined,
+ *   counts: () => {files: Number, errors: Number, warnings: Number},
+ * } */
+// What macros ask of the editor (macros.js): say something, a command's
+// keys and title, redraw the status bar, run a command, type text, pick a
+// register, and show a text.
+/** type MacrosEditor = {
+ *   say: (String) => Undefined,
+ *   keyLabel: (String) => String,
+ *   updateStatus: () => Undefined,
+ *   run: (String, CommandArg) => Promise<Undefined>,
+ *   insert: (String, Boolean) => Undefined,
+ *   pick: (PickOptions<String>) => Undefined,
+ *   titleOf: (String) => String,
+ *   showText: (String, String) => Undefined,
+ * } */
 // What the menu bar asks of the editor (menubar.js): a command's title
 // (none: no such command), its keys, run it, whether a toggle is on (a
 // "setting" or a view "state"), and focus.

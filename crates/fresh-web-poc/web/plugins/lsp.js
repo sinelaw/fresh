@@ -17,6 +17,7 @@
 // each).
 
 import * as fresh from "../js/api.js";
+import { insOp, delOp } from "../js/api.js";
 import { h } from "../js/ui.js";
 
 // An inlay hint.
@@ -201,8 +202,8 @@ export function activate(app) {
       })
       .sort((x, y) => y.s - x.s);
     for (const e of resolved) {
-      if (e.e > e.s) ops.push({ t: "del", pos: e.s, len: e.e - e.s });
-      if (e.text) ops.push({ t: "ins", pos: e.s, text: e.text });
+      if (e.e > e.s) ops.push(delOp(e.s, e.e - e.s));
+      if (e.text) ops.push(insOp(e.s, e.text));
     }
     if (ops.length) b.edit(ops);
     return resolved.length;

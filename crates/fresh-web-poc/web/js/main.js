@@ -17,7 +17,7 @@ import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
 
 import { $ } from "./dom.js";
-import { found } from "./maybe.js";
+import { found, listOf } from "./maybe.js";
 
 async function main() {
   // The workspace this page views: `?ws=<id>`, or the server's first. None
@@ -44,7 +44,7 @@ async function main() {
   // Skins: report a failure, say something, measure the editor's cell
   // again (a skin's fonts are in), put an editor theme on, pick from a
   // list, and count the open files and their problems.
-  const skinsEditor = {
+  const skinsEditor /*: SkinsEditor */ = {
     report: (text) => { app.report(text); },
     say: (text) => { app.setStatus(text); },
     remeasure: () => { app.remeasure(); },
@@ -55,14 +55,14 @@ async function main() {
   // Macros: say something, a command's key and title, refresh the status
   // bar, run a command, put text in the active view, pick from a list, and
   // show a text.
-  const macrosEditor = {
+  const macrosEditor /*: MacrosEditor */ = {
     say: (text) => { app.setStatus(text); },
     keyLabel: (id) => app.keyLabel(id),
     updateStatus: () => { app.updateStatus(); },
     run: (id, arg) => app.run(id, arg),
     insert: (text, typed) => { app.insertText(text, typed); },
     pick: (o) => { app.prompt.open(o); },
-    titleOf: (id) => app.commands.get(id)?.title ?? id,
+    titleOf: (id) => found(app.commands.get(id)).map((c) => c.title).at(0) ?? id,
     showText: (name, text) => { app.showText(name, text); },
   };
   // The menu bar: a command's title (none: no such command), its key,
@@ -139,7 +139,7 @@ async function main() {
   // it binds; its status bar item; the panels and menus it shows; and the
   // terminals it reports on and runs agents in.
   const orchestratorEditor = {
-    workspaceId: () => app.workspace?.id ?? null,
+    workspaceId: () => listOf(app.workspace).map((w) => w.id).at(0) ?? null,
     root: () => app.root,
     trusted: () => app.trusted,
     closed: () => { app.workspace = null; },

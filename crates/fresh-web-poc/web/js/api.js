@@ -13,9 +13,10 @@
 // `onLspStatus`.
 
 import { rpc } from "./rpc.js";
+import { found, listOf } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand, asArgCommand } from "./commands.js";
-export { byteLen } from "./ot.js";
+export { byteLen, insOp, delOp } from "./ot.js";
 // A value that may be missing (null) as a list of at most one, to act on
 // it if it is there.
 export { listOf } from "./maybe.js";
@@ -23,6 +24,9 @@ export { stringWidth as textWidth } from "./layout.js";
 
 // The application's buffer a handle is of (none once it is closed).
 const held = (app, buffer) => app.buffers.get(buffer.id);
+// The server document of the buffer a handle names (none: it is gone, or
+// virtual).
+const docOfHeld = (app, buffer) => found(held(app, buffer)).flatMap((b) => listOf(b.doc)).at(0) ?? null;
 
 // ---------------------------------------------------------------- the workspace
 
@@ -158,7 +162,7 @@ export const findFiles = async (_app, query) => (await rpc("fs.find", { query })
 export const searchWorkspace = (_app, query, o) => rpc("search.project", { query, regex: o.regex, case: o.case, whole: o.whole, max: o.max });
 // The next (or previous) occurrence of `query` in a document, found by the
 // server: how a huge file is searched.
-export const searchDocument = async (app, buffer, query, from, backward) => (await rpc("doc.search", { doc: held(app, buffer)?.doc ?? null, query, from, backward })).pos;
+export const searchDocument = async (app, buffer, query, from, backward) => (await rpc("doc.search", { doc: docOfHeld(app, buffer), query, from, backward })).pos;
 // The editor's themes: [{key, name}], and one fully resolved.
 export const themes = async (_app) => (await rpc("theme.list", {})).themes;
 export const theme = (_app, key) => rpc("theme.get", { key });
@@ -167,8 +171,8 @@ export const theme = (_app, key) => rpc("theme.get", { key });
 
 export const lspAvailable = (app, buffer) => { const b = held(app, buffer); return b !== undefined && app.lspAvailable(b); };
 // A request about `buffer` (at byte `pos` when it is about a position).
-export const lspRequest = (app, buffer, method, params) => rpc("lsp.call", { doc: held(app, buffer)?.doc ?? null, method, params, pos: null });
-export const lspRequestAt = (app, buffer, method, params, pos) => rpc("lsp.call", { doc: held(app, buffer)?.doc ?? null, method, params, pos });
+export const lspRequest = (app, buffer, method, params) => rpc("lsp.call", { doc: docOfHeld(app, buffer), method, params, pos: null });
+export const lspRequestAt = (app, buffer, method, params, pos) => rpc("lsp.call", { doc: docOfHeld(app, buffer), method, params, pos });
 // A request about the workspace (`workspace/symbol`) to `language`'s server.
 export const lspWorkspaceRequest = (_app, language, method, params) => rpc("lsp.call", { language, method, params });
 // LSP (line, character) to a byte offset in a held buffer, and back.

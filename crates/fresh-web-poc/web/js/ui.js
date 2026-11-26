@@ -15,14 +15,14 @@
 // virtualised (any number of items) and keyboard-navigable.
 
 import { $, setClass, escapeHtml, within } from "./dom.js";
-import { listOf } from "./maybe.js";
+import { listOf, found } from "./maybe.js";
 import { color } from "./highlight.js";
 import { makeMenu, menuSpec } from "./menu.js";
 
-// `children` is one array of nodes and strings; nested arrays are
+// `children` is one array of nodes and strings; arrays in it are
 // flattened, and null and false left out (for conditional parts).
 export function h(type, props, children = []) {
-  return { type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null && c !== false) };
+  return { type, props: props || {}, children: children.flat().filter((c) => c != null && c !== false) };
 }
 
 const ROW_H = 22;
@@ -135,6 +135,15 @@ export class UIKit {
   }
 }
 
+// A panel's controls' state, by key: lists' selection and scroll, trees'
+// expanded node ids.
+/** function noLists() => Map<String, {sel: Number, scroll: Number}> */
+function noLists() { return new Map(); }
+/** function noExpanded() => Map<String, Set<String>> */
+function noExpanded() { return new Map(); }
+/** function noIds() => Set<String> */
+function noIds() { return new Set(); }
+
 class Panel {
   constructor(kit, id, title, place, onClose) {
     this.kit = kit;
@@ -142,7 +151,11 @@ class Panel {
     this.title = title;
     this.place = place;
     this.onClose = onClose;
-    this.state = new Map(); // per-key control state (list selection, tree expansion)
+    // Per-key control state: a list's selection and scroll, how the arrow
+    // keys move it, and a tree's expanded nodes.
+    this.lists = noLists();
+    this.movers = new Map();
+    this.expanded = noExpanded();
     this.tree = null;
     this.el = document.createElement("div");
     this.el.className = `panel panel-${place}`;
@@ -248,8 +261,9 @@ class Panel {
     for (const f of had) {
       const el = this.body.querySelector(`[data-key="${CSS.escape(f.key)}"]`);
       if (el === null) continue;
-      el.focus({ preventScroll: true });
-      try { el.setSelectionRange(f.start, f.end); } catch {}
+      el.focus();
+      // (A control without a text selection refuses one.)
+      try { el.selectionStart = f.start; el.selectionEnd = f.end; } catch {}
     }
   }
 
@@ -258,100 +272,92 @@ class Panel {
     const p = n.props;
     const kids = (el) => { for (const c of n.children) el.appendChild(this.build(c)); return el; };
     let el;
-    switch (n.type) {
-      case "row": case "col": case "box":
-        el = kids(div(`ui-${n.type}`));
-        break;
-      case "text":
-        el = kids(document.createElement("span"));
-        el.className = "ui-text" + (p.dim ? " dim" : "") + (p.mono ? " mono" : "") + (p.bold ? " bold" : "");
-        // A theme key ("syntax.type") or a CSS colour.
-        if (p.color) el.style.color = color(p.color) || p.color;
-        if (p.title) el.title = p.title;
-        break;
-      case "badge":
-        el = kids(div("ui-badge"));
-        if (p.color) el.style.background = color(p.color) || p.color;
-        break;
-      case "input":
-        el = document.createElement("input");
-        el.className = "ui-input";
-        el.value = p.value ?? "";
-        el.placeholder = p.placeholder || "";
-        el.spellcheck = false;
-        el.oninput = () => p.onInput?.(el.value);
-        el.onkeydown = (e) => {
-          if (p.onKey && p.onKey(e) === true) { e.preventDefault(); return; }
-          if (e.key === "Enter") { e.preventDefault(); p.onEnter?.(el.value, e); }
-          if ((e.key === "ArrowDown" || e.key === "ArrowUp") && p.list) {
-            e.preventDefault();
-            this.listMove(p.list, e.key === "ArrowDown" ? 1 : -1);
-          }
-        };
-        break;
-      case "textarea":
-        // Text of several lines (Enter is a new line); `rows` tall.
-        el = document.createElement("textarea");
-        el.className = "ui-textarea";
-        el.rows = p.rows || 4;
-        el.value = p.value ?? "";
-        el.placeholder = p.placeholder || "";
-        el.oninput = () => p.onInput?.(el.value);
-        el.onkeydown = (e) => { if (p.onKey && p.onKey(e) === true) e.preventDefault(); };
-        break;
-      case "button":
-        el = kids(document.createElement("button"));
-        // A `field` button is part of a box beside it (a ▾ for its values):
-        // drawn as the box is, not as a button.
-        el.className = p.field ? "ui-field-button" : "ui-button" + (p.primary ? " primary" : "");
-        el.disabled = !!p.disabled;
-        el.title = p.title || "";
-        el.onclick = (e) => p.onClick?.(e);
-        break;
-      case "toggle": {
-        // A compact on/off button, as in find bars: [Aa] [ab] [.*]
-        el = kids(document.createElement("button"));
-        el.className = "ui-toggle" + (p.on ? " on" : "");
-        el.title = p.title || "";
-        el.onclick = () => p.onChange?.(!p.on);
-        break;
-      }
-      case "checkbox": {
-        el = document.createElement("label");
-        el.className = "ui-check";
-        const c = document.createElement("input");
-        c.type = "checkbox";
-        c.checked = !!p.checked;
-        c.disabled = !!p.disabled;
-        if (p.disabled) el.classList.add("disabled");
-        if (p.title) el.title = p.title;
-        c.onchange = () => p.onChange?.(c.checked);
-        el.append(c, ...n.children.map((x) => this.build(x)));
-        break;
-      }
-      case "select": {
-        el = document.createElement("select");
-        el.className = "ui-select";
-        for (const o of p.options || []) {
-          const op = document.createElement("option");
-          op.value = o.value;
-          op.textContent = o.label ?? o.value;
-          op.disabled = !!o.disabled;
-          el.appendChild(op);
+    if (n.type === "row" || n.type === "col" || n.type === "box") {
+      el = kids(div(`ui-${n.type}`));
+    } else if (n.type === "text") {
+      el = kids(document.createElement("span"));
+      el.className = "ui-text" + (p.dim ? " dim" : "") + (p.mono ? " mono" : "") + (p.bold ? " bold" : "");
+      // A theme key ("syntax.type") or a CSS colour.
+      if (p.color) el.style.color = color(p.color) ?? p.color;
+      if (p.title) el.title = p.title;
+    } else if (n.type === "badge") {
+      el = kids(div("ui-badge"));
+      if (p.color) el.style.background = color(p.color) ?? p.color;
+    } else if (n.type === "input") {
+      el = document.createElement("input");
+      el.className = "ui-input";
+      el.value = p.value ?? "";
+      el.placeholder = p.placeholder || "";
+      el.setAttribute("spellcheck", "false");
+      el.oninput = () => p.onInput?.(el.value);
+      el.onkeydown = (e) => {
+        if (p.onKey && p.onKey(e) === true) { e.preventDefault(); return; }
+        if (e.key === "Enter") { e.preventDefault(); p.onEnter?.(el.value, e); }
+        if ((e.key === "ArrowDown" || e.key === "ArrowUp") && p.list) {
+          e.preventDefault();
+          this.listMove(p.list, e.key === "ArrowDown" ? 1 : -1);
         }
-        el.value = p.value;
-        el.onchange = () => p.onChange?.(el.value);
-        break;
+      };
+    } else if (n.type === "textarea") {
+      // Text of several lines (Enter is a new line); `rows` tall.
+      el = document.createElement("textarea");
+      el.className = "ui-textarea";
+      el.setAttribute("rows", String(p.rows || 4));
+      el.value = p.value ?? "";
+      el.placeholder = p.placeholder || "";
+      el.oninput = () => p.onInput?.(el.value);
+      el.onkeydown = (e) => { if (p.onKey && p.onKey(e) === true) e.preventDefault(); };
+    } else if (n.type === "button") {
+      el = kids(document.createElement("button"));
+      // A `field` button is part of a box beside it (a ▾ for its values):
+      // drawn as the box is, not as a button.
+      el.className = p.field ? "ui-field-button" : "ui-button" + (p.primary ? " primary" : "");
+      el.disabled = !!p.disabled;
+      el.title = p.title || "";
+      el.onclick = (e) => p.onClick?.(e);
+    } else if (n.type === "toggle") {
+      // A compact on/off button, as in find bars: [Aa] [ab] [.*]
+      el = kids(document.createElement("button"));
+      el.className = "ui-toggle" + (p.on ? " on" : "");
+      el.title = p.title || "";
+      el.onclick = () => p.onChange?.(!p.on);
+    } else if (n.type === "checkbox") {
+      el = document.createElement("label");
+      el.className = "ui-check";
+      const c = document.createElement("input");
+      c.type = "checkbox";
+      c.checked = !!p.checked;
+      c.disabled = !!p.disabled;
+      if (p.disabled) el.classList.add("disabled");
+      if (p.title) el.title = p.title;
+      c.onchange = () => p.onChange?.(c.checked);
+      el.append(c);
+      for (const x of n.children) el.append(this.build(x));
+    } else if (n.type === "select") {
+      el = document.createElement("select");
+      el.className = "ui-select";
+      for (const o of p.options || []) {
+        const op = document.createElement("option");
+        op.value = o.value;
+        op.textContent = o.label ?? o.value;
+        op.disabled = !!o.disabled;
+        el.appendChild(op);
       }
-      case "list": el = this.list(n); break;
-      case "tree": el = this.treeView(n); break;
-      case "table": el = this.table(n); break;
-      case "spacer": el = div("ui-spacer"); break;
-      case "markdown":
-        el = div("ui-markdown");
-        el.innerHTML = markdownHtml(p.text || "");
-        break;
-      default: el = kids(div(`ui-${n.type}`));
+      el.value = p.value;
+      el.onchange = () => p.onChange?.(el.value);
+    } else if (n.type === "list") {
+      el = this.list(n);
+    } else if (n.type === "tree") {
+      el = this.treeView(n);
+    } else if (n.type === "table") {
+      el = this.table(n);
+    } else if (n.type === "spacer") {
+      el = div("ui-spacer");
+    } else if (n.type === "markdown") {
+      el = div("ui-markdown");
+      el.innerHTML = markdownHtml(p.text || "");
+    } else {
+      el = kids(div(`ui-${n.type}`));
     }
     if (p.key) el.dataset.key = p.key;
     if (p.class) el.classList.add(...p.class.split(" "));
@@ -363,8 +369,8 @@ class Panel {
   list(n) {
     const p = n.props;
     const key = p.key || "list";
-    const st = this.state.get(key) || { sel: 0, scroll: 0 };
-    this.state.set(key, st);
+    const st = this.lists.get(key) ?? { sel: 0, scroll: 0 };
+    this.lists.set(key, st);
     const items = p.items || [];
     // A selection the plugin moves (the explorer following the active file)
     // is scrolled into view.
@@ -483,7 +489,7 @@ class Panel {
       else if (e.key === "Enter") { e.preventDefault(); p.onActivate?.(items[st.sel], st.sel, "key", e); }
       else p.onKey?.(e, items[st.sel], st.sel);
     };
-    el._move = (d, e) => {
+    this.movers.set(key, (d, e) => {
       let i = st.sel + d;
       // Skip header rows.
       while (items[i] && items[i].header && i > 0 && i < items.length - 1) i += Math.sign(d);
@@ -491,8 +497,7 @@ class Panel {
       show();
       draw();
       p.onSelect?.(items[st.sel], st.sel, "key", e);
-    };
-    el._draw = draw;
+    });
     const show = () => {
       const top = st.sel * ROW_H;
       // In a tree, as many rows as the row has ancestors may be pinned
@@ -508,8 +513,7 @@ class Panel {
 
   // Move a list's selection `d` rows (the key `e` that moved it, if any).
   listMove(key, d, e) {
-    const el = this.body.querySelector(`.ui-list[data-key="${CSS.escape(key)}"]`);
-    el?._move(d, e || null);
+    for (const move of found(this.movers.get(key))) move(d, e);
   }
 
   // A tree: nodes {id, label, children, open, leaf, data} (a leaf has no
@@ -517,8 +521,8 @@ class Panel {
   treeView(n) {
     const p = n.props;
     const key = p.key || "tree";
-    const open = this.state.get(key + ":open") || new Set();
-    this.state.set(key + ":open", open);
+    const open = this.expanded.get(key) ?? noIds();
+    this.expanded.set(key, open);
     const rows = [];
     const walk = (nodes, depth, path) => {
       nodes.forEach((nd, i) => {
@@ -658,8 +662,7 @@ export function markdownHtml(text) {
 function focusIn(body) {
   const active = document.activeElement;
   if (active === null || !body.contains(active)) return [];
-  const key = active.dataset.key;
-  return key === undefined ? [] : [{ key, start: active.selectionStart, end: active.selectionEnd }];
+  return found(active.dataset.key).map((key) => ({ key, start: active.selectionStart, end: active.selectionEnd }));
 }
 
 function div(cls) {
