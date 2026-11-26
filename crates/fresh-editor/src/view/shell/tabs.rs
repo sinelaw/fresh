@@ -264,7 +264,8 @@ fn elided_title(pieces: &[TitlePiece], cap: usize, modified_glyph: &str) -> Stri
 /// scrollbar's track gives — would skip past every tab you were looking for.
 pub const TAB_SCROLL_STEP_COLUMNS: u16 = 10;
 
-/// A tab's close button: the theme's glyph and a cell of air after it.
+/// A tab's close button: the theme's glyph and a cell of air after it. Used
+/// for the tab's width; `close_node` draws the two as separate runs.
 fn close_text(g: &Glyphs) -> String {
     format!("{} ", g.tab_close)
 }
@@ -335,12 +336,21 @@ fn tab_ink(s: &Strip, i: usize) -> (String, String) {
         a.push("italic");
     }
     let name = attrs(fg, bg, &a);
+    // A hovered `×` sits on a pill of `ui.tab_hover_bg`. A change of glyph
+    // colour alone was the whole hover cue, and on a dark tab a white `×`
+    // turning red is easy to miss — the pointer is on the button and the
+    // button barely answers (#3853).
     let close = match hover_close {
-        true => attrs("ui.tab_close_hover_fg", bg, &a),
+        true => attrs("ui.tab_close_hover_fg", HOVER_PILL_BG, &a),
         false => name.clone(),
     };
     (name, close)
 }
+
+/// The ground a hovered button in the strip sits on — the tab `×`, the `+`
+/// and the pane's own `□`/`×` — so each reads as a button under the pointer,
+/// not just a glyph that changed colour.
+const HOVER_PILL_BG: &str = "ui.tab_hover_bg";
 
 fn press(fact: UiFact) -> fresh_ui::Handler<UiMsg> {
     Rc::new(move |e: &Event| {
@@ -442,8 +452,22 @@ fn name_node(
 /// A tab's `×`. A right press here opens the tab's menu too, as the painter's
 /// hit test answered `CloseButton` for the menu the same as `TabName`; a
 /// middle press closes, as it does on the name (issue #3284).
-fn close_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> {
-    gesture(text(s).theme(ink))
+///
+/// `ink` is the glyph's and `tail_ink` the space after it, which is the
+/// tab's own: lit on hover, the glyph gets a pill of its own instead of a
+/// block that runs on into the gap.
+fn close_node(
+    pane: LeafId,
+    t: TabTarget,
+    glyph: String,
+    ink: String,
+    tail_ink: String,
+) -> Node<UiMsg> {
+    let label = fresh_ui::text_runs([
+        fresh_ui::Run::themed(glyph, ink),
+        fresh_ui::Run::themed(" ".to_string(), tail_ink),
+    ]);
+    gesture(label)
         .key(close_tab_key(pane, t))
         .on(
             GestureKind::Press,
@@ -471,11 +495,11 @@ fn close_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg>
 /// name does and as the strip's own `<`/`>` caps do — the three are the same
 /// kind of thing and read the same way.
 fn plus_node(pane: LeafId, hovered: bool, s: String) -> Node<UiMsg> {
-    let fg = match hovered {
-        true => "ui.tab_close_hover_fg",
-        false => "ui.tab_inactive_fg",
+    let theme = match hovered {
+        true => pair("ui.tab_close_hover_fg", HOVER_PILL_BG),
+        false => pair("ui.tab_inactive_fg", "ui.tab_inactive_bg"),
     };
-    gesture(text(s).theme(pair(fg, "ui.tab_inactive_bg")))
+    gesture(text(s).theme(theme))
         .key(new_tab_key(pane))
         .on_enter(hover(Some(HoverTarget::NewTabButton(pane))))
         .on_leave(hover(None))
@@ -498,11 +522,11 @@ fn plus_node(pane: LeafId, hovered: bool, s: String) -> Node<UiMsg> {
 /// A cell of the right-hand cluster: `□`/`⧉` or `×`, answering its own press
 /// and reporting its own hover.
 fn control(glyph: &'static str, hovered: bool, target: HoverTarget, fact: UiFact) -> Node<UiMsg> {
-    let fg = match hovered {
-        true => "ui.tab_close_hover_fg",
-        false => "editor.line_number_fg",
+    let theme = match hovered {
+        true => pair("ui.tab_close_hover_fg", HOVER_PILL_BG),
+        false => pair("editor.line_number_fg", "ui.tab_separator_bg"),
     };
-    gesture(text(glyph).theme(pair(fg, "ui.tab_separator_bg")))
+    gesture(text(glyph).theme(theme))
         .on(GestureKind::Press, press(fact))
         .on_enter(hover(Some(target)))
         .on_leave(hover(None))
@@ -652,7 +676,13 @@ fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
             name_ink.clone(),
             icon,
         ));
-        span.push(close_node(pane, t.target, close_text(g), close_ink));
+        span.push(close_node(
+            pane,
+            t.target,
+            g.tab_close.clone(),
+            close_ink,
+            name_ink.clone(),
+        ));
         if !g.tab_cap_right.is_empty() {
             span.push(text(g.tab_cap_right.clone()).theme(cap_ink(&name_ink)));
         }
