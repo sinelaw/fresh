@@ -174,7 +174,7 @@ impl Session {
         let m = self.meta();
         json!({
             "id": self.id, "name": self.name(), "label": m.name, "root": self.ws.root.to_string_lossy(),
-            "host": self.ws.authority.name(), "folder": m.folder, "pinned": m.pinned,
+            "host": m.host, "folder": m.folder, "pinned": m.pinned,
             "created": m.created, "worktree": m.worktree, "status": self.status(), "error": null,
         })
     }
@@ -184,7 +184,7 @@ impl Session {
         let trusted = self.trusted();
         json!({
             "id": self.id, "name": self.name(), "root": self.ws.root.to_string_lossy(),
-            "host": self.ws.authority.name(), "trusted": trusted,
+            "host": self.meta().host, "trusted": trusted,
             "terminals": self.terms.list(),
             // Finding the servers runs a probe on the host: only once
             // trusted (then sent with `workspace.trusted`).

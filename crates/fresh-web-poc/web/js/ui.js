@@ -70,8 +70,13 @@ export function checkbox(p, label) { return { kind: "checkbox", props: p, label 
 export function input(p) { return { kind: "input", props: p }; }
 /** function textarea(p: TextareaProps) => UINode */
 export function textarea(p) { return { kind: "textarea", props: p }; }
-/** function select(p: SelectProps) => UINode */
-export function select(p) { return { kind: "select", props: p }; }
+/** function select<T>(p: SelectProps<T>) => UINode */
+export function select(p) {
+  return {
+    kind: "select",
+    props: { key: p.key, labels: p.options.map((o) => o.label), selected: p.selected, choose: (i) => { for (const o of p.options.slice(i, i + 1)) p.onChange(o.value); } },
+  };
+}
 
 // A list's props when nothing more is said: nothing selected, no rows
 // headers or marked, a row doing nothing when pressed.
@@ -697,19 +702,19 @@ function textareaEl(p) {
   return el;
 }
 
-/** function selectEl(p: SelectProps) => El */
+/** function selectEl(p: Choice) => El */
 function selectEl(p) {
   const el = document.createElement("select");
   el.className = "ui-select";
   el.dataset.key = p.key;
-  for (const o of p.options) {
+  p.labels.forEach((label, i) => {
     const op = document.createElement("option");
-    op.value = o.value;
-    op.textContent = o.label;
+    op.value = String(i);
+    op.textContent = label;
     el.appendChild(op);
-  }
-  el.value = p.value;
-  el.onchange = (_e) => { p.onChange(el.value); };
+  });
+  el.value = String(p.selected);
+  el.onchange = (_e) => { p.choose(Number(el.value)); };
   return el;
 }
 

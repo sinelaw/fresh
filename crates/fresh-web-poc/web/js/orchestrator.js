@@ -34,6 +34,7 @@ import { rpc, attempt, failure } from "./rpc.js";
 import * as ui from "./ui.js";
 import { baseName, parentOf } from "./paths.js";
 import { plural } from "./words.js";
+import { hostText, localHost, sshHost } from "./hosts.js";
 import { TERM_MARKS } from "./terminal.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
@@ -93,17 +94,6 @@ function whereOf(r) {
   return r.repo ? { kind: "repo", toplevel: r.toplevel } : { kind: "plain" };
 }
 
-// A host as people read it: an SSH target, a container, the agent.
-/** function hostText(host: HostSpec) => String */
-function hostText(host) {
-  if (host.kind === "ssh") return host.target;
-  if (host.kind === "container") return `container ${host.id}`;
-  return host.kind;
-}
-/** function localHost() => HostSpec */
-function localHost() { return { kind: "local" }; }
-/** function sshHost(target: String, identity: String | Null, options: String[]) => HostSpec */
-function sshHost(target, identity, options) { return { kind: "ssh", target, identity, options }; }
 
 // The dock's marks: a terminal's state's (terminal.js), and a workspace's
 // own, failed to open and on its way.
@@ -141,7 +131,6 @@ export function displayName(w) {
   return listOf(w.label).filter((l) => l !== "").at(0) ?? agent.at(0) ?? w.name;
 }
 
-const hostKind = (w) => (w.host.startsWith("ssh ") ? "ssh" : w.host.startsWith("container ") ? "container" : w.host === "agent" ? "agent" : "local");
 // The dock folder a dock folder is in ("": the top level).
 const folderParent = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
@@ -150,6 +139,68 @@ async function changeWorkspace(say, change) {
   try { await rpc("workspace.set", change); } catch (e) { say(`Not changed: ${String(e)}`); }
 }
 
+// The machine a workspace goes on: this one, a declared one (by name), or
+// one being declared (New Workspace's "Add…").
+/** type MachineChoice = {kind: "local"} | {kind: "declared", name: String} | {kind: "adding"} */
+/** const THIS_MACHINE: MachineChoice */
+const THIS_MACHINE = { kind: "local" };
+/** const ADDING: MachineChoice */
+const ADDING = { kind: "adding" };
+/** function declared(name: String) => MachineChoice */
+function declared(name) { return { kind: "declared", name }; }
+// The choice as people read it.
+/** function machineText(c: MachineChoice) => String */
+function machineText(c) { return c.kind === "declared" ? c.name : c.kind === "adding" ? "a new machine" : "this machine"; }
+// The machine remembered for the next form (`prefs.machine`): a declared
+// one's name, or none (this machine).
+/** function rememberedOf(c: MachineChoice) => String[] */
+function rememberedOf(c) { return c.kind === "declared" ? [c.name] : []; }
+// The agents New Workspace offers (a terminal of no agent among them),
+// `chosen` the one chosen.
+/** function agentSelect(chosen: String, onChange: (String) => Undefined) => UINode */
+function agentSelect(chosen, onChange) {
+  const options = AGENT_CHOICES.filter((c) => c.value !== "custom");
+  return ui.select({ key: "agent", options, selected: Math.max(0, options.findIndex((o) => o.value === chosen)), onChange });
+}
+// The machine remembered (a declared one's name, or none) while it is
+// still declared; else this machine.
+/** function chosenOf(machines: Machine[], remembered: String[]) => MachineChoice */
+function chosenOf(machines, remembered) {
+  for (const name of remembered) if (machines.some((m) => m.name === name)) return declared(name);
+  return THIS_MACHINE;
+}
+// The host a choice names (a list of at most one).
+/** function hostsIn(machines: Machine[], choice: MachineChoice) => HostSpec[] */
+function hostsIn(machines, choice) {
+  if (choice.kind === "local") return [localHost()];
+  if (choice.kind === "adding") return [];
+  const name = choice.name;
+  return machines.filter((x) => x.name === name).map((m) => m.host);
+}
+// The machine choices: this machine, the declared ones, the hosts in
+// ~/.ssh/config (they need no declaring) and (`withAdd`) "Add…", which
+// declares another; `chosen` the one chosen.
+/** function machineSelectOf(
+ *   machines: Machine[],
+ *   key: String,
+ *   chosen: MachineChoice,
+ *   withAdd: Boolean,
+ *   onChange: (MachineChoice) => Undefined,
+ * ) => UINode */
+function machineSelectOf(machines, key, chosen, withAdd, onChange) {
+  const options = [
+    machineOption(THIS_MACHINE, "This machine"),
+    ...machines.map((m) => machineOption(declared(m.name), m.ssh_config ? `${m.name} (~/.ssh/config)` : m.name === hostText(m.host) ? m.name : `${m.name} (${hostText(m.host)})`)),
+    ...(withAdd ? [machineOption(ADDING, "Add…")] : []),
+  ];
+  const same = (o) => o.value.kind === chosen.kind && machineText(o.value) === machineText(chosen);
+  return ui.select({ key, options, selected: Math.max(0, options.findIndex(same)), onChange });
+}
+/** function noMachine() => String[] */
+function noMachine() { return []; }
+/** function machineOption(value: MachineChoice, label: String) => SelectOption<MachineChoice> */
+function machineOption(value, label) { return { value, label }; }
+
 // The New Workspace form's fields: the agent (or "terminal"), the prompt
 // (a terminal's command), the machine, the folder, how git is used, the
 // name, an imported session's resume command, and whether it is being
@@ -157,7 +208,7 @@ async function changeWorkspace(say, change) {
 /** type NewWorkspaceForm = {
  *   agent: String,
  *   prompt: String,
- *   machine: String,
+ *   machine: MachineChoice,
  *   root: String,
  *   git: String,
  *   name: String,
@@ -242,7 +293,7 @@ export class Orchestrator {
     this.filter = "";
     this.pending = []; // workspaces being made in the background: {key, spec, name, error}
     this.nextPending = 0;
-    this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [], machine: "local", git: "worktree" };
+    this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [], machine: noMachine(), git: "worktree" };
     this.formGo = []; // the open New Workspace form's launch: a list of at most one
     this.boards = []; // the open Workboard's redraw: a list of at most one
   }
@@ -356,7 +407,7 @@ export class Orchestrator {
     for (const w of workspaceIn(this.list, this.current)) {
       const trusted = listOf(w.status).some((s) => s.trusted);
       document.title = `${displayName(w)} — Fresh`;
-      $("#ws-name").textContent = `${displayName(w)} · ${w.host}${trusted ? "" : " · restricted"}`;
+      $("#ws-name").textContent = `${displayName(w)} · ${hostText(w.host)}${trusted ? "" : " · restricted"}`;
     }
   }
 
@@ -411,7 +462,7 @@ export class Orchestrator {
       value: "",
       items: this.list.filter((w) => w.status !== null).map((w) => ({
         label: `${markOf(stateOf(w))} ${displayName(w)}${w.id === this.current ? " (this one)" : ""}`,
-        detail: [w.folder, w.host, branchOf(w), attentionOf(w)].filter((x) => x !== "").join(" · "),
+        detail: [w.folder, hostText(w.host), branchOf(w), attentionOf(w)].filter((x) => x !== "").join(" · "),
         value: w.id,
       })),
       onAccept: (it) => { this.switchTo(it.value); },
@@ -469,16 +520,16 @@ export class Orchestrator {
   row(w) {
     const state = stateOf(w);
     const here = w.id === this.current;
-    const kind = hostKind(w);
+    const kind = w.host.kind;
     const st = listOf(w.status);
-    const title = [w.root, w.host, w.error ?? attentionOf(w), ...listOf(w.worktree).map((t) => `worktree of ${t.repo}`)].filter((x) => x !== "").join("\n");
+    const title = [w.root, hostText(w.host), w.error ?? attentionOf(w), ...listOf(w.worktree).map((t) => `worktree of ${t.repo}`)].filter((x) => x !== "").join("\n");
     return ui.row({ ...ui.BOX, class: "orch-row" + (here ? " current" : "") }, [
       ui.text({ ...ui.TEXT, class: "orch-name", bold: here, title }, displayName(w)),
       ...[branchOf(w)].filter((b) => b !== "").map((b) => ui.text({ ...ui.TEXT, dim: true, class: "orch-branch" }, b)),
       ...st.filter((s) => s.modified > 0).map((s) => ui.text({ ...ui.TEXT, class: "orch-modified", title: "Unsaved files" }, `●${s.modified}`)),
       ui.spacer(),
       ...st.filter((s) => !s.trusted).map((_s) => ui.text({ ...ui.TEXT, class: "orch-restricted", title: "Restricted: no processes, terminals or language servers" }, "⊘")),
-      ...found(HOST_MARK.get(kind)).map((m) => ui.text({ ...ui.TEXT, dim: true, title: w.host }, m)),
+      ...found(HOST_MARK.get(kind)).map((m) => ui.text({ ...ui.TEXT, dim: true, title: hostText(w.host) }, m)),
       ui.text({ ...ui.TEXT, class: `orch-mark ${state}`, title: state }, markOf(state)),
     ]);
   }
@@ -838,31 +889,21 @@ export class Orchestrator {
 
   // ----------------------------------------------------------- machines
 
-  // The machine choices: this machine, the declared ones, the hosts in
-  // ~/.ssh/config (they need no declaring) and (`withAdd`) "Add…", which
-  // declares another.
-  machineOptions(withAdd) {
-    return [
-      { value: "local", label: "This machine" },
-      ...this.machines.map((m) => ({ value: `m:${m.name}`, label: m.ssh_config ? `${m.name} (~/.ssh/config)` : m.name === hostText(m.host) ? m.name : `${m.name} (${hostText(m.host)})` })),
-      ...(withAdd ? [{ value: "add", label: "Add…" }] : []),
-    ];
-  }
-  // A remembered choice, while its machine is still declared.
-  machineChoice(choice) {
-    return choice && this.machines.some((m) => `m:${m.name}` === choice) ? choice : "local";
-  }
-  // The host a choice names (a list of at most one: none for "Add…", or
-  // a machine no longer declared).
-  hostsOf(choice) {
-    if (choice === "local") return [localHost()];
-    return this.machines.filter((x) => `m:${x.name}` === choice).map((m) => m.host);
-  }
+  // The remembered machine (a declared one's name, or none), while it is
+  // still declared; else this machine.
+  machineChoice(remembered) { return chosenOf(this.machines, remembered); }
+  // The host a choice names (a list of at most one: none while one is
+  // being added, or for a machine no longer declared).
+  hostsOf(choice) { return hostsIn(this.machines, choice); }
   // The host a choice names; it throws when there is none.
   hostOf(choice) {
     for (const h of this.hostsOf(choice)) return h;
-    throw new Error(`${choice.slice(2)} is not a declared machine (removed?)`);
+    throw new Error(`${machineText(choice)} is not a declared machine (removed?)`);
   }
+  // The machine choices offered (`withAdd`: "Add…" too), and which is
+  // chosen.
+  machineSelect(key, chosen, withAdd, onChange) { return machineSelectOf(this.machines, key, chosen, withAdd, onChange); }
+
 
   // ----------------------------------------------------------- import
 
@@ -906,7 +947,7 @@ export class Orchestrator {
       panel.render(ui.col({ ...ui.BOX, class: "orch-import" }, [
         ui.row(ui.BOX, [
           ui.text({ ...ui.TEXT, class: "orch-label" }, "Machine"),
-          ui.select({ key: "machine", value: st.machine, options: this.machineOptions(false), onChange: (v) => { st.machine = v; render(); } }),
+          this.machineSelect("machine", st.machine, false, (v) => { st.machine = v; render(); }),
           ui.button({ ...ui.BUTTON, primary: true, disabled: st.busy, onClick: () => { scan(); } }, st.busy ? "Scanning…" : "Scan"),
           ui.spacer(),
           ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
@@ -997,9 +1038,9 @@ export class Orchestrator {
     const panel = this.editor.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
     const worktree = () => f.git === "worktree" && where.kind === "repo";
     const go = async (background) => {
-      if (f.busy || f.machine === "add" || !f.root.trim() || where.kind === "missing") return;
+      if (f.busy || f.machine.kind === "adding" || !f.root.trim() || where.kind === "missing") return;
       const hosts = this.hostsOf(f.machine);
-      if (hosts.length === 0) { f.error = `${f.machine.slice(2)} is not a declared machine (removed?)`; render(); return; }
+      if (hosts.length === 0) { f.error = `${machineText(f.machine)} is not a declared machine (removed?)`; render(); return; }
       const host = hosts[0];
       // The terminal runs the prompt box's command (none: a shell); an
       // agent gets the prompt.
@@ -1013,7 +1054,7 @@ export class Orchestrator {
       };
       const root = f.root.trim();
       Object.assign(this.prefs, {
-        agent: f.agent, machine: f.machine, git: f.git,
+        agent: f.agent, machine: rememberedOf(f.machine), git: f.git,
         recent: [root, ...this.prefs.recent.filter((x) => x !== root)].slice(0, 8),
       });
       this.savePrefs();
@@ -1029,13 +1070,13 @@ export class Orchestrator {
       clearTimeout(whereTimer);
       whereTimer = setTimeout(async () => {
         const path = f.root.trim();
-        const key = `${f.machine}\n${path}`;
+        const key = `${f.machine.kind}:${machineText(f.machine)}\n${path}`;
         asked = key;
         where = ASKING;
         render();
         /** let next: Where */
         let next = { kind: "missing" };
-        if (path && f.machine !== "add") {
+        if (path && f.machine.kind !== "adding") {
           try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); next = whereOf({ repo: r.repo, folder: r.folder, toplevel: r.toplevel || "" }); }
           catch (e) { next = unknownWhere(failure(e)); }
         }
@@ -1060,7 +1101,7 @@ export class Orchestrator {
         // Unnamed, the machine is called by its host.
         const name = add.name.trim() !== "" ? add.name.trim() : reach;
         this.machines = (await rpc("machine.add", { name, host })).machines;
-        f.machine = `m:${name}`;
+        f.machine = declared(name);
         Object.assign(add, { name: "", target: "", port: "", identity: "", options: "" });
         checkGit();
       } catch (e) { add.error = failure(e); }
@@ -1129,11 +1170,11 @@ export class Orchestrator {
     const field = (label, controls) => ui.row({ ...ui.BOX, class: "orch-field" }, [ui.text({ ...ui.TEXT, class: "orch-label" }, label), ...controls]);
     const addInput = (key, placeholder, value, set) => ui.input({ ...ui.INPUT, key: `add-${key}`, value, placeholder, onInput: set, onEnter: () => { addMachine(); } });
     const machineChanged = (v) => {
-      if (v === "add") add.back = f.machine;
+      if (v.kind === "adding") add.back = f.machine;
       f.machine = v;
       browse.shown = false;
       render();
-      if (v === "add") panel.focus("add-target");
+      if (v.kind === "adding") panel.focus("add-target");
       else checkGit();
     };
     const addSection = () => ui.col({ ...ui.BOX, class: "orch-add-machine" }, [
@@ -1186,7 +1227,7 @@ export class Orchestrator {
     ]);
     const render = () => {
       const agent = agentById(f.agent);
-      const adding = f.machine === "add";
+      const adding = f.machine.kind === "adding";
       const w = where;
       const missing = w.kind === "missing" && f.root.trim() !== "";
       panel.render(ui.col({ ...ui.BOX, class: "orch-form orch-prompt-form" }, [
@@ -1199,8 +1240,8 @@ export class Orchestrator {
           onInput: (v) => { f.prompt = v; },
         }),
         ui.row({ ...ui.BOX, class: "orch-opts" }, [
-          labelled("Agent", ui.select({ key: "agent", value: f.agent, options: AGENT_CHOICES.filter((c) => c.value !== "custom"), onChange: (v) => { f.agent = v; render(); } })),
-          labelled("Machine", ui.select({ key: "machine", value: f.machine, options: this.machineOptions(true), onChange: machineChanged })),
+          labelled("Agent", agentSelect(f.agent, (v) => { f.agent = v; render(); })),
+          labelled("Machine", this.machineSelect("machine", f.machine, true, machineChanged)),
           ...(adding ? [] : [ui.checkbox({
             ...ui.CHECKBOX,
             key: "worktree",
@@ -1218,7 +1259,7 @@ export class Orchestrator {
           ]),
           ui.button({ ...ui.BUTTON, onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, "Browse…"),
         ])]),
-        ...(missing ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `No folder ${f.root.trim()} on ${f.machine === "local" ? "this machine" : f.machine.slice(2)}`)])] : []),
+        ...(missing ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `No folder ${f.root.trim()} on ${machineText(f.machine)}`)])] : []),
         ...(w.kind === "unknown" && f.root.trim() !== "" ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `Could not ask about ${f.root.trim()}: ${w.why}`)])] : []),
         ...(!adding && browse.shown ? [browser()] : []),
         ...(f.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, f.error)] : []),
@@ -1235,7 +1276,7 @@ export class Orchestrator {
     };
     render();
     checkGit();
-    panel.focus(f.machine === "add" ? "add-target" : "prompt");
+    panel.focus(f.machine.kind === "adding" ? "add-target" : "prompt");
   }
 }
 

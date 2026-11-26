@@ -333,9 +333,9 @@ pub enum HostSpec {
     /// (`-J jump`, `-o Name=value`) when given.
     Ssh {
         target: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         identity: Option<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         options: Vec<String>,
     },
     /// A running container: files here, processes through `docker exec`.

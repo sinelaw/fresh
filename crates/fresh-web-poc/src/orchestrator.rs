@@ -97,7 +97,7 @@ pub struct Machine {
     pub name: String,
     pub host: HostSpec,
     /// Found in `~/.ssh/config` (not kept in the registry).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     pub ssh_config: bool,
 }
 
@@ -165,6 +165,15 @@ struct Saved {
     machines: Vec<Machine>,
     #[serde(default)]
     workspaces: Vec<Record>,
+}
+
+/// The host a request names (`host`; this machine when it names none).
+fn host_in(m: &Value) -> Result<HostSpec> {
+    match m.get("host") {
+        Some(h) => serde_json::from_value(h.clone())
+            .map_err(|e| err(Code::BadRequest, format!("host: {e}"))),
+        None => Ok(HostSpec::Local),
+    }
 }
 
 /// Where the registry is kept: a file read and written through a
@@ -909,29 +918,17 @@ impl Orchestrator {
             }
             "machine.git" => {
                 self.known(client)?;
-                let host: HostSpec = match m.get("host") {
-                    Some(h) => serde_json::from_value(h.clone())
-                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
-                    None => HostSpec::Local,
-                };
+                let host = host_in(m)?;
                 self.git_of(&host, m.get("path").and_then(Value::as_str).unwrap_or(""))?
             }
             "machine.browse" => {
                 self.known(client)?;
-                let host: HostSpec = match m.get("host") {
-                    Some(h) => serde_json::from_value(h.clone())
-                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
-                    None => HostSpec::Local,
-                };
+                let host = host_in(m)?;
                 self.browse(&host, m.get("path").and_then(Value::as_str).unwrap_or(""))?
             }
             "workspace.open" => {
                 self.known(client)?;
-                let host: HostSpec = match m.get("host") {
-                    Some(h) => serde_json::from_value(h.clone())
-                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
-                    None => HostSpec::Local,
-                };
+                let host = host_in(m)?;
                 let worktree = m
                     .get("worktree")
                     .filter(|w| w.is_object())
@@ -974,11 +971,7 @@ impl Orchestrator {
                 // Agent sessions run outside the editor on a host
                 // (default: this machine), to import as workspaces.
                 self.known(client)?;
-                let host: HostSpec = match m.get("host") {
-                    Some(h) => serde_json::from_value(h.clone())
-                        .map_err(|e| err(Code::BadRequest, format!("host: {e}")))?,
-                    None => HostSpec::Local,
-                };
+                let host = host_in(m)?;
                 let authority = authority::connect(&host, self.slow)
                     .map_err(|e| err(Code::Failed, format!("cannot reach the host: {e}")))?;
                 let fs = authority.fs();
@@ -1044,7 +1037,7 @@ fn failed_entry(r: &Record, why: &str) -> Value {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| r.root.clone());
     json!({
-        "id": r.id, "name": name, "label": r.meta.name, "root": r.root, "host": r.meta.host.label(),
+        "id": r.id, "name": name, "label": r.meta.name, "root": r.root, "host": r.meta.host,
         "folder": r.meta.folder, "pinned": r.meta.pinned, "created": r.meta.created,
         "worked": r.meta.worked, "worktree": r.meta.worktree, "status": null, "error": why,
     })

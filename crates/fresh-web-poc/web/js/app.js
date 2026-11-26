@@ -8,6 +8,7 @@ import { rpc, attempt, clientId, connectEvents, failure } from "./rpc.js";
 import { shiftRange } from "./decor.js";
 import { byteLen, byteToIdx } from "./utf8.js";
 import { shownFrom } from "./paths.js";
+import { hostText } from "./hosts.js";
 import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
@@ -313,7 +314,7 @@ export class App {
     this.params = c.params;
     const ws = listOf(c.workspace);
     this.root = ws.map((w) => w.root).at(0) ?? "";
-    this.hostName = ws.map((w) => w.host).at(0) ?? "";
+    this.hostName = ws.map((w) => hostText(w.host)).at(0) ?? "";
     this.trusted = ws.some((w) => w.trusted);
     this.lspLanguages = new Set(ws.flatMap((w) => w.lsp));
     this.lspStatus = noStatus(); // each language's server, as `lsp.status` events say
@@ -345,7 +346,7 @@ export class App {
     else { document.title = "Workspaces — Fresh"; $("#ws-name").textContent = "No workspace"; }
     $("#ws-name").title = "Workspaces (Alt+O)";
     connectEvents((ev) => { this.onEvent(ev); });
-    if (ws) this.session.open(ws.host, ws.root);
+    if (ws) this.session.open(hostText(ws.host), ws.root);
     this.installSashes();
     this.prompt.listen();
     this.activePane.listen();

@@ -314,12 +314,22 @@
  *   title: String,
  *   onChange: (Boolean) => Undefined,
  * } */
-/** type SelectOption = {value: String, label: String} */
-/** type SelectProps = {
+// A choice among `options` (any type of value), `selected` the index of
+// the one chosen.
+/** type SelectOption<T> = {value: T, label: String} */
+/** type SelectProps<T> = {
  *   key: String,
- *   value: String,
- *   options: SelectOption[],
- *   onChange: (String) => Undefined,
+ *   options: SelectOption<T>[],
+ *   selected: Number,
+ *   onChange: (T) => Undefined,
+ * } */
+// A choice as ui.js draws it: its options' labels, and what choosing the
+// one at an index does.
+/** type Choice = {
+ *   key: String,
+ *   labels: String[],
+ *   selected: Number,
+ *   choose: (Number) => Undefined,
  * } */
 
 // A list of `items` (virtualised: any number), each row drawn by `render`;
@@ -413,7 +423,7 @@
  *   | {kind: "checkbox", props: CheckboxProps, label: String}
  *   | {kind: "input", props: InputProps}
  *   | {kind: "textarea", props: TextareaProps}
- *   | {kind: "select", props: SelectProps}
+ *   | {kind: "select", props: Choice}
  *   | {kind: "list", rows: Rows}
  *   | {kind: "tree", key: String, nodes: Branch[], none: (DomEvent<El>) => Undefined} */
 
@@ -756,12 +766,15 @@
  *   | {kind: "ssh", target: String, identity: String | Null, options: String[]}
  *   | {kind: "container", id: String}
  *   | {kind: "agent"} */
+// A machine the user declared, or a host found in ~/.ssh/config
+// (`ssh_config`): its name and how it is reached.
+/** type Machine = {name: String, host: HostSpec, ssh_config: Boolean} */
 /** type WorkspaceEntry = {
  *   id: Number,
  *   name: String,
  *   label: String | Null,
  *   root: String,
- *   host: String,
+ *   host: HostSpec,
  *   folder: String,
  *   pinned: Boolean,
  *   created: Number,
