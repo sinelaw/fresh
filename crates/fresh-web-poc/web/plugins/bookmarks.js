@@ -30,18 +30,21 @@ export function activate(app) {
     if (!v) return;
     const b = v.buffer;
     const now = where(n);
-    // The line of `p` in a buffer's held lines (-1: not held).
-    /** const line: (BufferHandle, Number) => Number */
-    const line = (buf, p) => { const L = buf.lines(); return L !== null ? L.starts.filter((s) => s <= p).length - 1 : -1; };
+    // The start of the held line holding `p` (a list of at most one: none
+    // when it is not held).
+    /** const lineStart: (BufferHandle, Number) => Number[] */
+    const lineStart = (buf, p) => listOf(buf.lines()).flatMap((L) => fresh.heldLineAt(L, p).map((i) => L.starts[i]));
     const was = now ? fresh.bufferById(app, now.buffer) : null;
     if (now && was) {
       set(n)(was).clear();
       was.render();
-      if (was.id === b.id && line(b, now.pos) === line(b, v.cursor())) { marks.delete(n); fresh.message(app, `Bookmark ${n} cleared`); return; }
+      const here = lineStart(b, v.cursor());
+      if (was.id === b.id && here.length > 0 && lineStart(b, now.pos).includes(here[0])) { marks.delete(n); fresh.message(app, `Bookmark ${n} cleared`); return; }
     }
-    const L = b.lines();
-    const i = line(b, v.cursor());
-    const pos = L && i >= 0 ? L.starts[i] : v.cursor();
+    // At the start of the cursor's line (the cursor's place, when its line
+    // is not held).
+    let pos = v.cursor();
+    for (const s of lineStart(b, v.cursor())) pos = s;
     set(n)(b).gutter(pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
     b.render();
     // A virtual buffer's bookmark goes with it.
@@ -83,7 +86,7 @@ export function activate(app) {
         const at = where(n);
         const open = at ? fresh.bufferById(app, at.buffer) : null;
         const m = marks.get(n);
-        const name = open ? open.name() : m ? m.path.slice(m.path.lastIndexOf("/") + 1) : null;
+        const name = open ? open.name() : m ? fresh.baseName(m.path) : null;
         if (name !== null) items.push({ label: `${n}  ${name}`, detail: open ? "open" : "closed file", value: n });
       }
       if (!items.length) items.push({ label: "No bookmarks (Ctrl+Shift+0…9 sets one)", detail: "", value: null });

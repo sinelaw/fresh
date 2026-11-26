@@ -118,20 +118,18 @@ export function activate(app) {
     if (!now.blocks.length) return fresh.message(app, "No differences");
     const L = v.buffer.lines();
     if (!L) return;
-    const cur = L.starts.findIndex((s, k) => v.cursor() >= s && (k + 1 >= L.starts.length || v.cursor() < L.starts[k + 1]));
-    const lines = now.blocks.map(side.start);
-    const line = dir > 0 ? lines.find((i) => i > cur) ?? lines[0] : [...lines].reverse().find((i) => i < cur) ?? lines[lines.length - 1];
-    v.setCursor(L.starts[Math.min(line, L.starts.length - 1)], { center: true });
+    for (const cur of fresh.heldLineAt(L, v.cursor())) {
+      const lines = now.blocks.map(side.start);
+      const line = dir > 0 ? lines.find((i) => i > cur) ?? lines[0] : [...lines].reverse().find((i) => i < cur) ?? lines[lines.length - 1];
+      v.setCursor(L.starts[Math.min(line, L.starts.length - 1)], { center: true });
+    }
   };
   // Marked again a moment after the edits stop.
-  /** let pending: Number | Null */
-  let pending = null;
+  const later = fresh.debouncer();
   fresh.onBuffer(app, "buffer.changed", (buffer) => {
     const now = pair;
     if (!now || (buffer.id !== now.a && buffer.id !== now.b)) return;
-    const before = pending;
-    if (before !== null) clearTimeout(before);
-    pending = setTimeout(() => { pending = null; mark(); }, 200);
+    later("mark", 200, mark);
   });
   fresh.register(app, "compare.files", { title: "Compare Files…", hidden: false, run: compareFiles });
   fresh.register(app, "compare.head", { title: "Compare with Last Commit", hidden: false, run: compareHead });

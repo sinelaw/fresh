@@ -15,7 +15,7 @@ import * as fresh from "../js/api.js";
 import * as ui from "../js/ui.js";
 
 /** const isMarkdown: (BufferHandle) => Boolean */
-const isMarkdown = (b) => /\.(md|markdown)$/i.test(b.path() || b.name());
+const isMarkdown = (b) => b.language() === "markdown";
 
 // Styles: the markup itself is not restyled; inline spans.
 /** const PLAIN: Style */
@@ -37,20 +37,6 @@ const COMPOSE = { when: "compose", mark: false, above: false };
 // How long a match is (0: none).
 /** function matchLength(m: String[] | Null) => Number */
 function matchLength(m) { return m ? m[0].length : 0; }
-
-// Run `f` once `ms` after the last call for `key` (`timers` holds each
-// key's pending run).
-/** function later(
- *   timers: Map<String, Number>,
- *   key: String,
- *   ms: Number,
- *   f: () => Undefined,
- * ) => Undefined */
-function later(timers, key, ms, f) {
-  const before = timers.get(key);
-  if (before !== undefined) clearTimeout(before);
-  timers.set(key, setTimeout(() => { timers.delete(key); f(); }, ms));
-}
 
 export function activate(app) {
   const B = fresh.byteLen;
@@ -240,11 +226,11 @@ export function activate(app) {
     b.render();
   };
 
-  const timers = new Map();
+  const later = fresh.debouncer();
   const composing = (b) => b.views().some((v) => v.mode() === "compose");
   const schedule = (b, delay) => {
     if (!isMarkdown(b) || !composing(b)) return;
-    later(timers, String(b.id), delay, () => { decorate(b); });
+    later(String(b.id), delay, () => { decorate(b); });
   };
   fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer, 30));
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer, 0));
@@ -305,8 +291,7 @@ export function activate(app) {
     renderContents();
   };
   fresh.onBuffer(app, "buffer.activated", (_b) => { renderContents(); });
-  const tocTimer = new Map();
-  fresh.onBuffer(app, "buffer.changed", (_b) => { later(tocTimer, "toc", 300, renderContents); });
+  fresh.onBuffer(app, "buffer.changed", (_b) => { later("toc", 300, renderContents); });
 
   fresh.register(app, "markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
   fresh.register(app, "markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });

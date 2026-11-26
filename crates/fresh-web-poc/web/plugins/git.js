@@ -14,12 +14,6 @@ import * as fresh from "../js/api.js";
 import { found } from "../js/api.js";
 import * as ui from "../js/ui.js";
 
-// `path` from `root`, when it is under it.
-/** function relative(root: String, path: String | Null) => String | Null */
-function relative(root, path) {
-  return path !== null && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
-}
-
 // A line's blame, at the row's end.
 /** const BLAME: Style */
 const BLAME = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true, underline: false, strike: false, mono: false, extendToLineEnd: false };
@@ -73,7 +67,12 @@ function unknownBase(why) { return { kind: "unknown", why }; }
 
 export function activate(app) {
   const root = fresh.root(app);
-  const rel = (p) => relative(root, p);
+  // A buffer's path from the root (none: no path, or not under it).
+  /** const rel: (String | Null) => String | Null */
+  const rel = (p) => {
+    for (const x of fresh.listOf(p)) for (const r of fresh.under(root, x)) return r;
+    return null;
+  };
   // git in the workspace (a restricted workspace refuses it: the command
   // that asked says so).
   const git = (args) => fresh.runProcess(app, "git", args, { cwd: root });
@@ -141,7 +140,7 @@ export function activate(app) {
     return b;
   };
 
-  const timers = new Map();
+  const later = fresh.debouncer();
   const changes = new Map(); // buffer id -> changed window line indices
   /** const markGutter: (BufferHandle) => Promise<Undefined> */
   const markGutter = async (b) => {
@@ -167,9 +166,7 @@ export function activate(app) {
   };
   /** const schedule: (BufferHandle) => Undefined */
   const schedule = (b) => {
-    const before = timers.get(b.id);
-    if (before !== undefined) clearTimeout(before);
-    timers.set(b.id, setTimeout(() => { markGutter(b); }, 300));
+    later(String(b.id), 300, () => { markGutter(b); });
   };
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer));
   fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer));
@@ -183,9 +180,10 @@ export function activate(app) {
     const L = b.lines();
     const list = changes.get(b.id) ?? [];
     if (L === null || !list.length) { fresh.message(app, "No changes"); return; }
-    const cur = L.starts.findIndex((s, k) => v.cursor() >= s && (k + 1 >= L.starts.length || v.cursor() < L.starts[k + 1]));
-    const next = dir > 0 ? list.find((i) => i > cur) ?? list[0] : [...list].reverse().find((i) => i < cur) ?? list[list.length - 1];
-    v.setCursor(L.starts[next], { center: true });
+    for (const cur of fresh.heldLineAt(L, v.cursor())) {
+      const next = dir > 0 ? list.find((i) => i > cur) ?? list[0] : [...list].reverse().find((i) => i < cur) ?? list[list.length - 1];
+      v.setCursor(L.starts[next], { center: true });
+    }
   };
 
   // ---------------------------------------------------------------- blame

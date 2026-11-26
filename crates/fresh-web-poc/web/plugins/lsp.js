@@ -42,7 +42,7 @@ export function activate(app) {
   const ask = (v, method, params) => fresh.lspRequestAt(app, v.buffer, method, params, v.cursor());
   // The same, about position `pos` of view `v`'s buffer.
   const askAt = (v, method, params, pos) => fresh.lspRequestAt(app, v.buffer, method, params, pos);
-  const rel = (p) => (p.startsWith(fresh.root(app) + "/") ? p.slice(fresh.root(app).length + 1) : p);
+  const rel = (p) => fresh.shownFrom(fresh.root(app), p);
 
   // Open a location: `preview` as for OpenOptions (a list's selection
   // previews it, the keyboard staying in the list).
@@ -364,9 +364,9 @@ export function activate(app) {
   const lineLabel = (b, pos) => {
     const L = b.lines();
     if (L === null) return "?";
-    const i = L.starts.findIndex((s, k) => pos >= s && (k + 1 >= L.starts.length || pos < L.starts[k + 1]));
     const first = L.firstLine;
-    return i >= 0 && first !== null ? String(first + i + 1) : "?";
+    for (const i of fresh.heldLineAt(L, pos)) if (first !== null) return String(first + i + 1);
+    return "?";
   };
   const renderDiagnostics = () => {
     const diagPanel = fresh.shown(app, "diagnostics");
@@ -478,7 +478,7 @@ export function activate(app) {
   // A document's hints, drawn before the character they are at (in the
   // line numbers' colour), asked for the whole document once its text has
   // settled after an edit. An answer to an older text is dropped.
-  const hintTimers = new Map();
+  const later = fresh.debouncer();
   /** const refreshHints: (BufferHandle) => Promise<Undefined> */
   const refreshHints = async (b) => {
     const deco = b.decorations("inlay");
@@ -503,9 +503,7 @@ export function activate(app) {
   };
   /** const hintsSoon: (BufferHandle) => Undefined */
   const hintsSoon = (b) => {
-    const pending = hintTimers.get(b.id);
-    if (pending !== undefined) clearTimeout(pending);
-    hintTimers.set(b.id, setTimeout(() => { hintTimers.delete(b.id); refreshHints(b); }, 500));
+    later(String(b.id), 500, () => { refreshHints(b); });
   };
   fresh.onBuffer(app, "buffer.changed", (buffer) => { if (fresh.settings(app).flags.inlay_hints === true && fresh.lspAvailable(app, buffer)) hintsSoon(buffer); });
   const toggleHints = () => {

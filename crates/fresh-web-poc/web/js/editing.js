@@ -235,8 +235,6 @@ function isWord(c) { return listOf(c).some((x) => /[\p{L}\p{N}_]/u.test(x)); }
 /** function lenOf(c: String | Null) => Number */
 function lenOf(c) { return listOf(c).map(byteLen).at(0) ?? 0; }
 
-function languageOf(b) { return b.language ?? (/\.(md|markdown)$/.test(b.path) ? "markdown" : null); }
-
 // The unmatched opening bracket before `p` (in the held lines), or null.
 function openerBefore(b, p) {
   const L = b.held;
@@ -741,7 +739,7 @@ export class Editing {
   type(pane, text, typed) {
     const v = pane.view;
     const b = v.buf;
-    const lang = languageOf(b);
+    const lang = b.language;
     const pairsOn = this.editor.autoClose() && lang !== "markdown";
     const carets = () => v.cursors.map((c) => c.pos).join();
     const run = typed && !text.includes("\n");
@@ -781,7 +779,7 @@ export class Editing {
 
   newline(pane) {
     const b = pane.view.buf;
-    const lang = languageOf(b);
+    const lang = b.language;
     this.replace(pane, (c) => {
       const s = sel(c) ?? { start: c.pos, end: c.pos };
       const ln = lineAt(b, s.start);
@@ -958,7 +956,7 @@ export class Editing {
     const v = pane.view;
     const b = v.buf;
     const L = b.held;
-    const prefix = listOf(languageOf(b)).flatMap((l) => found(COMMENT.get(l))).at(0) ?? "//";
+    const prefix = listOf(b.language).flatMap((l) => found(COMMENT.get(l))).at(0) ?? "//";
     const close = prefix === "<!--" ? " -->" : prefix === "/*" ? " */" : "";
     const lines = new Set();
     for (const c of v.cursors) { const [a, z] = lineSpan(b, c); for (let i = a; i <= z; i++) lines.add(i); }

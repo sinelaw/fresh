@@ -15,6 +15,7 @@ import { rpc, attempt, failure } from "./rpc.js";
 import { some, none } from "./maybe.js";
 import { transformSeqs, insOp, delOp } from "./ot.js";
 import { byteLen, byteToIdx } from "./utf8.js";
+import { baseName } from "./paths.js";
 import { Decor } from "./decor.js";
 
 // A window: this many lines before and after the line asked for. A file
@@ -324,7 +325,7 @@ export class Buffer {
     const path = info.path ?? "";
     this.path = path;
     this.untitled = info.untitled;
-    this.name = path !== "" ? path.slice(path.lastIndexOf("/") + 1) : `Untitled-${info.untitled ?? ""}`;
+    this.name = path !== "" ? baseName(path) : `Untitled-${info.untitled ?? ""}`;
     this.language = info.language;
     this.modified = info.modified;
     this.encoding = some(info.encoding);

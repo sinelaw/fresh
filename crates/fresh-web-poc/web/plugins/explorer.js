@@ -55,7 +55,7 @@ function cursorOn(s, p) { return { cursor: p, marks: s.marks, anchor: s.anchor }
 /** function dirOf(root: String, r: Row | Undefined) => String */
 function dirOf(root, r) {
   if (r === undefined) return root;
-  return r.dir ? r.path : r.path.replace(/\/[^/]*$/, "");
+  return r.dir ? r.path : fresh.parentOf(r.path);
 }
 // What an action on row `r` acts on: the marked rows when `r` is one of
 // them (in tree order, leaving out what a marked folder holds), else `r`.
@@ -220,8 +220,8 @@ export function activate(app) {
     } else showFile(r, how === "click");
   };
   const showFile = (r, preview) => fresh.open(app, r.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
-  const parentOf = (p) => p.replace(/\/[^/]*$/, "");
-  const rel = (p) => (p === root ? "the workspace's root" : p.slice(root.length + 1));
+  const parentOf = fresh.parentOf;
+  const rel = (p) => (p === root ? "the workspace's root" : fresh.shownFrom(root, p));
   const forget = (path) => { for (const d of [...open]) if (d === path || d.startsWith(path + "/")) collapse(d); };
   // Run `f` on each of `list`, one after the other; says what failed.
   /** const each: (Named[], (Named) => Promise<Undefined>) => Promise<Number> */
@@ -275,7 +275,7 @@ export function activate(app) {
     paste: async (dest) => {
       const c = clip;
       if (c.kind === "none") return;
-      const list = c.paths.map((p) => ({ path: p, name: p.slice(p.lastIndexOf("/") + 1) }));
+      const list = c.paths.map((p) => ({ path: p, name: fresh.baseName(p) }));
       if (c.kind === "cut") {
         await each(list.filter((x) => parentOf(x.path) !== dest), async (x) => { await fresh.rename(app, x.path, `${dest}/${x.name}`); forget(x.path); });
         clip = NO_CLIP;
@@ -339,9 +339,9 @@ export function activate(app) {
   // Follow the active file: open its folders and select it.
   const reveal = async (path) => {
     if (path === null || !path.startsWith(root + "/")) return;
-    let d = path.replace(/\/[^/]*$/, "");
+    let d = fresh.parentOf(path);
     const chain = [];
-    while (d.length > root.length) { chain.unshift(d); d = d.replace(/\/[^/]*$/, ""); }
+    while (d.length > root.length) { chain.unshift(d); d = fresh.parentOf(d); }
     for (const dir of chain) if (!open.has(dir)) await expand(dir);
     sel = cursorOn(sel, path);
     render();

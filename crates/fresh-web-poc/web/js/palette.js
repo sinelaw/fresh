@@ -9,6 +9,7 @@
 // — and the general pick-from-a-list / ask-for-text prompts plugins use.
 
 import { rpc } from "./rpc.js";
+import { shownFrom } from "./paths.js";
 
 import { $, escapeHtml } from "./dom.js";
 import { some, none } from "./maybe.js";
@@ -90,8 +91,7 @@ function matching(items, q) {
 }
 
 // `path` from `root` (as it is if not under it).
-/** function relative(root: String, path: String) => String */
-function relative(root, path) { return path.startsWith(root + "/") ? path.slice(root.length + 1) : path; }
+
 
 /** function commonPrefix(list: String[]) => String */
 function commonPrefix(list) {
@@ -177,7 +177,7 @@ export class Palette {
       const buffers /*: PaletteBuffer[] */ = ed.buffers();
       return buffers
         .filter((b) => (b.path !== "" ? b.path : b.name).toLowerCase().includes(t))
-        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path !== "" ? relative(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
+        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path !== "" ? shownFrom(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
     }
     const pr = this.providers.get(q[0]);
     for (const m of modeList(pr)) return await m.items(q.slice(1).trim());
@@ -189,7 +189,7 @@ export class Palette {
     // Nothing typed: the files opened lately.
     if (!q.trim()) {
       const recent /*: String[] */ = ed.recent();
-      return recent.map((p) => paletteItem(relative(ed.root(), p), "recent", () => { ed.open(p); }));
+      return recent.map((p) => paletteItem(shownFrom(ed.root(), p), "recent", () => { ed.open(p); }));
     }
     if (!m) return [];
     const files = (await rpc("fs.find", { query: m[1] })).files;

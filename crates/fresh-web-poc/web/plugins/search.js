@@ -32,16 +32,17 @@ const CURRENT = { fg: "search.current_fg", bg: "search.current_bg", bold: true, 
 // there is one.
 /** function wordIn(L: HeldLines, pos: Number) => Range | Null */
 function wordIn(L, pos) {
-  const i = L.starts.findIndex((s, k) => pos >= s && (k === L.starts.length - 1 || pos < L.starts[k + 1]));
-  if (i < 0) return null;
-  const line = L.lines[i];
-  let col = 0, bytes = 0;
-  while (col < line.length && bytes < pos - L.starts[i]) { bytes += byteLen(line[col]); col++; }
-  let s = col, e = col;
-  while (s > 0 && /[\p{L}\p{N}_]/u.test(line[s - 1])) s--;
-  while (e < line.length && /[\p{L}\p{N}_]/u.test(line[e])) e++;
-  if (s === e) return null;
-  return { start: L.starts[i] + byteLen(line.slice(0, s)), end: L.starts[i] + byteLen(line.slice(0, e)) };
+  for (const i of fresh.heldLineAt(L, pos)) {
+    const line = L.lines[i];
+    let col = 0, bytes = 0;
+    while (col < line.length && bytes < pos - L.starts[i]) { bytes += byteLen(line[col]); col++; }
+    let s = col, e = col;
+    while (s > 0 && /[\p{L}\p{N}_]/u.test(line[s - 1])) s--;
+    while (e < line.length && /[\p{L}\p{N}_]/u.test(line[e])) e++;
+    if (s === e) return null;
+    return { start: L.starts[i] + byteLen(line.slice(0, s)), end: L.starts[i] + byteLen(line.slice(0, e)) };
+  }
+  return null;
 }
 
 // A match: its bytes, and its text (null until held, for a match the
@@ -464,6 +465,8 @@ export function activate(app) {
 
   // (`unsearched`: files that could not be searched, with why.)
   const pq = { query: "", replace: "", results: [], files: 0, truncated: false, unsearched: [], busy: false, error: "" };
+  // The project search runs a moment after typing stops.
+  const later = fresh.debouncer();
   const runSearch = async () => {
     if (!pq.query) { pq.results = []; renderPanel(); return; }
     pq.busy = true;
@@ -482,7 +485,6 @@ export function activate(app) {
     pq.busy = false;
     renderPanel();
   };
-  let timer = 0;
   const rows = () => {
     const out = [];
     let last = null;
@@ -555,7 +557,7 @@ export function activate(app) {
           placeholder: "Search the workspace",
           grow: true,
           list: ["results"],
-          onInput: (q) => { pq.query = q; clearTimeout(timer); timer = setTimeout(() => { runSearch(); }, 250); },
+          onInput: (q) => { pq.query = q; later("search", 250, () => { runSearch(); }); },
           onEnter: () => { runSearch(); },
         }),
         ...toggles(() => { update(); runSearch(); }),

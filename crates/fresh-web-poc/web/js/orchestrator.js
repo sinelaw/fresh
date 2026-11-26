@@ -32,6 +32,7 @@
 
 import { rpc, attempt, failure } from "./rpc.js";
 import * as ui from "./ui.js";
+import { baseName, parentOf } from "./paths.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
 import { listOf, found, some, none } from "./maybe.js";
@@ -139,8 +140,8 @@ export function displayName(w) {
 
 const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 const hostKind = (w) => (w.host.startsWith("ssh ") ? "ssh" : w.host.startsWith("container ") ? "container" : w.host === "agent" ? "agent" : "local");
-const leaf = (path) => path.slice(path.lastIndexOf("/") + 1);
-const parentOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+// The dock folder a dock folder is in ("": the top level).
+const folderParent = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
 // Change a workspace's settings; a refusal is said in the status bar.
 async function changeWorkspace(say, change) {
@@ -507,10 +508,10 @@ export class Orchestrator {
       const searching = !!this.filter.trim();
       // A folder's node (none while searching finds nothing in it).
       const folder = (path) => {
-        const subs = this.folders.filter((f) => parentOf(f) === path).flatMap((f) => folder(f));
+        const subs = this.folders.filter((f) => folderParent(f) === path).flatMap((f) => folder(f));
         const own = rest.filter((w) => w.folder === path).map((w) => this.wsNode(w));
         const all = rest.filter((w) => w.folder === path || w.folder.startsWith(`${path}/`));
-        return searching && !all.length ? [] : [{ id: `f:${path}`, label: folderRow(leaf(path), all), children: [...subs, ...own], open: true, leaf: false, data: folderData(path) }];
+        return searching && !all.length ? [] : [{ id: `f:${path}`, label: folderRow(baseName(path), all), children: [...subs, ...own], open: true, leaf: false, data: folderData(path) }];
       };
       for (const f of this.folders.filter((x) => !x.includes("/"))) for (const n of folder(f)) out.push(n);
       for (const w of rest.filter((x) => !x.folder)) out.push(this.wsNode(w));
@@ -669,9 +670,9 @@ export class Orchestrator {
   }
 
   async renameFolder(path) {
-    const name = await this.editor.ask({ title: `Rename folder ${path}`, value: leaf(path), hint: "", select: true });
+    const name = await this.editor.ask({ title: `Rename folder ${path}`, value: baseName(path), hint: "", select: true });
     if (!name || !name.trim()) return;
-    const to = parentOf(path) ? `${parentOf(path)}/${name.trim()}` : name.trim();
+    const to = folderParent(path) ? `${folderParent(path)}/${name.trim()}` : name.trim();
     try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.editor.say(`Not renamed: ${failure(e)}`); }
   }
 
@@ -929,7 +930,7 @@ export class Orchestrator {
   // A workspace to make from a New Workspace spec, as the dock shows it
   // while it is made: named as asked, else after its folder.
   newPending(spec) {
-    const folder = leaf(spec.root.replace(/\/+$/, ""));
+    const folder = baseName(spec.root.replace(/\/+$/, ""));
     const name = listOf(spec.name).at(0) ?? (folder !== "" ? folder : spec.root);
     this.nextPending += 1;
     return { key: this.nextPending, spec, name, error: "" };
@@ -1112,7 +1113,6 @@ export class Orchestrator {
       else { browse.open.add(row.path); if (!browse.dirs.has(row.path)) { load(row.path, false); return; } }
       render();
     };
-    const parentOf = (path) => (path === "/" ? "/" : path.slice(0, path.lastIndexOf("/")) || "/");
     const setRoot = (path) => { f.root = path; render(); checkGit(); };
     const choose = () => { browse.shown = false; setRoot(browse.sel || browse.base); panel.focus("root"); };
     // Ctrl+Enter / Alt+Enter anywhere in the dialog: an input leaves them to

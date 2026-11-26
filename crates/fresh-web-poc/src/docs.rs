@@ -136,7 +136,7 @@ pub fn language_of(path: &Path) -> Option<String> {
         "js" | "mjs" | "cjs" => "javascript",
         "ts" | "tsx" => "typescript",
         "json" => "json",
-        "md" => "markdown",
+        "md" | "markdown" => "markdown",
         "toml" => "toml",
         "sh" | "bash" => "shell",
         "c" | "h" => "c",

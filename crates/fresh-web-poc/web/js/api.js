@@ -14,12 +14,41 @@
 
 import { rpc } from "./rpc.js";
 import { whenSynced } from "./buffer.js";
+import { byteLen as byteLenOf } from "./utf8.js";
 import { lspOffset as lspOffsetIn, lspPosition as lspPositionIn } from "./app.js";
 import { found, listOf } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { asCommand, asArgCommand } from "./commands.js";
 export { insOp, delOp } from "./ot.js";
 export { byteLen } from "./utf8.js";
+export { baseName, parentOf, under, shownFrom } from "./paths.js";
+
+// The held line holding byte `pos` of held lines `L`: its index (a list
+// of at most one: none when `pos` is not held).
+/** function heldLineAt(L: HeldLines, pos: Number) => Number[] */
+export function heldLineAt(L, pos) {
+  const n = L.starts.length;
+  if (n === 0 || pos < L.starts[0]) return [];
+  let lo = 0, hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (L.starts[mid] <= pos) lo = mid;
+    else hi = mid - 1;
+  }
+  return pos <= L.starts[lo] + byteLenOf(L.lines[lo]) ? [lo] : [];
+}
+
+// Calls settled: the function made runs `f` `ms` after the last call with
+// the same `key` (each key on its own).
+/** function debouncer() => (String, Number, () => Undefined) => Undefined */
+export function debouncer() {
+  /** const timers: Map<String, Number> */
+  const timers = new Map();
+  return (key, ms, f) => {
+    for (const t of found(timers.get(key))) clearTimeout(t);
+    timers.set(key, setTimeout(() => { timers.delete(key); f(); }, ms));
+  };
+}
 
 // File line `line` (0-based) among held lines `L`: its index there (a list
 // of at most one: none when the lines' place in the file is not known yet,

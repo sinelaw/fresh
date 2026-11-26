@@ -454,7 +454,7 @@ export class Pane {
   layoutOpts(v, width) {
     const buf = v.buf;
     const L = buf.held;
-    const lang = buf.language ?? (/\.(md|markdown)$/.test(buf.path) ? "markdown" : null);
+    const lang = buf.language;
     const sels = v.selections();
     const s = this.editor.settings();
     // Fenced blocks in markdown are highlighted in the fence's language.

@@ -7,6 +7,7 @@
 import { rpc, attempt, clientId, connectEvents, failure } from "./rpc.js";
 import { shiftRange } from "./decor.js";
 import { byteLen, byteToIdx } from "./utf8.js";
+import { shownFrom } from "./paths.js";
 import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
@@ -904,7 +905,7 @@ export class App {
   // A tab's menu: closing it and its neighbours, splitting it, its path.
   tabMenu(pane, v, at) {
     const b = v.buf;
-    const rel = b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
+    const rel = shownFrom(this.root, b.path);
     const copy = (t) => navigator.clipboard?.writeText(t).then((_r) => this.setStatus(`Copied ${t}`)).catch((_e) => this.setStatus("The browser did not allow writing the clipboard"));
     const path = b.path;
     this.ui.menu([
@@ -1112,7 +1113,7 @@ export class App {
   // overwritten once confirmed. A buffer with no document (a plugin's
   // panel) has its text written to the file, which then opens.
   async saveBufferAs(b) {
-    const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
+    const rel = (p) => shownFrom(this.root, p);
     const name = (await this.prompt.ask({ title: "Save as", value: b.path !== "" ? rel(b.path) : b.name, hint: "", select: true })) ?? "";
     if (name === "") return;
     const path = name.startsWith("/") ? name : `${this.root}/${name}`;
@@ -1702,7 +1703,7 @@ export class App {
     cmd("view.toggleSidebar", "View: Toggle Sidebar", () => { $("#sidebar").classList.toggle("hidden"); this.renderAll(); this.rememberLayout(); });
     hiddenCmd("view.showSidebar", "View: Show Sidebar", () => { $("#sidebar").classList.remove("hidden"); this.renderAll(); this.rememberLayout(); });
     cmd("file.recent", "File: Open Recent…", () => {
-      const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
+      const rel = (p) => shownFrom(this.root, p);
       const list = this.recentFiles();
       if (!list.length) { this.setStatus("No recent files"); return; }
       this.prompt.open({
