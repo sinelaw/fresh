@@ -27,9 +27,10 @@ const termFont = () => {
   return { fontFamily: css.getPropertyValue("--mono"), fontSize: parseFloat(getComputedStyle(surface || document.body).fontSize) || 13 };
 };
 
-// How an agent session's tab shows what it is doing (the server reads it
-// from the terminal's stream: `src/terminal.rs`).
-export const STATE_MARK = new Map([["working", "* "], ["waiting", "● "], ["done", "✓ "], ["idle", "· "], ["unknown", "? "], ["exited", "✕ "]]);
+// A terminal's state's mark (the server reads the state from the
+// terminal's stream: `src/terminal.rs`): an agent session's tab and the
+// orchestrator's dock show it.
+export const TERM_MARKS = new Map([["working", "*"], ["waiting", "●"], ["done", "✓"], ["idle", "·"], ["unknown", "?"], ["exited", "✕"]]);
 
 // Base64 as bytes.
 /** function decode(b64: String) => Uint8Array */
@@ -136,7 +137,8 @@ class Term {
   // What its tab says: the agent's state or that it exited, then the
   // title its program set (else its name).
   get label() {
-    const mark = (this.done ? STATE_MARK.get("exited") : this.agent ? STATE_MARK.get(this.state) : undefined) ?? "";
+    const state = this.done ? ["exited"] : this.agent ? [this.state] : [];
+    const mark = state.flatMap((x) => found(TERM_MARKS.get(x))).map((m) => `${m} `).join("");
     return `${mark}${this.title || (this.agent ? this.name : `Terminal ${this.id}`)}`;
   }
 

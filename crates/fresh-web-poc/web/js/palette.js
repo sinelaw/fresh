@@ -12,7 +12,7 @@ import { rpc } from "./rpc.js";
 import { shownFrom } from "./paths.js";
 
 import { $, escapeHtml } from "./dom.js";
-import { some, none } from "./maybe.js";
+import { some, none, found, listOf } from "./maybe.js";
 
 // A palette row that runs `run` when chosen (none: a note).
 /** function paletteItem(
@@ -58,8 +58,6 @@ function noItems() { return []; }
 // A palette mode (`fresh.paletteMode`): its hint, and its rows for the
 // text after its prefix.
 /** type PaletteMode = {hint: String, items: (String) => Promise<PaletteItem[]>} */
-/** function modeList(m: PaletteMode | Undefined) => PaletteMode[] */
-function modeList(m) { return m === undefined ? [] : [m]; }
 /** function noModes() => Map<String, PaletteMode> */
 function noModes() { return new Map(); }
 
@@ -129,7 +127,11 @@ export class Palette {
   listen() {
     this.input.addEventListener("input", () => { this.changed(); });
     this.input.addEventListener("keydown", (e) => { this.key(e); });
-    this.input.addEventListener("blur", () => { setTimeout(() => { if (this.isOpen && document.activeElement !== this.input) this.cancel(); }, 150); });
+    // Focus moved elsewhere in the page closes it (its rows keep the
+    // focus as they are pressed; switching to another window leaves it).
+    this.input.addEventListener("blur", (e) => {
+      if (this.isOpen && document.hasFocus() && !listOf(e.relatedTarget).some((t) => this.el.contains(t))) this.cancel();
+    });
   }
 
   get isOpen() { return this.specs.length > 0; }
@@ -180,7 +182,7 @@ export class Palette {
         .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path !== "" ? shownFrom(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
     }
     const pr = this.providers.get(q[0]);
-    for (const m of modeList(pr)) return await m.items(q.slice(1).trim());
+    for (const m of found(pr)) return await m.items(q.slice(1).trim());
     if (q.startsWith(":")) {
       const n = parseInt(q.slice(1), 10);
       return [n > 0 ? paletteItem(`Go to line ${n}`, null, () => { ed.goto(n - 1); }) : paletteItem("Type a line number", null, null)];

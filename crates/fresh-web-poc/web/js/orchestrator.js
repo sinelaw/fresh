@@ -33,6 +33,8 @@
 import { rpc, attempt, failure } from "./rpc.js";
 import * as ui from "./ui.js";
 import { baseName, parentOf } from "./paths.js";
+import { plural } from "./words.js";
+import { TERM_MARKS } from "./terminal.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
 import { listOf, found, some, none } from "./maybe.js";
@@ -103,8 +105,9 @@ function localHost() { return { kind: "local" }; }
 /** function sshHost(target: String, identity: String | Null, options: String[]) => HostSpec */
 function sshHost(target, identity, options) { return { kind: "ssh", target, identity, options }; }
 
-// The dock's marks, as the editor's.
-const MARKS = new Map([["failed", "!"], ["pending", "…"], ["waiting", "●"], ["done", "✓"], ["working", "*"], ["idle", "·"], ["unknown", "?"], ["exited", "·"]]);
+// The dock's marks: a terminal's state's (terminal.js), and a workspace's
+// own, failed to open and on its way.
+const MARKS = new Map([["failed", "!"], ["pending", "…"], ...TERM_MARKS]);
 // A state's mark (a state this client does not know reads as unknown).
 /** function markOf(state: String) => String */
 export function markOf(state) { return MARKS.get(state) ?? "?"; }
@@ -138,7 +141,6 @@ export function displayName(w) {
   return listOf(w.label).filter((l) => l !== "").at(0) ?? agent.at(0) ?? w.name;
 }
 
-const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 const hostKind = (w) => (w.host.startsWith("ssh ") ? "ssh" : w.host.startsWith("container ") ? "container" : w.host === "agent" ? "agent" : "local");
 // The dock folder a dock folder is in ("": the top level).
 const folderParent = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");

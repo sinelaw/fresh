@@ -8,6 +8,7 @@
 // Registers last as long as the page.
 
 import { some, none, listOf } from "./maybe.js";
+import { plural } from "./words.js";
 
 const REGISTERS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -77,9 +78,6 @@ function describeMacros(registers, last, titleOf) {
  *   run: () => Promise<Undefined>,
  * ) => MacroCommand */
 function macroCommand(id, title, run) { return { id, title, run }; }
-
-/** function plural(n: Number, word: String) => String */
-function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
 // Empty state, typed.
 /** function noMacros() => Map<String, Step[]> */

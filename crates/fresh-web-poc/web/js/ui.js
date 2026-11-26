@@ -244,14 +244,15 @@ export class UIKit {
 // expanded node ids.
 /** function noLists() => Map<String, {sel: Number, scroll: Number}> */
 function noLists() { return new Map(); }
-/** function noExpanded() => Map<String, Set<String>> */
+/** function noExpanded() => Map<String, Map<String, Boolean>> */
 function noExpanded() { return new Map(); }
 /** function noMovers() => Map<String, (Number, DomEvent<El>) => Undefined> */
 function noMovers() { return new Map(); }
 /** function noTree() => UINode[] */
 function noTree() { return []; }
-/** function noIds() => Set<String> */
-function noIds() { return new Set(); }
+// A tree's folders opened or closed by hand (true: open), by id.
+/** function noToggled() => Map<String, Boolean> */
+function noToggled() { return new Map(); }
 
 class Panel {
   constructor(kit, id, title, place, onClose) {
@@ -544,11 +545,12 @@ class Panel {
   }
 
   // A tree: its open folders' children shown under them; which are open is
-  // kept by id (a folder closed by hand that started open: "!" and its id).
+  // kept by id: a folder opened or closed by hand stays so, else it is as
+  // its node says (`open`).
   treeView(key, nodes, none) {
-    const open = this.expanded.get(key) ?? noIds();
-    this.expanded.set(key, open);
-    const shown = treeRows(nodes, open, 0);
+    const toggled = this.expanded.get(key) ?? noToggled();
+    this.expanded.set(key, toggled);
+    const shown = treeRows(nodes, toggled, 0);
     return this.list(rowsOf({
       ...listProps(key, shown, (t, _i) => row({ ...BOX, class: "ui-tree-row" }, [
         text({ ...TEXT, class: "ui-tree-indent" }, " ".repeat(t.depth * 2) + (t.b.leaf ? "  " : t.isOpen ? "▾ " : "▸ ")),
@@ -560,7 +562,7 @@ class Panel {
         if (t.b.leaf) { t.b.activate(); return; }
         // A folder opens or closes on its first click.
         if (how === "double") return;
-        if (t.isOpen) { open.delete(t.b.id); open.add("!" + t.b.id); } else { open.add(t.b.id); open.delete("!" + t.b.id); }
+        toggled.set(t.b.id, !t.isOpen);
         for (const n of this.shownTree) this.render(n);
         this.focus(key);
       },
@@ -579,11 +581,12 @@ class Panel {
 /** type TreeRow = {b: Branch, depth: Number, isOpen: Boolean} */
 
 // The rows of `nodes` at `depth`, each open folder's children under it.
-/** function treeRows(nodes: Branch[], open: Set<String>, depth: Number) => TreeRow[] */
-function treeRows(nodes, open, depth) {
+// (`toggled`: the folders opened or closed by hand.)
+/** function treeRows(nodes: Branch[], toggled: Map<String, Boolean>, depth: Number) => TreeRow[] */
+function treeRows(nodes, toggled, depth) {
   return nodes.flatMap((b) => {
-    const isOpen = !b.leaf && (open.has(b.id) || (b.open && !open.has("!" + b.id)));
-    return [{ b, depth, isOpen }, ...(isOpen ? treeRows(b.children, open, depth + 1) : [])];
+    const isOpen = !b.leaf && (toggled.get(b.id) ?? b.open);
+    return [{ b, depth, isOpen }, ...(isOpen ? treeRows(b.children, toggled, depth + 1) : [])];
   });
 }
 

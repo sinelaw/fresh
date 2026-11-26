@@ -316,6 +316,8 @@ impl Session {
                 }
                 self.room
                     .broadcast(&json!({"ev": "workspace.trusted", "lsp": self.lsp.languages()}));
+                // Every client's list says so now, not at the next look.
+                self.publish_status();
                 json!({})
             }
             "workspace.seen" => {

@@ -12,7 +12,7 @@
 // "diagnostics.changed"), `onView` ("cursor.moved", "view.resized") and
 // `onLspStatus`.
 
-import { rpc } from "./rpc.js";
+import { rpc, failure } from "./rpc.js";
 import { whenSynced } from "./buffer.js";
 import { byteLen as byteLenOf } from "./utf8.js";
 import { lspOffset as lspOffsetIn, lspPosition as lspPositionIn } from "./app.js";
@@ -182,7 +182,7 @@ export const statusItem = (app, id) => app.statusItem(id);
 export const message = (app, text) => app.setStatus(text);
 // A failure's text in the status bar: a refused request's detail (the
 // server's own words), else the error as written.
-export const errorText = (e) => String(e);
+export const errorText = failure;
 export const showError = (app, e) => app.setStatus(errorText(e));
 // `text` in a popup under the caret.
 export const popup = (app, text) => app.popupAtCaret(text);

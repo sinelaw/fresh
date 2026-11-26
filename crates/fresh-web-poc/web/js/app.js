@@ -340,10 +340,10 @@ export class App {
     await this.skins.load();
     document.body.style.setProperty("--editor-zoom", String(this.settings.zoom));
     this.measure();
-    document.title = ws ? `${ws.name} — Fresh` : "Workspaces — Fresh";
-    const name = $("#ws-name");
-    name.textContent = ws ? `${ws.name} · ${ws.host}${ws.trusted ? "" : " · restricted"}` : "No workspace";
-    name.title = "Workspaces (Alt+O)";
+    // The workspace's name heads the page (the orchestrator keeps it).
+    if (ws) this.orchestrator.renderTitle();
+    else { document.title = "Workspaces — Fresh"; $("#ws-name").textContent = "No workspace"; }
+    $("#ws-name").title = "Workspaces (Alt+O)";
     connectEvents((ev) => { this.onEvent(ev); });
     if (ws) this.session.open(ws.host, ws.root);
     this.installSashes();
@@ -1366,7 +1366,6 @@ export class App {
       // The language servers start now: the event names them.
       this.trusted = true;
       this.lspLanguages = new Set(ev.lsp);
-      $("#ws-name").textContent = $("#ws-name").textContent.replace(" · restricted", "");
       this.host.emit("workspace.trusted");
       return;
     }

@@ -19,7 +19,7 @@
 // The choice is per browser (localStorage); `?skin=<id>` overrides it, to
 // recover from a skin that hides the way back.
 
-import { rpc, attempt } from "./rpc.js";
+import { rpc, attempt, failure } from "./rpc.js";
 import { $ } from "./dom.js";
 import { listOf, found } from "./maybe.js";
 
@@ -111,10 +111,16 @@ export class Skins {
   // the editor's cell is measured in the skin's font.
   async load() {
     $("#skin-btn").addEventListener("click", () => { this.pick(); });
-    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
+    await this.reread();
     // The skin the URL names, else the one this browser chose; one known.
     const asked = listOf(new URLSearchParams(location.search).get("skin") ?? savedSkin()).filter((id) => skinIn(this.all, id) !== null);
     await this.apply(asked.at(0) ?? "default");
+  }
+
+  // The skins as the server lists them now (on failure, as they were, and
+  // why is reported).
+  async reread() {
+    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${failure(e)}`); }
   }
 
   byId(id) { return skinIn(this.all, id); }
@@ -255,7 +261,7 @@ export class Skins {
   // the one before back. The list is read again, so a skin just added to
   // the skins folder is there.
   async pick() {
-    try { this.all = (await rpc("skin.list", {})).skins; } catch (e) { this.editor.report(`Skins: ${String(e)}`); }
+    await this.reread();
     const before = this.current.map((s) => s.id).at(0) ?? "default";
     this.editor.pick({
       title: "Skin",
