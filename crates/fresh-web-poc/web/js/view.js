@@ -87,6 +87,10 @@ function remember(memo, key, make) {
 
 // A scrollbar mark: its rank (lower wins a row) and colour.
 /** type Mark = {rank: Number, color: String} */
+// A view's folds: none at first (each its first and last line, as window
+// line indices).
+/** function noFoldSpans() => Range[] */
+function noFoldSpans() { return []; }
 /** function noMarks() => Map<Number, Mark> */
 function noMarks() { return new Map(); }
 // A diagnostic's theme key by severity (1 error … 4 hint).
@@ -196,7 +200,7 @@ export class View {
     this.cursors = [cursorAt(0)];
     this.mode = "source"; // or "compose"
     this.opts = viewOptions(!buf.isVirtual);
-    this.folds = []; // [{start, end}] window line indices; start's line stays
+    this.folds = noFoldSpans(); // window line indices; start's line stays
     this.left = 0; // columns scrolled sideways (no wrap)
     this.preview = false; // the split's preview tab: the next preview replaces it
     // The selections Expand Selection grew from (Shrink goes back), while

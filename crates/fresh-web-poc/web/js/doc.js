@@ -162,7 +162,7 @@ function concealHTML(c) {
 // hidden(li): the fold hiding line `li` and the last line it keeps
 // ({fold, keep}; none: the line shows).
 function hider(ctx) {
-  const keeps = ctx.v.folds.map((f) => {
+  const keeps = ctx.folds.map((f) => {
     const sb = blockAt(ctx, f.start);
     return nodeOf(sb).some((n) => !LINES.has(n.type)) ? Math.max(f.start, sb.last) : f.start;
   });
@@ -282,12 +282,18 @@ function walk(ctx, a, z, syn) {
   return { html: out, shown };
 }
 
+// The places of cursors `cs`.
+/** function positionsOf(cs: Cursor[]) => Number[] */
+function positionsOf(cs) { return cs.map((c) => c.pos); }
+
 // What drawing needs for the whole frame: decorations by line, styles.
 function context(v) {
   const buf = v.buf;
   const L = buf.held;
   const d = buf.decor;
-  const cursors = v.cursors.map((c) => c.pos);
+  const cursors = positionsOf(v.cursors);
+  /** const folds: Range[] */
+  const folds = v.folds;
   const o = v.pane.layoutOpts(v, 0);
   const vlines = noLines();
   for (const x of d.lines) {
@@ -321,14 +327,16 @@ function context(v) {
   };
   // The folds hide lines by the blocks they fold, which takes only the
   // view, its text and its decorations (as `hiding` asks).
-  const base = { v, L, d, mode: v.mode };
+  const base = { v, L, d, mode: v.mode, folds };
   const hidden = hider(base);
-  return { base, v, L, d, o, cursors, vlines, lineInfo, mode: v.mode, hidden };
+  return { base, v, L, d, o, cursors, folds, vlines, lineInfo, mode: v.mode, hidden };
 }
 
 // The fold hiding line `li` of view `v`, as `hidden` gives it.
 export function hiding(v, li) {
-  return hider({ v, L: v.buf.held, d: v.buf.decor, mode: v.mode })(li);
+  /** const folds: Range[] */
+  const folds = v.folds;
+  return hider({ v, L: v.buf.held, d: v.buf.decor, mode: v.mode, folds })(li);
 }
 
 // The fold the block holding line `li` offers: {start, end} lines, or null.
@@ -384,7 +392,7 @@ function blockHTML(ctx, blk) {
   const ls = L.starts[blk.first], le = L.lineEnd(blk.last);
   // The fold toggle (shown on hover, or while folded) and, while folded,
   // an ellipsis where the hidden part was.
-  const folded = ctx.v.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
+  const folded = ctx.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
   const tog = folded || foldOf(ctx.base, blk, true) !== null ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
   const more = folded ? `<span class="doc-more" data-fold="${blk.first}">⋯</span>` : "";
   const joined = () => { const r = walk(ctx, ls, le, NO_SYNTAX); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
