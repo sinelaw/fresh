@@ -62,8 +62,8 @@ pub fn run_gui(
         config::Config::load_with_layers(&dir_context, &working_dir)
     };
 
-    // On macOS GUI, auto-select the macos-gui keybinding map (Cmd-key shortcuts)
-    // unless the user has explicitly set a different keymap.
+    // On macOS GUI, auto-select the macos-gui keybinding map (the macos map
+    // plus GUI-only bindings) unless the user has explicitly set a different keymap.
     #[cfg(target_os = "macos")]
     {
         let default_macos_map = config::KeybindingMapName("macos".to_string());

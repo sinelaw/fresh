@@ -58,6 +58,8 @@ In `~/.config/fresh/config.json`:
 ```
 :::
 
+On macOS, Fresh selects this keymap by default. It includes Command shortcuts such as **⌘A** to select all, **⌘C** to copy, **⌘V** to paste, and **⌘S** to save. In a terminal, these shortcuts work when the terminal forwards them to Fresh. If the terminal handles a shortcut itself, change the terminal binding to pass it through or use a Fresh Control shortcut where available.
+
 The macOS keymap is designed around these constraints:
 
 **Ctrl+Shift combinations don't work.** Some macOS terminals cannot reliably send Ctrl+Shift sequences. For example, Ctrl+Shift+Z produces a caron character (ˇ) instead of being recognized as a key chord. The macOS keymap uses Ctrl+Alt as an alternative modifier.
