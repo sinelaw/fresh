@@ -2076,10 +2076,8 @@ fn git_init_repo(dir: &Path) {
     }
 }
 
-/// The path out of the form's `worktree at …` row, as the screen draws it.
-/// The row is a wrapped note inside the dialog, so the value runs to the
-/// frame's right border.
-/// The screen with the frame and every space removed.
+/// The screen with the dialog frame, empty-line tilde gutter, and every
+/// space removed.
 ///
 /// The `worktree at …` note is drawn with `wrap: true`, so a path too long
 /// for the dialog is split across rows mid-component — and how long is too
@@ -2087,11 +2085,38 @@ fn git_init_repo(dir: &Path) {
 /// than Linux's `/tmp/.tmpXXXXXX`, so a row that fits on one line here wraps
 /// there. Flattening the screen makes the assertion independent of where the
 /// break landed; a path holds no spaces, so nothing that matters is lost.
+///
+/// Only the leading `~` gutter marker on each terminal row is stripped: a
+/// path may legitimately contain `~` (for example Windows 8.3 short paths
+/// such as `RUNNER~1`), which must survive flattening.
 fn screen_without_frame(screen: &str) -> String {
     screen
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '│' && *c != '~')
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            trimmed.strip_prefix('~').unwrap_or(trimmed)
+        })
+        .flat_map(str::chars)
+        .filter(|c| !c.is_whitespace() && *c != '│')
         .collect()
+}
+
+#[test]
+fn screen_without_frame_preserves_tilde_in_windows_short_paths() {
+    let screen = "\
+~ ┌──────────────────────────────────────┐
+~ │ worktree at C:/Users/RUNNER~1/AppDat │
+~ │ a/Local/Temp/.tmp123/data/orchestrat │
+~ │ or/repo/fix-colon                    │
+~ └──────────────────────────────────────┘
+~";
+    let flat = screen_without_frame(screen);
+    assert!(
+        flat.contains(
+            "C:/Users/RUNNER~1/AppData/Local/Temp/.tmp123/data/orchestrator/repo/fix-colon"
+        ),
+        "expected RUNNER~1 path to remain intact after flattening, got: {flat}"
+    );
 }
 
 /// The directory every project's state hangs under, as the plugin renders it:
