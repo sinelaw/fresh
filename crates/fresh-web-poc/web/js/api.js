@@ -13,7 +13,7 @@
 // `onLspStatus`.
 
 import { rpc, failure } from "./rpc.js";
-import { whenSynced } from "./buffer.js";
+import { whenSynced, filePath } from "./buffer.js";
 import { byteLen as byteLenOf } from "./utf8.js";
 import { lspOffset as lspOffsetIn, lspPosition as lspPositionIn } from "./app.js";
 import { found, listOf } from "./maybe.js";
@@ -140,7 +140,7 @@ export const onLspStatus = (app, f) => app.host.onStatus((status) => { f(status)
 export const activeBuffer = (app) => { const v = app.view(); return v ? bufferHandle(app, v.buf) : null; };
 export const buffers = (app) => [...app.buffers.values()].map((b) => bufferHandle(app, b));
 export const bufferById = (app, id) => { const b = app.buffers.get(id); return b === undefined ? null : bufferHandle(app, b); };
-export const bufferByPath = (app, path) => { const b = [...app.buffers.values()].find((x) => x.path === path); return b === undefined ? null : bufferHandle(app, b); };
+export const bufferByPath = (app, path) => { const b = [...app.buffers.values()].find((x) => filePath(x.origin).includes(path)); return b === undefined ? null : bufferHandle(app, b); };
 // `at`: OpenOptions (types/fresh.d.js).
 export const open = async (app, path, at) => (await app.openFile(path, at)).map((v) => bufferHandle(app, v.buf)).at(0) ?? null;
 // The buffer for a file, without showing it.

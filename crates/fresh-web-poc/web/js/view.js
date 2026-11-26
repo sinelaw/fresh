@@ -7,7 +7,7 @@ import { setClass, escapeHtml } from "./dom.js";
 import { layout, applies, cursorIn } from "./layout.js";
 import { byteLen, byteToIdx } from "./utf8.js";
 import { shiftPos } from "./ot.js";
-import { ENSURE_AFTER, terminalOf } from "./buffer.js";
+import { ENSURE_AFTER, terminalOf, filePath } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, cssFor, styleKey, restyler, withWavy } from "./paint.js";
@@ -400,10 +400,11 @@ export class Pane {
       t.className = "tab" + (this.shown.includes(v) ? " active" : "") + (v.preview ? " preview" : "");
       t.dataset.i = String(i);
       // Tabs of files with one name show their parent folder.
-      const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path !== "";
-      const label = dup ? v.buf.path.split("/").slice(-2).join("/") : v.buf.name;
+      // Two tabs of one name: each says its folder too.
+      const dup = names.filter((n) => n === v.buf.name).length > 1;
+      const label = (dup ? filePath(v.buf.origin).map((p) => p.split("/").slice(-2).join("/")).at(0) : undefined) ?? v.buf.name;
       t.textContent = (v.buf.modified ? "● " : "") + label + (v.buf.readOnly && !v.buf.isVirtual ? " [RO]" : "");
-      t.title = (v.buf.path !== "" ? v.buf.path : v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
+      t.title = (filePath(v.buf.origin).at(0) ?? v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
       // A press shows it (and may drag it: app.tabPress); the middle button
       // closes it; the right one opens its menu.
       t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.editor.closeTab(this, v); else if (e.button === 0) this.editor.tabPress(e, this, v); };

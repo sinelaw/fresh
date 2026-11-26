@@ -2,6 +2,7 @@
 // the application's parts (each holding a getter for the application, which
 // is made last, from them) and starts it with the built-in plugins.
 
+import { filePath } from "./buffer.js";
 import { rpc, session } from "./rpc.js";
 import { App, loadSettings, loadUserKeys, scrollToFraction, lspPosition, lspOffset } from "./app.js";
 import { Editing, selectWord, selectLine, setBlock, toggleFoldAt, wordAt, bracketPair } from "./editing.js";
@@ -80,7 +81,7 @@ async function main() {
     here: () => app.here(),
     goto: (line) => { app.gotoLine(line, 0, false); },
     commands: () => [...app.commands].filter(([, c]) => !c.hidden).map(([id, c]) => ({ title: c.title, key: app.keyFor(id), source: c.source, run: () => { app.run(id, undefined); } })),
-    buffers: () => [...app.buffers.values()].map((b) => ({ name: b.name, path: b.path, modified: b.modified, stored: b.doc !== null, show: () => { app.showBuffer(b, "tab", { preview: null, focus: true }); } })),
+    buffers: () => [...app.buffers.values()].map((b) => ({ name: b.name, path: filePath(b.origin), modified: b.modified, stored: b.doc !== null, show: () => { app.showBuffer(b, "tab", { preview: null, focus: true }); } })),
     root: () => app.root,
     recent: () => app.recentFiles(),
     open: (path) => { app.openFile(path, { line: null, column: 1, place: "tab", preview: null, focus: true }); },

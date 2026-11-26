@@ -67,12 +67,13 @@ function unknownBase(why) { return { kind: "unknown", why }; }
 
 export function activate(app) {
   const root = fresh.root(app);
-  // A buffer's path from the root (none: no path, or not under it).
-  /** const rel: (String | Null) => String | Null */
-  const rel = (p) => {
-    for (const x of fresh.listOf(p)) for (const r of fresh.under(root, x)) return r;
-    return null;
-  };
+  // A path from the root (a list of at most one: none when not under it).
+  /** const rel: (String) => String[] */
+  const rel = (p) => fresh.under(root, p);
+  // A buffer's file in the workspace: its path, and from the root (a list
+  // of at most one: none for a buffer of no file, or one outside).
+  /** const fileOf: (BufferHandle) => {path: String, rel: String}[] */
+  const fileOf = (b) => b.path().flatMap((path) => rel(path).map((r) => ({ path, rel: r })));
   // git in the workspace (a restricted workspace refuses it: the command
   // that asked says so).
   const git = (args) => fresh.runProcess(app, "git", args, { cwd: root });
@@ -123,16 +124,17 @@ export function activate(app) {
   const held = (L) => (L.lines[L.lines.length - 1] === "" ? L.lines.slice(0, -1) : L.lines);
   // The file at HEAD: its lines, not in HEAD, or git could not say (not
   // kept: asked again next time).
-  /** const baseline: (String) => Promise<Baseline> */
-  const baseline = async (path) => {
+  /** const baseline: ({path: String, rel: String}) => Promise<Baseline> */
+  const baseline = async (f) => {
+    const path = f.path;
     for (const known of found(baselines.get(path))) return known;
     if (!fresh.trusted(app)) return unknownBase("the workspace is restricted");
-    const there = await git(["ls-tree", "--name-only", "HEAD", "--", `./${rel(path)}`]);
+    const there = await git(["ls-tree", "--name-only", "HEAD", "--", `./${f.rel}`]);
     if (there.code !== 0) return unknownBase(there.stderr.trim());
     /** let b: Baseline */
     let b = UNTRACKED;
     if (there.stdout.trim() !== "") {
-      const r = await git(["show", `HEAD:./${rel(path)}`]);
+      const r = await git(["show", `HEAD:./${f.rel}`]);
       if (r.code !== 0) return unknownBase(r.stderr.trim());
       b = baseLines(r.stdout.replace(/\n$/, "").split("\n"));
     }
@@ -144,12 +146,17 @@ export function activate(app) {
   const changes = new Map(); // buffer id -> changed window line indices
   /** const markGutter: (BufferHandle) => Promise<Undefined> */
   const markGutter = async (b) => {
-    if (b.isVirtual || !b.whole() || rel(b.path()) === null) return;
-    const base = await baseline(b.path());
+    if (b.isVirtual || !b.whole()) return;
+    for (const f of fileOf(b)) await markFile(b, f);
+  };
+  // `b`'s gutter marks against its file `f` at HEAD.
+  /** const markFile: (BufferHandle, {path: String, rel: String}) => Promise<Undefined> */
+  const markFile = async (b, f) => {
+    const base = await baseline(f);
     const L = b.lines();
     const d = b.decorations("gutter");
     d.clear();
-    if (base.kind === "unknown" && !told.has(b.path())) { told.add(b.path()); fresh.message(app, `git: no changes shown for ${rel(b.path())}: ${base.why}`); }
+    if (base.kind === "unknown" && !told.has(f.path)) { told.add(f.path); fresh.message(app, `git: no changes shown for ${f.rel}: ${base.why}`); }
     if (base.kind !== "lines" || L === null) { b.render(); return; }
     const edits = diffLines(base.lines, held(L));
     if (!edits) { b.render(); return; }
@@ -192,8 +199,11 @@ export function activate(app) {
   const blame = async () => {
     const b = fresh.activeBuffer(app);
     if (b === null) return;
-    const file = rel(b.path());
-    if (file === null) return;
+    for (const f of fileOf(b)) await blameFile(b, f);
+  };
+  /** const blameFile: (BufferHandle, {path: String, rel: String}) => Promise<Undefined> */
+  const blameFile = async (b, f) => {
+    const file = f.rel;
     const d = b.decorations("blame");
     if (blamed.has(b.id)) { blamed.delete(b.id); d.clear(); b.render(); return; }
     const r = await git(["blame", "--line-porcelain", "--", file]);
@@ -201,7 +211,7 @@ export function activate(app) {
     const L = b.lines();
     if (L === null || !b.whole()) { fresh.message(app, "Blame needs the whole file"); return; }
     // Blame describes the file on disk; the buffer's lines map onto it.
-    const disk = (await fresh.read(app, b.path())).replace(/\n$/, "").split("\n");
+    const disk = (await fresh.read(app, f.path)).replace(/\n$/, "").split("\n");
     const map = mapLines(disk, held(L));
     const info = parseBlame(r.stdout);
     /** const byLine: Map<Number, Blamed> */
@@ -225,14 +235,14 @@ export function activate(app) {
   });
 
   // The log of the workspace, or of one file (`path`).
-  /** const log: (String | Null) => Promise<Undefined> */
-  const log = async (path) => {
-    const of = path === null ? null : rel(path);
+  // (`of`: the file's path from the root; none: the whole workspace.)
+  /** const log: (String[]) => Promise<Undefined> */
+  const log = async (of) => {
     const format = ["log", "-n", "500", "--format=%H%x1f%h%x1f%an%x1f%ar%x1f%s"];
-    const r = await git(of ? [...format, "--", of] : format);
+    const r = await git([...format, ...of.flatMap((x) => ["--", x])]);
     if (r.code !== 0) { fresh.message(app, r.stderr.trim() || "git log failed"); return; }
     const items = r.stdout.trim().split("\n").filter(Boolean).map((l) => { const [hash, short, author, when, subject] = l.split("\x1f"); return { hash, short, author, when, subject }; });
-    const logPanel = fresh.panel(app, { id: "git-log", title: of ? `Log: ${of}` : "Git Log", place: "bottom", onClose: null });
+    const logPanel = fresh.panel(app, { id: "git-log", title: of.map((x) => `Log: ${x}`).at(0) ?? "Git Log", place: "bottom", onClose: null });
     logPanel.render(ui.list({
       ...ui.listProps("log", items, (c) => ui.row(ui.BOX, [ui.text({ ...ui.TEXT, color: ["ui.accent_fg"], mono: true }, c.short), ui.text(ui.TEXT, c.subject), ui.spacer(), ui.text({ ...ui.TEXT, dim: true }, `${c.author}, ${c.when}`)])),
       onActivate: async (c) => {
@@ -248,11 +258,15 @@ export function activate(app) {
   const diffFile = async () => {
     const b = fresh.activeBuffer(app);
     if (b === null) return;
+    for (const f of fileOf(b)) await diffOf(b, f);
+  };
+  /** const diffOf: (BufferHandle, {path: String, rel: String}) => Promise<Undefined> */
+  const diffOf = async (b, f) => {
     const L = b.lines();
-    const file = rel(b.path());
-    if (file === null || L === null) return;
+    const file = f.rel;
+    if (L === null) return;
     if (!b.whole()) { fresh.message(app, "Diff needs the whole file"); return; }
-    const base = await baseline(b.path());
+    const base = await baseline(f);
     if (base.kind === "untracked") { fresh.message(app, "Not in HEAD"); return; }
     if (base.kind === "unknown") { fresh.message(app, `git: ${base.why}`); return; }
     const text = unifiedDiff(base.lines, held(L), `a/${file}`, `b/${file}`);
@@ -264,8 +278,8 @@ export function activate(app) {
   // A command, and its key ("" for none).
   /** const reg: (String, String, () => Undefined, String) => Undefined */
   const reg = (id, title, run, key) => { fresh.register(app, id, { title, hidden: false, run }); if (key) fresh.bindKey(app, key, id); };
-  reg("git.log", "Git: Log", () => { log(null); }, "C-S-g");
-  reg("git.logFile", "Git: Log of Current File", () => { const b = fresh.activeBuffer(app); log(b === null ? null : b.path()); }, "");
+  reg("git.log", "Git: Log", () => { log([]); }, "C-S-g");
+  reg("git.logFile", "Git: Log of Current File", () => { const b = fresh.activeBuffer(app); if (b !== null) log(fileOf(b).map((f) => f.rel)); }, "");
   reg("git.blame", "Git: Toggle Blame", () => { blame(); }, "");
   reg("git.diffFile", "Git: Diff Current File", () => { diffFile(); }, "");
   reg("git.nextChange", "Git: Next Change", () => { step(1); }, "M-F5");

@@ -193,8 +193,14 @@ function machineSelectOf(machines, key, chosen, withAdd, onChange) {
     ...machines.map((m) => machineOption(declared(m.name), m.ssh_config ? `${m.name} (~/.ssh/config)` : m.name === hostText(m.host) ? m.name : `${m.name} (${hostText(m.host)})`)),
     ...(withAdd ? [machineOption(ADDING, "Add…")] : []),
   ];
-  const same = (o) => o.value.kind === chosen.kind && machineText(o.value) === machineText(chosen);
-  return ui.select({ key, options, selected: Math.max(0, options.findIndex(same)), onChange });
+  return ui.select({ key, options, selected: Math.max(0, options.findIndex((o) => sameMachine(o.value, chosen))), onChange });
+}
+// Whether two choices name the same machine.
+/** function sameMachine(a: MachineChoice, b: MachineChoice) => Boolean */
+function sameMachine(a, b) {
+  if (a.kind === "declared") return b.kind === "declared" && a.name === b.name;
+  if (a.kind === "local") return b.kind === "local";
+  return b.kind === "adding";
 }
 /** function noMachine() => String[] */
 function noMachine() { return []; }
@@ -1169,6 +1175,7 @@ export class Orchestrator {
     const labelled = (label, control) => ui.row({ ...ui.BOX, class: "orch-opt" }, [ui.text({ ...ui.TEXT, dim: true }, label), control]);
     const field = (label, controls) => ui.row({ ...ui.BOX, class: "orch-field" }, [ui.text({ ...ui.TEXT, class: "orch-label" }, label), ...controls]);
     const addInput = (key, placeholder, value, set) => ui.input({ ...ui.INPUT, key: `add-${key}`, value, placeholder, onInput: set, onEnter: () => { addMachine(); } });
+    /** const machineChanged: (MachineChoice) => Undefined */
     const machineChanged = (v) => {
       if (v.kind === "adding") add.back = f.machine;
       f.machine = v;

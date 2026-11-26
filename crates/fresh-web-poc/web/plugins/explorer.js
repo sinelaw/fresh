@@ -340,8 +340,9 @@ export function activate(app) {
   };
 
   // Follow the active file: open its folders and select it.
+  /** const reveal: (String) => Promise<Undefined> */
   const reveal = async (path) => {
-    if (path === null || !path.startsWith(root + "/")) return;
+    if (!path.startsWith(root + "/")) return;
     let d = fresh.parentOf(path);
     const chain = [];
     while (d.length > root.length) { chain.unshift(d); d = fresh.parentOf(d); }
@@ -350,7 +351,7 @@ export function activate(app) {
     render();
   };
 
-  fresh.onBuffer(app, "buffer.activated", (buffer) => reveal(buffer.path()));
+  fresh.onBuffer(app, "buffer.activated", (buffer) => { for (const p of buffer.path()) reveal(p); });
   fresh.onBuffer(app, "buffer.saved", (_b) => { refresh(); });
   fresh.register(app, "explorer.focus", { title: "Explorer: Focus", hidden: false, run: () => panel.focus("tree") });
   fresh.register(app, "explorer.toggle", { title: "View: Toggle File Explorer", hidden: false, run: () => fresh.run(app, "view.toggleSidebar") });
@@ -365,7 +366,7 @@ export function activate(app) {
   fresh.register(app, "explorer.reveal", { title: "Explorer: Reveal Active File", hidden: false, run: async () => {
     fresh.run(app, "view.showSidebar");
     const b = fresh.activeBuffer(app);
-    if (b) await reveal(b.path());
+    if (b) for (const p of b.path()) await reveal(p);
     panel.focus("tree");
   } });
   const setShow = (next) => {

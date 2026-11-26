@@ -3,6 +3,7 @@
 // handlers, on four channels: plain events, buffer events (with the ops of a
 // change), view events and the language servers' status.
 
+import { filePath } from "./buffer.js";
 import { insOp, delOp } from "./ot.js";
 import { listOf, some, none } from "./maybe.js";
 
@@ -40,7 +41,7 @@ export function bufferHandle(app, buf) {
   return asBuffer({
     id: buf.id,
     isVirtual: buf.isVirtual,
-    path: () => buf.path,
+    path: () => filePath(buf.origin),
     name: () => buf.name,
     language: () => buf.language,
     length: () => buf.len,

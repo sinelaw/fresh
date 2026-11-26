@@ -48,9 +48,8 @@ export function activate(app) {
     set(n)(b).gutter(pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
     b.render();
     // A virtual buffer's bookmark goes with it.
-    const path = b.path();
-    if (path) marks.set(n, { path, pos });
-    else marks.delete(n);
+    marks.delete(n);
+    for (const path of b.path()) marks.set(n, { path, pos });
     fresh.message(app, `Bookmark ${n} set`);
   };
   const jump = async (n) => {

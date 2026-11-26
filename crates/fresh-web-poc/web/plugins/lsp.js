@@ -64,7 +64,7 @@ export function activate(app) {
   // A buffer as a list names it: its path from the root, or its name.
   /** const shownName: (BufferHandle) => String */
   const shownName = (b) => {
-    for (const p of listOf(b.path())) return rel(p);
+    for (const p of b.path()) return rel(p);
     return b.name();
   };
 

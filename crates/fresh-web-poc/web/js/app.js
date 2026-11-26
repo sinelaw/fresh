@@ -9,7 +9,7 @@ import { shiftRange } from "./decor.js";
 import { byteLen, byteToIdx } from "./utf8.js";
 import { shownFrom } from "./paths.js";
 import { hostText } from "./hosts.js";
-import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
+import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince, filePath, untitledNumber } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
 import { THEME } from "./highlight.js";
@@ -212,8 +212,8 @@ function firstOf(xs) { return xs.length > 0 ? some(xs[0]) : none(); }
 // What a tab shows, to restore it: a file, an untitled document or a
 // terminal (none: a plugin's buffer).
 function tabRef(b) {
-  if (b.path !== "") return [tabFile(b.path)];
-  for (const n of listOf(b.untitled)) return [tabUntitled(n)];
+  for (const p of filePath(b.origin)) return [tabFile(p)];
+  for (const n of untitledNumber(b.origin)) return [tabUntitled(n)];
   for (const id of terminalOf(b.source)) return [tabTerminal(id)];
   return [];
 }
@@ -906,9 +906,7 @@ export class App {
   // A tab's menu: closing it and its neighbours, splitting it, its path.
   tabMenu(pane, v, at) {
     const b = v.buf;
-    const rel = shownFrom(this.root, b.path);
     const copy = (t) => navigator.clipboard?.writeText(t).then((_r) => this.setStatus(`Copied ${t}`)).catch((_e) => this.setStatus("The browser did not allow writing the clipboard"));
-    const path = b.path;
     this.ui.menu([
       ...(v.preview ? [action("Keep Open", null, () => this.keep(v))] : []),
       action("Close", this.keyLabel("view.closeTab"), () => this.closeTab(pane, v)),
@@ -919,12 +917,12 @@ export class App {
       SEPARATOR,
       action("Split Right", this.keyLabel("view.splitRight"), () => { this.focusPane(pane); this.splitActive("h"); }),
       action("Split Down", null, () => { this.focusPane(pane); this.splitActive("v"); }),
-      ...(path !== "" ? [
+      ...filePath(b.origin).flatMap((path) => [
         SEPARATOR,
         action("Copy Path", null, () => copy(path)),
-        action("Copy Relative Path", null, () => copy(rel)),
+        action("Copy Relative Path", null, () => copy(shownFrom(this.root, path))),
         action("Reveal in Explorer", null, () => this.run("explorer.reveal", undefined)),
-      ] : []),
+      ]),
     ], at);
   }
   // The editor's menu: the clipboard, the language server's actions on
@@ -965,14 +963,14 @@ export class App {
   // The buffer for a file, opening its document without showing it.
   async loadFile(path) {
     const abs = path.startsWith("/") ? path : `${this.root}/${path}`;
-    const open = [...this.buffers.values()].find((x) => x.path === abs);
+    const open = [...this.buffers.values()].find((x) => filePath(x.origin).includes(abs));
     if (open) return open;
     return this.adoptDoc(await rpc("doc.open", { path: abs }));
   }
   // The buffer for an untitled document the server keeps (the page was
   // reloaded with its unsaved text).
   async loadUntitled(n) {
-    const open = [...this.buffers.values()].find((x) => x.untitled === n);
+    const open = [...this.buffers.values()].find((x) => untitledNumber(x.origin).includes(n));
     if (open !== undefined) return open;
     return this.adoptDoc(await rpc("doc.open", { untitled: n }));
   }
@@ -1012,7 +1010,7 @@ export class App {
       const b = await this.loadFile(path);
       for (const f of from) this.pushHistory(f, f.primary.pos);
       const v = this.showBuffer(b, place, { preview, focus });
-      this.noteRecent(b.path);
+      for (const p of filePath(b.origin)) this.noteRecent(p);
       for (const l of listOf(line)) await this.gotoLine(l - 1, column - 1, false);
       this.updateStatus();
       return v;
@@ -1091,7 +1089,7 @@ export class App {
   async saveBuffer(b, ask) {
     if (b.file.length === 0) return;
     // An untitled document is saved as a file, asked for.
-    if (!b.path) { await this.saveBufferAs(b); return; }
+    if (filePath(b.origin).length === 0) { await this.saveBufferAs(b); return; }
     try {
       // Keeping one's changes over the file's (`askChangedOnDisk`) was the
       // choice to overwrite it.
@@ -1115,10 +1113,10 @@ export class App {
   // panel) has its text written to the file, which then opens.
   async saveBufferAs(b) {
     const rel = (p) => shownFrom(this.root, p);
-    const name = (await this.prompt.ask({ title: "Save as", value: b.path !== "" ? rel(b.path) : b.name, hint: "", select: true })) ?? "";
+    const name = (await this.prompt.ask({ title: "Save as", value: filePath(b.origin).map(rel).at(0) ?? b.name, hint: "", select: true })) ?? "";
     if (name === "") return;
     const path = name.startsWith("/") ? name : `${this.root}/${name}`;
-    if (path === b.path) { await this.saveBuffer(b, true); return; }
+    if (filePath(b.origin).includes(path)) { await this.saveBuffer(b, true); return; }
     const st = await rpc("fs.stat", { path });
     if (st.dir) { this.setStatus(`${name} is a folder`); return; }
     if (st.exists && !(await this.confirm(`${name} exists. Overwrite it?`, "Overwrite"))) return;
@@ -1129,7 +1127,7 @@ export class App {
         const info = await rpc("doc.save_as", { doc: b.doc, path, overwrite: st.exists });
         b.setInfo(info);
         b.modified = info.modified;
-        this.noteRecent(b.path);
+        for (const p of filePath(b.origin)) this.noteRecent(p);
         this.renderAll();
         this.updateStatus();
         this.bufferEvent("buffer.saved", b, [], false);
@@ -1162,7 +1160,7 @@ export class App {
     const now = Date.now();
     for (const b of this.buffers.values()) {
       // An untitled document waits for a name.
-      if (b.path && b.modified && b.file.some(synced) && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
+      if (filePath(b.origin).length > 0 && b.modified && b.file.some(synced) && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
         b.lastEdit = now;
         this.saveBuffer(b, false);
       }

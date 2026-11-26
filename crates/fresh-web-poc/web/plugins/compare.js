@@ -94,18 +94,20 @@ export function activate(app) {
   };
   const compareHead = async () => {
     const cur = fresh.activeBuffer(app);
-    if (!cur || !cur.path()) return;
+    if (!cur) return;
     const root = fresh.root(app);
-    if (!cur.path().startsWith(root + "/")) return fresh.message(app, `${cur.name()} is not in the workspace`);
-    const rel = cur.path().slice(root.length + 1);
-    // (A restricted workspace refuses git: the command says so.)
-    const r = await fresh.runProcess(app, "git", ["show", `HEAD:./${rel}`], { cwd: root });
-    if (r.code !== 0) return fresh.message(app, `Not compared with HEAD: ${r.stderr.trim()}`);
-    const head = fresh.createVirtual(app, {
-      name: `${cur.name()} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
-      mode: null, readOnly: true, language: cur.language(), keep: false, place: null, lineNumbers: true,
-    });
-    open(head, cur);
+    const rels = cur.path().flatMap((p) => fresh.under(root, p));
+    if (rels.length === 0) return fresh.message(app, `${cur.name()} is not a file in the workspace`);
+    for (const rel of rels.slice(0, 1)) {
+      // (A restricted workspace refuses git: the command says so.)
+      const r = await fresh.runProcess(app, "git", ["show", `HEAD:./${rel}`], { cwd: root });
+      if (r.code !== 0) return fresh.message(app, `Not compared with HEAD: ${r.stderr.trim()}`);
+      const head = fresh.createVirtual(app, {
+        name: `${cur.name()} (HEAD)`, entries: [{ text: r.stdout, props: {}, style: null }],
+        mode: null, readOnly: true, language: cur.language(), keep: false, place: null, lineNumbers: true,
+      });
+      open(head, cur);
+    }
   };
   // The next (or previous) changed block, on whichever side is active.
   const next = (dir) => {

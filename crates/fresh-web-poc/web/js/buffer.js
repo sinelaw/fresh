@@ -12,7 +12,7 @@
 // per-entry properties live here and nowhere else.
 
 import { rpc, attempt, failure } from "./rpc.js";
-import { some, none } from "./maybe.js";
+import { some, none, listOf } from "./maybe.js";
 import { transformSeqs, insOp, delOp } from "./ot.js";
 import { byteLen, byteToIdx } from "./utf8.js";
 import { baseName } from "./paths.js";
@@ -264,6 +264,30 @@ function movedBy(n, d) { return n === null ? null : n + d; }
 /** function heldList<A>(L: A | Null) => A[] */
 function heldList(L) { return L === null ? [] : [L]; }
 
+// A buffer of no file and no untitled document (a plugin's, a terminal).
+/** const OTHER: Origin */
+const OTHER = { kind: "other" };
+// A document's origin as the server describes it.
+/** function originOf(info: DocInfo) => Origin */
+function originOf(info) {
+  for (const path of listOf(info.path)) return { kind: "file", path };
+  for (const n of listOf(info.untitled)) return { kind: "untitled", n };
+  return OTHER;
+}
+// An origin's file path (a list of at most one: none for any other).
+/** function filePath(o: Origin) => String[] */
+export function filePath(o) { return o.kind === "file" ? [o.path] : []; }
+// An untitled document's number (a list of at most one).
+/** function untitledNumber(o: Origin) => Number[] */
+export function untitledNumber(o) { return o.kind === "untitled" ? [o.n] : []; }
+// A document's name: its file's, or Untitled-N.
+/** function nameOf(o: Origin) => String */
+function nameOf(o) {
+  if (o.kind === "file") return baseName(o.path);
+  if (o.kind === "untitled") return `Untitled-${o.n}`;
+  return "";
+}
+
 // How much text past a position is fetched when nothing else says.
 export const ENSURE_AFTER = 200;
 
@@ -279,8 +303,7 @@ export class Buffer {
     this.source = source;
     this.id = nextBufferId++;
     this.name = "";
-    this.path = "";
-    this.untitled = none(); // an untitled document's number (Untitled-N)
+    this.origin = OTHER; // a file's, an untitled document's, or neither
     // What the server says of a file (`setInfo`); a virtual buffer's
     // language is its creator's.
     this.language = none();
@@ -322,10 +345,8 @@ export class Buffer {
   // Save As, a rename or a delete): its path (none while untitled), name,
   // language, format and whether it is unsaved.
   setInfo(info) {
-    const path = info.path ?? "";
-    this.path = path;
-    this.untitled = info.untitled;
-    this.name = path !== "" ? baseName(path) : `Untitled-${info.untitled ?? ""}`;
+    this.origin = originOf(info);
+    this.name = nameOf(this.origin);
     this.language = info.language;
     this.modified = info.modified;
     this.encoding = some(info.encoding);

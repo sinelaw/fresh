@@ -496,7 +496,7 @@
 /** type BufferHandle = {
  *   id: Number,
  *   isVirtual: Boolean,
- *   path: () => String,
+ *   path: () => String[],
  *   name: () => String,
  *   language: () => String | Null,
  *   length: () => Number,
@@ -577,6 +577,10 @@
 /** type EntryRange = {start: Number, end: Number, props: Dict<String>, style: Style | Null} */
 // Where a buffer's text comes from: a server document (its replica), a
 // plugin's entries, or a terminal (its tab has no text).
+// What a buffer's text is, as people name it: a file (its path), an
+// untitled document (its number: Untitled-N), or neither (a plugin's
+// buffer, a terminal).
+/** type Origin = {kind: "file", path: String} | {kind: "untitled", n: Number} | {kind: "other"} */
 /** type Source =
  *   | {kind: "file", replica: Replica}
  *   | {kind: "virtual", ranges: EntryRange[]}
@@ -801,7 +805,7 @@
 /** type PaletteCommand = {title: String, key: String, source: String, run: () => Undefined} */
 /** type PaletteBuffer = {
  *   name: String,
- *   path: String,
+ *   path: String[],
  *   modified: Boolean,
  *   stored: Boolean,
  *   show: () => Undefined,

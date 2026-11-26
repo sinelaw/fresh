@@ -178,8 +178,8 @@ export class Palette {
       const t = q.slice(1).toLowerCase();
       const buffers /*: PaletteBuffer[] */ = ed.buffers();
       return buffers
-        .filter((b) => (b.path !== "" ? b.path : b.name).toLowerCase().includes(t))
-        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path !== "" ? shownFrom(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
+        .filter((b) => (b.path.at(0) ?? b.name).toLowerCase().includes(t))
+        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path.map((p) => shownFrom(ed.root(), p)).at(0) ?? (b.stored ? "unsaved" : "virtual"), b.show));
     }
     const pr = this.providers.get(q[0]);
     for (const m of found(pr)) return await m.items(q.slice(1).trim());
