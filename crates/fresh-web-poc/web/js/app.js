@@ -4,7 +4,7 @@
 // own (explorer, search, git, language-server panels, markdown, tours,
 // keybindings, themes) are plugins in `web/plugins/`.
 
-import { rpc, attempt, session, connectEvents, failure } from "./rpc.js";
+import { rpc, attempt, clientId, connectEvents, failure } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, byteToIdx, ENSURE_AFTER, synced, whenSynced, opsSince } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
@@ -576,7 +576,7 @@ export class App {
   renderAll() { for (const p of panesOf(this.layoutTree)) { p.renderTabs(); p.scheduleRender(); } }
   renderBuffer(id) { for (const p of panesOf(this.layoutTree)) if (p.shown.some((v) => v.buf.id === id)) p.scheduleRender(); }
   // The active view (none: the active split shows nothing).
-  view() { return this.activePane.shown.length > 0 ? some(this.activePane.shown[0]) : none(); }
+  view() { return this.activePane.shown.length > 0 ? some(this.activePane.view) : none(); }
   // Where the active view is, to go back to (a list of at most one):
   // remembered for Go Back, or restored.
   here() {
@@ -1252,7 +1252,7 @@ export class App {
     const ev /*: ServerEvent */ = news;
     if (ev.ev === "doc.ops") {
       const b = this.docs.get(ev.doc);
-      if (b) { b.onOps(ev, session.client); this.renderBuffer(b.id); }
+      if (b) { b.onOps(ev, clientId()); this.renderBuffer(b.id); }
       return;
     }
     if (ev.ev === "doc.indexing") {
@@ -1267,6 +1267,11 @@ export class App {
         this.reindexed(b, ev.lines);
         this.setStatus(`${b.name}: ${ev.lines} lines`);
       }
+      return;
+    }
+    if (ev.ev === "doc.index_failed") {
+      // Its lines stay without numbers (a huge file's count failed).
+      for (const b of found(this.docs.get(ev.doc))) this.setStatus(`${b.name}: lines not counted: ${ev.why}`);
       return;
     }
     if (ev.ev === "doc.saved") {
@@ -1486,8 +1491,7 @@ export class App {
   onKey(e) {
     const k = keyName(e);
     // A buffer's mode (a plugin's panel buffer) takes its keys first.
-    const bound = this.activePane.shown.map((v) => modeKey(this.modes, v.buf.mode, k)).at(0);
-    for (const b of found(bound)) { e.preventDefault(); b.run(); return; }
+    for (const b of this.activePane.shown.flatMap((v) => found(modeKey(this.modes, v.buf.mode, k))).slice(0, 1)) { e.preventDefault(); b.run(); return; }
     for (const cmd of found(this.keymap().get(k))) { e.preventDefault(); this.run(cmd, undefined); }
   }
 
@@ -1597,7 +1601,12 @@ export class App {
     const P = () => this.activePane;
     // The active view, for the commands that run only when there is one
     // (vcmd, mv).
-    const V = () => this.activePane.shown[0];
+    // The active split's view (the commands that use it run only when it
+    // has one: `hasView`).
+    const V = () => {
+      for (const v of this.activePane.shown) return v;
+      throw new Error("the active split shows no view");
+    };
     const hasView = () => this.activePane.shown.length > 0;
     const ro = () => { const v = V(); return !v || v.buf.readOnly; };
     // A command, listed in the palette or not (`hiddenCmd`). Declared

@@ -188,7 +188,7 @@ export function activate(app) {
       },
       activateOnClick: true,
       onContext: (r, _i, at) => menu(r, at),
-      onKey: (e, r) => key(e, r.at(0)),
+      onKey: (e, r) => { key(e, r.at(0)); },
       // Drag a file or folder (or the selection it is in) onto a folder (or
       // a file in it, or the space below: the root) to move it there.
       drop: [{

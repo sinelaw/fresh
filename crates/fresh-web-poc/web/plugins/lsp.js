@@ -17,7 +17,7 @@
 // each).
 
 import * as fresh from "../js/api.js";
-import { insOp, delOp, found } from "../js/api.js";
+import { insOp, delOp, found, listOf } from "../js/api.js";
 import * as ui from "../js/ui.js";
 
 // An inlay hint.
@@ -40,6 +40,8 @@ export function activate(app) {
   // A request about the cursor's position. A refused one throws; each
   // command shows the server's reason (see `reg`).
   const ask = (v, method, params) => fresh.lspRequestAt(app, v.buffer, method, params, v.cursor());
+  // The same, about position `pos` of view `v`'s buffer.
+  const askAt = (v, method, params, pos) => fresh.lspRequestAt(app, v.buffer, method, params, pos);
   const rel = (p) => (p.startsWith(fresh.root(app) + "/") ? p.slice(fresh.root(app).length + 1) : p);
 
   // Open a location: `preview` as for OpenOptions (a list's selection
@@ -272,11 +274,12 @@ export function activate(app) {
 
   // ---------------------------------------------------------------- completion, hover, signatures
 
-  const completion = async () => {
+  // Completions at `pos` (a typed "." right after it, or the cursor).
+  const completion = async (pos) => {
     const v = active();
     if (!v) return;
     /** const items: LspCompletion[] */
-    const items = await ask(v, "textDocument/completion", {});
+    const items = await askAt(v, "textDocument/completion", {}, pos);
     if (!items.length) return fresh.message(app, "No completions");
     const word = wordEnd(v.buffer.text(Math.max(0, v.cursor() - 100), v.cursor()) || "");
     fresh.pick(app, {
@@ -287,12 +290,16 @@ export function activate(app) {
         const vv = fresh.activeView(app);
         if (!vv) return;
         const b = vv.buffer;
-        const left = b.text(Math.max(0, vv.cursor() - 100), vv.cursor()) || "";
-        const w = wordEnd(left);
-        const text = i.insert;
-        const start = vv.cursor() - fresh.byteLen(w);
-        b.replace(start, vv.cursor(), text);
-        vv.setCursor(start + fresh.byteLen(text), { center: false });
+        // The range the server gave, else the word before the cursor.
+        const given = listOf(i.range).flatMap((r) => {
+          const s = fresh.lspOffset(app, b, r.start.line, r.start.character);
+          const e = fresh.lspOffset(app, b, r.end.line, r.end.character);
+          return s !== null && e !== null ? [{ start: s, end: e }] : [];
+        });
+        const before = fresh.byteLen(wordEnd(b.text(Math.max(0, vv.cursor() - 100), vv.cursor()) || ""));
+        const at = given.at(0) ?? { start: vv.cursor() - before, end: vv.cursor() };
+        b.replace(at.start, at.end, i.insert);
+        vv.setCursor(at.start + fresh.byteLen(i.insert), { center: false });
       },
       onChange: (_it) => {},
       onCancel: () => {},
@@ -326,11 +333,12 @@ export function activate(app) {
     if (t) fresh.popup(app, t);
   };
 
-  const signatureHelp = async () => {
+  // The signature at `pos` (right after a typed "(" or ",", or the cursor).
+  const signatureHelp = async (pos) => {
     const v = active();
     if (!v) return;
     /** const sig: LspSignature | Null */
-    const sig = await ask(v, "textDocument/signatureHelp", {});
+    const sig = await askAt(v, "textDocument/signatureHelp", {}, pos);
     if (!sig) return;
     const doc = sig.documentation;
     fresh.popup(app, doc ? `${sig.label}\n\n${doc}` : sig.label);
@@ -342,8 +350,11 @@ export function activate(app) {
     if (op?.t !== "ins") return;
     // The inserted text's first character: typing "(" inserts "()".
     const ch = op.text[0];
-    if (ch === "(" || ch === ",") setTimeout(() => { signatureHelp(); }, 50);
-    else if (ch === "." && op.text.length === 1) setTimeout(() => { completion(); }, 50);
+    // Asked about the place right after it (each request waits for the
+    // edit to reach the server).
+    const after = op.pos + fresh.byteLen(ch);
+    if (ch === "(" || ch === ",") signatureHelp(after);
+    else if (ch === "." && op.text.length === 1) completion(after);
   });
 
   // ---------------------------------------------------------------- diagnostics
@@ -516,13 +527,13 @@ export function activate(app) {
   };
   reg("lsp.definition", "LSP: Go to Definition", async () => { await definition(); }, "F12");
   reg("lsp.references", "LSP: Find References", async () => { await references(); }, "S-F12");
-  reg("lsp.completion", "LSP: Completion", async () => { await completion(); }, "C-Space");
+  reg("lsp.completion", "LSP: Completion", async () => { for (const v of listOf(active())) await completion(v.cursor()); }, "C-Space");
   reg("lsp.hover", "LSP: Hover", async () => { await hover(); }, "C-k");
   reg("lsp.rename", "LSP: Rename Symbol", async () => { await rename(); }, "F2");
   reg("lsp.codeActions", "LSP: Code Actions", async () => { await codeActions(); }, "C-.");
   reg("lsp.format", "LSP: Format Document", async () => { await format(); }, "M-S-f");
   reg("lsp.symbols", "Go to Symbol in File…", async () => { await symbols(); }, "C-S-o");
-  reg("lsp.signatureHelp", "LSP: Signature Help", async () => { await signatureHelp(); }, "C-S-Space");
+  reg("lsp.signatureHelp", "LSP: Signature Help", async () => { for (const v of listOf(active())) await signatureHelp(v.cursor()); }, "C-S-Space");
   reg("lsp.diagnostics", "Diagnostics: Show Panel", async () => { diagnosticsPanel(); }, "C-S-m");
   // The next (previous) diagnostic after (before) the cursor, round the
   // end of the file; its message in the status bar.

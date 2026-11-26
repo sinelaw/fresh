@@ -225,14 +225,14 @@ async fn api(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let reply = tokio::task::spawn_blocking(move || {
-        let msg: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-        let client = msg.get("client").and_then(Value::as_u64).unwrap_or(0);
-        let op = msg
-            .get("op")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        match orch.dispatch(client, &op, &msg) {
+        match request(&body).and_then(|(op, client, msg)| match client {
+            None if op == "hello" => Ok(orch.hello(&msg)),
+            None => Err(error::err(
+                error::Code::BadRequest,
+                format!("{op}: no client (say hello first)"),
+            )),
+            Some(client) => orch.dispatch(client, &op, &msg),
+        }) {
             Ok(v) => json!({ "ok": v }),
             Err(e) => json!({ "error": error::to_json(&e) }),
         }
@@ -244,6 +244,27 @@ async fn api(
         axum::Json(reply),
     )
         .into_response()
+}
+
+/// A request's body: a JSON object with its `op`, and (but for `hello`) the
+/// `client` making it (none: absent or null). Anything else is a bad
+/// request.
+fn request(body: &[u8]) -> anyhow::Result<(String, Option<u64>, Value)> {
+    let bad = |what: String| error::err(error::Code::BadRequest, what);
+    let msg: Value = serde_json::from_slice(body).map_err(|e| bad(format!("not JSON: {e}")))?;
+    let op = msg
+        .get("op")
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad("no op".into()))?
+        .to_string();
+    let client = match msg.get("client") {
+        None | Some(Value::Null) => None,
+        Some(c) => Some(
+            c.as_u64()
+                .ok_or_else(|| bad(format!("{op}: client is not a number")))?,
+        ),
+    };
+    Ok((op, client, msg))
 }
 
 #[derive(serde::Deserialize)]

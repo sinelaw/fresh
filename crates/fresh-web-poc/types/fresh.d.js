@@ -619,7 +619,14 @@
  *   command: LspCommand | Null,
  * } */
 // completion:
-/** type LspCompletion = {label: String, detail: String | Null, insert: String} */
+// (`range`: what it replaces, at the version asked about; null: the word
+// before the cursor.)
+/** type LspCompletion = {
+ *   label: String,
+ *   detail: String | Null,
+ *   insert: String,
+ *   range: LspRange | Null,
+ * } */
 // signatureHelp (the active signature; null for none):
 /** type LspSignature = {label: String, documentation: String | Null} */
 // inlayHint:
@@ -881,6 +888,7 @@
  *   | {ev: "orchestrator.folders", folders: String[]}
  *   | {ev: "doc.indexing", doc: Number, done: Number, total: Number}
  *   | {ev: "doc.indexed", doc: Number, lines: Number, version: Number}
+ *   | {ev: "doc.index_failed", doc: Number, why: String}
  *   | {ev: "lsp.diagnostics", doc: Number, version: Number, items: Diagnostic[]}
  *   | TermEvent
  *   | {ev: "proc.exit", proc: Number, code: Number, stdout: String, stderr: String}

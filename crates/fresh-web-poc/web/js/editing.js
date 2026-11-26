@@ -305,7 +305,7 @@ export function addCursorVertical(pane, dir) {
   const v = pane.view;
   const b = v.buf;
   const L = b.held;
-  const edge = dir < 0 ? v.cursors.reduce((m, c) => (c.pos < m.pos ? c : m)) : v.cursors.reduce((m, c) => (c.pos > m.pos ? c : m));
+  const edge = v.cursors.reduce((m, c) => (dir < 0 ? c.pos < m.pos : c.pos > m.pos) ? c : m, v.primary);
   const ln = lineAt(b, edge.pos);
   const j = ln.i + dir;
   if (j < 0 || j >= L.count) return;
@@ -474,14 +474,15 @@ function structureAround(b, s) {
 // starts at the primary cursor.
 export function blockSelect(pane, dl, dc) {
   const v = pane.view;
-  const L = v.buf.text;
-  if (!L) return;
-  const kept = v.block.find((b) => b.key === blockKey(v));
-  const anchor = kept === undefined ? cornerAt(v.buf, v.primary.pos) : kept.anchor;
-  const head = kept === undefined ? { ...anchor } : { ...kept.head };
-  head.line = Math.max(0, Math.min(L.count - 1, head.line + dl));
-  head.col = Math.max(0, head.col + dc);
-  setBlock(pane, anchor, head);
+  for (const L of listOf(v.buf.text)) {
+    // The rectangle kept for this view's cursors, else one at the primary.
+    let anchor = cornerAt(v.buf, v.primary.pos);
+    let head = { ...anchor };
+    for (const k of v.block.filter((x) => x.key === blockKey(v)).slice(0, 1)) { anchor = k.anchor; head = { ...k.head }; }
+    head.line = Math.max(0, Math.min(L.count - 1, head.line + dl));
+    head.col = Math.max(0, head.col + dc);
+    setBlock(pane, anchor, head);
+  }
 }
 
 export function selectWord(pane) {
@@ -612,7 +613,7 @@ export class Editing {
     if (!b.text) return;
     const before = v.cursors.map((c) => ({ pos: c.pos, anchor: c.anchor }));
     const lsp = await this.lspSelectionRanges(v);
-    if (pane.view !== v) return;
+    if (!pane.shown.includes(v)) return;
     let grew = false;
     v.cursors.forEach((c, i) => {
       const s = sel(c) ?? { start: c.pos, end: c.pos };

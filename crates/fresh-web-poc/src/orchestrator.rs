@@ -868,6 +868,25 @@ impl Orchestrator {
         }
     }
 
+    /// `hello`: a new client, viewing the workspace asked for, or the first
+    /// one; none when it was closed (the client offers the others). The
+    /// one request made before the client has an id.
+    pub fn hello(&self, m: &Value) -> Value {
+        let session = match m.get("workspace").and_then(Value::as_u64) {
+            Some(id) => self.session(id),
+            None => self.sessions.lock().unwrap().values().next().cloned(),
+        };
+        let id = self.hub.register(session.as_ref().map(|s| s.id));
+        json!({
+            "client": id,
+            "workspace": session.map(|s| s.hello()),
+            "workspaces": self.list(),
+            "folders": self.folders(),
+            "machines": self.all_machines(),
+        })
+    }
+
+    /// Request `op` of client `client` (every request but `hello`).
     pub fn dispatch(&self, client: u64, op: &str, m: &Value) -> Result<Value> {
         let flag = |k: &str| m.get(k).and_then(Value::as_bool).unwrap_or(false);
         let text = |k: &str| {
@@ -876,22 +895,6 @@ impl Orchestrator {
                 .filter(|c| !c.trim().is_empty())
         };
         Ok(match op {
-            "hello" => {
-                // The workspace asked for, or the first one; none when it
-                // was closed (the client offers the others).
-                let session = match m.get("workspace").and_then(Value::as_u64) {
-                    Some(id) => self.session(id),
-                    None => self.sessions.lock().unwrap().values().next().cloned(),
-                };
-                let id = self.hub.register(session.as_ref().map(|s| s.id));
-                json!({
-                    "client": id,
-                    "workspace": session.map(|s| s.hello()),
-                    "workspaces": self.list(),
-                    "folders": self.folders(),
-                    "machines": self.all_machines(),
-                })
-            }
             "workspace.list" => json!({ "workspaces": self.list(), "folders": self.folders() }),
             "machine.list" => json!({ "machines": self.all_machines() }),
             "machine.add" => {
@@ -1186,9 +1189,7 @@ mod tests {
 
     /// A client viewing workspace `ws`, with its event stream open.
     fn client(orch: &Orchestrator, ws: u64) -> (u64, UnboundedReceiver<String>) {
-        let hello = orch
-            .dispatch(0, "hello", &json!({ "workspace": ws }))
-            .unwrap();
+        let hello = orch.hello(&json!({ "workspace": ws }));
         let id = hello["client"].as_u64().unwrap();
         (id, orch.hub.take_stream(id).unwrap())
     }
@@ -1387,9 +1388,7 @@ mod tests {
 
         // A client asking for a closed workspace views none: it has the
         // list, and the built-in skins.
-        let hello = orch
-            .dispatch(0, "hello", &json!({ "workspace": w1.id }))
-            .unwrap();
+        let hello = orch.hello(&json!({ "workspace": w1.id }));
         assert!(hello["workspace"].is_null());
         assert_eq!(hello["workspaces"].as_array().unwrap().len(), 1);
         let c = hello["client"].as_u64().unwrap();

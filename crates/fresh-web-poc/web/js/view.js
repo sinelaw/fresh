@@ -134,9 +134,6 @@ function nextClicks(last, t, x, y) {
   return { t, x, y, n: close ? last.n + 1 : 1 };
 }
 
-// A list's first item, if it has one.
-/** function first<T>(xs: T[]) => T | Undefined */
-function first(xs) { return xs.at(0); }
 
 // No draw asked for yet (a pane's `pending` frame).
 /** const NO_FRAME: Number | Null */
@@ -309,7 +306,12 @@ export class Pane {
   }
 
   // The view shown, if any.
-  get view() { return first(this.shown); }
+  // The view shown, where the caller knows there is one (the commands on
+  // a view run only then): it throws when the split shows none.
+  get view() {
+    for (const v of this.shown) return v;
+    throw new Error("the split shows no view");
+  }
 
   // Take the surface's resizes and mouse (once, after `new`).
   // Whether the editor's keys go to this pane.
@@ -337,7 +339,7 @@ export class Pane {
     this.surfaceEl.addEventListener("mousemove", (e) => this.onHover(e));
     this.scrollbarEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
     this.gutterEl.addEventListener("mousedown", (e) => this.onGutter(e));
-    this.surfaceEl.addEventListener("contextmenu", (e) => { e.preventDefault(); if (this.view) this.editor.editorMenu(this, { x: e.clientX, y: e.clientY }); });
+    this.surfaceEl.addEventListener("contextmenu", (e) => { e.preventDefault(); if (this.shown.length > 0) this.editor.editorMenu(this, { x: e.clientX, y: e.clientY }); });
     // The wheel over the tabs scrolls them sideways.
     this.tabsEl.addEventListener("wheel", (e) => { if (!e.deltaX) this.tabsEl.scrollLeft += e.deltaY; }, { passive: true });
   }
@@ -384,8 +386,8 @@ export class Pane {
     if (i < 0) return;
     this.views.splice(i, 1);
     this.untrack(v);
-    if (this.view === v) this.shown = this.views.slice(Math.max(0, i - 1), Math.max(0, i - 1) + 1);
-    if (this.view) this.editor.shown(this, this.view);
+    if (this.shown.includes(v)) this.shown = this.views.slice(Math.max(0, i - 1), Math.max(0, i - 1) + 1);
+    for (const s of this.shown) this.editor.shown(this, s);
     this.renderTabs();
     this.scheduleRender();
   }
@@ -394,7 +396,7 @@ export class Pane {
     const names = this.views.map((v) => v.buf.name);
     this.views.forEach((v, i) => {
       const t = document.createElement("div");
-      t.className = "tab" + (v === this.view ? " active" : "") + (v.preview ? " preview" : "");
+      t.className = "tab" + (this.shown.includes(v) ? " active" : "") + (v.preview ? " preview" : "");
       t.dataset.i = String(i);
       // Tabs of files with one name show their parent folder.
       const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path !== "";

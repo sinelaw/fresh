@@ -13,6 +13,7 @@
 // `onLspStatus`.
 
 import { rpc } from "./rpc.js";
+import { whenSynced } from "./buffer.js";
 import { lspOffset as lspOffsetIn, lspPosition as lspPositionIn } from "./app.js";
 import { found, listOf } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
@@ -186,8 +187,11 @@ export const theme = (_app, key) => rpc("theme.get", { key });
 
 export const lspAvailable = (app, buffer) => { const b = held(app, buffer); return b !== undefined && app.lspAvailable(b); };
 // A request about `buffer` (at byte `pos` when it is about a position).
-export const lspRequest = (app, buffer, method, params) => rpc("lsp.call", { doc: docOfHeld(app, buffer), method, params, pos: null });
-export const lspRequestAt = (app, buffer, method, params, pos) => rpc("lsp.call", { doc: docOfHeld(app, buffer), method, params, pos });
+// A request about a buffer is sent once every edit made in it here is
+// sequenced: the server then has the text its positions were taken from.
+const edited = async (app, buffer) => { for (const b of found(held(app, buffer))) for (const f of b.file) await whenSynced(f); };
+export const lspRequest = async (app, buffer, method, params) => { await edited(app, buffer); return rpc("lsp.call", { doc: docOfHeld(app, buffer), method, params, pos: null }); };
+export const lspRequestAt = async (app, buffer, method, params, pos) => { await edited(app, buffer); return rpc("lsp.call", { doc: docOfHeld(app, buffer), method, params, pos }); };
 // A request about the workspace (`workspace/symbol`) to `language`'s server.
 export const lspWorkspaceRequest = (_app, language, method, params) => rpc("lsp.call", { language, method, params });
 // LSP (line, character) to a byte offset in a held buffer, and back.

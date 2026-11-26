@@ -590,7 +590,14 @@ impl Docs {
                 return Ok((id, false));
             }
         }
-        let meta = fs.metadata(host(&path).as_host_path()).ok();
+        // No such file yet: a new one, written on save. Any other failure
+        // to look (permissions, a dropped connection) is an error, never
+        // taken for a new, empty file.
+        let meta = match fs.metadata(host(&path).as_host_path()) {
+            Ok(m) => Some(m),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(anyhow::anyhow!("{}: {e}", path.display())),
+        };
         let readonly = meta.as_ref().is_some_and(|m| m.is_readonly);
         let disk = signature(&fs, &path);
         let buffer = if meta.is_some() {

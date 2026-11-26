@@ -1,7 +1,17 @@
 // Transport to the data server: requests as JSON POSTs, pushed events over
 // one Server-Sent Events stream.
 
-export const session = { client: 0 };
+// This page's client id: none until `hello` gives it one.
+/** const session: {client: Number | Null} */
+export const session = { client: null };
+// The client id, once `hello` gave it (every request but `hello` is made
+// after).
+/** function clientId() => Number */
+export function clientId() {
+  const c = session.client;
+  if (c === null) throw new Error("no client id yet: hello comes first");
+  return c;
+}
 
 // A refused operation: `code` is the server's stable reason (see the
 // README's protocol section), `detail` its message for people, `message`
@@ -67,9 +77,8 @@ async function send(op, args) {
 }
 
 /** function connectEvents(onEvent: (ServerEvent) => Undefined) => EventSource */
-/** function connectEvents(onEvent: (ServerEvent) => Undefined) => EventSource */
 export function connectEvents(onEvent) {
-  const es = new EventSource(`/events?client=${session.client}`);
+  const es = new EventSource(`/events?client=${clientId()}`);
   es.onmessage = (m) => { onEvent(JSON.parse(m.data)); };
   return es;
 }

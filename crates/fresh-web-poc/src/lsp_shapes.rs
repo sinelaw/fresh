@@ -148,13 +148,23 @@ fn hover_text(c: &Value) -> Value {
     }
 }
 
+/// A completion item: its label, detail, the text it inserts, and the
+/// range it replaces: a `TextEdit`'s, or an `InsertReplaceEdit`'s
+/// `replace` (null: none given, the client replaces the word before the
+/// cursor, as the protocol says).
 fn completion(i: &Value) -> Value {
     let label = i["label"].as_str().unwrap_or_default();
-    let insert = i["textEdit"]["newText"]
+    let edit = &i["textEdit"];
+    let insert = edit["newText"]
         .as_str()
         .or(i["insertText"].as_str())
         .unwrap_or(label);
-    json!({"label": label, "detail": text_or_null(&i["detail"]), "insert": insert})
+    let replaces = [&edit["range"], &edit["replace"]]
+        .into_iter()
+        .find(|r| r["start"].is_object() && r["end"].is_object())
+        .cloned()
+        .unwrap_or(Value::Null);
+    json!({"label": label, "detail": text_or_null(&i["detail"]), "insert": insert, "range": replaces})
 }
 
 /// A `Command` as `{command, arguments}`, its arguments as JSON text (the
@@ -332,10 +342,18 @@ mod tests {
 
     #[test]
     fn completion_hints_folds_and_selections() {
-        let c = json!({"isIncomplete": false, "items": [{"label": "len", "detail": "fn", "textEdit": {"newText": "len()"}}, {"label": "x"}]});
+        let c = json!({"isIncomplete": false, "items": [
+            {"label": "len", "detail": "fn", "textEdit": {"newText": "len()", "range": R(1)}},
+            {"label": "is", "textEdit": {"newText": "is_empty", "insert": R(2), "replace": R(3)}},
+            {"label": "x"},
+        ]});
         assert_eq!(
             plain("textDocument/completion", c),
-            json!([{"label": "len", "detail": "fn", "insert": "len()"}, {"label": "x", "detail": null, "insert": "x"}])
+            json!([
+                {"label": "len", "detail": "fn", "insert": "len()", "range": R(1)},
+                {"label": "is", "detail": null, "insert": "is_empty", "range": R(3)},
+                {"label": "x", "detail": null, "insert": "x", "range": null},
+            ])
         );
         let h = json!([{"position": {"line": 0, "character": 1}, "label": [{"value": ": "}, {"value": "i32"}], "paddingLeft": true}]);
         assert_eq!(

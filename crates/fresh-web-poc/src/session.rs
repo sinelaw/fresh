@@ -1320,9 +1320,25 @@ fn index_lines(docs: Arc<Mutex<Docs>>, room: Room, id: u64) {
 }
 
 pub(crate) fn build_line_index(docs: &Mutex<Docs>, room: &Room, id: u64) {
+    if let Err(e) = count_lines(docs, room, id) {
+        // Its lines stay without numbers: its viewers are told why.
+        let clients: Vec<u64> = match docs.lock().unwrap().get(id) {
+            Ok(d) => d.clients.iter().copied().collect(),
+            Err(_) => Vec::new(), // closed meanwhile: no one to tell
+        };
+        let ev = json!({"ev": "doc.index_failed", "doc": id, "why": e.to_string()});
+        for c in clients {
+            room.send(c, &ev);
+        }
+    }
+}
+
+/// Count document `id`'s lines and tell its viewers (nothing to do when it
+/// was closed meanwhile).
+fn count_lines(docs: &Mutex<Docs>, room: &Room, id: u64) -> Result<()> {
     let (fs, work, total) = {
         let mut g = docs.lock().unwrap();
-        let Ok(d) = g.get(id) else { return };
+        let Ok(d) = g.get(id) else { return Ok(()) };
         let (chunks, total) = d.buffer.prepare_line_scan();
         let leaves = d.buffer.piece_tree_leaves();
         let work: Vec<(PathBuf, u64, usize)> = chunks
@@ -1336,10 +1352,9 @@ pub(crate) fn build_line_index(docs: &Mutex<Docs>, room: &Room, id: u64) {
     let mut done = 0usize;
     let mut last = std::time::Instant::now();
     for (path, off, len) in work {
-        let Ok(n) = fs.count_line_feeds_in_range(workspace::host(&path).as_host_path(), off, len)
-        else {
-            return;
-        };
+        let n = fs
+            .count_line_feeds_in_range(workspace::host(&path).as_host_path(), off, len)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
         counts.insert((path, off, len), n);
         done += len;
         if last.elapsed() > Duration::from_millis(250) {
@@ -1348,20 +1363,21 @@ pub(crate) fn build_line_index(docs: &Mutex<Docs>, room: &Room, id: u64) {
         }
     }
     let mut g = docs.lock().unwrap();
-    let Ok(d) = g.get(id) else { return };
+    let Ok(d) = g.get(id) else { return Ok(()) };
     let (chunks, _) = d.buffer.prepare_line_scan();
     let leaves = d.buffer.piece_tree_leaves();
     let mut updates = Vec::new();
     for c in chunks.iter().filter(|c| !c.already_known) {
         let leaf = &leaves[c.leaf_index];
         let n = match d.buffer.leaf_io_params(leaf) {
-            Some(k) => counts.get(&k).copied().or_else(|| {
-                fs.count_line_feeds_in_range(workspace::host(&k.0).as_host_path(), k.1, k.2)
-                    .ok()
-            }),
-            None => d.buffer.scan_leaf(leaf).ok(),
+            Some(k) => match counts.get(&k) {
+                Some(n) => *n,
+                None => fs
+                    .count_line_feeds_in_range(workspace::host(&k.0).as_host_path(), k.1, k.2)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", k.0.display()))?,
+            },
+            None => d.buffer.scan_leaf(leaf)?,
         };
-        let Some(n) = n else { return };
         updates.push((c.leaf_index, n));
     }
     d.buffer.apply_scan_updates(&updates);
@@ -1369,6 +1385,7 @@ pub(crate) fn build_line_index(docs: &Mutex<Docs>, room: &Room, id: u64) {
     for c in &d.clients {
         room.send(*c, &ev);
     }
+    Ok(())
 }
 
 #[cfg(test)]
