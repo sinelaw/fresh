@@ -1153,8 +1153,16 @@ fn test_tab_hover_position_accuracy() {
 
     println!("Tab row: '{}'", tab_row);
 
-    // Find all × positions (there should be 2, one for each tab)
-    let x_positions: Vec<usize> = tab_row.match_indices('×').map(|(i, _)| i).collect();
+    // Find all × positions (there should be 2, one for each tab). These are
+    // screen columns, not byte offsets: `×` is two bytes in UTF-8, so a byte
+    // offset lands every `×` after the first one column too far right — on
+    // the space after it.
+    let x_positions: Vec<usize> = tab_row
+        .chars()
+        .enumerate()
+        .filter(|&(_, c)| c == '×')
+        .map(|(col, _)| col)
+        .collect();
     println!("× positions: {:?}", x_positions);
     assert_eq!(
         x_positions.len(),
@@ -1184,11 +1192,25 @@ fn test_tab_hover_position_accuracy() {
             })
             .collect();
         println!("Colors before hover: {:?}", colors_before);
+        let bg_before = harness
+            .get_cell_style(x_pos as u16, layout::TAB_BAR_ROW as u16)
+            .and_then(|s| s.bg);
 
         // Hover over the current close button
         harness
             .mouse_move(x_pos as u16, layout::TAB_BAR_ROW as u16)
             .unwrap();
+
+        // The hovered `×` sits on a pill of its own, not just a new glyph
+        // colour on the tab's ground (#3853).
+        let bg_after = harness
+            .get_cell_style(x_pos as u16, layout::TAB_BAR_ROW as u16)
+            .and_then(|s| s.bg);
+        assert_ne!(
+            bg_before, bg_after,
+            "Close button {} at position {} should get a hover background",
+            idx, x_pos
+        );
 
         // Get colors of both × after hovering
         let colors_after: Vec<_> = x_positions
