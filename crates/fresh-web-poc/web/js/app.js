@@ -683,7 +683,7 @@ export class App {
     if (panesOf(this.layoutTree).length === 1) return;
     for (const b of new Set(p.views.map((v) => v.buf))) if (!(await this.mayClose(b, p.views))) return;
     this.layoutTree = without(this.layoutTree, p);
-    for (const v of [...p.views]) { v.buf.dropView(v); this.dropIfUnshown(v.buf); }
+    for (const v of [...p.views]) { p.untrack(v); this.dropIfUnshown(v.buf); }
     this.activePane = panesOf(this.layoutTree)[0];
     this.relayout();
     this.focusPane(this.activePane);
@@ -1063,7 +1063,7 @@ export class App {
 
   afterEdit(b, op, local) {
     // Editing a preview tab's file keeps it.
-    if (local) for (const v of b.views) this.keep(v);
+    if (local) for (const v of this.viewsOf(b)) this.keep(v);
     this.bufferEvent("buffer.changed", b, [op], local);
     this.renderBuffer(b.id);
     for (const p of panesOf(this.layoutTree)) if (p.views.some((v) => v.buf === b)) p.renderTabs();
@@ -1289,7 +1289,7 @@ export class App {
       // A huge file changed on disk and was loaded again.
       const b = this.docs.get(ev.doc);
       if (!b) return;
-      b.reloaded(ev.info).then(() => { this.renderAll(); this.updateStatus(); });
+      this.reloadedDoc(b, ev.info);
       this.setStatus(ev.lost ? `${b.name} changed on disk and was reloaded; its unsaved changes are lost` : `${b.name} changed on disk and was reloaded`);
       return;
     }
@@ -1880,10 +1880,26 @@ export class App {
   // Buffer `b`'s document has a line index (`lines` long) now: its window
   // is fetched again, with line numbers.
   async reindexed(b, lines) {
-    await b.indexed(lines);
+    await b.indexed(lines, this.viewsOf(b).map((v) => v.top).at(0) ?? 0);
     this.renderBuffer(b.id);
     this.updateStatus();
   }
+
+  // Buffer `b`'s document was loaded again (a huge file changed on disk):
+  // its views go to its start, and its window is fetched again.
+  async reloadedDoc(b, info) {
+    b.reloaded(info);
+    const views = this.viewsOf(b);
+    for (const v of views) {
+      for (const c of v.cursors) { c.pos = Math.min(c.pos, b.len); c.anchor = none(); }
+      v.setTop(0, 0);
+    }
+    await b.ensure(views.map((v) => v.primary.pos).at(0) ?? 0, ENSURE_AFTER);
+    this.renderAll();
+    this.updateStatus();
+  }
+  // The views of buffer `b`, in every split.
+  viewsOf(b) { return panesOf(this.layoutTree).flatMap((p) => p.views.filter((v) => v.buf === b)); }
 
   afterUndo(v, ops) {
     const last = ops.at(-1);

@@ -1,7 +1,7 @@
 // A pane and the views in it: one view per buffer tab, each with its own
 // scroll, cursors, options and folds — all of it this client's.
 
-import { listOf, some } from "./maybe.js";
+import { listOf, found, some } from "./maybe.js";
 
 import { setClass } from "./dom.js";
 import { layout, applies, cursorIn } from "./layout.js";
@@ -244,7 +244,7 @@ export class View {
 // split): its cursors, scroll, mode, options and folds.
 export function copyTab(v, to, index) {
   const nv = new View(to, v.buf);
-  v.buf.addView(nv);
+  to.track(nv);
   nv.cursors = copyCursors(v.cursors);
   nv.setTop(v.top, v.topPx);
   nv.mode = v.mode;
@@ -262,6 +262,7 @@ export class Pane {
     this.id = nextPaneId++;
     this.views = []; // tabs
     this.shown = []; // the view shown: one of `views`, or none
+    this.unfollow = new Map(); // each view's unfollow of its buffer's edits
     // The tabs over the surface: rulers, gutter, text and carets, then (in
     // a compose view) the document, then the scrollbar.
     this.tabsEl = div("tabs", []);
@@ -345,15 +346,22 @@ export class Pane {
     this.scheduleRender();
     return v;
   }
+  // A view of this split follows its buffer's edits (its cursors and
+  // scroll move through them) until it is closed.
+  track(v) { this.unfollow.set(v, v.buf.follow((op) => { v.shift(op); })); }
+  untrack(v) {
+    for (const off of found(this.unfollow.get(v))) off();
+    this.unfollow.delete(v);
+  }
   // A new tab of `buf`: the preview tab (in place of the one there was,
   // unless that one holds unsaved changes: it is kept), or a kept one.
   newTab(buf, preview) {
     const v = new View(this, buf);
-    buf.addView(v);
+    this.track(v);
     const old = preview ? this.views.find((x) => x.preview) : undefined;
     if (old !== undefined && !old.buf.modified) {
       this.views.splice(this.views.indexOf(old), 1, v);
-      old.buf.dropView(old);
+      this.untrack(old);
       this.editor.dropIfUnshown(old.buf);
     } else {
       if (old !== undefined) old.preview = false;
@@ -366,7 +374,7 @@ export class Pane {
     const i = this.views.indexOf(v);
     if (i < 0) return;
     this.views.splice(i, 1);
-    v.buf.dropView(v);
+    this.untrack(v);
     if (this.view === v) this.shown = this.views.slice(Math.max(0, i - 1), Math.max(0, i - 1) + 1);
     if (this.view) this.editor.shown(this, this.view);
     this.renderTabs();

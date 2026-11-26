@@ -230,6 +230,9 @@ export const ENSURE_AFTER = 200;
 /** function noFoldRanges() => LspFold[] */
 function noFoldRanges() { return []; }
 
+/** function noFollowers() => Set<(Op) => Undefined> */
+function noFollowers() { return new Set(); }
+
 export class Buffer {
   // `source`: where its text comes from (a Source).
   constructor(source) {
@@ -252,7 +255,7 @@ export class Buffer {
     this.len = 0;
     this.totalLines = none(); // none while a huge file has no line index
     this.decor = new Decor();
-    this.views = new Set();
+    this.followers = noFollowers(); // what moves through its edits (views' cursors and scroll)
     this.undo = [];
     this.redo = [];
     this.typingRun = false;
@@ -293,7 +296,7 @@ export class Buffer {
   // cursors in every view, and undo entries.
   moveThrough(op) {
     this.decor.shift(op);
-    for (const v of this.views) v.shift(op);
+    for (const f of this.followers) f(op);
   }
 
   // Apply a primitive to the held text (`deleted`: the newlines it deleted,
@@ -330,15 +333,18 @@ export class Buffer {
     throw new Error(`${this.name}: its text is not held`);
   }
   // The document's line index is built (`lines` long): the window is
-  // fetched again, with its line numbers, at its first view's top.
-  indexed(lines) {
+  // fetched again, with its line numbers, at `top`.
+  indexed(lines, top) {
     this.totalLines = some(lines);
     this.text = none();
-    return this.ensure([...this.views].map((v) => v.top).at(0) ?? 0, ENSURE_AFTER);
+    return this.ensure(top, ENSURE_AFTER);
   }
-  // A view of it shown (a split's tab), and one closed.
-  addView(v) { this.views.add(v); }
-  dropView(v) { this.views.delete(v); }
+  // Follow its edits: `shift(op)` for each primitive applied (a view's
+  // cursors and scroll move through it). Returns the unfollow.
+  follow(shift) {
+    this.followers.add(shift);
+    return () => { this.followers.delete(shift); };
+  }
   textRange(s, e) { return heldList(this.text).map((L) => L.text(s, Math.min(e, this.len))).at(0) ?? NO_TEXT; }
   // Text for a plugin's getBufferText: local when held, else the source's.
   async textAsync(s, e) {
@@ -550,12 +556,6 @@ export class Buffer {
     this.undo = [];
     this.redo = [];
     this.text = none();
-    for (const v of this.views) {
-      for (const c of v.cursors) { c.pos = Math.min(c.pos, this.len); c.anchor = none(); }
-      v.setTop(0, 0);
-    }
-    const v = [...this.views][0];
-    return this.ensure(v ? v.primary.pos : 0, ENSURE_AFTER);
   }
 }
 

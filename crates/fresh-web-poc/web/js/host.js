@@ -58,7 +58,7 @@ export function bufferHandle(app, buf) {
     replace: (start, end, text) => { edit([...(end > start ? [delOp(start, end - start)] : []), ...(text !== "" ? [insOp(start, text)] : [])]); },
     save: () => app.saveBuffer(buf, true),
     decorations: (ns) => decorationSet(buf, ns),
-    views: () => [...buf.views].map((v) => viewHandle(app, v)),
+    views: () => app.viewsOf(buf).map((v) => viewHandle(app, v)),
     setEntries: (entries) => { buf.setEntries(entries); app.renderBuffer(buf.id); },
     propsAt: (pos) => buf.propsAt(pos),
     setFoldRanges: (ranges) => { buf.foldRanges = ranges; },
