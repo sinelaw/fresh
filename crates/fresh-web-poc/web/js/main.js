@@ -17,7 +17,7 @@ import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
 
 import { $ } from "./dom.js";
-import { found, listOf } from "./maybe.js";
+import { found, listOf, some, none } from "./maybe.js";
 
 async function main() {
   // The workspace this page views: `?ws=<id>`, or the server's first. None
@@ -139,10 +139,10 @@ async function main() {
   // it binds; its status bar item; the panels and menus it shows; and the
   // terminals it reports on and runs agents in.
   const orchestratorEditor = {
-    workspaceId: () => listOf(app.workspace).map((w) => w.id).at(0) ?? null,
+    workspaceId: () => { const ids = listOf(app.workspace).map((w) => w.id); return ids.length > 0 ? some(ids[0]) : none(); },
     root: () => app.root,
     trusted: () => app.trusted,
-    closed: () => { app.workspace = null; },
+    closed: () => { app.workspace = none(); },
     say: (text) => { app.setStatus(text); },
     focus: () => { app.focusPane(app.activePane); },
     pick: (o) => { app.prompt.open(o); },
