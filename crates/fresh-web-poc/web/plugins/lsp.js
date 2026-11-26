@@ -28,6 +28,24 @@ const HINT = { fg: "editor.line_number_fg", bg: null, bold: false, italic: true,
 /** function note(label: String) => PaletteItem */
 function note(label) { return { label, detail: null, run: null, preview: null }; }
 
+// The references list's rows: a file's header, or a reference in it (with
+// its line's text).
+/** type RefRow = {kind: "file", path: String} | {kind: "ref", at: LspLocation, text: String} */
+/** function refFile(path: String) => RefRow */
+function refFile(path) { return { kind: "file", path }; }
+/** function refRow(at: LspLocation, text: String) => RefRow */
+function refRow(at, text) { return { kind: "ref", at, text }; }
+// The diagnostics list's rows: a buffer's header, or one of its problems
+// (with its line's number, as shown).
+/** type DiagRow =
+ *   | {kind: "file", b: BufferHandle}
+ *   | {kind: "problem", b: BufferHandle, d: Diagnostic, line: String}
+ */
+/** function diagFile(b: BufferHandle) => DiagRow */
+function diagFile(b) { return { kind: "file", b }; }
+/** function problemRow(b: BufferHandle, d: Diagnostic, line: String) => DiagRow */
+function problemRow(b, d, line) { return { kind: "problem", b, d, line }; }
+
 export function activate(app) {
   const SEV = ["", "error", "warning", "info", "hint"];
   const status = fresh.statusItem(app, "lsp");
@@ -43,6 +61,12 @@ export function activate(app) {
   // The same, about position `pos` of view `v`'s buffer.
   const askAt = (v, method, params, pos) => fresh.lspRequestAt(app, v.buffer, method, params, pos);
   const rel = (p) => fresh.shownFrom(fresh.root(app), p);
+  // A buffer as a list names it: its path from the root, or its name.
+  /** const shownName: (BufferHandle) => String */
+  const shownName = (b) => {
+    for (const p of listOf(b.path())) return rel(p);
+    return b.name();
+  };
 
   // Open a location: `preview` as for OpenOptions (a list's selection
   // previews it, the keyboard staying in the list).
@@ -82,18 +106,20 @@ export function activate(app) {
       const i = l.range.start.line;
       return i < lines.length ? lines[i].trim() : "";
     };
-    // A file's header, then its references: one row shape for both.
+    // Each file's header row, then its references.
+    /** const items: RefRow[] */
     const items = r.flatMap((l, i) => {
-      const row = { header: false, path: l.path, range: l.range, text: lineOf(l) };
-      return i === 0 || r[i - 1].path !== l.path ? [{ header: true, path: l.path, range: l.range, text: "" }, row] : [row];
+      const row = refRow(l, lineOf(l));
+      return i === 0 || r[i - 1].path !== l.path ? [refFile(l.path), row] : [row];
     });
     const refsPanel = fresh.panel(app, { id: "references", title: `References (${r.length})`, place: "bottom", onClose: null });
     refsPanel.render(ui.list({
-      ...ui.listProps("refs", items, (it) => it.header ? ui.text({ ...ui.TEXT, bold: true }, rel(it.path)) : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, dim: true }, `  ${it.range.start.line + 1}:${it.range.start.character + 1}`), ui.text({ ...ui.TEXT, mono: true }, it.text)])),
+      ...ui.listProps("refs", items, (it) => it.kind === "file" ? ui.text({ ...ui.TEXT, bold: true }, rel(it.path)) : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, dim: true }, `  ${it.at.range.start.line + 1}:${it.at.range.start.character + 1}`), ui.text({ ...ui.TEXT, mono: true }, it.text)])),
+      header: (it) => it.kind === "file",
       // Selected, a reference shows in the preview tab (the keyboard stays
       // in the list); Enter or a double-click opens it for good.
-      onSelect: (it) => { if (!it.header) goto(it.path, it.range, true); },
-      onActivate: (it) => { if (!it.header) goto(it.path, it.range, false); },
+      onSelect: (it) => { if (it.kind === "ref") goto(it.at.path, it.at.range, true); },
+      onActivate: (it) => { if (it.kind === "ref") goto(it.at.path, it.at.range, false); },
     }));
     refsPanel.focus("refs");
   };
@@ -372,16 +398,22 @@ export function activate(app) {
     const diagPanel = fresh.shown(app, "diagnostics");
     if (!diagPanel) return;
     // Each file with problems: a header row, then a row per problem.
+    /** const items: DiagRow[] */
     const items = fresh.buffers(app).flatMap((b) => {
       const ds = fresh.diagnostics(app, b).sort((x, y) => x.start - y.start);
-      const rows = ds.map((d) => ({ header: false, b, d, line: lineLabel(b, d.start) }));
-      return ds.length ? [{ header: true, b, d: ds[0], line: "" }, ...rows] : [];
+      return ds.length ? [diagFile(b), ...ds.map((d) => problemRow(b, d, lineLabel(b, d.start)))] : [];
     });
     diagPanel.render(ui.list({
-      ...ui.listProps("diags", items, (it) => it.header
-        ? ui.text({ ...ui.TEXT, bold: true }, rel(it.b.path()))
+      ...ui.listProps("diags", items, (it) => it.kind === "file"
+        ? ui.text({ ...ui.TEXT, bold: true }, shownName(it.b))
         : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, color: [it.d.severity === 1 ? "diagnostic.error" : "diagnostic.warning"] }, it.d.severity === 1 ? "  ●" : "  ▲"), ui.text({ ...ui.TEXT, dim: true }, it.line), ui.text({ ...ui.TEXT, mono: true }, it.d.message.split("\n")[0])])),
-      onActivate: async (it) => { if (it.header) return; await fresh.open(app, it.b.path(), { line: null, column: 1, place: "tab", preview: null, focus: true }); const v = fresh.activeView(app); if (v !== null) v.setCursor(it.d.start, { center: true }); },
+      header: (it) => it.kind === "file",
+      // The problem's buffer shown, at the problem.
+      onActivate: (it) => {
+        if (it.kind === "file") return;
+        fresh.show(app, it.b, "tab");
+        for (const v of listOf(fresh.activeView(app))) v.setCursor(it.d.start, { center: true });
+      },
     }));
   };
   const diagnosticsPanel = () => {

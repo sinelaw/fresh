@@ -57,6 +57,15 @@ const match = (pos, len, text) => ({ pos, len, text });
 // The most matches looked for in a buffer.
 const MATCH_LIMIT = 20000;
 
+// A match the project search found, and the results list's rows: a
+// file's header, or one of its matches.
+/** type ProjectMatch = {path: String, line: Number, col: Number, len: Number, text: String} */
+/** type ResultRow = {kind: "file", path: String} | {kind: "match", m: ProjectMatch} */
+/** function fileRow(path: String) => ResultRow */
+function fileRow(path) { return { kind: "file", path }; }
+/** function matchRow(m: ProjectMatch) => ResultRow */
+function matchRow(m) { return { kind: "match", m }; }
+
 export function activate(app) {
   const opts = { case: false, word: false, regex: false };
   let query = "";
@@ -485,20 +494,14 @@ export function activate(app) {
     pq.busy = false;
     renderPanel();
   };
-  const rows = () => {
-    const out = [];
-    let last = null;
-    for (const m of pq.results) {
-      if (m.path !== last) { out.push({ header: true, path: m.path, line: 0, col: 0, len: 0, text: "" }); last = m.path; }
-      out.push({ header: false, path: m.path, line: m.line, col: m.col, len: m.len, text: m.text });
-    }
-    return out;
-  };
+  // The results by file: each file's header row, then its matches.
+  /** const rows: () => ResultRow[] */
+  const rows = () => pq.results.flatMap((m, i) => (i === 0 || pq.results[i - 1].path !== m.path ? [fileRow(m.path), matchRow(m)] : [matchRow(m)]));
   // A match selected (a click, the arrows) shows in the preview tab, the
   // keyboard staying in the list; Enter or a double-click opens it in a
   // tab of its own.
+  /** const openMatch: (ProjectMatch, Boolean) => Promise<Undefined> */
   const openMatch = async (m, preview) => {
-    if (!m || m.header) return;
     for (const b of listOf(await fresh.open(app, m.path, { line: m.line + 1, column: 1, place: "tab", preview, focus: !preview }))) {
       for (const v of listOf(fresh.activeView(app))) {
         for (const L of listOf(b.lines())) {
@@ -566,11 +569,12 @@ export function activate(app) {
         ui.text({ ...ui.TEXT, dim: true }, status),
       ]),
       ui.list({
-        ...ui.listProps("results", rows(), (m) => m.header
-          ? ui.text({ ...ui.TEXT, bold: true }, m.path)
-          : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, dim: true }, `  ${m.line + 1}:${m.col + 1}`), ui.text({ ...ui.TEXT, mono: true }, m.text.trim())])),
-        onSelect: (m) => openMatch(m, true),
-        onActivate: (m) => openMatch(m, false),
+        ...ui.listProps("results", rows(), (r) => r.kind === "file"
+          ? ui.text({ ...ui.TEXT, bold: true }, r.path)
+          : ui.row(ui.BOX, [ui.text({ ...ui.TEXT, dim: true }, `  ${r.m.line + 1}:${r.m.col + 1}`), ui.text({ ...ui.TEXT, mono: true }, r.m.text.trim())])),
+        header: (r) => r.kind === "file",
+        onSelect: (r) => { if (r.kind === "match") openMatch(r.m, true); },
+        onActivate: (r) => { if (r.kind === "match") openMatch(r.m, false); },
       }),
     ]));
   };
