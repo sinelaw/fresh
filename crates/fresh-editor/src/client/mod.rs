@@ -27,8 +27,11 @@ mod relay_unix;
 /// Reason the client exited
 #[derive(Debug)]
 pub enum ClientExitReason {
-    /// Server closed the connection normally
+    /// Server closed the connection normally: it said `Quit` (the editor
+    /// quit, or the user detached this client)
     ServerQuit,
+    /// Server went away without saying so (crashed, or was killed)
+    ServerGone,
     /// User requested detach
     Detached,
     /// Version mismatch between client and server

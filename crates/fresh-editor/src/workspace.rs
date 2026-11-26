@@ -874,7 +874,7 @@ pub struct SerializedTerminalWorkspace {
     /// quits. Absent when nothing in the terminal reported, and in
     /// workspaces written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub program_resume: Option<crate::services::program_resume::ResumeCommand>,
+    pub program_resume: Option<crate::services::program_resume::ResumeRecord>,
 }
 
 /// `skip_serializing_if` helper: keeps the default-`false` capability flag out
@@ -1665,9 +1665,23 @@ impl Workspace {
         // Write atomically: temp file + rename
         let temp_path = path.with_extension("json.tmp");
 
-        // Write to temp file
+        // Write to temp file — readable by this user only: it can hold
+        // terminals' resume commands (OSC 7577), whose arguments may carry
+        // secrets, and the spec requires other users can't read or change
+        // saved records.
         {
-            let mut file = std::fs::File::create(&temp_path)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options.open(&temp_path)?;
+            // `mode` applies only when the file is created; a temp file left
+            // by an earlier version keeps its old mode otherwise.
+            #[cfg(unix)]
+            std::fs::set_permissions(
+                &temp_path,
+                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+            )?;
             file.write_all(content.as_bytes())?;
             file.sync_all()?; // Ensure data is on disk before rename
         }
@@ -2330,6 +2344,25 @@ mod tests {
         let loaded = Workspace::load(&root).unwrap().expect("found by root");
         assert_eq!(loaded.stable_id.as_deref(), Some(id.as_str()));
         assert!(workspace_ids_for_root(&root).contains(&id));
+    }
+
+    /// A saved workspace can hold terminals' resume commands (OSC 7577),
+    /// whose arguments may carry secrets: the spec requires that other users
+    /// can't read or change saved records, so the file is this user's only.
+    #[cfg(unix)]
+    #[test]
+    fn a_saved_workspace_is_readable_by_its_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::TempDir::new().unwrap();
+        let _guard = DataDirGuard::new(temp.path());
+        let root = PathBuf::from("/w/private");
+        let id = generate_stable_id();
+        let mut workspace = Workspace::new(root.clone());
+        workspace.stable_id = Some(id.clone());
+        workspace.save().unwrap();
+        let path = workspace_path_for(&root, &id).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "workspace file mode is {mode:o}");
     }
 
     /// #3787: a file under a deep path keeps its per-file state, instead of

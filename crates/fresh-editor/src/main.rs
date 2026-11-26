@@ -6162,8 +6162,9 @@ fn run_attach(
     // The daemon ended this client — the editor quit, or the user detached
     // (which the daemon answers with `Quit` too): withdraw the resume report.
     // `Detached` is *not* that: it is stdin reaching EOF, i.e. this terminal
-    // going away, which is exactly when the report must survive. Errors keep
-    // it as well.
+    // going away, which is exactly when the report must survive. A daemon
+    // that vanished without a word (`ServerGone`: crashed, or killed at
+    // logout) and errors keep it as well.
     if matches!(
         result,
         Ok(client::ClientExitReason::ServerQuit | client::ClientExitReason::VersionMismatch { .. })
@@ -6175,6 +6176,9 @@ fn run_attach(
     match result {
         Ok(client::ClientExitReason::ServerQuit) => {
             tracing::debug!("Client exit: ServerQuit");
+        }
+        Ok(client::ClientExitReason::ServerGone) => {
+            tracing::debug!("Client exit: ServerGone");
         }
         Err(e) => {
             tracing::debug!("Client error: {}", e);

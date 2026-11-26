@@ -103,14 +103,14 @@ impl Fixture {
         )
         .unwrap();
 
-        // A program that reports `/bin/sh resumed.sh` in `elsewhere`, signed
+        // A program that reports `<$2> resumed.sh` in `elsewhere`, signed
         // with `$1`, then stays running — a record whose owner has exited is
         // dropped, so it has to be alive when the workspace is saved.
         std::fs::write(
             root.join("report.sh"),
             format!(
                 "b() {{ printf '%s' \"$1\" | base64 | tr -d '\\n'; }}\n\
-                 body=\"pid=$$:time=$(date +%s):argv=$(b /bin/sh),$(b '{resumed}'):cwd=$(b '{cwd}')\"\n\
+                 body=\"pid=$$:time=$(date +%s):argv=$(b \"$2\"),$(b '{resumed}'):cwd=$(b '{cwd}')\"\n\
                  mac=$(printf '%s:%s' \"$body\" \"$1\" | sha256sum | cut -c1-64)\n\
                  printf '\\033]7577;%s:mac=%s\\033\\\\' \"$body\" \"$mac\"\n\
                  echo REPORTED-$((40+2))\n\
@@ -151,8 +151,9 @@ impl Fixture {
     }
 
     /// Session 1: open a terminal, run the reporting program with `token`
-    /// (a shell expression) and quit while it is still running.
-    fn report_and_quit(&self, token: &str) {
+    /// (a shell expression) reporting `program` to run `resumed.sh`, and quit
+    /// while it is still running.
+    fn report_and_quit(&self, token: &str, program: &str) {
         let mut harness = self.harness(true);
         harness.startup(true, &[]).unwrap();
         harness.editor_mut().open_terminal();
@@ -160,7 +161,10 @@ impl Fixture {
         harness.wait_for_screen_contains("SHELL-START-1").unwrap();
         run_in_terminal(
             &mut harness,
-            &format!("sh '{}' {token}", self.root.join("report.sh").display()),
+            &format!(
+                "sh '{}' {token} {program}",
+                self.root.join("report.sh").display()
+            ),
         );
         harness.wait_for_screen_contains("REPORTED-42").unwrap();
         harness.shutdown(true).unwrap();
@@ -204,7 +208,7 @@ fn a_reported_program_is_resumed_and_the_shell_returns_after_it() {
         return;
     }
     let fx = Fixture::new();
-    fx.report_and_quit("\"$OSC7577_TOKEN\"");
+    fx.report_and_quit("\"$OSC7577_TOKEN\"", "/bin/sh");
 
     // Session 2: the program comes back, in its directory.
     let resumed = resumed_marker(&fx.elsewhere, 1);
@@ -253,7 +257,7 @@ fn a_report_with_the_wrong_token_is_ignored() {
         return;
     }
     let fx = Fixture::new();
-    fx.report_and_quit("not-the-token-this-terminal-gave");
+    fx.report_and_quit("not-the-token-this-terminal-gave", "/bin/sh");
 
     let mut harness = fx.harness(true);
     harness.startup(true, &[]).unwrap();
@@ -273,7 +277,7 @@ fn resume_programs_off_restores_the_shell() {
         return;
     }
     let fx = Fixture::new();
-    fx.report_and_quit("\"$OSC7577_TOKEN\"");
+    fx.report_and_quit("\"$OSC7577_TOKEN\"", "/bin/sh");
 
     let mut harness = fx.harness(false);
     harness.startup(true, &[]).unwrap();
@@ -284,4 +288,23 @@ fn resume_programs_off_restores_the_shell() {
         !screen.contains(&resumed),
         "with terminal.resume_programs off the shell should come back.\nScreen:\n{screen}"
     );
+}
+
+/// A reported program that can't be started any more (uninstalled, or only
+/// on a `PATH` the shell's startup files set) leaves the terminal as the
+/// shell it was — not missing from the restored workspace.
+#[test]
+fn a_program_that_cannot_start_leaves_the_shell() {
+    if !can_run() {
+        return;
+    }
+    let fx = Fixture::new();
+    fx.report_and_quit("\"$OSC7577_TOKEN\"", "/nonexistent/program-resume-test");
+
+    let mut harness = fx.harness(true);
+    harness.startup(true, &[]).unwrap();
+    harness.render().unwrap();
+    harness.wait_for_screen_contains("SHELL-START-2").unwrap();
+    run_in_terminal(&mut harness, "echo BACK$((1+2))");
+    harness.wait_for_screen_contains("BACK3").unwrap();
 }

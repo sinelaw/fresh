@@ -250,15 +250,15 @@ impl TerminalHandle {
 
     /// The command a program in this terminal reported for resuming it (OSC
     /// 7577), when one is still running there.
-    pub fn program_resume_command(&self) -> Option<crate::services::program_resume::ResumeCommand> {
+    pub fn program_resume_command(&self) -> Option<crate::services::program_resume::ResumeRecord> {
         self.state.lock().ok()?.program_resume_command()
     }
 
     /// Make `command` the resume record of this terminal's child, which was
     /// started to resume it, until the child reports for itself or exits.
-    pub fn adopt_program_resume(&self, command: crate::services::program_resume::ResumeCommand) {
+    pub fn adopt_program_resume(&self, record: crate::services::program_resume::ResumeRecord) {
         if let (Some(pid), Ok(mut state)) = (self.pid, self.state.lock()) {
-            state.adopt_program_resume(pid, command);
+            state.adopt_program_resume(pid, record);
         }
     }
 

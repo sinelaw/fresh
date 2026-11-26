@@ -671,10 +671,10 @@ impl TerminalState {
     pub fn adopt_program_resume(
         &mut self,
         pid: u32,
-        command: crate::services::program_resume::ResumeCommand,
+        record: crate::services::program_resume::ResumeRecord,
     ) {
         if let Some(tracker) = self.program_resume.as_mut() {
-            tracker.adopt(pid, command);
+            tracker.adopt(pid, record);
         }
     }
 
@@ -683,7 +683,7 @@ impl TerminalState {
     /// [`crate::services::program_resume::ResumeTracker::current`].
     pub fn program_resume_command(
         &mut self,
-    ) -> Option<crate::services::program_resume::ResumeCommand> {
+    ) -> Option<crate::services::program_resume::ResumeRecord> {
         self.program_resume.as_mut()?.current()
     }
 

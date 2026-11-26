@@ -149,6 +149,20 @@ impl ResumeCommand {
     }
 }
 
+/// What a terminal keeps for a pane: the reported command, plus — when the
+/// report named no `cwd` — the owner's own working directory, read from the
+/// OS when the report was accepted (the spec's second source). The two are
+/// kept apart because they fail differently: a reported `cwd` that no longer
+/// exists means "don't resume", an owner's one only "start in the default
+/// directory instead".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeRecord {
+    #[serde(flatten)]
+    pub command: ResumeCommand,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_cwd: Option<PathBuf>,
+}
+
 // ============================================================================
 // Program side
 // ============================================================================
@@ -253,8 +267,9 @@ impl ProgramReporter {
     }
 
     /// The sequence reporting `cmd`, remembering it so [`Self::refresh`] can
-    /// send it again. When `cmd` can't be expressed this is a `clear`
-    /// instead, so the terminal doesn't keep resuming an older command.
+    /// send it again. When `cmd` can't be expressed this withdraws the
+    /// command reported before, if any, so the terminal doesn't keep
+    /// resuming it.
     pub fn report(&mut self, cmd: ResumeCommand) -> Option<String> {
         let time = self.next_time();
         match encode_sequence(self.pid, time, Report::Resume(&cmd), &self.token) {
@@ -264,8 +279,7 @@ impl ProgramReporter {
             }
             None => {
                 tracing::debug!("OSC 7577: resume command not expressible; clearing instead");
-                self.current = None;
-                encode_sequence(self.pid, time, Report::Clear, &self.token)
+                self.clear()
             }
         }
     }
@@ -277,9 +291,13 @@ impl ProgramReporter {
         self.report(cmd)
     }
 
-    /// The sequence that withdraws the report, for a deliberate quit.
+    /// The sequence that withdraws the report, for a deliberate quit —
+    /// `None` when nothing is reported. A `clear` removes the record of the
+    /// pid it names, and in a terminal that keeps only the latest report a
+    /// stray one would also drop what the program that started us (git
+    /// running `$EDITOR`) reported.
     pub fn clear(&mut self) -> Option<String> {
-        self.current = None;
+        self.current.take()?;
         let time = self.next_time();
         encode_sequence(self.pid, time, Report::Clear, &self.token)
     }
@@ -331,8 +349,17 @@ pub fn clear_resume() {
 /// the absolute path of the binary (the AppImage itself rather than its
 /// temporary mount).
 pub fn own_program() -> Option<String> {
-    if let Some(appimage) = std::env::var_os("APPIMAGE") {
-        return appimage.into_string().ok();
+    // Only when this binary is the AppImage's own: the variables are
+    // inherited, so a fresh started from inside some other AppImage sees
+    // that one's.
+    if let (Some(appimage), Some(appdir), Ok(exe)) = (
+        std::env::var_os("APPIMAGE"),
+        std::env::var_os("APPDIR"),
+        std::env::current_exe(),
+    ) {
+        if exe.starts_with(&appdir) {
+            return appimage.into_string().ok();
+        }
     }
     let argv0 = std::env::args().next()?;
     let path = Path::new(&argv0);
@@ -460,7 +487,9 @@ fn parse_body(body: &str) -> Result<Verdict, &'static str> {
         }) {
             return Err("malformed value");
         }
-        if fields.insert(key, value).is_some() {
+        // `mac` is the last key, already split off: another one in the
+        // body is a repeat.
+        if key == "mac" || fields.insert(key, value).is_some() {
             return Err("repeated key");
         }
     }
@@ -543,20 +572,30 @@ impl ReportScanner {
                     self.saw_esc = false;
                     if byte == b'\\' {
                         self.finish(out);
-                    } else {
-                        self.reset();
+                        continue;
                     }
+                    // Any other byte after ESC abandons this sequence — and
+                    // that ESC may be the start of the next one (a real
+                    // report after a stray, unterminated introducer), so it
+                    // is matched as an introducer below.
+                    self.reset();
+                    self.intro_match = 1;
                 } else if byte == 0x07 {
                     self.finish(out);
+                    continue;
                 } else if byte == 0x1b {
                     self.saw_esc = true;
+                    continue;
                 } else if self.buf.len() >= MAX_PAYLOAD_BYTES {
                     // Oversized: not received whole, so ignored.
                     self.reset();
+                    continue;
                 } else {
                     self.buf.push(byte);
+                    continue;
                 }
-            } else if byte == REPORT_INTRO[self.intro_match] {
+            }
+            if byte == REPORT_INTRO[self.intro_match] {
                 self.intro_match += 1;
                 if self.intro_match == REPORT_INTRO.len() {
                     self.collecting = true;
@@ -598,7 +637,7 @@ struct Owner {
 #[derive(Debug, Clone)]
 struct Record {
     owner: Owner,
-    command: ResumeCommand,
+    record: ResumeRecord,
     /// Acceptance order, newest highest.
     seq: u64,
 }
@@ -641,10 +680,13 @@ impl ResumeTracker {
                 return;
             }
         };
+        // Earlier than the last accepted report from this pid: a report sent
+        // before it, arriving late. The same second is fine — the spec's own
+        // example reports and clears within one.
         if self
             .last_time
             .get(&checked.pid)
-            .is_some_and(|&last| checked.time <= last)
+            .is_some_and(|&last| checked.time < last)
         {
             tracing::debug!("OSC 7577 report ignored: {:?}", Ignored::Replayed);
             return;
@@ -664,10 +706,16 @@ impl ResumeTracker {
         match checked.verdict {
             Verdict::Resume(command) => {
                 tracing::debug!("OSC 7577: pid {} reported {:?}", checked.pid, command.argv);
+                // No `cwd` key: the owner's directory, read now, at acceptance.
+                let owner_cwd = if command.cwd.is_none() {
+                    proc_info::cwd(checked.pid)
+                } else {
+                    None
+                };
                 self.next_seq += 1;
                 self.records.push(Record {
                     owner,
-                    command,
+                    record: ResumeRecord { command, owner_cwd },
                     seq: self.next_seq,
                 });
             }
@@ -686,7 +734,7 @@ impl ResumeTracker {
     /// Make `command` the record of `pid`, as if it had reported it: what a
     /// terminal does for a program it just resumed, which the spec has own
     /// the record it was resumed from until it reports for itself (or exits).
-    pub fn adopt(&mut self, pid: u32, command: ResumeCommand) {
+    pub fn adopt(&mut self, pid: u32, record: ResumeRecord) {
         let Some(owner) = proc_info::owner_in_session(pid, None) else {
             return;
         };
@@ -694,7 +742,7 @@ impl ResumeTracker {
         self.next_seq += 1;
         self.records.push(Record {
             owner,
-            command,
+            record,
             seq: self.next_seq,
         });
     }
@@ -705,9 +753,8 @@ impl ResumeTracker {
     /// Records of exited owners are dropped first. Of those left, an
     /// ancestor's record wins over a descendant's (the outermost program is
     /// the one the pane was running; a child it started reports for itself
-    /// only), and among unrelated ones the newest. A record without a `cwd`
-    /// takes its owner's working directory, read now.
-    pub fn current(&mut self) -> Option<ResumeCommand> {
+    /// only), and among unrelated ones the newest.
+    pub fn current(&mut self) -> Option<ResumeRecord> {
         self.records.retain(|r| proc_info::is_alive(r.owner));
         let pids: Vec<u32> = self.records.iter().map(|r| r.owner.pid).collect();
         let record = self
@@ -719,11 +766,7 @@ impl ResumeTracker {
                 })
             })
             .max_by_key(|r| r.seq)?;
-        let mut command = record.command.clone();
-        if command.cwd.is_none() {
-            command.cwd = proc_info::cwd(record.owner.pid);
-        }
-        Some(command)
+        Some(record.record.clone())
     }
 }
 
@@ -744,7 +787,9 @@ mod proc_info {
     /// `(ppid, session, starttime)` from `/proc/<pid>/stat`.
     #[cfg(target_os = "linux")]
     fn stat(pid: u32) -> Option<(u32, u32, u64)> {
-        let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // Bytes, not a string: the command name in it need not be UTF-8.
+        let bytes = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+        let text = String::from_utf8_lossy(&bytes);
         // The command name is in parentheses and may itself contain spaces
         // or parentheses; every field after the last `)` is plain.
         let rest = &text[text.rfind(')')? + 1..];
@@ -850,6 +895,18 @@ mod tests {
         ResumeCommand {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             cwd: cwd.map(PathBuf::from),
+        }
+    }
+
+    /// The record a tracker keeps for `cmd` from this (live) test process.
+    fn record(cmd: &ResumeCommand) -> ResumeRecord {
+        ResumeRecord {
+            command: cmd.clone(),
+            owner_cwd: if cmd.cwd.is_none() && cfg!(target_os = "linux") {
+                std::env::current_dir().ok()
+            } else {
+                None
+            },
         }
     }
 
@@ -970,6 +1027,7 @@ mod tests {
         rejected(format!("{t}:argv=!!!"));
         rejected(format!("{t}:clear=2"));
         rejected(format!("{t}:argv={},{}", b64(""), b64("x")));
+        rejected(format!("{t}:argv={}:mac=00", b64("vim")));
     }
 
     #[test]
@@ -1017,6 +1075,9 @@ mod tests {
             Verdict::Clear
         );
         assert!(reporter.refresh().is_none());
+        // Nothing standing: nothing to clear, and no stray `clear` sent.
+        assert!(reporter.clear().is_none());
+        assert!(reporter.report(cmd(&["./relative"], None)).is_none());
     }
 
     #[test]
@@ -1028,6 +1089,12 @@ mod tests {
         assert!(out.is_empty());
         scanner.feed(b"\\ world \x1b]7577;x\x07 \x1b]7;file:///tmp\x07", &mut out);
         assert_eq!(out, vec!["pid=1:mac=ab".to_string(), "x".to_string()]);
+
+        // A stray, unterminated introducer doesn't swallow the report after
+        // it: that report's ESC both ends the stray and starts itself.
+        let mut out = Vec::new();
+        scanner.feed(b"\x1b]7577;junk \x1b]7577;real\x1b\\", &mut out);
+        assert_eq!(out, vec!["real".to_string()]);
     }
 
     #[test]
@@ -1052,14 +1119,18 @@ mod tests {
         };
         let vim = cmd(&["vim"], Some("/tmp"));
         tracker.handle_payload(&report(&vim, now), now);
-        assert_eq!(tracker.current(), Some(vim.clone()));
+        assert_eq!(tracker.current(), Some(record(&vim)));
 
-        // A replay of an older time is ignored; a newer report replaces.
+        // A report earlier than the last accepted one is ignored; one in the
+        // same second (the spec's own example does that) or later replaces.
         let htop = cmd(&["htop"], Some("/"));
+        tracker.handle_payload(&report(&htop, now - 1), now);
+        assert_eq!(tracker.current(), Some(record(&vim)));
         tracker.handle_payload(&report(&htop, now), now);
-        assert_eq!(tracker.current(), Some(vim));
-        tracker.handle_payload(&report(&htop, now + 1), now);
-        assert_eq!(tracker.current(), Some(htop));
+        assert_eq!(tracker.current(), Some(record(&htop)));
+        let top = cmd(&["top"], Some("/"));
+        tracker.handle_payload(&report(&top, now + 1), now);
+        assert_eq!(tracker.current(), Some(record(&top)));
 
         // A well-signed report that breaks a rule drops the owner's record.
         let body = format!("pid={pid}:time={}:argv=!!", now + 2);
@@ -1068,12 +1139,8 @@ mod tests {
 
         let vim = cmd(&["vim"], None);
         tracker.handle_payload(&report(&vim, now + 3), now);
-        // No cwd key: the owner's own working directory is used.
-        #[cfg(target_os = "linux")]
-        assert_eq!(
-            tracker.current().and_then(|c| c.cwd),
-            std::env::current_dir().ok()
-        );
+        // No cwd key: the owner's own working directory, kept apart from it.
+        assert_eq!(tracker.current(), Some(record(&vim)));
         let clear = encode_sequence(pid, now + 4, Report::Clear, SPEC_TOKEN).unwrap();
         tracker.handle_payload(payload(&clear), now);
         assert_eq!(tracker.current(), None);
@@ -1084,14 +1151,14 @@ mod tests {
         let pid = std::process::id();
         let now = unix_now();
         let mut tracker = ResumeTracker::new(SPEC_TOKEN.to_string());
-        let resumed = cmd(&["vim", "-S", "/tmp/s.vim"], Some("/tmp"));
+        let resumed = record(&cmd(&["vim", "-S", "/tmp/s.vim"], Some("/tmp")));
         tracker.adopt(pid, resumed.clone());
         assert_eq!(tracker.current(), Some(resumed));
         // Its own report supersedes the adopted record.
         let own = cmd(&["vim"], Some("/"));
         let seq = encode_sequence(pid, now, Report::Resume(&own), SPEC_TOKEN).unwrap();
         tracker.handle_payload(payload(&seq), now);
-        assert_eq!(tracker.current(), Some(own));
+        assert_eq!(tracker.current(), Some(record(&own)));
     }
 
     #[cfg(target_os = "linux")]

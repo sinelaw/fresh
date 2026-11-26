@@ -15,7 +15,8 @@
 
 use fresh::services::program_resume::{
     check_report, encode_body, encode_sequence, new_token, unix_now, Ignored, ProgramReporter,
-    Report, ResumeCommand, ResumeTracker, Verdict, MIN_ACCEPTED_SEQUENCE_BYTES, TIME_WINDOW_SECS,
+    Report, ResumeCommand, ResumeRecord, ResumeTracker, Verdict, MIN_ACCEPTED_SEQUENCE_BYTES,
+    TIME_WINDOW_SECS,
 };
 use fresh::services::terminal::TerminalState;
 use proptest::prelude::*;
@@ -150,7 +151,8 @@ proptest! {
     /// The reporter against a model: every sequence it emits verifies, times
     /// strictly increase (so a terminal never drops one as a replay), a
     /// refresh repeats the last command, and an inexpressible command or a
-    /// quit withdraws it.
+    /// quit withdraws it — and only it: with nothing reported, nothing is
+    /// sent.
     #[test]
     fn program_reporter_matches_its_model(
         ops in prop::collection::vec(program_op(), 1..24),
@@ -166,20 +168,25 @@ proptest! {
                     let sent = reporter.report(cmd.clone());
                     // Too long to send: the reporter withdraws instead.
                     let fits = encode_sequence(pid, 1, Report::Resume(&cmd), &token).is_some();
+                    let expected = if fits {
+                        Some(Verdict::Resume(cmd.clone()))
+                    } else {
+                        model.as_ref().map(|_| Verdict::Clear)
+                    };
                     model = fits.then_some(cmd);
-                    (sent, Some(model.clone().map_or(Verdict::Clear, Verdict::Resume)))
+                    (sent, expected)
                 }
                 ProgramOp::ReportInexpressible => {
-                    model = None;
+                    let expected = model.take().map(|_| Verdict::Clear);
                     let cmd = ResumeCommand { argv: vec!["./relative".into()], cwd: None };
-                    (reporter.report(cmd), Some(Verdict::Clear))
+                    (reporter.report(cmd), expected)
                 }
                 ProgramOp::Refresh => {
                     (reporter.refresh(), model.clone().map(Verdict::Resume))
                 }
                 ProgramOp::Clear => {
-                    model = None;
-                    (reporter.clear(), Some(Verdict::Clear))
+                    let expected = model.take().map(|_| Verdict::Clear);
+                    (reporter.clear(), expected)
                 }
             };
             match (sent, expected) {
@@ -219,6 +226,10 @@ enum TerminalOp {
     Malformed,
     /// Ordinary output: anything without ESC or BEL.
     Noise(Vec<u8>),
+    /// An introducer that never gets its terminator — a program killed
+    /// mid-write, or a `cat` of half a log. It must not swallow a report
+    /// that follows.
+    Stray,
 }
 
 fn terminal_op() -> impl Strategy<Value = TerminalOp> {
@@ -233,6 +244,7 @@ fn terminal_op() -> impl Strategy<Value = TerminalOp> {
             0..40,
         )
         .prop_map(TerminalOp::Noise),
+        1 => Just(TerminalOp::Stray),
     ]
 }
 
@@ -240,7 +252,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
     /// The terminal against a model of the spec's rules: only reports signed
-    /// with the pane's token and newer than the owner's last count; `clear`
+    /// with the pane's token and not older than the owner's last count; `clear`
     /// and a rejected report both drop the record; and none of it depends on
     /// how the output was cut into reads or what surrounds it.
     #[test]
@@ -293,6 +305,7 @@ proptest! {
                     stream.extend_from_slice(format!("\x1b]7577;{body}:mac={mac}\x07").as_bytes());
                 }
                 TerminalOp::Noise(bytes) => stream.extend_from_slice(&bytes),
+                TerminalOp::Stray => stream.extend_from_slice(b"\x1b]7577;pid=1:time=1:argv=e"),
             }
         }
         // Every report in this run must still be inside the time window.
@@ -307,16 +320,16 @@ proptest! {
             state.process_output(&rest[..n]);
             rest = &rest[n..];
         }
-        // A record without a `cwd` takes its owner's own working directory,
-        // where the platform exposes it.
+        // A record without a `cwd` keeps its owner's own working directory,
+        // where the platform exposes it, apart from the command.
         let owner_cwd = if cfg!(target_os = "linux") {
             std::env::current_dir().ok()
         } else {
             None
         };
-        let model = model.map(|mut cmd| {
-            cmd.cwd = cmd.cwd.or(owner_cwd);
-            cmd
+        let model = model.map(|command| ResumeRecord {
+            owner_cwd: if command.cwd.is_none() { owner_cwd } else { None },
+            command,
         });
         prop_assert_eq!(state.program_resume_command(), model);
     }

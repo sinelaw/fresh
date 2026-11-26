@@ -270,7 +270,7 @@ Fresh speaks it on its own when the terminal offers it; there is nothing to set 
 | bare `fresh` with Auto Attach | `fresh` | this terminal, attached to the shared daemon |
 | `fresh -a [NAME]`, `--cmd daemon attach/new NAME` | `fresh -a [NAME]` | the daemon if it is still running, else a new one that restores its workspace |
 
-`--config`, `--locale`, `--no-plugins`, `--no-init` and `--safe` are carried along. Fresh reports again after it is suspended and resumed (`Ctrl+Z`, `fg`), and withdraws the report when you **quit** — or detach — so the terminal doesn't bring back an editor you closed on purpose. Being killed with the terminal (`SIGHUP`, `SIGTERM`, a lost connection) keeps it.
+`--config`, `--locale`, `--no-plugins`, `--no-init` and `--safe` are carried along. Fresh reports again after it is suspended and resumed (`Ctrl+Z`, `fg`), and withdraws the report when you **quit** — or detach — so the terminal doesn't bring back an editor you closed on purpose. Being killed with the terminal (`SIGHUP`, `SIGTERM`, a lost connection), or a daemon that dies under its clients, keeps it.
 
 Nothing is reported for launches that can't be reproduced or aren't yours to resume: `--wait` (an `$EDITOR` for git and friends), reading stdin, an SSH remote, and `--no-restore`.
 

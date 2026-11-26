@@ -250,3 +250,39 @@ fn a_daemon_client_reports_reattaching() {
     waited.unwrap_or_else(|e| panic!("the client never reported: {e}"));
     assert_eq!(sent[0].1, resume(&[&binary(), "-a", session], &project));
 }
+
+/// A daemon that dies without saying `Quit` — crashed, or killed at logout —
+/// is not the user ending fresh: its client keeps the report (no `clear`), so
+/// the terminal can still bring it back.
+#[test]
+fn a_daemon_client_keeps_its_report_when_the_daemon_dies() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    setup(home.path());
+    let session = "program-resume-daemon-dies";
+    let mut cmd = isolated_fresh(home.path());
+    cmd.args(["--cmd", "daemon", "new", session]);
+    let mut client = spawn_on_pty(cmd, ChildStdin::Terminal, 120, 30).expect("spawn fresh");
+    client
+        .wait_for_output(|out| !reports(out).is_empty())
+        .unwrap_or_else(|e| panic!("the client never reported: {e}"));
+
+    let pid_file = home.path().join("run").join("fresh").join(format!("{session}.pid"));
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .expect("the daemon writes its pid file before it accepts a client")
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: a plain kill(2) of the daemon this test started.
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+
+    client.drain_and_wait().unwrap();
+    let sent = reports(client.output());
+    assert!(
+        sent.iter().all(|(_, v)| *v != Verdict::Clear),
+        "a client whose daemon died must not withdraw its report: {sent:?}"
+    );
+}

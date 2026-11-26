@@ -58,7 +58,8 @@ Fresh's terminals implement the [Program Resume protocol](https://www.superlogic
 *   Only a signed report counts. Anything else that prints the sequence (a log being `cat`'d, a remote host) is ignored.
 *   The report must come from a process still running in that terminal when the workspace is saved. A program you quit, or one that sent `clear`, leaves nothing behind.
 *   A resumed program keeps its record across further restarts until it reports again or exits.
-*   Nothing is resumed when the directory it named is gone, when Fresh runs as root, or in container or SSH terminals, which never get a token. It is off on Windows.
+*   Nothing is resumed when the directory it named is gone, when Fresh runs as root, or in container or SSH terminals, which never get a token. It is off on Windows. A program that can't be started (no longer installed, say) leaves the terminal as the shell it was.
+*   A terminal with an Orchestrator agent-resume spec comes back the way its launcher configured (`terminal.resume_agents`), whatever the agent itself reported.
 *   The program runs directly, never through shell source. It starts with the terminal's environment, not your shell's startup files.
 
 Turn it off with `terminal.resume_programs` (default on). Reports are still recorded; restored terminals come back as shells.
