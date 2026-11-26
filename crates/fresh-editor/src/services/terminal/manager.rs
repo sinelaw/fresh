@@ -248,6 +248,20 @@ impl TerminalHandle {
         self.cwd.clone()
     }
 
+    /// The command a program in this terminal reported for resuming it (OSC
+    /// 7577), when one is still running there.
+    pub fn program_resume_command(&self) -> Option<crate::services::program_resume::ResumeRecord> {
+        self.state.lock().ok()?.program_resume_command()
+    }
+
+    /// Make `command` the resume record of this terminal's child, which was
+    /// started to resume it, until the child reports for itself or exits.
+    pub fn adopt_program_resume(&self, record: crate::services::program_resume::ResumeRecord) {
+        if let (Some(pid), Ok(mut state)) = (self.pid, self.state.lock()) {
+            state.adopt_program_resume(pid, record);
+        }
+    }
+
     /// Get the shell executable path used for this terminal
     pub fn shell(&self) -> &str {
         &self.shell
@@ -403,6 +417,22 @@ impl TerminalManager {
         let pty_pair = open_pty(cols, rows)?;
         let cwd_is_local = !terminal_wrapper.manages_cwd;
 
+        // Program Resume (OSC 7577): a local PTY gets a token of its own, so
+        // the programs in it can report how to resume them. Never through a
+        // wrapper that leaves this machine (docker/ssh): the token is a
+        // secret that must stay here. Not on Windows, where the protocol's
+        // pids can't be checked against the pane (Rex leaves it off there
+        // too).
+        let program_resume_token =
+            (cwd_is_local && cfg!(not(windows))).then(crate::services::program_resume::new_token);
+        let mut extra_env = extra_env;
+        if let Some(token) = &program_resume_token {
+            extra_env.insert(
+                crate::services::program_resume::TOKEN_ENV.to_string(),
+                token.clone(),
+            );
+        }
+
         // The active authority's terminal wrapper drives the shell command
         // unconditionally — local wraps `detect_shell()` with no args;
         // container/remote authorities re-parent into `docker exec -w …`,
@@ -422,7 +452,16 @@ impl TerminalManager {
         let child_pid = child.process_id();
         let child_killer = child.clone_killer();
 
-        let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
+        let mut terminal_state = TerminalState::new(cols, rows);
+        if let Some(token) = program_resume_token {
+            let mut tracker = crate::services::program_resume::ResumeTracker::new(token);
+            // The child is the session leader of its PTY (portable-pty runs
+            // it under `setsid`); reports from outside that session aren't
+            // this terminal's.
+            tracker.set_session_leader(child_pid);
+            terminal_state.enable_program_resume(tracker);
+        }
+        let state = Arc::new(Mutex::new(terminal_state));
 
         // A *continuing* terminal (workspace restore, respawn after exit) picks
         // up the transcript already in its backing file: seed the history end

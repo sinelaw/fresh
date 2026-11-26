@@ -2035,6 +2035,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "Quando i programmi nel terminale ricevono gli eventi del mouse. `requested` (predefinito): solo i programmi che richiedono il mouse (più la rotellina per le app a schermo intero); Shift+trascinamento seleziona comunque. `alt_screen`: ogni programma a schermo intero riceve tutti gli eventi.",
   "settings.field.terminal.resume_agents": "Riprendi agenti",
   "settings.field.terminal.resume_agents_desc": "Quando ripristina le sessioni degli agenti dell'Orchestrator, riprende la conversazione precedente (es. `claude --resume`) invece di ricominciare da zero. Predefinito: true",
+  "settings.field.terminal.resume_programs": "Riprendi programmi",
+  "settings.field.terminal.resume_programs_desc": "Al ripristino di un'area di lavoro, riporta ogni terminale con il programma che stava eseguendo, se questo ha indicato come riprenderlo (protocollo OSC 7577 Program Resume, ad es. un editor che riapre la sua sessione). La shell torna quando il programma termina. Predefinito: true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "Shell del terminale. Se non impostata (predefinito) usa `$SHELL` o quella predefinita di sistema. Non modifica `$SHELL` per le altre funzionalità e non si applica ai terminali remoti o nei container.",
   "settings.field.terminal.shell.args": "Argomenti",

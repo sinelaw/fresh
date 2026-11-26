@@ -124,7 +124,7 @@ pub fn relay_loop(
             match conn.read_data(&mut data_buf) {
                 Ok(0) => {
                     // Server closed connection
-                    return Ok(ClientExitReason::ServerQuit);
+                    return Ok(server_ended(conn, &mut ctrl_buf));
                 }
                 Ok(n) => {
                     stdout.write_all(&data_buf[..n])?;
@@ -144,7 +144,7 @@ pub fn relay_loop(
                 match conn.control.try_read(&mut ctrl_read) {
                     Ok(0) => {
                         // Control stream closed by the server.
-                        return Ok(ClientExitReason::ServerQuit);
+                        return Ok(server_ended(conn, &mut ctrl_buf));
                     }
                     Ok(n) => ctrl_buf.extend_from_slice(&ctrl_read[..n]),
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -195,8 +195,31 @@ pub fn relay_loop(
 
         // Check for socket errors
         if ready.hung_up(1) {
-            return Ok(ClientExitReason::ServerQuit);
+            return Ok(server_ended(conn, &mut ctrl_buf));
         }
+    }
+}
+
+/// Why the daemon's sockets closed: it said `Quit` (the editor quit, or this
+/// client was detached), or it just went away (crashed, killed). The `Quit`
+/// line is written before the connection closes, so whatever control bytes
+/// are still unread — including a line already buffered in `ctrl_buf` — are
+/// read to look for it.
+fn server_ended(conn: &mut ClientConnection, ctrl_buf: &mut Vec<u8>) -> ClientExitReason {
+    let mut chunk = [0u8; 4096];
+    while let Ok(n @ 1..) = conn.control.try_read(&mut chunk) {
+        ctrl_buf.extend_from_slice(&chunk[..n]);
+    }
+    let said_quit = ctrl_buf.split(|&b| b == b'\n').any(|line| {
+        matches!(
+            serde_json::from_slice::<crate::server::protocol::ServerControl>(line),
+            Ok(crate::server::protocol::ServerControl::Quit { .. })
+        )
+    });
+    if said_quit {
+        ClientExitReason::ServerQuit
+    } else {
+        ClientExitReason::ServerGone
     }
 }
 
@@ -242,6 +265,8 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
     }
     crate::services::stderr_redirect::redirect_to_log();
+    // Back in the foreground: say again how to resume this client (OSC 7577).
+    crate::services::program_resume::refresh_resume();
 
     // Echo our current size back so the server is guaranteed to tick a
     // render (Resize always flips `needs_render`) without waiting on input.

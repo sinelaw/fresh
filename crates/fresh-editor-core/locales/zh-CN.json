@@ -2028,6 +2028,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "终端中的程序何时接收鼠标事件。`requested`（默认）：仅请求鼠标的程序（全屏应用还会接收滚轮事件）；Shift+拖动仍可选择文本。`alt_screen`：所有全屏程序都接收全部事件。",
   "settings.field.terminal.resume_agents": "恢复代理会话",
   "settings.field.terminal.resume_agents_desc": "恢复编排器的代理会话时，继续之前的对话（例如 `claude --resume`），而不是重新开始。默认：true",
+  "settings.field.terminal.resume_programs": "恢复程序",
+  "settings.field.terminal.resume_programs_desc": "恢复工作区时，如果终端中运行的程序报告了恢复方式（OSC 7577 Program Resume 协议，例如重新打开会话的编辑器），则让该终端重新运行该程序。程序退出后回到 shell。默认值：true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "终端使用的 Shell。未设置（默认）时使用 `$SHELL` 或系统默认 Shell。不会更改其他功能使用的 `$SHELL`，也不适用于远程或容器终端。",
   "settings.field.terminal.shell.args": "参数",

@@ -2042,6 +2042,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "Kdy programy v terminálu dostávají události myši. `requested` (výchozí): jen programy, které o myš požádají (plus kolečko u celoobrazovkových aplikací); Shift+tažení stále vybírá. `alt_screen`: každý celoobrazovkový program dostává všechny události.",
   "settings.field.terminal.resume_agents": "Pokračovat v relacích agentů",
   "settings.field.terminal.resume_agents_desc": "Při obnovování relací agentů Orchestratoru pokračovat v předchozí konverzaci (např. `claude --resume`) místo čistého začátku. Výchozí: true",
+  "settings.field.terminal.resume_programs": "Obnovit programy",
+  "settings.field.terminal.resume_programs_desc": "Při obnovení pracovního prostoru vrátit každý terminál se spuštěným programem, který v něm běžel, pokud program sdělil, jak ho obnovit (protokol OSC 7577 Program Resume, např. editor znovu otevírající svou relaci). Po ukončení programu se vrátí shell. Výchozí: true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "Shell pro terminál. Není-li nastaven (výchozí), použije se `$SHELL` nebo výchozí shell systému. Nemění `$SHELL` pro jiné funkce a nevztahuje se na vzdálené terminály ani terminály v kontejnerech.",
   "settings.field.terminal.shell.args": "Argumenty",

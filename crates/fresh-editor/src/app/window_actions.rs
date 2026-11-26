@@ -1189,6 +1189,7 @@ impl crate::app::Editor {
         let command = src.terminal_commands.remove(&terminal_id);
         let resume = src.terminal_resume_commands.remove(&terminal_id);
         let resume_requires = src.terminal_resume_requires.remove(&terminal_id);
+        let program_resumed = src.program_resumed_terminals.remove(&terminal_id);
         let ephemeral = src.ephemeral_terminals.remove(&terminal_id);
         let explicit_title = src.terminal_explicit_titles.remove(&buffer_id);
         let fg_name = src.terminal_fg_cache.remove(&buffer_id);
@@ -1221,6 +1222,9 @@ impl crate::app::Editor {
         }
         if let Some(path) = resume_requires {
             tgt.terminal_resume_requires.insert(new_id, path);
+        }
+        if program_resumed {
+            tgt.program_resumed_terminals.insert(new_id);
         }
         if ephemeral {
             tgt.ephemeral_terminals.insert(new_id);

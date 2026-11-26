@@ -1260,6 +1260,12 @@ pub struct Window {
     pub terminal_resume_requires:
         std::collections::HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
 
+    /// Shell terminals that a workspace restore brought back running the
+    /// program they had reported (OSC 7577) instead of the shell. When that
+    /// program exits the terminal is respawned as the shell it was, rather
+    /// than left dead (see `handle_terminal_exited`).
+    pub program_resumed_terminals: std::collections::HashSet<crate::services::terminal::TerminalId>,
+
     /// Terminals whose child was handed a `FRESH_CMD_TOKEN` capability token
     /// (`allowScript`), mapped to the token that terminal's *current*
     /// incarnation carries.
@@ -2751,6 +2757,7 @@ impl Window {
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
             terminal_resume_requires: std::collections::HashMap::new(),
+            program_resumed_terminals: std::collections::HashSet::new(),
             terminal_script_tokens: std::collections::HashMap::new(),
             exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),

@@ -2035,6 +2035,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "Wann Programme im Terminal Mausereignisse erhalten. `requested` (Standard): nur Programme, die die Maus anfordern (plus Mausrad bei Vollbildanwendungen); Shift+Ziehen wählt weiterhin aus. `alt_screen`: Jedes Vollbildprogramm erhält alle Ereignisse.",
   "settings.field.terminal.resume_agents": "Agenten fortsetzen",
   "settings.field.terminal.resume_agents_desc": "Beim Wiederherstellen von Orchestrator-Agent-Sitzungen die vorherige Unterhaltung fortsetzen (z. B. `claude --resume`), statt neu zu beginnen. Standard: true",
+  "settings.field.terminal.resume_programs": "Programme fortsetzen",
+  "settings.field.terminal.resume_programs_desc": "Beim Wiederherstellen eines Arbeitsbereichs jedes Terminal mit dem Programm zurückbringen, das darin lief, sofern es mitgeteilt hat, wie es fortgesetzt wird (Protokoll OSC 7577 Program Resume, z. B. ein Editor, der seine Sitzung wieder öffnet). Die Shell kehrt zurück, wenn das Programm beendet wird. Standard: true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "Shell für das Terminal. Ohne Angabe (Standard) wird `$SHELL` oder der Systemstandard verwendet. Ändert `$SHELL` nicht für andere Funktionen und gilt nicht für Remote- oder Container-Terminals.",
   "settings.field.terminal.shell.args": "Argumente",

@@ -37,6 +37,10 @@ pub struct PtyChild {
     master: File,
     child: Child,
     parser: vt100::Parser,
+    /// Every byte read from the child so far, for what the parsed screen
+    /// drops — escape sequences addressed to the terminal rather than drawn,
+    /// like a program's OSC reports.
+    raw: Vec<u8>,
 }
 
 /// Where the child's stdin comes from.
@@ -161,6 +165,7 @@ pub fn spawn_on_pty(
         master,
         child,
         parser: vt100::Parser::new(rows, cols, 0),
+        raw: Vec::new(),
     })
 }
 
@@ -219,6 +224,7 @@ impl PtyChild {
             Ok(0) => Ok(Pumped::Closed),
             Ok(n) => {
                 self.parser.process(&buf[..n]);
+                self.raw.extend_from_slice(&buf[..n]);
                 Ok(Pumped::Progress)
             }
             // The pty reports the last slave closing as EIO, not EOF.
@@ -306,6 +312,38 @@ impl PtyChild {
             "the expected screen never arrived; last screen was:\n{}",
             self.screen()
         ))
+    }
+
+    /// Read from the pty until `predicate` holds for everything the child
+    /// has written so far, raw — for output that never reaches the screen.
+    /// Bounded and reported like [`wait_for_screen`](Self::wait_for_screen).
+    pub fn wait_for_output<F>(&mut self, predicate: F) -> Result<(), String>
+    where
+        F: Fn(&[u8]) -> bool,
+    {
+        let deadline = Instant::now() + PTY_WAIT_DEADLINE;
+        let mut buf = [0u8; 8192];
+        loop {
+            if predicate(&self.raw) {
+                return Ok(());
+            }
+            match self.pump_once(deadline, &mut buf)? {
+                Pumped::Progress => {}
+                Pumped::Closed | Pumped::TimedOut => break,
+            }
+        }
+        if predicate(&self.raw) {
+            return Ok(());
+        }
+        Err(format!(
+            "the expected output never arrived; last screen was:\n{}",
+            self.screen()
+        ))
+    }
+
+    /// Everything the child has written so far, raw.
+    pub fn output(&self) -> &[u8] {
+        &self.raw
     }
 
     /// The rendered screen, one line per row.

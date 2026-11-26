@@ -6129,6 +6129,17 @@ fn run_attach(
     // `emergency_cleanup` below puts stderr back.
     fresh::services::stderr_redirect::redirect_to_log();
 
+    if let Some(cmd) = attach_resume_command(
+        session_name,
+        orchestrator_mode,
+        &ssh_url,
+        locale,
+        config,
+        &working_dir,
+    ) {
+        fresh::services::program_resume::report_resume(cmd);
+    }
+
     // Run the client relay loop (handshake already done)
     let result = client::run_client_relay(conn);
 
@@ -6148,10 +6159,26 @@ fn run_attach(
     #[cfg(windows)]
     let _ = fresh_winterm::restore_console_mode(original_console_mode);
 
+    // The daemon ended this client — the editor quit, or the user detached
+    // (which the daemon answers with `Quit` too): withdraw the resume report.
+    // `Detached` is *not* that: it is stdin reaching EOF, i.e. this terminal
+    // going away, which is exactly when the report must survive. A daemon
+    // that vanished without a word (`ServerGone`: crashed, or killed at
+    // logout) and errors keep it as well.
+    if matches!(
+        result,
+        Ok(client::ClientExitReason::ServerQuit | client::ClientExitReason::VersionMismatch { .. })
+    ) {
+        fresh::services::program_resume::clear_resume();
+    }
+
     // Handle result
     match result {
         Ok(client::ClientExitReason::ServerQuit) => {
             tracing::debug!("Client exit: ServerQuit");
+        }
+        Ok(client::ClientExitReason::ServerGone) => {
+            tracing::debug!("Client exit: ServerGone");
         }
         Err(e) => {
             tracing::debug!("Client error: {}", e);
@@ -6175,6 +6202,134 @@ fn run_attach(
     }
 
     Ok(())
+}
+
+/// The flags that shape a launch and must survive a resume: the config file
+/// (made absolute — the resume may run elsewhere), the locale, and the
+/// plugin / init switches.
+fn resume_flags(
+    config: Option<&Path>,
+    locale: Option<&str>,
+    no_plugins: bool,
+    no_init: bool,
+    safe: bool,
+) -> Option<Vec<String>> {
+    let mut flags = Vec::new();
+    if let Some(config) = config {
+        let config = std::path::absolute(config).ok()?;
+        flags.push("--config".to_string());
+        flags.push(config.to_str()?.to_string());
+    }
+    if let Some(locale) = locale {
+        flags.push("--locale".to_string());
+        flags.push(locale.to_string());
+    }
+    if safe {
+        flags.push("--safe".to_string());
+    } else {
+        if no_plugins {
+            flags.push("--no-plugins".to_string());
+        }
+        if no_init {
+            flags.push("--no-init".to_string());
+        }
+    }
+    Some(flags)
+}
+
+/// The command that brings a direct (in-terminal) launch back after the
+/// terminal restarts, for OSC 7577:
+///
+///   * a workspace launch: `fresh --restore` in the workspace's directory,
+///     which reopens it as it was saved — forced, so the resume works even
+///     with `restore_previous_session` off;
+///   * a file launch: the same files (made absolute), the same way;
+///   * `--diff`: the same two files.
+///
+/// `None` for what can't be reproduced: input read from stdin, a remote
+/// (SSH) launch — which would prompt, and the protocol keeps its token on
+/// this machine — and `--no-restore`, which keeps nothing to resume.
+fn direct_resume_command(
+    args: &Args,
+    file_launch: bool,
+    workspace_enabled: bool,
+    working_dir: Option<&Path>,
+    file_locations: &[FileLocation],
+    reading_stdin: bool,
+) -> Option<fresh::services::program_resume::ResumeCommand> {
+    if reading_stdin
+        || extract_ssh_url_from_files(&args.files)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        return None;
+    }
+    let cwd = match working_dir {
+        Some(dir) => std::path::absolute(dir).ok()?,
+        None => std::env::current_dir().ok()?,
+    };
+    let mut argv = vec![fresh::services::program_resume::own_program()?];
+    argv.extend(resume_flags(
+        args.config.as_deref(),
+        args.locale.as_deref(),
+        args.no_plugins,
+        args.no_init,
+        args.safe,
+    )?);
+    if let Some((left, right)) = &args.diff {
+        argv.push("--diff".to_string());
+        argv.push(left.to_str()?.to_string());
+        argv.push(right.to_str()?.to_string());
+    } else if file_launch {
+        if args.simple {
+            argv.push("--simple".to_string());
+        }
+        for loc in file_locations {
+            argv.push(std::path::absolute(&loc.path).ok()?.to_str()?.to_string());
+        }
+    } else if workspace_enabled {
+        argv.push("--restore".to_string());
+    } else {
+        return None;
+    }
+    Some(fresh::services::program_resume::ResumeCommand {
+        argv,
+        cwd: Some(cwd),
+    })
+}
+
+/// The command that re-attaches this terminal after it restarts, for OSC
+/// 7577: a bare `fresh` for the shared (auto-attach) daemon, else `fresh -a
+/// [NAME]`. If the daemon outlived the terminal this rejoins the very same
+/// editor; if not, it starts one, which restores the workspace. `None` for a
+/// remote (SSH) daemon, which the resume would have to reconnect to.
+fn attach_resume_command(
+    session_name: Option<&str>,
+    orchestrator_mode: bool,
+    ssh_url: &Option<String>,
+    locale: Option<&str>,
+    config: Option<&Path>,
+    working_dir: &Path,
+) -> Option<fresh::services::program_resume::ResumeCommand> {
+    if ssh_url.is_some() {
+        return None;
+    }
+    let mut argv = vec![fresh::services::program_resume::own_program()?];
+    let flags = resume_flags(config, locale, false, false, false)?;
+    // A bare `fresh` is what auto-attaches; any flag makes it an ordinary
+    // launch, so with flags the shared daemon is reached as `fresh -a`.
+    if !(orchestrator_mode && flags.is_empty()) {
+        argv.extend(flags);
+        argv.push("-a".to_string());
+        if let Some(name) = session_name.filter(|_| !orchestrator_mode) {
+            argv.push(name.to_string());
+        }
+    }
+    Some(fresh::services::program_resume::ResumeCommand {
+        argv,
+        cwd: Some(working_dir.to_path_buf()),
+    })
 }
 
 /// Print deprecation warnings for old CLI flags
@@ -6681,6 +6836,12 @@ fn real_main() -> AnyhowResult<()> {
     #[cfg(all(not(windows), feature = "gui"))]
     let console_available = true;
 
+    // Program Resume (OSC 7577): take the terminal's token out of the
+    // environment before anything can inherit it — the daemon, LSP servers,
+    // embedded shells (each of which gets a token of its own) — and keep it
+    // for reporting how to resume this launch. First, while no thread exists.
+    fresh::services::program_resume::init_from_env();
+
     // Enable backtraces for error reporting if not already set.
     // Errors that crash the editor are bugs — backtraces help diagnose them.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
@@ -6749,6 +6910,11 @@ fn real_main() -> AnyhowResult<()> {
             _ => {}
         }
     }
+
+    // `--wait` is how `$EDITOR` / `core.editor` launches say so; such an
+    // editor belongs to the program waiting on it, so it is not reported for
+    // resuming on its own (see `direct_resume_command`).
+    let launched_with_wait = cli.wait;
 
     // Convert to legacy Args format for compatibility
     let mut args: Args = cli.into();
@@ -6980,6 +7146,25 @@ fn real_main() -> AnyhowResult<()> {
             editor.set_diff_launch(left.clone(), right.clone());
         }
 
+        // Tell the terminal how to bring this launch back if it restarts
+        // (OSC 7577; a no-op in a terminal that doesn't offer it). Decided
+        // before first-run setup consumes the stdin stream.
+        let resume_command = if is_interactive_launch(&args) && !launched_with_wait {
+            direct_resume_command(
+                &args,
+                file_launch,
+                workspace_enabled,
+                current_working_dir.as_deref(),
+                &file_locations,
+                stdin_stream.is_some(),
+            )
+        } else {
+            None
+        };
+        if let Some(cmd) = resume_command {
+            fresh::services::program_resume::report_resume(cmd);
+        }
+
         tracing::info!("Running first-run setup...");
         handle_first_run_setup(
             &mut editor,
@@ -7045,6 +7230,13 @@ fn real_main() -> AnyhowResult<()> {
     // Restore terminal state
     terminal_modes.undo();
 
+    // The loop ends cleanly only when the user quit: withdraw the resume
+    // report, so the terminal doesn't bring back an editor that was closed
+    // on purpose. An error exit (a lost terminal) keeps it.
+    if result.is_ok() {
+        fresh::services::program_resume::clear_resume();
+    }
+
     // Restore the original console mode AFTER all other cleanup (crossterm's
     // disable_raw_mode, DisableMouseCapture, etc.) to ensure Quick Edit mode
     // is properly restored. Without this, text selection with mouse doesn't
@@ -7098,6 +7290,9 @@ fn handle_suspend_request(
         let keyboard_config = KeyboardConfig::from_editor_config(&editor.config().editor);
         terminal_modes::suspend_and_resume(terminal_modes, Some(&keyboard_config))
             .context("Failed to suspend process")?;
+        // Back in the foreground: the terminal may have taken a report from
+        // whatever ran meanwhile, so say again how to resume this editor.
+        fresh::services::program_resume::refresh_resume();
         editor.request_full_redraw();
         editor.set_status_message(fresh_i18n::t!("status.resumed_after_suspend").to_string());
     }

@@ -1115,20 +1115,21 @@ impl crate::app::window::Window {
                     && self.resources.config.terminal.resume_agents
                     && !nothing_to_resume
             });
-        let spawn_argv =
-            resume_argv.or_else(|| terminal.command.as_ref().filter(|argv| !argv.is_empty()));
-        // Run the resume/launch argv through the workspace's backend (local →
-        // directly; container → `docker exec … <argv>`) so a restored agent
-        // rejoins *inside* its backend, not on the host. For a dormant remote
-        // workspace the live authority is still the local placeholder until
-        // reconnect — `terminal_command` composes with whatever backend is
-        // live, so the reconnect-on-activate step re-runs it in the real one.
-        let wrapper_for_spawn = match spawn_argv {
-            Some(argv) => self.authority().terminal_command(argv),
-            None => self.resolved_terminal_wrapper(),
+        // A program the terminal was running reported how to resume it (OSC
+        // 7577): it knows its own state better than the launch command does,
+        // so it comes before that. Not for a terminal with an agent-resume
+        // spec: its launcher decides how that one comes back, and
+        // `terminal.resume_agents` off must not be bypassed by the agent's
+        // own report.
+        let mut program_resume = if terminal.agent_resume.is_none() {
+            self.program_resume_to_run(terminal)
+        } else {
+            None
         };
-        let wrapper_for_spawn = self.apply_remote_terminal_env(wrapper_for_spawn);
-        let env_delta = self.terminal_env_delta(&wrapper_for_spawn);
+        let launch_argv = terminal.command.as_ref().filter(|argv| !argv.is_empty());
+        let spawn_argv = resume_argv
+            .or(program_resume.map(|r| &r.command.argv))
+            .or(launch_argv);
         // A terminal saved with the script grant comes back holding it: mint a
         // token bound to *this* (restored) window and stamp it into the child's
         // environment. The saved workspace records only that the grant existed
@@ -1141,24 +1142,63 @@ impl crate::app::window::Window {
         // A saved cwd that has since been removed would otherwise land the
         // shell in $HOME (portable-pty's fallback); the workspace root is
         // the better guess. `manages_cwd` wrappers ignore this value.
-        let cwd = match terminal.cwd.as_ref() {
+        let default_cwd = match terminal.cwd.as_ref() {
             Some(dir) if !dir.is_dir() => Some(self.root.clone()),
             other => other.cloned(),
         };
-        let terminal_id = match self.terminal_manager.spawn(
-            terminal.cols,
-            terminal.rows,
+        // A resumed program starts where it reported (checked to exist by
+        // `program_resume_to_run`), else where it was when it reported, else
+        // where the shell would.
+        let cwd = match program_resume {
+            Some(r) => r
+                .command
+                .cwd
+                .clone()
+                .or_else(|| r.owner_cwd.clone().filter(|dir| dir.is_dir()))
+                .or_else(|| default_cwd.clone()),
+            None => default_cwd.clone(),
+        };
+        let spawned = self.spawn_restored_terminal(
+            terminal,
+            spawn_argv,
             cwd,
-            Some(log_path.clone()),
-            Some(backing_path.clone()),
-            // Restore: this terminal's own saved transcript — keep streaming
-            // into it so the restored buffer keeps its scrollback.
-            crate::services::terminal::BackingMode::Continue,
-            wrapper_for_spawn,
-            env_delta,
-            extra_env,
-        ) {
+            &log_path,
+            &backing_path,
+            extra_env.clone(),
+        );
+        let terminal_id = match spawned {
             Ok(id) => id,
+            // The resumed program couldn't start (not installed any more, or
+            // not on the PATH fresh runs it with): the terminal is the one it
+            // would have been without the report, rather than lost from the
+            // workspace. Not a retry of the program — the spec rules that out.
+            Err(e) if program_resume.is_some() => {
+                tracing::warn!(
+                    "Terminal {}: could not resume {:?} ({}); starting it as before",
+                    terminal.terminal_index,
+                    program_resume.map(|r| &r.command.argv),
+                    e
+                );
+                program_resume = None;
+                match self.spawn_restored_terminal(
+                    terminal,
+                    launch_argv,
+                    default_cwd,
+                    &log_path,
+                    &backing_path,
+                    extra_env,
+                ) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to restore terminal {}: {}",
+                            terminal.terminal_index,
+                            e
+                        );
+                        return None;
+                    }
+                }
+            }
             Err(e) => {
                 tracing::warn!(
                     "Failed to restore terminal {}: {}",
@@ -1178,6 +1218,30 @@ impl crate::app::window::Window {
                 .insert(terminal_id, backing_path.clone());
             self.terminal_log_files.remove(&predicted_id);
             self.terminal_backing_files.remove(&predicted_id);
+        }
+
+        // A shell pane brought back running the program it had: once that
+        // program quits, the pane goes back to being the shell it was (see
+        // `handle_terminal_exited`), as if the program had been started from
+        // its prompt. A pane launched with its own command keeps the usual
+        // exit behaviour.
+        // The record now belongs to the process just started, as the spec
+        // has it: kept (and saved again) while that program runs, even if it
+        // never reports for itself.
+        if let (Some(resume), Some(handle)) =
+            (program_resume, self.terminal_manager.get(terminal_id))
+        {
+            handle.adopt_program_resume(resume.clone());
+        }
+        // A plain shell has no launch command, or the empty plain-shell marker
+        // a plugin-opened one carries.
+        if program_resume.is_some() && launch_argv.is_none() {
+            tracing::info!(
+                "Terminal {} resumed its program via OSC 7577: {:?}",
+                terminal.terminal_index,
+                program_resume.map(|r| &r.command.argv)
+            );
+            self.program_resumed_terminals.insert(terminal_id);
         }
 
         // Carry the restore markers forward (even the empty-vec plain-shell
@@ -1206,6 +1270,79 @@ impl crate::app::window::Window {
         self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
 
         Some(buffer_id)
+    }
+
+    /// The OSC 7577 resume command saved for `terminal`, when it should run:
+    /// `terminal.resume_programs` is on, the editor isn't running as root
+    /// (the spec asks for an explicit opt-in there), the directory it runs
+    /// in still exists (the spec's rule: don't resume elsewhere), and the
+    /// workspace runs commands on this machine — the report came from a
+    /// local PTY, and its program means nothing inside a container or on a
+    /// remote host.
+    fn program_resume_to_run<'t>(
+        &self,
+        terminal: &'t SerializedTerminalWorkspace,
+    ) -> Option<&'t crate::services::program_resume::ResumeRecord> {
+        let record = terminal.program_resume.as_ref()?;
+        let resume = &record.command;
+        if !self.resources.config.terminal.resume_programs || resume.argv.is_empty() {
+            return None;
+        }
+        #[cfg(unix)]
+        // SAFETY: `geteuid` has no preconditions and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            tracing::info!("Not resuming a terminal's program: running as root");
+            return None;
+        }
+        if resume.cwd.as_ref().is_some_and(|dir| !dir.is_dir()) {
+            tracing::info!(
+                "Not resuming {:?}: its directory {:?} is gone",
+                resume.argv,
+                resume.cwd
+            );
+            return None;
+        }
+        if self.authority().terminal_command(&resume.argv).manages_cwd {
+            return None;
+        }
+        Some(record)
+    }
+
+    /// Spawn the PTY for a restored terminal: `argv` through the workspace's
+    /// backend (local → directly; container → `docker exec … <argv>`) so a
+    /// restored agent rejoins *inside* its backend, not on the host, or the
+    /// configured shell when there is none. For a dormant remote workspace
+    /// the live authority is still the local placeholder until reconnect —
+    /// `terminal_command` composes with whatever backend is live, so the
+    /// reconnect-on-activate step re-runs it in the real one.
+    fn spawn_restored_terminal(
+        &mut self,
+        terminal: &SerializedTerminalWorkspace,
+        argv: Option<&Vec<String>>,
+        cwd: Option<PathBuf>,
+        log_path: &Path,
+        backing_path: &Path,
+        extra_env: std::collections::HashMap<String, String>,
+    ) -> Result<crate::services::terminal::TerminalId, String> {
+        let wrapper = match argv {
+            Some(argv) => self.authority().terminal_command(argv),
+            None => self.resolved_terminal_wrapper(),
+        };
+        let wrapper = self.apply_remote_terminal_env(wrapper);
+        let env_delta = self.terminal_env_delta(&wrapper);
+        self.terminal_manager.spawn(
+            terminal.cols,
+            terminal.rows,
+            cwd,
+            Some(log_path.to_path_buf()),
+            Some(backing_path.to_path_buf()),
+            // Restore: this terminal's own saved transcript — keep streaming
+            // into it so the restored buffer keeps its scrollback.
+            crate::services::terminal::BackingMode::Continue,
+            wrapper,
+            env_delta,
+            extra_env,
+        )
     }
 
     /// Rebuild a terminal whose process had already quit at save time: restore
@@ -2893,6 +3030,7 @@ impl crate::app::window::Window {
                     // process — there is nothing to carry.
                     auto_title: None,
                     script_access: self.terminal_has_script_access(terminal_id),
+                    program_resume: handle.and_then(|h| h.program_resume_command()),
                 });
             }
         }
@@ -2951,6 +3089,8 @@ impl crate::app::window::Window {
                 // from (#3074).
                 auto_title: exited.auto_title.clone(),
                 script_access: exited.script_access,
+                // Its process is gone, and with it whatever it reported.
+                program_resume: None,
             });
         }
 

@@ -256,6 +256,26 @@ done
 - **Detach** (File → Detach, or "Detach" in the command palette): the client exits and the daemon keeps running.
 - `Ctrl+Q` asks first: **Detach** (the default) leaves Fresh running in the background, and **Quit and Stop All** stops the daemon along with its terminals and agents.
 
+## Terminals That Restore Running Programs (OSC 7577)
+
+Some terminals can reopen their tabs after they restart — an update, a crash, a reboot — and bring back the *program* each tab was running, not just a shell in the right directory. They do it with the [Program Resume protocol](https://www.superlogical.com/rex/docs/build/program-resume) (OSC 7577): the terminal hands each tab a secret in `OSC7577_TOKEN`, and a program running there tells the terminal, signed with that secret, the command that resumes it.
+
+Fresh speaks it on its own when the terminal offers it; there is nothing to set up. The command it reports depends on how it was started:
+
+| Launch | Reported command | Brings back |
+|---|---|---|
+| `fresh`, `fresh DIR` (direct mode) | `fresh --restore` in that directory | the workspace, as it was saved |
+| `fresh FILE…` | `fresh /abs/FILE…` | the same files |
+| `fresh --diff A B` | `fresh --diff /abs/A /abs/B` | the same comparison |
+| bare `fresh` with Auto Attach | `fresh` | this terminal, attached to the shared daemon |
+| `fresh -a [NAME]`, `--cmd daemon attach/new NAME` | `fresh -a [NAME]` | the daemon if it is still running, else a new one that restores its workspace |
+
+`--config`, `--locale`, `--no-plugins`, `--no-init` and `--safe` are carried along. Fresh reports again after it is suspended and resumed (`Ctrl+Z`, `fg`), and withdraws the report when you **quit** — or detach — so the terminal doesn't bring back an editor you closed on purpose. Being killed with the terminal (`SIGHUP`, `SIGTERM`, a lost connection), or a daemon that dies under its clients, keeps it.
+
+Nothing is reported for launches that can't be reproduced or aren't yours to resume: `--wait` (an `$EDITOR` for git and friends), reading stdin, an SSH remote, and `--no-restore`.
+
+Fresh also plays the terminal's part for its own terminals: see [Programs That Resume Themselves](./terminal.md#programs-that-resume-themselves).
+
 ## Limitations and Pitfalls
 
 ### Resource Usage

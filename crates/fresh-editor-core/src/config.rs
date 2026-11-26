@@ -2314,6 +2314,13 @@ pub struct TerminalConfig {
     #[serde(default = "default_true")]
     pub resume_agents: bool,
 
+    /// When restoring a workspace, bring each terminal back running the
+    /// program it was running, if that program said how to resume it (the
+    /// OSC 7577 Program Resume protocol, e.g. an editor reopening its
+    /// session). The shell returns when the program quits. Default: true
+    #[serde(default = "default_true")]
+    pub resume_programs: bool,
+
     /// Dragging in a terminal selects text for Ctrl+C, switching to scrollback
     /// (Ctrl+Space returns). A click only focuses. Default: true
     #[serde(default = "default_true")]
@@ -2357,6 +2364,7 @@ impl Default for TerminalConfig {
             shell: None,
             skip_app_execution_alias: true,
             resume_agents: true,
+            resume_programs: true,
             mouse_drag_selects: true,
             mouse_forwarding: TerminalMouseForwarding::default(),
             close_on_exit: false,

@@ -2028,6 +2028,8 @@
   "settings.field.terminal.mouse_forwarding_desc": "Khi nào chương trình trong terminal nhận sự kiện chuột. `requested` (mặc định): chỉ các chương trình yêu cầu chuột (cùng con lăn cho ứng dụng toàn màn hình); Shift+kéo vẫn chọn văn bản. `alt_screen`: mọi chương trình toàn màn hình nhận tất cả sự kiện.",
   "settings.field.terminal.resume_agents": "Tiếp tục phiên agent",
   "settings.field.terminal.resume_agents_desc": "Khi khôi phục phiên agent của Orchestrator, tiếp tục cuộc hội thoại trước đó (ví dụ `claude --resume`) thay vì bắt đầu mới. Mặc định: true",
+  "settings.field.terminal.resume_programs": "Tiếp tục chương trình",
+  "settings.field.terminal.resume_programs_desc": "Khi khôi phục không gian làm việc, đưa mỗi terminal trở lại với chương trình đang chạy trong đó, nếu chương trình đã cho biết cách tiếp tục (giao thức OSC 7577 Program Resume, ví dụ trình soạn thảo mở lại phiên của nó). Shell sẽ trở lại khi chương trình kết thúc. Mặc định: true",
   "settings.field.terminal.shell": "Shell",
   "settings.field.terminal.shell_desc": "Shell cho terminal. Không đặt (mặc định) thì dùng `$SHELL` hoặc shell mặc định của hệ thống. Không thay đổi `$SHELL` cho các tính năng khác và không áp dụng cho terminal từ xa hoặc trong container.",
   "settings.field.terminal.shell.args": "Đối số",

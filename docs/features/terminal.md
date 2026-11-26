@@ -51,6 +51,21 @@ To have a shell's tab close when you `exit` it (or press `Ctrl+D`) instead, turn
 
 In a terminal pane, `Ctrl+V` pastes the system clipboard's text. When the clipboard holds no text, for example an image you copied, `Ctrl+V` goes to the program instead, so an agent CLI such as Claude Code can read the image from the clipboard itself. Turn off **Pass Ctrl V Without Text** under **Settings → Terminal** (`terminal.pass_ctrl_v_without_text`) to paste your last yank in that case instead. When the system clipboard can't be read at all (no display, over SSH), `Ctrl+V` pastes your last yank either way.
 
+## Programs That Resume Themselves
+
+Fresh's terminals implement the [Program Resume protocol](https://www.superlogical.com/rex/docs/build/program-resume) (OSC 7577). Each local terminal gives its shell a secret token in `OSC7577_TOKEN`. A program that supports the protocol uses it to tell Fresh how to resume itself, for example `nvim -S <session>` or `lazygit` in a given directory. When the workspace is reopened, that terminal comes back **running the program** in the directory it named, instead of a bare shell. Once the program quits, the terminal is its shell again.
+
+*   Only a signed report counts. Anything else that prints the sequence (a log being `cat`'d, a remote host) is ignored.
+*   The report must come from a process still running in that terminal when the workspace is saved. A program you quit, or one that sent `clear`, leaves nothing behind.
+*   A resumed program keeps its record across further restarts until it reports again or exits.
+*   Nothing is resumed when the directory it named is gone, when Fresh runs as root, or in container or SSH terminals, which never get a token. It is off on Windows. A program that can't be started (no longer installed, say) leaves the terminal as the shell it was.
+*   A terminal with an Orchestrator agent-resume spec comes back the way its launcher configured (`terminal.resume_agents`), whatever the agent itself reported.
+*   The program runs directly, never through shell source. It starts with the terminal's environment, not your shell's startup files.
+
+Turn it off with `terminal.resume_programs` (default on). Reports are still recorded; restored terminals come back as shells.
+
+Fresh is also a resumable program itself, in any terminal that offers the protocol; see [Daemon Mode](./session-persistence.md#terminals-that-restore-running-programs-osc-7577).
+
 ## Terminal Modes
 
 The terminal has two modes, and a status message announces each switch:
