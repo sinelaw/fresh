@@ -80,7 +80,7 @@ async function main() {
   const paletteEditor /*: PaletteEditor */ = {
     here: () => app.here(),
     goto: (line) => { app.gotoLine(line, 0, false); },
-    commands: () => [...app.commands].filter(([, c]) => !c.hidden).map(([id, c]) => ({ title: c.title, key: app.keyFor(id), source: c.source, run: () => { app.run(id, undefined); } })),
+    commands: () => [...app.commands].filter(([, c]) => !c.hidden).map(([id, c]) => ({ title: c.title, keys: app.keyFor(id), source: c.source, run: () => { app.run(id, undefined); } })),
     buffers: () => [...app.buffers.values()].map((b) => ({ name: b.name, path: filePath(b.origin), modified: b.modified, stored: b.doc !== null, show: () => { app.showBuffer(b, "tab", { preview: null, focus: true }); } })),
     root: () => app.root,
     recent: () => app.recentFiles(),

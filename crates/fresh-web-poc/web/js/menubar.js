@@ -382,7 +382,7 @@ export class MenuBar {
       if (titles.length === 0) continue;
       const title = titles[0];
       const checked = row.checked;
-      out.push(actionOf(row.label ?? title, row.keys ?? ed.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => { ed.run(command); }));
+      out.push(actionOf(row.label ?? title, row.keys ?? (ed.keyLabel(command).at(0) ?? null), checked !== null ? this.isChecked(checked) : null, false, () => { ed.run(command); }));
     }
     return lastIsRow() || !out.length ? out : out.slice(0, -1);
   }

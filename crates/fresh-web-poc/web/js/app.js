@@ -270,6 +270,16 @@ export function popup(text, at) {
 
 export function hidePopup() { $("#popup").classList.add("hidden"); }
 
+// A key as menus show it ("C-S-p": Ctrl+Shift+P): a list of at most one
+// (none for what is not a key's name).
+/** function keyText(k: String) => String[] */
+function keyText(k) {
+  const m = /^((?:[CMS]-)*)(.+)$/.exec(k);
+  if (m === null) return [];
+  const key = m[2].length === 1 ? m[2].toUpperCase() : m[2];
+  return [[...m[1].split("-").filter(Boolean).map((x) => MODIFIERS.get(x) ?? x), key].join("+")];
+}
+
 export class App {
   constructor(c) {
     this.buffers = new Map();
@@ -909,13 +919,13 @@ export class App {
     const copy = (t) => navigator.clipboard?.writeText(t).then((_r) => this.setStatus(`Copied ${t}`)).catch((_e) => this.setStatus("The browser did not allow writing the clipboard"));
     this.ui.menu([
       ...(v.preview ? [action("Keep Open", null, () => this.keep(v))] : []),
-      action("Close", this.keyLabel("view.closeTab"), () => this.closeTab(pane, v)),
+      action("Close", this.keyLabel("view.closeTab").at(0) ?? null, () => this.closeTab(pane, v)),
       action("Close Others", null, () => this.closeTabs(pane, (x, _i) => x !== v)),
       actionOf("Close to the Right", null, null, pane.views.indexOf(v) === pane.views.length - 1, () => this.closeTabs(pane, (x, i) => i > pane.views.indexOf(v))),
       action("Close Saved", null, () => this.closeTabs(pane, (x, _i) => !x.buf.modified)),
       action("Close All", null, () => this.closeTabs(pane, (_x, _i) => true)),
       SEPARATOR,
-      action("Split Right", this.keyLabel("view.splitRight"), () => { this.focusPane(pane); this.splitActive("h"); }),
+      action("Split Right", this.keyLabel("view.splitRight").at(0) ?? null, () => { this.focusPane(pane); this.splitActive("h"); }),
       action("Split Down", null, () => { this.focusPane(pane); this.splitActive("v"); }),
       ...filePath(b.origin).flatMap((path) => [
         SEPARATOR,
@@ -1557,22 +1567,17 @@ export class App {
   }
 
   // The keys bound to command `id`, as the keymap names them.
+  // The keys bound to command `id` (none for most).
   keyFor(id) {
     /** const keys: String[] */
     const keys = [];
     this.keymap().forEach((c, k) => { if (c === id) keys.push(k); });
-    return keys.join(", ");
+    return keys;
   }
 
   // The first key for command `id` as people write it ("Ctrl+Shift+K"),
   // or "".
-  keyLabel(id) {
-    const k = this.keyFor(id).split(", ")[0];
-    const m = /^((?:[CMS]-)*)(.+)$/.exec(k);
-    if (m === null) return "";
-    const key = m[2].length === 1 ? m[2].toUpperCase() : m[2];
-    return [...m[1].split("-").filter(Boolean).map((x) => MODIFIERS.get(x) ?? x), key].join("+");
-  }
+  keyLabel(id) { return this.keyFor(id).slice(0, 1).flatMap(keyText); }
 
   // Run command `id`, with its one optional argument (a theme name for
   // `theme.use`, …).
@@ -2011,7 +2016,7 @@ export class App {
     // A fact, its tooltip and what clicking it does (none: not clickable).
     const add = (text, title, run) => { items.push(statusFactOf(text, title, run)); };
     const cmd = (id) => () => { this.run(id, undefined); };
-    const titled = (what, id) => { const k = this.keyLabel(id); return k !== "" ? `${what} (${k})` : what; };
+    const titled = (what, id) => this.keyLabel(id).map((k) => `${what} (${k})`).at(0) ?? what;
     // A document's facts (a terminal's tab has none).
     for (const v of listOf(this.view()).filter((x) => terminalOf(x.buf.source).length === 0)) {
       const b = v.buf;

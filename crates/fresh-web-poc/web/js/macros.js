@@ -87,9 +87,9 @@ function noRecording() { return []; }
 /** function noRegister() => String[] */
 function noRegister() { return []; }
 
-// A command's keys, or (it has none) what to call it.
-/** function keysOr(keys: String, name: String) => String */
-function keysOr(keys, name) { return keys !== "" ? keys : name; }
+// A command's key, or (it has none) what to call it.
+/** function keysOr(keys: String[], name: String) => String */
+function keysOr(keys, name) { return keys.at(0) ?? name; }
 
 export class Macros {
   // `editor`: what macros ask of the editor (js/main.js).

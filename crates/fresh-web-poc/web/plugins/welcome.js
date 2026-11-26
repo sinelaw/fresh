@@ -18,7 +18,7 @@ export function activate(app) {
   ];
   // A key's line, which runs its command on Enter.
   /** const keyLine: (String, String) => Entry */
-  const keyLine = (id, what) => ({ text: `  ${(fresh.keyLabel(app, id) || "palette").padEnd(22)} ${what}\n`, props: { command: id }, style: null });
+  const keyLine = (id, what) => ({ text: `  ${(fresh.keyLabel(app, id).at(0) ?? "palette").padEnd(22)} ${what}\n`, props: { command: id }, style: null });
   const show = () => {
     /** const entries: Entry[] */
     const entries = [

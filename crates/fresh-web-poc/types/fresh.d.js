@@ -802,7 +802,8 @@
 /** type CommandInfo = {id: String, title: String, source: String, hidden: Boolean} */
 // The palette's rows for commands (`key`: its keys, "" for none) and open
 // buffers (`stored`: the server keeps it; `path` "" for none).
-/** type PaletteCommand = {title: String, key: String, source: String, run: () => Undefined} */
+// (`keys`: the keys bound to it, none for most.)
+/** type PaletteCommand = {title: String, keys: String[], source: String, run: () => Undefined} */
 /** type PaletteBuffer = {
  *   name: String,
  *   path: String[],
@@ -826,7 +827,7 @@
 // register, and show a text.
 /** type MacrosEditor = {
  *   say: (String) => Undefined,
- *   keyLabel: (String) => String,
+ *   keyLabel: (String) => String[],
  *   updateStatus: () => Undefined,
  *   run: (String, CommandArg) => Promise<Undefined>,
  *   insert: (String, Boolean) => Undefined,
@@ -839,7 +840,7 @@
 // "setting" or a view "state"), and focus.
 /** type MenuEditor = {
  *   title: (String) => String | Null,
- *   keyLabel: (String) => String,
+ *   keyLabel: (String) => String[],
  *   run: (String) => Undefined,
  *   isOn: ("setting" | "state" | "read", String) => Boolean,
  *   focus: () => Undefined,

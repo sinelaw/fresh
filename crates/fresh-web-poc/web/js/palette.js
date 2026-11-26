@@ -171,7 +171,7 @@ export class Palette {
       const commands /*: PaletteCommand[] */ = ed.commands();
       return commands
         .filter((c) => terms.every((t) => c.title.toLowerCase().includes(t)))
-        .map((c) => paletteItem(c.title, [c.key, c.source !== "core" ? c.source : ""].filter((s) => s !== "").join(" · "), c.run))
+        .map((c) => paletteItem(c.title, [...(c.keys.length > 0 ? [c.keys.join(", ")] : []), ...(c.source !== "core" ? [c.source] : [])].join(" · "), c.run))
         .sort((a, b) => a.label.localeCompare(b.label));
     }
     if (q.startsWith("#")) {
