@@ -77,7 +77,16 @@ function whereOf(r) {
 }
 
 // A host as people read it: an SSH target, a container, the agent.
-const hostText = (host) => (host.kind === "ssh" ? host.target : host.kind === "container" ? `container ${host.id}` : host.kind);
+/** function hostText(host: HostSpec) => String */
+function hostText(host) {
+  if (host.kind === "ssh") return host.target;
+  if (host.kind === "container") return `container ${host.id}`;
+  return host.kind;
+}
+/** function localHost() => HostSpec */
+function localHost() { return { kind: "local" }; }
+/** function sshHost(target: String, identity: String | Null, options: String[]) => HostSpec */
+function sshHost(target, identity, options) { return { kind: "ssh", target, identity, options }; }
 
 // The dock's marks, as the editor's.
 const MARKS = new Map([["failed", "!"], ["pending", "…"], ["waiting", "●"], ["done", "✓"], ["working", "*"], ["idle", "·"], ["unknown", "?"], ["exited", "·"]]);
@@ -151,6 +160,43 @@ function belowSelected(list) {
   const r = (list.querySelector(".ui-list-row.sel") ?? list).getBoundingClientRect();
   return { x: r.left + 12, y: r.bottom };
 }
+
+function pageLooked() { return document.visibilityState === "visible" && document.hasFocus(); }
+
+function pendingRow(p) {
+  const failed = p.error !== "";
+  const state = failed ? "failed" : "pending";
+  return h("row", { class: "orch-row" }, [
+    h("text", { class: "orch-name keep", title: p.error }, [p.name]),
+    h("text", { dim: !failed, class: failed ? "orch-why" : "", title: p.error }, [failed ? p.error : "Creating…"]),
+    h("spacer", {}),
+    h("text", { class: `orch-mark ${state}` }, [markOf(state)]),
+  ]);
+}
+
+// A folder's row: its name, and how many in it need you.
+function folderRow(label, items) {
+  const waiting = items.filter((w) => stateOf(w) === "waiting").length;
+  const done = items.filter((w) => stateOf(w) === "done").length;
+  return h("row", { class: "orch-row orch-folder" }, [
+    h("text", { bold: true }, [label]),
+    h("spacer", {}),
+    waiting ? h("text", { class: "orch-mark waiting" }, [`● ${waiting}`]) : null,
+    done ? h("text", { class: "orch-mark done" }, [`✓ ${done}`]) : null,
+  ]);
+}
+
+// The command line for an agent choice: the registry's agent with its
+// auto mode and first prompt, a custom command, or none (a terminal).
+function commandFor(choice, auto, prompt, custom) {
+  if (choice === "custom") return custom.trim() !== "" ? some(custom.trim()) : none();
+  return listOf(agentById(choice)).map((agent) => agentCommand(agent, auto, prompt)).at(0) ?? none();
+}
+
+// The command line that takes that agent up again after the server
+// restarts: the registry's agent continues its latest conversation (a
+// command of one's own has none).
+function resumeFor(choice, auto) { return listOf(agentById(choice)).map((agent) => agentResume(agent, auto)).at(0) ?? none(); }
 
 export class Orchestrator {
   // `editor` (main.js): the workspace this page views (its id, root and
@@ -264,12 +310,10 @@ export class Orchestrator {
     for (const redraw of this.boards) redraw();
   }
 
-  looked() { return document.visibilityState === "visible" && document.hasFocus(); }
-
   // What this workspace needed, once this page is looked at: said in the
   // status bar, and cleared (finished work is seen, too).
   seeIfLooked() {
-    if (!this.looked()) return;
+    if (!pageLooked()) return;
     for (const s of workspaceIn(this.list, this.current).flatMap((w) => listOf(w.status))) {
       const done = s.terminals.some((t) => t.state === "done");
       if (!s.attention && !done) return;
@@ -409,29 +453,6 @@ export class Orchestrator {
     ]);
   }
 
-  pendingRow(p) {
-    const failed = p.error !== "";
-    const state = failed ? "failed" : "pending";
-    return h("row", { class: "orch-row" }, [
-      h("text", { class: "orch-name keep", title: p.error }, [p.name]),
-      h("text", { dim: !failed, class: failed ? "orch-why" : "", title: p.error }, [failed ? p.error : "Creating…"]),
-      h("spacer", {}),
-      h("text", { class: `orch-mark ${state}` }, [markOf(state)]),
-    ]);
-  }
-
-  // A folder's row: its name, and how many in it need you.
-  folderRow(label, items) {
-    const waiting = items.filter((w) => stateOf(w) === "waiting").length;
-    const done = items.filter((w) => stateOf(w) === "done").length;
-    return h("row", { class: "orch-row orch-folder" }, [
-      h("text", { bold: true }, [label]),
-      h("spacer", {}),
-      waiting ? h("text", { class: "orch-mark waiting" }, [`● ${waiting}`]) : null,
-      done ? h("text", { class: "orch-mark done" }, [`✓ ${done}`]) : null,
-    ]);
-  }
-
   wsNode(w) { return { id: `w${w.id}`, label: this.row(w), children: [], open: false, leaf: true, data: wsData(w) }; }
 
   // The dock's tree: pinned workspaces, then folders (or days), then the
@@ -441,7 +462,7 @@ export class Orchestrator {
     const pinned = shown.filter((w) => w.pinned);
     const rest = shown.filter((w) => !w.pinned);
     const out = [];
-    if (pinned.length) out.push({ id: "g:pinned", label: this.folderRow("Pinned", pinned), children: pinned.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
+    if (pinned.length) out.push({ id: "g:pinned", label: folderRow("Pinned", pinned), children: pinned.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
     if (this.prefs.group === "date") {
       const { day, week } = dayStarts();
       const when = (w) => listOf(w.status).map((s) => s.worked).filter((t) => t > 0).at(0) ?? w.created;
@@ -453,7 +474,7 @@ export class Orchestrator {
       for (const g of groups) {
         if (!g.items.length) continue;
         const items = [...g.items].sort((a, b) => when(b) - when(a));
-        out.push({ id: `g:${g.label}`, label: this.folderRow(g.label, items), children: items.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
+        out.push({ id: `g:${g.label}`, label: folderRow(g.label, items), children: items.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
       }
     } else {
       const searching = !!this.filter.trim();
@@ -462,12 +483,12 @@ export class Orchestrator {
         const subs = this.folders.filter((f) => parentOf(f) === path).flatMap((f) => folder(f));
         const own = rest.filter((w) => w.folder === path).map((w) => this.wsNode(w));
         const all = rest.filter((w) => w.folder === path || w.folder.startsWith(`${path}/`));
-        return searching && !all.length ? [] : [{ id: `f:${path}`, label: this.folderRow(leaf(path), all), children: [...subs, ...own], open: true, leaf: false, data: folderData(path) }];
+        return searching && !all.length ? [] : [{ id: `f:${path}`, label: folderRow(leaf(path), all), children: [...subs, ...own], open: true, leaf: false, data: folderData(path) }];
       };
       for (const f of this.folders.filter((x) => !x.includes("/"))) for (const n of folder(f)) out.push(n);
       for (const w of rest.filter((x) => !x.folder)) out.push(this.wsNode(w));
     }
-    for (const p of this.pending.filter((x) => !this.filter.trim() || x.name.toLowerCase().includes(this.filter.trim().toLowerCase()))) out.push({ id: `p${p.key}`, label: this.pendingRow(p), children: [], open: false, leaf: true, data: pendingData(p.key) });
+    for (const p of this.pending.filter((x) => !this.filter.trim() || x.name.toLowerCase().includes(this.filter.trim().toLowerCase()))) out.push({ id: `p${p.key}`, label: pendingRow(p), children: [], open: false, leaf: true, data: pendingData(p.key) });
     return out;
   }
 
@@ -574,7 +595,6 @@ export class Orchestrator {
 
   // ----------------------------------------------------------- acting
 
-
   async rename(w) {
     const name = await this.editor.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder", select: true });
     if (name !== null) await changeWorkspace((t) => { this.editor.say(t); }, { workspace: w.id, name });
@@ -659,18 +679,6 @@ export class Orchestrator {
     this.editor.say(`Closed ${displayName(w)}`);
   }
 
-  // The command line for an agent choice: the registry's agent with its
-  // auto mode and first prompt, a custom command, or none (a terminal).
-  commandFor(choice, auto, prompt, custom) {
-    if (choice === "custom") return custom.trim() !== "" ? some(custom.trim()) : none();
-    return listOf(agentById(choice)).map((agent) => agentCommand(agent, auto, prompt)).at(0) ?? none();
-  }
-
-  // The command line that takes that agent up again after the server
-  // restarts: the registry's agent continues its latest conversation (a
-  // command of one's own has none).
-  resumeFor(choice, auto) { return listOf(agentById(choice)).map((agent) => agentResume(agent, auto)).at(0) ?? none(); }
-
   // Run Agent here: pick the agent, give it a task; a terminal running it.
   startAgent() {
     if (this.current === null) return;
@@ -693,11 +701,11 @@ export class Orchestrator {
     if (custom === null) return;
     const prompt = agent.length > 0 ? await this.editor.ask({ title: `${agent[0].label}: the task (optional)`, value: "", hint: "", select: true }) : "";
     if (prompt === null) return;
-    for (const command of listOf(this.commandFor(choice, this.prefs.auto, prompt, custom))) {
+    for (const command of listOf(commandFor(choice, this.prefs.auto, prompt, custom))) {
       if (choice === "custom") this.prefs.custom = custom;
       this.prefs.agent = choice;
       this.savePrefs();
-      await this.editor.runInTerminal(command, this.resumeFor(choice, this.prefs.auto));
+      await this.editor.runInTerminal(command, resumeFor(choice, this.prefs.auto));
     }
   }
 
@@ -805,8 +813,7 @@ export class Orchestrator {
   }
   // The host a choice names.
   hostOf(choice) {
-    const m = this.machines.find((x) => `m:${x.name}` === choice);
-    return m ? m.host : { kind: "local" };
+    return this.machines.filter((x) => `m:${x.name}` === choice).map((m) => m.host).at(0) ?? localHost();
   }
 
   // ----------------------------------------------------------- import
@@ -948,10 +955,10 @@ export class Orchestrator {
       // The terminal runs the prompt box's command (none: a shell); an
       // agent gets the prompt.
       const command = f.prompt.trim();
-      const agent = f.agent === "terminal" ? (command !== "" ? some(command) : none()) : this.commandFor(f.agent, true, f.prompt, "");
+      const agent = f.agent === "terminal" ? (command !== "" ? some(command) : none()) : commandFor(f.agent, true, f.prompt, "");
       const spec = {
         root: f.root.trim(), host, trusted: true, agent,
-        agent_resume: f.agent === "terminal" ? (f.resume !== "" && command === f.resume ? some(f.resume) : none()) : this.resumeFor(f.agent, true),
+        agent_resume: f.agent === "terminal" ? (f.resume !== "" && command === f.resume ? some(f.resume) : none()) : resumeFor(f.agent, true),
         worktree: worktree() ? { branch: null, base: null } : null,
         name: f.name.trim() !== "" ? some(f.name.trim()) : none(), folder: "",
       };
@@ -989,19 +996,19 @@ export class Orchestrator {
     };
     const addMachine = async () => {
       const target = add.target.trim();
-      if (!target) { add.error = "A host is needed"; render(); return; }
-      const host = {
-        kind: "ssh",
-        target: add.port.trim() ? `${target}:${add.port.trim()}` : target,
-        identity: add.identity.trim() || null,
-        options: add.options.trim() ? add.options.trim().split(/\s+/) : [],
-      };
+      if (target === "") { add.error = "A host is needed"; render(); return; }
+      const port = add.port.trim(), identity = add.identity.trim(), options = add.options.trim();
+      const reach = port !== "" ? `${target}:${port}` : target;
+      const host = sshHost(
+        reach,
+        identity !== "" ? some(identity) : none(),
+        options !== "" ? options.split(/\s+/) : []);
       add.busy = true;
       add.error = "";
       render();
       try {
         // Unnamed, the machine is called by its host.
-        const name = add.name.trim() || host.target;
+        const name = add.name.trim() !== "" ? add.name.trim() : reach;
         this.machines = (await rpc("machine.add", { name, host })).machines;
         f.machine = `m:${name}`;
         Object.assign(add, { name: "", target: "", port: "", identity: "", options: "" });

@@ -10,7 +10,7 @@ import { byteToIdx, ENSURE_AFTER, terminalOf } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
-import { DocView } from "./doc.js";
+import { DocView, hiding } from "./doc.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
 
 
@@ -796,7 +796,7 @@ export class Pane {
   // The fold hiding line `li`, with the last line it keeps: {fold, keep}
   // (none: the line shows).
   foldHiding(v, li) {
-    if (v.mode === "compose") return this.doc.hiding(v, li);
+    if (v.mode === "compose") return hiding(v, li);
     return v.folds.filter((f) => li > f.start && li <= f.end).slice(0, 1).map((f) => ({ fold: f, keep: f.start }));
   }
 

@@ -4,7 +4,7 @@
 
 import { rpc, session } from "./rpc.js";
 import { App, loadSettings, loadUserKeys } from "./app.js";
-import { Editing } from "./editing.js";
+import { Editing, selectWord, selectLine, setBlock, toggleFoldAt, wordAt, bracketPair } from "./editing.js";
 import { Terminals } from "./terminal.js";
 import { UIKit } from "./ui.js";
 import { Host } from "./host.js";
@@ -115,13 +115,13 @@ async function main() {
     closeTab: (pane, v) => { app.closeTab(pane, v); },
     run: (id) => { app.run(id, undefined); },
     place: (pane, pos, extend) => { app.editing.place(pane, pos, extend); },
-    selectWord: (pane) => { app.editing.selectWord(pane); },
-    selectLine: (pane) => { app.editing.selectLine(pane); },
-    setBlock: (pane, anchor, head) => { app.editing.setBlock(pane, anchor, head); },
-    toggleFold: (pane, line) => { app.editing.toggleFoldAt(pane, line); },
+    selectWord: (pane) => { selectWord(pane); },
+    selectLine: (pane) => { selectLine(pane); },
+    setBlock: (pane, anchor, head) => { setBlock(pane, anchor, head); },
+    toggleFold: (pane, line) => { toggleFoldAt(pane, line); },
     mountTerminal: (id, box) => { app.terminals.mount(id, box); },
-    wordAt: (buf, pos) => app.editing.wordAt(buf, pos),
-    bracketPair: (buf, pos) => app.editing.bracketPair(buf, pos),
+    wordAt: (buf, pos) => wordAt(buf, pos),
+    bracketPair: (buf, pos) => bracketPair(buf, pos),
   };
   // Editing: say something, apply an edit (as typed, or not), hear that a
   // cursor moved, the auto-close setting, and language server positions.

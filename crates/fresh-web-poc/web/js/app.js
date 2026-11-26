@@ -8,7 +8,7 @@ import { rpc, attempt, session, connectEvents, failure } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
 import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, byteToIdx, ENSURE_AFTER, synced, opsSince } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
-import { put, KEEP } from "./editing.js";
+import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 
@@ -1395,7 +1395,7 @@ export class App {
     const v = this.view();
     if (v === null) return [];
     const sels = v.selections().sort((x, y) => x.start - y.start);
-    const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "") : [this.editing.lineAt(v.buf, v.primary.pos).text + "\n"];
+    const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "") : [lineAt(v.buf, v.primary.pos).text + "\n"];
     if (cut && !v.buf.readOnly) {
       if (sels.length) this.editing.replace(this.activePane, (c) => { const s = sel(c); return s ? put(s.start, s.end, "") : KEEP; });
       else this.editing.deleteLine(this.activePane);
@@ -1618,7 +1618,7 @@ export class App {
       const v = V();
       if (!v) return;
       const sels = v.selections().sort((x, y) => x.start - y.start);
-      const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "").join("\n") : this.editing.lineAt(v.buf, v.primary.pos).text + "\n";
+      const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "").join("\n") : lineAt(v.buf, v.primary.pos).text + "\n";
       const p = this.terminalPane();
       const id = p.shown.flatMap((v) => terminalOf(v.buf.source)).at(0) ?? await this.terminals.create(null, null, null);
       this.showTerminal(id, p);
@@ -1725,18 +1725,18 @@ export class App {
     mv("select.paragraphUp", "Select to Previous Paragraph", () => ed().paragraph(P(), -1, true));
     mv("select.paragraphDown", "Select to Next Paragraph", () => ed().paragraph(P(), 1, true));
     vcmd("cursor.matchingBracket", "Go to Matching Bracket", () => ed().matchingBracket(P()));
-    vcmd("cursor.addAbove", "Add Cursor Above", () => ed().addCursorVertical(P(), -1));
-    vcmd("cursor.addBelow", "Add Cursor Below", () => ed().addCursorVertical(P(), 1));
+    vcmd("cursor.addAbove", "Add Cursor Above", () => addCursorVertical(P(), -1));
+    vcmd("cursor.addBelow", "Add Cursor Below", () => addCursorVertical(P(), 1));
     cmd("select.all", "Select All", () => { const v = V(); if (v) { v.cursors = [selecting(v.buf.len, 0)]; P().scheduleRender(); } });
-    vcmd("select.line", "Select Line", () => ed().selectLine(P()));
+    vcmd("select.line", "Select Line", () => selectLine(P()));
     vcmd("select.nextOccurrence", "Select Next Occurrence", () => ed().selectNextOccurrence(P()));
     vcmd("select.allOccurrences", "Select All Occurrences", () => ed().selectAllOccurrences(P()));
     vcmd("select.expand", "Expand Selection", () => ed().expandSelection(P()));
-    vcmd("select.shrink", "Shrink Selection", () => ed().shrinkSelection(P()));
-    mv("select.blockUp", "Block Select Up", () => ed().blockSelect(P(), -1, 0));
-    mv("select.blockDown", "Block Select Down", () => ed().blockSelect(P(), 1, 0));
-    mv("select.blockLeft", "Block Select Left", () => ed().blockSelect(P(), 0, -1));
-    mv("select.blockRight", "Block Select Right", () => ed().blockSelect(P(), 0, 1));
+    vcmd("select.shrink", "Shrink Selection", () => shrinkSelection(P()));
+    mv("select.blockUp", "Block Select Up", () => blockSelect(P(), -1, 0));
+    mv("select.blockDown", "Block Select Down", () => blockSelect(P(), 1, 0));
+    mv("select.blockLeft", "Block Select Left", () => blockSelect(P(), 0, -1));
+    mv("select.blockRight", "Block Select Right", () => blockSelect(P(), 0, 1));
     // Editing.
     mv("edit.newline", "Newline", mutate(() => ed().newline(P())));
     mv("edit.backspace", "Backspace", mutate(() => ed().backspace(P(), false)));
@@ -1757,14 +1757,14 @@ export class App {
     cmd("edit.trimTrailing", "Trim Trailing Whitespace", mutate(() => ed().trimTrailing(P())));
     cmd("edit.transposeChars", "Transpose Characters", mutate(() => ed().transposeChars(P())));
     cmd("edit.transposeLines", "Transpose Lines", mutate(() => ed().transposeLines(P())));
-    vcmd("fold.toggle", "Toggle Fold", () => ed().toggleFold(P()));
-    vcmd("fold.all", "Fold All", () => ed().foldAll(P()));
-    vcmd("fold.none", "Unfold All", () => ed().unfoldAll(P()));
+    vcmd("fold.toggle", "Toggle Fold", () => toggleFold(P()));
+    vcmd("fold.all", "Fold All", () => foldAll(P()));
+    vcmd("fold.none", "Unfold All", () => unfoldAll(P()));
     // Emacs: mark and kill ring.
     mv("edit.setMark", "Set Mark", () => { const v = V(); v.primary.anchor = v.primary.pos; this.setStatus("Mark set"); });
     mv("edit.killLine", "Kill Line", mutate(() => {
       const v = V();
-      const ln = ed().lineAt(v.buf, v.primary.pos);
+      const ln = lineAt(v.buf, v.primary.pos);
       const end = v.primary.pos === ln.end ? ln.end + 1 : ln.end;
       this.killRing.unshift(v.buf.textRange(v.primary.pos, end) ?? "");
       ed().replace(P(), (c) => (c === v.primary ? { start: c.pos, end, text: "", caret: 0 } : null));

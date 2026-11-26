@@ -104,6 +104,321 @@ function hiddenBy(folds, keeps, li) {
   return i < 0 ? [] : [{ fold: folds[i], keep: keeps[i] }];
 }
 
+// The next line drawn after (dir 1) or before (dir -1) line `k`, past the
+// folds: -1 or L.count at the ends.
+function shownFrom(ctx, k, dir) {
+  while (k >= 0 && k < ctx.L.count) {
+    const h = ctx.hidden(k);
+    if (h.length === 0) break;
+    k = dir > 0 ? h[0].fold.end + 1 : h[0].keep;
+  }
+  return k;
+}
+
+// The block holding line `li`: its node (or none) and its lines.
+function blockAt(ctx, li) {
+  const { L, d } = ctx;
+  const nodes = d.nodesIn(L.starts[li], L.lineEnd(li) + 1).filter((n) => !PART.has(n.type) && applies(n, ctx.mode));
+  // The one starting first (the first of those at one start).
+  for (const best of [...nodes].sort((a, b) => a.start - b.start).slice(0, 1)) {
+    const f = L.indexOf(best.start), l = L.indexOf(best.end);
+    return { node: some(best), first: f < 0 ? 0 : Math.min(f, li), last: l < 0 ? L.count - 1 : Math.max(l, li) };
+  }
+  return { node: NO_NODE, first: li, last: li };
+}
+
+// A block of the document: its Markdown node (none: plain lines) and its
+// first and last line.
+/** type DocBlock = {node: DocNode | Null, first: Number, last: Number} */
+// Its node, as a list of at most one.
+/** function nodeOf(b: DocBlock) => DocNode[] */
+function nodeOf(b) { return listOf(b.node); }
+
+// A height the block surely has at least, from line `from` on: a line
+// draws at least a line height; a code block's fences and a table's
+// delimiter row may draw nothing.
+function atLeastHeight(ctx, blk, lh, from) {
+  for (const node of nodeOf(blk)) {
+    let n = 0;
+    for (let k = from; k <= blk.last; k++) if (ctx.hidden(k).length === 0) n++;
+    if (node.type === "code") n -= 2;
+    if (node.type === "table") n -= 1;
+    return Math.max(0, n) * lh;
+  }
+  return from > blk.last ? 0 : lh;
+}
+
+function vline(x) {
+  const st = cssOf(drawnOf(x.style));
+  return `<div class="vline"${st ? ` style="${st}"` : ""}>${esc(x.text || "")}​</div>`;
+}
+
+function concealHTML(c) {
+  const st = cssOf(drawnOf(c.style));
+  const body = c.text === "\n" ? "<br>" : esc(c.text);
+  return `<span class="cc" data-at="${c.start}" data-e="${c.end}"${st ? ` style="${st}"` : ""}>${body}</span>`;
+}
+
+// hidden(li): the fold hiding line `li` and the last line it keeps
+// ({fold, keep}; none: the line shows).
+function hider(ctx) {
+  const keeps = ctx.v.folds.map((f) => {
+    const sb = blockAt(ctx, f.start);
+    return nodeOf(sb).some((n) => !LINES.has(n.type)) ? Math.max(f.start, sb.last) : f.start;
+  });
+  return (li) => hiddenBy(ctx.v.folds, keeps, li);
+}
+
+// `probe`: only whether there is one (looks no further than needed).
+function foldOf(ctx, blk, probe) {
+  const { L } = ctx;
+  const nodes = nodeOf(blk);
+  if (nodes.length === 0) return NO_FOLD;
+  const n = nodes[0];
+  if (n.type === "code") return blk.last - blk.first >= 3 ? some({ start: blk.first + 1, end: blk.last }) : NO_FOLD;
+  if (n.type === "table") return blk.last - blk.first >= 2 ? some({ start: blk.first, end: blk.last }) : NO_FOLD;
+  // A heading's section runs to the next heading as high; an item or a
+  // quote holds the deeper ones after it. Blank lines in between belong.
+  const child = (b) => n.type === "heading"
+    ? !nodeOf(b).some((x) => x.type === "heading" && x.level <= n.level)
+    : nodeOf(b).some((x) => x.type === n.type && x.depth > n.depth);
+  let end = -1;
+  for (let k = blk.last + 1; k < L.count;) {
+    const b = blockAt(ctx, k);
+    if (nodeOf(b).length === 0 && L.lines[k].trim() === "") { k++; continue; }
+    if (!child(b)) break;
+    end = b.last;
+    k = b.last + 1;
+    if (probe) break;
+  }
+  return end < 0 ? NO_FOLD : some({ start: blk.first, end });
+}
+
+// The HTML of source [a, z): runs of equally styled text as spans, each
+// with its first byte; concealed ranges as their replacement; inline text.
+// A line break inside the range draws as a space (or, concealed with
+// "\n", as a line break). `syn(li)`: syntax spans for a line.
+function walk(ctx, a, z, syn) {
+  const { L, o } = ctx;
+  let out = "", shown = false;
+  let li = L.indexOf(a), b = a;
+  while (li >= 0 && li < L.count && b <= z) {
+    const text = L.lines[li], ls = L.starts[li], le = L.lineEnd(li);
+    const { act, rev, inl } = ctx.lineInfo(li);
+    const spans = syn(li);
+    let run = "", at = 0, key = "", style = "";
+    const flush = () => {
+      if (!run) return;
+      out += `<span data-p="${at}"${style ? ` style="${style}"` : ""}>${esc(run)}</span>`;
+      shown = true;
+      run = "";
+    };
+    const put = (ch, p, st) => {
+      const k = styleKey(st);
+      if (k !== key || !run) { flush(); key = k; style = k === PLAIN ? "" : cssFor(st, k); at = p; }
+      run += ch;
+    };
+    const inline = (p, side) => {
+      for (const t of inl.get(`${p}${side}`) ?? []) {
+        flush();
+        const st = cssOf(drawnOf(t.style));
+        out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${esc(t.text)}</span>`;
+      }
+    };
+    const styleAt = (p, idx) => {
+      let st = o.decoStyle(p, li, synAt(spans, idx));
+      for (const c of rev) if (p >= c.start && p < c.end) { st = asMarkup(st); break; }
+      return st;
+    };
+    let ci = 0;
+    const concealAt = (p) => {
+      while (ci < act.length && act[ci].end <= p) ci++;
+      return ci < act.length && act[ci].start <= p ? act[ci] : null;
+    };
+    let i = byteToIdx(text, b - ls);
+    let jumped = false;
+    const stop = Math.min(z, le);
+    while (b < stop) {
+      inline(b, "b");
+      const c = concealAt(b);
+      if (c) {
+        flush();
+        out += concealHTML(c);
+        if (c.text) shown = true;
+        b = c.end;
+        if (b > le) { jumped = true; break; }
+        i = byteToIdx(text, b - ls);
+        continue;
+      }
+      const cp = text.codePointAt(i);
+      const ch = String.fromCodePoint(cp);
+      put(ch, b, styleAt(b, i));
+      inline(b, "a");
+      b += byteLen(ch);
+      i += ch.length;
+    }
+    if (jumped) { flush(); li = L.indexOf(b); continue; }
+    if (b === le) {
+      inline(le, "b");
+      inline(le, "a");
+      if (z > le && L.hasNewline(li)) {
+        // The line break inside a joined block.
+        const c = concealAt(le);
+        if (c) {
+          flush();
+          out += concealHTML(c);
+          if (c.text) shown = true;
+          b = c.end;
+          li = L.indexOf(b);
+          continue;
+        }
+        put(" ", le, styleAt(le, i));
+      }
+    }
+    flush();
+    b = le + 1;
+    li++;
+  }
+  return { html: out, shown };
+}
+
+// What drawing needs for the whole frame: decorations by line, styles.
+function context(v) {
+  const buf = v.buf;
+  const L = buf.held;
+  const d = buf.decor;
+  const cursors = v.cursors.map((c) => c.pos);
+  const o = v.pane.layoutOpts(v, 0);
+  const vlines = noLines();
+  for (const x of d.lines) {
+    if (!applies(x, v.mode)) continue;
+    const i = L.indexOf(x.pos);
+    if (i >= 0) vlines.set(i, [...(vlines.get(i) ?? []), x]);
+  }
+  const lineCache = new Map();
+  // A line's active conceals (sorted, the longest first at one start),
+  // the revealed ones (drawn dim) and its inline texts by position.
+  const lineInfo = (li) => {
+    let x = lineCache.get(li);
+    if (x) return x;
+    const ls = L.starts[li], le = L.lineEnd(li);
+    const act = [], rev = [];
+    for (const c of d.concealsIn(ls, le + 1)) {
+      if (c.end <= c.start || !applies(c, v.mode)) continue;
+      if (c.reveal && cursorIn(cursors, c.reveal)) rev.push(c);
+      else act.push(c);
+    }
+    act.sort((a, b) => a.start - b.start || b.end - a.end);
+    const inl = noInlines();
+    for (const t of d.inlinesIn(ls, le + 1)) {
+      if (!applies(t, v.mode) || t.pos < ls || t.pos > le) continue;
+      const k = `${t.pos}${t.side === "after" ? "a" : "b"}`;
+      inl.set(k, [...(inl.get(k) ?? []), t]);
+    }
+    x = { act, rev, inl };
+    lineCache.set(li, x);
+    return x;
+  };
+  // The folds hide lines by the blocks they fold, which takes only the
+  // view, its text and its decorations (as `hiding` asks).
+  const base = { v, L, d, mode: v.mode };
+  const hidden = hider(base);
+  return { base, v, L, d, o, cursors, vlines, lineInfo, mode: v.mode, hidden };
+}
+
+// The fold hiding line `li` of view `v`, as `hidden` gives it.
+export function hiding(v, li) {
+  return hider({ v, L: v.buf.held, d: v.buf.decor, mode: v.mode })(li);
+}
+
+// The fold the block holding line `li` offers: {start, end} lines, or null.
+export function foldRange(v, li) {
+  const ctx = { v, L: v.buf.held, d: v.buf.decor, mode: v.mode };
+  return foldOf(ctx, blockAt(ctx, li), false);
+}
+
+// A table block `blk` of node `n`; `tog`: its fold toggle.
+function tableHTML(ctx, blk, n, tog) {
+  const { L, d } = ctx;
+  const parts = d.nodesIn(n.start, n.end + 1).filter((x) => PART.has(x.type) && applies(x, ctx.mode));
+  const rows = noNodeAt(), cells = noNodesAt();
+  for (const x of parts) {
+    const li = L.indexOf(x.start);
+    if (x.type === "row") rows.set(li, x);
+    else cells.set(li, [...(cells.get(li) ?? []), x]);
+  }
+  let ncol = 1;
+  for (const list of cells.values()) { list.sort((a, b) => a.start - b.start); ncol = Math.max(ncol, list.length); }
+  let html = `<table class="doc-table"><tbody>`;
+  for (let k = blk.first; k <= blk.last; k++) {
+    if (ctx.hidden(k).length > 0) continue;
+    const ls = L.starts[k], le = L.lineEnd(k);
+    const list = cells.get(k) ?? [];
+    // The fold toggle sits in the first cell drawn, placed by the table.
+    const t = tog;
+    tog = "";
+    if (!list.length) {
+      // A row without cells (the delimiter row): its text across the table.
+      const r = walk(ctx, ls, le, NO_SYNTAX);
+      if (!r.shown && L.lines[k] !== "") continue;
+      html += `<tr class="raw"><td class="l" colspan="${ncol}">${t}${r.html}${r.shown ? "" : anchor(le)}</td></tr>`;
+      continue;
+    }
+    const tag = rows.get(k)?.header ? "th" : "td";
+    html += "<tr>";
+    list.forEach((c, i) => {
+      const a = i === 0 ? ls : c.start, z = i + 1 < list.length ? list[i + 1].start : le;
+      const r = walk(ctx, a, z, NO_SYNTAX);
+      const al = n.align.at(i) ?? null;
+      html += `<${tag} class="l"${al ? ` style="text-align:${al}"` : ""}>${i === 0 ? t : ""}${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
+    });
+    for (let i = list.length; i < ncol; i++) html += `<${tag}></${tag}>`;
+    html += "</tr>";
+  }
+  return html + "</tbody></table>";
+}
+
+function blockHTML(ctx, blk) {
+  const { L } = ctx;
+  const nodes = nodeOf(blk);
+  const ls = L.starts[blk.first], le = L.lineEnd(blk.last);
+  // The fold toggle (shown on hover, or while folded) and, while folded,
+  // an ellipsis where the hidden part was.
+  const folded = ctx.v.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
+  const tog = folded || foldOf(ctx.base, blk, true) !== null ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
+  const more = folded ? `<span class="doc-more" data-fold="${blk.first}">⋯</span>` : "";
+  const joined = () => { const r = walk(ctx, ls, le, NO_SYNTAX); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
+  if (nodes.length === 0) return `<p class="l">${joined()}</p>`;
+  const n = nodes[0];
+  const type = n.type;
+  if (type === "heading") {
+    const lv = Math.max(1, Math.min(6, n.level || 1));
+    return `<h${lv} class="l">${joined()}</h${lv}>`;
+  }
+  if (type === "item") {
+    const m = n.marker || "•";
+    const cls = m === "☑" ? " done" : m === "☐" ? " todo" : /\d/.test(m) ? " num" : "";
+    return `<div class="doc-li" style="--depth:${n.depth || 0}"><div class="l"><span class="mk${cls}">${esc(m)}</span>${joined()}</div></div>`;
+  }
+  if (type === "quote") return `<blockquote class="l" style="--depth:${n.depth || 1}">${joined()}</blockquote>`;
+  if (type === "rule") return `<div class="doc-hr l">${joined()}</div>`;
+  if (type === "code") {
+      const lang = fenceLanguage(n.lang);
+      const syn = lang ? (li) => spansFor(lang, L.lines[li]) : NO_SYNTAX;
+      let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>${tog}`;
+      for (let k = blk.first; k <= blk.last; k++) {
+        if (ctx.hidden(k).length > 0) continue;
+        const r = walk(ctx, L.starts[k], L.lineEnd(k), syn);
+        // A line whose text is all concealed draws nothing.
+        if (!r.shown && L.lines[k] !== "") continue;
+        html += `<div class="ln l">${r.html}${r.shown ? "" : anchor(L.lineEnd(k))}</div>`;
+      }
+      return html + (folded ? `<div class="ln">${more}</div>` : "") + "</div>";
+  }
+  if (type === "table") return tableHTML(ctx, blk, n, tog);
+  return `<p class="l">${joined()}</p>`;
+}
+
 export class DocView {
   constructor() {
     this.el = document.createElement("div");
@@ -143,7 +458,7 @@ export class DocView {
     const room = (pane.size.w || pane.surfaceEl.clientWidth) - 12 - 2 * FOLD_MARGIN;
     const w = `${Math.max(10 * cw, Math.min(g.width * cw, room))}px`;
     if (this.content.style.width !== w) this.content.style.width = w;
-    const ctx = this.context(v);
+    const ctx = context(v);
     // A frame is normally one pass; a jump (keeping a far cursor in view)
     // or an offset beyond what was drawn takes another, from the new top.
     let last;
@@ -161,130 +476,6 @@ export class DocView {
     if (this.caretsHtml !== html) { this.caretsEl.innerHTML = html; this.caretsHtml = html; }
   }
 
-  // What drawing needs for the whole frame: decorations by line, styles.
-  context(v) {
-    const buf = v.buf;
-    const L = buf.held;
-    const d = buf.decor;
-    const cursors = v.cursors.map((c) => c.pos);
-    const o = v.pane.layoutOpts(v, 0);
-    const vlines = noLines();
-    for (const x of d.lines) {
-      if (!applies(x, v.mode)) continue;
-      const i = L.indexOf(x.pos);
-      if (i >= 0) vlines.set(i, [...(vlines.get(i) ?? []), x]);
-    }
-    const lineCache = new Map();
-    // A line's active conceals (sorted, the longest first at one start),
-    // the revealed ones (drawn dim) and its inline texts by position.
-    const lineInfo = (li) => {
-      let x = lineCache.get(li);
-      if (x) return x;
-      const ls = L.starts[li], le = L.lineEnd(li);
-      const act = [], rev = [];
-      for (const c of d.concealsIn(ls, le + 1)) {
-        if (c.end <= c.start || !applies(c, v.mode)) continue;
-        if (c.reveal && cursorIn(cursors, c.reveal)) rev.push(c);
-        else act.push(c);
-      }
-      act.sort((a, b) => a.start - b.start || b.end - a.end);
-      const inl = noInlines();
-      for (const t of d.inlinesIn(ls, le + 1)) {
-        if (!applies(t, v.mode) || t.pos < ls || t.pos > le) continue;
-        const k = `${t.pos}${t.side === "after" ? "a" : "b"}`;
-        inl.set(k, [...(inl.get(k) ?? []), t]);
-      }
-      x = { act, rev, inl };
-      lineCache.set(li, x);
-      return x;
-    };
-    // The folds hide lines by the blocks they fold, which takes only the
-    // view, its text and its decorations (as `hiding` asks).
-    const base = { v, L, d, mode: v.mode };
-    const hidden = this.hider(base);
-    return { base, v, L, d, o, cursors, vlines, lineInfo, mode: v.mode, hidden };
-  }
-
-  // hidden(li): the fold hiding line `li` and the last line it keeps
-  // ({fold, keep}; none: the line shows).
-  hider(ctx) {
-    const keeps = ctx.v.folds.map((f) => {
-      const sb = this.blockAt(ctx, f.start);
-      return sb.node && !LINES.has(sb.node.type) ? Math.max(f.start, sb.last) : f.start;
-    });
-    return (li) => hiddenBy(ctx.v.folds, keeps, li);
-  }
-
-  // The fold hiding line `li` of view `v`, as `hidden` gives it.
-  hiding(v, li) {
-    return this.hider({ v, L: v.buf.held, d: v.buf.decor, mode: v.mode })(li);
-  }
-
-  // The fold the block holding line `li` offers: {start, end} lines, or null.
-  foldRange(v, li) {
-    const ctx = { v, L: v.buf.held, d: v.buf.decor, mode: v.mode };
-    return this.foldOf(ctx, this.blockAt(ctx, li), false);
-  }
-
-  // `probe`: only whether there is one (looks no further than needed).
-  foldOf(ctx, blk, probe) {
-    const { L } = ctx;
-    const n = blk.node;
-    if (n === null) return NO_FOLD;
-    if (n.type === "code") return blk.last - blk.first >= 3 ? some({ start: blk.first + 1, end: blk.last }) : NO_FOLD;
-    if (n.type === "table") return blk.last - blk.first >= 2 ? some({ start: blk.first, end: blk.last }) : NO_FOLD;
-    // A heading's section runs to the next heading as high; an item or a
-    // quote holds the deeper ones after it. Blank lines in between belong.
-    const child = (b) => n.type === "heading"
-      ? !(b.node?.type === "heading" && b.node.level <= n.level)
-      : b.node?.type === n.type && (b.node.depth ?? 0) > (n.depth ?? 0);
-    let end = -1;
-    for (let k = blk.last + 1; k < L.count;) {
-      const b = this.blockAt(ctx, k);
-      if (!b.node && L.lines[k].trim() === "") { k++; continue; }
-      if (!child(b)) break;
-      end = b.last;
-      k = b.last + 1;
-      if (probe) break;
-    }
-    return end < 0 ? NO_FOLD : some({ start: blk.first, end });
-  }
-
-  // The next line drawn after (dir 1) or before (dir -1) line `k`, past the
-  // folds: -1 or L.count at the ends.
-  shownFrom(ctx, k, dir) {
-    while (k >= 0 && k < ctx.L.count) {
-      const h = ctx.hidden(k);
-      if (h.length === 0) break;
-      k = dir > 0 ? h[0].fold.end + 1 : h[0].keep;
-    }
-    return k;
-  }
-
-  // The block holding line `li`: its node (or none) and its lines.
-  blockAt(ctx, li) {
-    const { L, d } = ctx;
-    const nodes = d.nodesIn(L.starts[li], L.lineEnd(li) + 1).filter((n) => !PART.has(n.type) && applies(n, ctx.mode));
-    // The one starting first (the first of those at one start).
-    for (const best of [...nodes].sort((a, b) => a.start - b.start).slice(0, 1)) {
-      const f = L.indexOf(best.start), l = L.indexOf(best.end);
-      return { node: some(best), first: f < 0 ? 0 : Math.min(f, li), last: l < 0 ? L.count - 1 : Math.max(l, li) };
-    }
-    return { node: NO_NODE, first: li, last: li };
-  }
-
-  // A height the block surely has at least, from line `from` on: a line
-  // draws at least a line height; a code block's fences and a table's
-  // delimiter row may draw nothing.
-  low(ctx, blk, lh, from) {
-    if (!blk.node) return from > blk.last ? 0 : lh;
-    let n = 0;
-    for (let k = from; k <= blk.last; k++) if (ctx.hidden(k).length === 0) n++;
-    if (blk.node.type === "code") n -= 2;
-    if (blk.node.type === "table") n -= 1;
-    return Math.max(0, n) * lh;
-  }
-
   pass(v, ctx, lh) {
     const { L } = ctx;
     const h = v.pane.size.h > 0 ? v.pane.size.h : v.pane.surfaceEl.clientHeight;
@@ -292,20 +483,20 @@ export class DocView {
     const ti = L.indexOf(v.top);
     // The blocks to draw: one above the top's block (more when the offset
     // is negative), and down to what surely fills the view.
-    const top = this.blockAt(ctx.base, ti);
+    const top = blockAt(ctx.base, ti);
     const blocks = [top];
     let cur = top, above = 0;
-    for (let k; (k = this.shownFrom(ctx, cur.first - 1, -1)) >= 0 && (blocks.length === 1 || above < -v.topPx);) {
-      cur = this.blockAt(ctx.base, k);
+    for (let k; (k = shownFrom(ctx, cur.first - 1, -1)) >= 0 && (blocks.length === 1 || above < -v.topPx);) {
+      cur = blockAt(ctx.base, k);
       blocks.unshift(cur);
-      above += this.low(ctx, cur, lh, cur.first);
+      above += atLeastHeight(ctx, cur, lh, cur.first);
     }
-    let below = this.low(ctx, top, lh, ti);
+    let below = atLeastHeight(ctx, top, lh, ti);
     cur = top;
-    for (let k; below < h + Math.max(0, v.topPx) + lh && (k = this.shownFrom(ctx, cur.last + 1, 1)) < L.count;) {
-      cur = this.blockAt(ctx.base, k);
+    for (let k; below < h + Math.max(0, v.topPx) + lh && (k = shownFrom(ctx, cur.last + 1, 1)) < L.count;) {
+      cur = blockAt(ctx.base, k);
       blocks.push(cur);
-      below += this.low(ctx, cur, lh, cur.first);
+      below += atLeastHeight(ctx, cur, lh, cur.first);
     }
 
     // Write: each block's HTML, its element reused while that is unchanged.
@@ -313,11 +504,11 @@ export class DocView {
     const drawn = [];
     const blockEls = [];
     for (const blk of blocks) {
-      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (x.above) drawn.push(take(pool, this.vline(x)));
-      const b = take(pool, this.blockHTML(ctx, blk));
+      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (x.above) drawn.push(take(pool, vline(x)));
+      const b = take(pool, blockHTML(ctx, blk));
       blockEls.push(b.el);
       drawn.push(b);
-      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (!x.above) drawn.push(take(pool, this.vline(x)));
+      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (!x.above) drawn.push(take(pool, vline(x)));
     }
     if (!sameDrawn(drawn, this.drawn)) this.body.replaceChildren(...drawn.map((d) => d.el));
     this.drawn = drawn;
@@ -356,7 +547,7 @@ export class DocView {
     }
     this.lineY = lineY;
     const yOf = (li) => yAt.get(li) ?? 0;
-    const atEnd = this.shownFrom(ctx, lastLine + 1, 1) >= L.count;
+    const atEnd = shownFrom(ctx, lastLine + 1, 1) >= L.count;
     const bottom = this.body.getBoundingClientRect().bottom - y0;
 
     // The scroll position, kept on the primary cursor when asked.
@@ -404,187 +595,7 @@ export class DocView {
     return { again, carets };
   }
 
-  vline(x) {
-    const st = cssOf(drawnOf(x.style));
-    return `<div class="vline"${st ? ` style="${st}"` : ""}>${esc(x.text || "")}​</div>`;
-  }
-
   // ---------------------------------------------------------------- blocks
-
-  blockHTML(ctx, blk) {
-    const { L } = ctx;
-    const n = blk.node;
-    const ls = L.starts[blk.first], le = L.lineEnd(blk.last);
-    // The fold toggle (shown on hover, or while folded) and, while folded,
-    // an ellipsis where the hidden part was.
-    const folded = ctx.v.folds.some((f) => f.start >= blk.first && f.start <= blk.last);
-    const tog = folded || this.foldOf(ctx.base, blk, true) !== null ? `<span class="doc-fold${folded ? " folded" : ""}" data-fold="${blk.first}">${folded ? "▸" : "▾"}</span>` : "";
-    const more = folded ? `<span class="doc-more" data-fold="${blk.first}">⋯</span>` : "";
-    const joined = () => { const r = this.walk(ctx, ls, le, NO_SYNTAX); return tog + r.html + (r.shown ? "" : anchor(le)) + more; };
-    if (n === null) return `<p class="l">${joined()}</p>`;
-    const type = n.type;
-    if (type === "heading") {
-      const lv = Math.max(1, Math.min(6, n.level || 1));
-      return `<h${lv} class="l">${joined()}</h${lv}>`;
-    }
-    if (type === "item") {
-      const m = n.marker || "•";
-      const cls = m === "☑" ? " done" : m === "☐" ? " todo" : /\d/.test(m) ? " num" : "";
-      return `<div class="doc-li" style="--depth:${n.depth || 0}"><div class="l"><span class="mk${cls}">${esc(m)}</span>${joined()}</div></div>`;
-    }
-    if (type === "quote") return `<blockquote class="l" style="--depth:${n.depth || 1}">${joined()}</blockquote>`;
-    if (type === "rule") return `<div class="doc-hr l">${joined()}</div>`;
-    if (type === "code") {
-        const lang = fenceLanguage(n.lang);
-        const syn = lang ? (li) => spansFor(lang, L.lines[li]) : NO_SYNTAX;
-        let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>${tog}`;
-        for (let k = blk.first; k <= blk.last; k++) {
-          if (ctx.hidden(k).length > 0) continue;
-          const r = this.walk(ctx, L.starts[k], L.lineEnd(k), syn);
-          // A line whose text is all concealed draws nothing.
-          if (!r.shown && L.lines[k] !== "") continue;
-          html += `<div class="ln l">${r.html}${r.shown ? "" : anchor(L.lineEnd(k))}</div>`;
-        }
-        return html + (folded ? `<div class="ln">${more}</div>` : "") + "</div>";
-    }
-    if (type === "table") return this.tableHTML(ctx, blk, n, tog);
-    return `<p class="l">${joined()}</p>`;
-  }
-
-  // A table block `blk` of node `n`; `tog`: its fold toggle.
-  tableHTML(ctx, blk, n, tog) {
-    const { L, d } = ctx;
-    const parts = d.nodesIn(n.start, n.end + 1).filter((x) => PART.has(x.type) && applies(x, ctx.mode));
-    const rows = noNodeAt(), cells = noNodesAt();
-    for (const x of parts) {
-      const li = L.indexOf(x.start);
-      if (x.type === "row") rows.set(li, x);
-      else cells.set(li, [...(cells.get(li) ?? []), x]);
-    }
-    let ncol = 1;
-    for (const list of cells.values()) { list.sort((a, b) => a.start - b.start); ncol = Math.max(ncol, list.length); }
-    let html = `<table class="doc-table"><tbody>`;
-    for (let k = blk.first; k <= blk.last; k++) {
-      if (ctx.hidden(k).length > 0) continue;
-      const ls = L.starts[k], le = L.lineEnd(k);
-      const list = cells.get(k) ?? [];
-      // The fold toggle sits in the first cell drawn, placed by the table.
-      const t = tog;
-      tog = "";
-      if (!list.length) {
-        // A row without cells (the delimiter row): its text across the table.
-        const r = this.walk(ctx, ls, le, NO_SYNTAX);
-        if (!r.shown && L.lines[k] !== "") continue;
-        html += `<tr class="raw"><td class="l" colspan="${ncol}">${t}${r.html}${r.shown ? "" : anchor(le)}</td></tr>`;
-        continue;
-      }
-      const tag = rows.get(k)?.header ? "th" : "td";
-      html += "<tr>";
-      list.forEach((c, i) => {
-        const a = i === 0 ? ls : c.start, z = i + 1 < list.length ? list[i + 1].start : le;
-        const r = this.walk(ctx, a, z, NO_SYNTAX);
-        const al = n.align.at(i) ?? null;
-        html += `<${tag} class="l"${al ? ` style="text-align:${al}"` : ""}>${i === 0 ? t : ""}${r.html}${r.shown ? "" : anchor(z)}</${tag}>`;
-      });
-      for (let i = list.length; i < ncol; i++) html += `<${tag}></${tag}>`;
-      html += "</tr>";
-    }
-    return html + "</tbody></table>";
-  }
-
-  // The HTML of source [a, z): runs of equally styled text as spans, each
-  // with its first byte; concealed ranges as their replacement; inline text.
-  // A line break inside the range draws as a space (or, concealed with
-  // "\n", as a line break). `syn(li)`: syntax spans for a line.
-  walk(ctx, a, z, syn) {
-    const { L, o } = ctx;
-    let out = "", shown = false;
-    let li = L.indexOf(a), b = a;
-    while (li >= 0 && li < L.count && b <= z) {
-      const text = L.lines[li], ls = L.starts[li], le = L.lineEnd(li);
-      const { act, rev, inl } = ctx.lineInfo(li);
-      const spans = syn(li);
-      let run = "", at = 0, key = "", style = "";
-      const flush = () => {
-        if (!run) return;
-        out += `<span data-p="${at}"${style ? ` style="${style}"` : ""}>${esc(run)}</span>`;
-        shown = true;
-        run = "";
-      };
-      const put = (ch, p, st) => {
-        const k = styleKey(st);
-        if (k !== key || !run) { flush(); key = k; style = k === PLAIN ? "" : cssFor(st, k); at = p; }
-        run += ch;
-      };
-      const inline = (p, side) => {
-        for (const t of inl.get(`${p}${side}`) ?? []) {
-          flush();
-          const st = cssOf(drawnOf(t.style));
-          out += `<span class="vt${t.edge ? " edge" : ""}"${st ? ` style="${st}"` : ""}>${esc(t.text)}</span>`;
-        }
-      };
-      const styleAt = (p, idx) => {
-        let st = o.decoStyle(p, li, synAt(spans, idx));
-        for (const c of rev) if (p >= c.start && p < c.end) { st = asMarkup(st); break; }
-        return st;
-      };
-      let ci = 0;
-      const concealAt = (p) => {
-        while (ci < act.length && act[ci].end <= p) ci++;
-        return ci < act.length && act[ci].start <= p ? act[ci] : null;
-      };
-      let i = byteToIdx(text, b - ls);
-      let jumped = false;
-      const stop = Math.min(z, le);
-      while (b < stop) {
-        inline(b, "b");
-        const c = concealAt(b);
-        if (c) {
-          flush();
-          out += this.concealHTML(c);
-          if (c.text) shown = true;
-          b = c.end;
-          if (b > le) { jumped = true; break; }
-          i = byteToIdx(text, b - ls);
-          continue;
-        }
-        const cp = text.codePointAt(i);
-        const ch = String.fromCodePoint(cp);
-        put(ch, b, styleAt(b, i));
-        inline(b, "a");
-        b += byteLen(ch);
-        i += ch.length;
-      }
-      if (jumped) { flush(); li = L.indexOf(b); continue; }
-      if (b === le) {
-        inline(le, "b");
-        inline(le, "a");
-        if (z > le && L.hasNewline(li)) {
-          // The line break inside a joined block.
-          const c = concealAt(le);
-          if (c) {
-            flush();
-            out += this.concealHTML(c);
-            if (c.text) shown = true;
-            b = c.end;
-            li = L.indexOf(b);
-            continue;
-          }
-          put(" ", le, styleAt(le, i));
-        }
-      }
-      flush();
-      b = le + 1;
-      li++;
-    }
-    return { html: out, shown };
-  }
-
-  concealHTML(c) {
-    const st = cssOf(drawnOf(c.style));
-    const body = c.text === "\n" ? "<br>" : esc(c.text);
-    return `<span class="cc" data-at="${c.start}" data-e="${c.end}"${st ? ` style="${st}"` : ""}>${body}</span>`;
-  }
 
   // ---------------------------------------------------------------- bytes and points
 

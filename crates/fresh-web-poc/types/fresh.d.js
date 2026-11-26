@@ -434,6 +434,14 @@
  *   attention: String | Null,
  * } */
 /** type Worktree = {repo: String, branch: String} */
+// A machine a workspace is on (src/authority.rs HostSpec): this one,
+// another over ssh (with an identity file and more ssh options), a
+// container, or the remote agent here.
+/** type HostSpec =
+ *   | {kind: "local"}
+ *   | {kind: "ssh", target: String, identity: String | Null, options: String[]}
+ *   | {kind: "container", id: String}
+ *   | {kind: "agent"} */
 /** type WorkspaceEntry = {
  *   id: Number,
  *   name: String,
