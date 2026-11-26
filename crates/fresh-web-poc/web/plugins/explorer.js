@@ -322,6 +322,9 @@ export function activate(app) {
     if (clip.kind === "cut") clip = NO_CLIP;
     render();
   };
+  // A key pressed in the tree, with the selected row (none in an empty
+  // tree).
+  /** const key: (DomEvent<El>, Row | Undefined) => Undefined */
   const key = (e, r) => {
     const k = (e.ctrlKey ? "C-" : "") + e.key;
     const keys = new Map([

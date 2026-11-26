@@ -364,7 +364,7 @@ export function activate(app) {
         ui.button({ ...ui.BUTTON, title: "Previous (Shift+Enter)", onClick: () => { go(-1); } }, "↑"),
         ui.button({ ...ui.BUTTON, title: "Next (Enter)", onClick: () => { go(1); } }, "↓"),
         ui.button({ ...ui.BUTTON, title: "Toggle replace", onClick: () => { showReplace = !showReplace; renderBar(); } }, "⇄"),
-        ui.button({ ...ui.BUTTON, title: "Close (Esc)", onClick: close }, "×"),
+        ui.button({ ...ui.BUTTON, title: "Close (Esc)", onClick: () => { close(); } }, "×"),
       ]),
       ...(showReplace ? [ui.row(ui.BOX, [
         ui.input({
@@ -379,7 +379,7 @@ export function activate(app) {
         }),
         ui.toggle({ ...ui.TOGGLE, key: "ask", on: confirmEach, title: "Ask at each match (Query Replace): y, n, a, q", onChange: (on) => { confirmEach = on; renderBar(); } }, "?"),
         ui.button({ ...ui.BUTTON, onClick: () => (confirmEach ? startAsking() : replaceOne()), disabled: !!q }, confirmEach ? "Replace…" : "Replace"),
-        ui.button({ ...ui.BUTTON, onClick: replaceAll, disabled: !matches.length || !!q }, "Replace All"),
+        ui.button({ ...ui.BUTTON, onClick: () => { replaceAll(); }, disabled: !matches.length || !!q }, "Replace All"),
       ])] : []),
       ...(q ? [ui.row({ ...ui.BOX, class: "search-ask" }, [
         ui.text(ui.TEXT, `Replace with “${shown}”?`),
@@ -562,7 +562,7 @@ export function activate(app) {
         }),
         ...toggles(() => { update(); runSearch(); }),
         ui.input({ ...ui.INPUT, key: "r", value: pq.replace, placeholder: "Replace with", grow: true, onInput: (r) => { pq.replace = r; } }),
-        ui.button({ ...ui.BUTTON, onClick: replaceEverywhere, disabled: !pq.results.length }, "Replace All"),
+        ui.button({ ...ui.BUTTON, onClick: () => { replaceEverywhere(); }, disabled: !pq.results.length }, "Replace All"),
         ui.text({ ...ui.TEXT, dim: true }, status),
       ]),
       ui.list({

@@ -84,7 +84,7 @@ export function activate(app) {
       ui.text({ ...ui.TEXT, bold: true }, label(s)),
       ui.markdown(s.description || ""),
       ui.list({
-        ...ui.listProps("steps", tour.steps.map((x, i) => ({ ...x, i })), (x) => ui.text({ ...ui.TEXT, mono: true }, `${x.i + 1}. ${label(x)}`)),
+        ...ui.listProps("steps", tour.steps.map((step, i) => ({ step, i })), (x) => ui.text({ ...ui.TEXT, mono: true }, `${x.i + 1}. ${label(x.step)}`)),
         selected: [step],
         onActivate: (x) => go(x.i),
         activateOnClick: true,

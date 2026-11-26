@@ -64,7 +64,7 @@ export function activate(app) {
         ])),
         selected: [selected],
         onSelect: (_r, i) => { selected = i; },
-        onActivate: record,
+        onActivate: (r) => { record(r); },
         onKey: (e, r) => { if (e.key === "Delete") { e.preventDefault(); for (const x of r) remove(x); } },
       }),
     ]));

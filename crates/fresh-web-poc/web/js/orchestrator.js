@@ -809,7 +809,7 @@ export class Orchestrator {
             ]);
           }),
           class: "wb-list",
-          onActivate: (it) => { if (it !== undefined && it.kind === "ws") this.switchTo(it.w.id); },
+          onActivate: (it) => { if (it.kind === "ws") this.switchTo(it.w.id); },
         }),
 ]));
       } else {
@@ -913,7 +913,7 @@ export class Orchestrator {
         st.sessions
           ? ui.text({ ...ui.TEXT, dim: true }, list.length ? `${plural(list.length, "session")} of Claude Code and Codex, newest first · Enter opens New Workspace to resume it` : "No Claude Code or Codex sessions on this machine")
           : ui.text({ ...ui.TEXT, dim: true }, "Finds Claude Code (~/.claude/projects) and Codex (~/.codex/sessions) sessions on the machine."),
-        ui.list({ ...ui.listProps("sessions", list, row), class: "orch-import-list", onActivate: open }),
+        ui.list({ ...ui.listProps("sessions", list, row), class: "orch-import-list", onActivate: (x) => { open(x); } }),
       ]));
     };
     render();
@@ -1098,7 +1098,7 @@ export class Orchestrator {
       const rows = [];
       const walk = (path, depth) => {
         for (const d of browse.dirs.get(path) ?? []) {
-          rows.push({ name: d.name, path: d.path, depth, open: browse.open.has(d.path) });
+          rows.push({ name: d.name, path: d.path, depth, open: browse.open.has(d.path), up: false });
           if (browse.open.has(d.path)) walk(d.path, depth + 1);
         }
       };
@@ -1161,7 +1161,7 @@ export class Orchestrator {
           if (t.startsWith("/") || t.startsWith("~")) browse.timer = setTimeout(() => { load(t, true); }, 300);
           else render();
         },
-        onEnter: choose,
+        onEnter: () => { choose(); },
       }),
       ui.text({ ...ui.TEXT, dim: true }, browse.error || browse.base),
       ui.list({
@@ -1179,7 +1179,7 @@ export class Orchestrator {
         ui.text({ ...ui.TEXT, dim: true }, `Selected: ${browse.sel || browse.base}`),
         ui.spacer(),
         ui.button({ ...ui.BUTTON, onClick: () => { browse.shown = false; render(); } }, "Cancel"),
-        ui.button({ ...ui.BUTTON, primary: true, onClick: choose }, "Choose"),
+        ui.button({ ...ui.BUTTON, primary: true, onClick: () => { choose(); } }, "Choose"),
       ]),
     ]);
     const render = () => {
