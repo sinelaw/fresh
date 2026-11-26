@@ -124,22 +124,25 @@ async function changeWorkspace(say, change) {
   try { await rpc("workspace.set", change); } catch (e) { say(`Not changed: ${String(e)}`); }
 }
 
-// A command the orchestrator adds, its action as the command table holds it.
-// The inbox's rows: a column's heading, or a workspace.
 // The New Workspace form's fields: the agent (or "terminal"), the prompt
 // (a terminal's command), the machine, the folder, how git is used, the
 // name, an imported session's resume command, and whether it is being
 // launched and why that failed.
 /** type NewWorkspaceForm = {agent: String, prompt: String, machine: String, root: String, git: String, name: String, resume: String, busy: Boolean, error: String} */
-/** type BoardItem = {kind: "header", label: String} | {kind: "ws", w: WorkspaceEntry} */
+
+// The inbox's rows: a column's heading, or a workspace (`header`: what
+// the list draws as a heading and the arrow keys pass over).
+/** type BoardItem = {kind: "header", header: true, label: String} | {kind: "ws", header: false, w: WorkspaceEntry} */
 /** function headerItem(label: String) => BoardItem */
-function headerItem(label) { return { kind: "header", label }; }
+function headerItem(label) { return { kind: "header", header: true, label }; }
 /** function wsItem(w: WorkspaceEntry) => BoardItem */
-function wsItem(w) { return { kind: "ws", w }; }
+function wsItem(w) { return { kind: "ws", header: false, w }; }
 
 // Workspace `id` of `list` (a list of at most one).
 /** function workspaceIn(list: WorkspaceEntry[], id: Number | Null) => WorkspaceEntry[] */
 function workspaceIn(list, id) { return list.filter((w) => w.id === id).slice(0, 1); }
+
+// A command the orchestrator adds, its action as the command table holds it.
 function orchestratorCommand(id, title, run) { return { id, title, run: asCommand(run) }; }
 
 // Where a menu opened from the keyboard on `list` goes: under its
