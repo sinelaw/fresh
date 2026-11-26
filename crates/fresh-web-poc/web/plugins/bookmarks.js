@@ -5,6 +5,7 @@
 // place it was set at is opened instead. Bookmarks: List picks one.
 
 import * as fresh from "../js/api.js";
+import { listOf } from "../js/api.js";
 
 // A bookmark as it was set: its file and place (for when the file is
 // closed), and where it is now in an open buffer (by id).
@@ -60,11 +61,10 @@ export function activate(app) {
     }
     const m = marks.get(n);
     if (!m) { fresh.message(app, `No bookmark ${n}`); return; }
-    const b = await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview: null, focus: true });
-    if (!b) return;
-    set(n)(b).gutter(m.pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
-    const v = fresh.activeView(app);
-    if (v) await v.setCursor(Math.min(m.pos, b.length()), { center: true });
+    for (const b of listOf(await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview: null, focus: true }))) {
+      set(n)(b).gutter(m.pos, { glyph: String(n), color: "ui.accent_fg", title: `Bookmark ${n}` });
+      for (const v of listOf(fresh.activeView(app))) await v.setCursor(Math.min(m.pos, b.length()), { center: true });
+    }
   };
   for (let n = 0; n <= 9; n++) {
     fresh.register(app, `bookmark.set${n}`, { title: `Bookmark: Toggle ${n}`, hidden: true, run: () => toggle(n) });

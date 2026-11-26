@@ -17,6 +17,7 @@ import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
 
 import { $ } from "./dom.js";
+import { found } from "./maybe.js";
 
 async function main() {
   // The workspace this page views: `?ws=<id>`, or the server's first. None
@@ -35,7 +36,7 @@ async function main() {
   // whole application. Terminals: let the editor take its own keys from a
   // focused terminal (true: it took one), and hear that a terminal's label
   // changed or that another client opened one.
-  const terminalsEditor = {
+  const terminalsEditor /*: TerminalsEditor */ = {
     key: (e) => app.terminalKey(e),
     changed: (id) => { app.terminalChanged(id); },
     appeared: (id) => { app.terminalAppeared(id); },
@@ -66,8 +67,8 @@ async function main() {
   };
   // The menu bar: a command's title (none: no such command), its key,
   // running it, whether a check is on, and giving the keyboard back.
-  const menuEditor = {
-    title: (id) => app.commands.get(id)?.title ?? null,
+  const menuEditor /*: MenuEditor */ = {
+    title: (id) => found(app.commands.get(id)).map((c) => c.title).at(0) ?? null,
     keyLabel: (id) => app.keyLabel(id),
     run: (id) => { app.run(id, undefined); },
     isOn: (kind, name) => app.isOn(kind, name),
@@ -75,9 +76,9 @@ async function main() {
   };
   // The palette: where the active view is (to put it back after a
   // preview), go to a line, and the commands, buffers and files it lists.
-  const paletteEditor = {
+  const paletteEditor /*: PaletteEditor */ = {
     here: () => app.here(),
-    goto: (line) => { app.gotoLine(line, 0, { history: false }); },
+    goto: (line) => { app.gotoLine(line, 0, false); },
     commands: () => [...app.commands].filter(([, c]) => !c.hidden).map(([id, c]) => ({ title: c.title, key: app.keyFor(id), source: c.source, run: () => { app.run(id, undefined); } })),
     buffers: () => [...app.buffers.values()].map((b) => ({ name: b.name, path: b.path, modified: b.modified, stored: b.doc !== null, show: () => { app.showBuffer(b, "tab", { preview: null, focus: true }); } })),
     root: () => app.root,
@@ -98,7 +99,7 @@ async function main() {
   const paneEditor = {
     isActive: (pane) => app.activePane === pane,
     focus: (pane) => { app.focusPane(pane); },
-    drive: (pane) => { app.scrollDriver = pane; },
+    drive: (pane) => { app.scrollDriver = [pane]; },
     settings: () => app.settings,
     metrics: () => app.metrics,
     shown: (pane, v) => { app.onViewShown(pane, v); },
@@ -128,7 +129,7 @@ async function main() {
     say: (text) => { app.setStatus(text); },
     edit: (b, ops, typing) => { app.applyTyped(b, ops, typing); },
     moved: (v, old) => { app.cursorMoved(v, old); },
-    autoClose: () => app.settings.auto_close,
+    autoClose: () => app.settings.flags.auto_close === true,
     lspAvailable: (b) => app.lspAvailable(b),
     lspPosition: (b, pos) => app.lspPosition(b, pos),
     lspOffset: (b, line, character) => app.lspOffset(b, line, character),

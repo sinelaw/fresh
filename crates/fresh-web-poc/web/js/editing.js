@@ -4,6 +4,7 @@
 // (one undo step) from the last position to the first so earlier positions
 // stay valid; each caret is then placed where its replacement says.
 
+import { listOf } from "./maybe.js";
 import { byteLen } from "./ot.js";
 import { byteToIdx } from "./buffer.js";
 import { sel, cursorAt, selecting } from "./view.js";
@@ -66,15 +67,15 @@ function partnerOf(lines, starts, li, k, ch, at) {
   }
   return null;
 }
-// How many lines a bracket's match is looked for in.
 // No block folds there.
-/** const NO_FOLD: Range | Null */
-const NO_FOLD = null;
+/** function noFold() => Range[] */
+function noFold() { return []; }
 
 // No language server's selection ranges (none runs, or it has no answer).
 /** const NO_RANGES: Range[][] | Null */
 const NO_RANGES = null;
 
+// How many lines a bracket's match is looked for in.
 const BRACKET_SCAN = 5000;
 const TAB = 4;
 
@@ -171,7 +172,7 @@ export class Editing {
   // ---------------------------------------------------------------- text queries
 
   lineAt(b, p) {
-    const L = b.text;
+    const L = b.held;
     const i = L.indexOf(p);
     /** const at: LineAt | Null */
     const at = i < 0 ? null : { i, start: L.starts[i], end: L.lineEnd(i), text: L.lines[i], next: i + 1 < L.count ? L.starts[i + 1] : null };
@@ -181,7 +182,7 @@ export class Editing {
     const ln = this.lineAt(b, p);
     if (!ln || p <= 0) return null;
     const idx = byteToIdx(ln.text, p - ln.start);
-    if (idx === 0) return ln.i > 0 || b.text.start < ln.start ? "\n" : null;
+    if (idx === 0) return ln.i > 0 || b.held.start < ln.start ? "\n" : null;
     const c = ln.text.charCodeAt(idx - 1);
     return idx >= 2 && c >= 0xdc00 && c < 0xe000 ? ln.text.slice(idx - 2, idx) : ln.text[idx - 1];
   }
@@ -209,7 +210,7 @@ export class Editing {
     while (this.isWord(this.charAt(b, e))) e += byteLen(this.charAt(b, e));
     return s < e ? { start: s, end: e } : null;
   }
-  lang(b) { return b.language || (/\.(md|markdown)$/.test(b.path || "") ? "markdown" : null); }
+  lang(b) { return b.language ?? (/\.(md|markdown)$/.test(b.path) ? "markdown" : null); }
 
   // ---------------------------------------------------------------- the core
 
@@ -236,7 +237,7 @@ export class Editing {
     for (const x of placesAfter(reps)) placed.set(x.cursor, x.at);
     v.cursors = v.cursors.map((c) => placed.get(c) ?? cursorAt(c.pos));
     v.normalize();
-    pane.reveal();
+    pane.reveal(false);
     if (old !== v.primary.pos) this.editor.moved(v, old);
     pane.scheduleRender();
     return true;
@@ -255,7 +256,7 @@ export class Editing {
       c.goalX = null;
     }
     v.normalize();
-    pane.reveal();
+    pane.reveal(false);
     if (old !== v.primary.pos) this.editor.moved(v, old);
     pane.scheduleRender();
   }
@@ -270,7 +271,7 @@ export class Editing {
     else c.anchor = null;
     c.pos = Math.max(0, Math.min(v.buf.len, p));
     c.goalX = null;
-    pane.reveal();
+    pane.reveal(false);
     if (old !== c.pos) this.editor.moved(v, old);
     pane.scheduleRender();
   }
@@ -282,7 +283,7 @@ export class Editing {
   // bracket pair's inside and the pair outwards, the line's text and the
   // line, each indentation block outwards (its lines), the document.
   structureAround(b, s) {
-    const L = b.text;
+    const L = b.held;
     const out = [];
     const add = (start, end) => { if (start <= s.start && end >= s.end && end > start) out.push({ start, end }); };
     const w = this.wordAt(b, s.start);
@@ -339,7 +340,7 @@ export class Editing {
 
   // The unmatched opening bracket before `p` (in the held lines), or null.
   openerBefore(b, p) {
-    const L = b.text;
+    const L = b.held;
     const li = L.indexOf(p);
     if (li < 0) return null;
     return openerIn(L.lines, L.starts, li, byteToIdx(L.lines[li], p - L.starts[li]) - 1);
@@ -395,7 +396,7 @@ export class Editing {
     v.expansions.stack.push(before);
     v.expansions.key = key(v.cursors);
     v.normalize();
-    pane.reveal();
+    pane.reveal(false);
     pane.scheduleRender();
   }
   shrinkSelection(pane) {
@@ -406,7 +407,7 @@ export class Editing {
       v.cursors = prev.map((c) => selecting(c.pos, c.anchor));
       v.expansions.key = v.cursors.map((c) => `${c.anchor}:${c.pos}`).join();
     } else for (const c of v.cursors) c.anchor = null;
-    pane.reveal();
+    pane.reveal(false);
     pane.scheduleRender();
   }
 
@@ -435,7 +436,7 @@ export class Editing {
   // with it to the next line (as Emacs's transpose-lines).
   transposeLines(pane) {
     const b = pane.view.buf;
-    const L = b.text;
+    const L = b.held;
     this.replace(pane, (c) => {
       const li = L.indexOf(c.pos);
       if (li < 1) return KEEP;
@@ -454,7 +455,7 @@ export class Editing {
   // on growing it while its cursors are the rectangle's.
   setBlock(pane, anchor, head) {
     const v = pane.view;
-    const L = v.buf.text;
+    const L = v.buf.held;
     const lo = Math.min(anchor.line, head.line), hi = Math.max(anchor.line, head.line);
     // A cursor on each line, the head's line's first (the primary).
     const lines = [head.line];
@@ -465,7 +466,7 @@ export class Editing {
       return selecting(at(head.col), at(anchor.col));
     });
     v.block = [{ anchor, head, key: this.blockKey(v) }];
-    pane.reveal();
+    pane.reveal(false);
     pane.scheduleRender();
   }
   blockKey(v) { return v.cursors.map((c) => `${c.anchor}:${c.pos}`).join(); }
@@ -503,14 +504,15 @@ export class Editing {
   // view folds its document's blocks (a heading's section, a list's deeper
   // items, a code block's lines).
   foldRangeAt(v, li) {
-    if (v.mode === "compose") return v.pane.doc.foldRange(v, li);
+    if (v.mode === "compose") return listOf(v.pane.doc.foldRange(v, li));
     const b = v.buf;
-    const L = b.text;
+    const L = b.held;
     const first = L.firstLine ?? 0;
-    const lsp = (b.foldRanges ?? []).find((r) => r.start === li + first && r.end > r.start);
-    if (lsp) return { start: li, end: Math.min(L.count - 1, lsp.end - first) };
+    // The language server's range, else the lines indented past this one.
+    const lsp = (b.foldRanges ?? []).filter((r) => r.start === li + first && r.end > r.start).slice(0, 1);
+    if (lsp.length > 0) return lsp.map((r) => ({ start: li, end: Math.min(L.count - 1, r.end - first) }));
     const ind = (t) => t.length - t.trimStart().length;
-    if (L.lines[li].trim() === "") return NO_FOLD;
+    if (L.lines[li].trim() === "") return noFold();
     const base = ind(L.lines[li]);
     let end = li;
     for (let k = li + 1; k < L.count; k++) {
@@ -518,48 +520,47 @@ export class Editing {
       if (ind(L.lines[k]) <= base) break;
       end = k;
     }
-    return end > li ? { start: li, end } : NO_FOLD;
+    return end > li ? [{ start: li, end }] : noFold();
   }
 
   toggleFoldAt(pane, li) {
     const v = pane.view;
-    const r = this.foldRangeAt(v, li);
+    const range = this.foldRangeAt(v, li);
     // The fold starting on the line, or the one this line's range starts.
-    const starts = r === null ? [li] : [li, r.start];
+    const starts = [li, ...range.map((r) => r.start)];
     const i = v.folds.findIndex((f) => starts.includes(f.start));
     if (i >= 0) v.folds.splice(i, 1);
     else {
-      if (r === null) return;
+      if (range.length === 0) return;
+      const r = range[0];
       v.folds = v.folds.filter((f) => f.start < r.start || f.start > r.end);
       v.folds.push(r);
       // A cursor the fold hides moves to the end of the last line it keeps.
-      const L = v.buf.text;
-      for (const c of v.cursors) { const h = pane.foldHiding(v, L.indexOf(c.pos)); if (h) { c.pos = L.lineEnd(h.keep); c.anchor = null; } }
+      const L = v.buf.held;
+      for (const c of v.cursors) for (const h of pane.foldHiding(v, L.indexOf(c.pos))) { c.pos = L.lineEnd(h.keep); c.anchor = null; }
     }
     pane.scheduleRender();
   }
 
   toggleFold(pane) {
     const v = pane.view;
-    const L = v.buf.text;
+    const L = v.buf.held;
     const li = L.indexOf(v.primary.pos);
     // Unfold the fold the cursor's line heads, else fold the innermost
     // block holding the cursor.
     if (v.folds.some((f) => f.start === li)) return this.toggleFoldAt(pane, li);
     for (let k = li; k >= 0; k--) {
-      const r = this.foldRangeAt(v, k);
-      if (r && r.end >= li) return this.toggleFoldAt(pane, k);
+      if (this.foldRangeAt(v, k).some((r) => r.end >= li)) return this.toggleFoldAt(pane, k);
     }
   }
 
   foldAll(pane) {
     const v = pane.view;
-    const L = v.buf.text;
+    const L = v.buf.held;
     v.folds = [];
     for (let k = 0; k < L.count; k++) {
       if (v.folds.some((f) => k >= f.start && k <= f.end)) continue;
-      const r = this.foldRangeAt(v, k);
-      if (r) v.folds.push(r);
+      v.folds.push(...this.foldRangeAt(v, k));
     }
     pane.scheduleRender();
   }
@@ -588,7 +589,7 @@ export class Editing {
     const b = pane.view.buf;
     this.move(pane, (c) => {
       const ln = this.lineAt(b, c.pos);
-      const indent = ln.start + byteLen(/^\s*/.exec(ln.text)[0]);
+      const indent = ln.start + byteLen(ln.text.slice(0, ln.text.length - ln.text.trimStart().length));
       return c.pos === indent ? ln.start : indent;
     }, extend);
   }
@@ -603,7 +604,7 @@ export class Editing {
     const b = v.buf;
     this.move(pane, (c) => {
       const ln = this.lineAt(b, c.pos);
-      const L = b.text;
+      const L = b.held;
       const j = ln.i + dir;
       if (j < 0 || j >= L.count) return c.pos;
       const col = byteToIdx(ln.text, c.pos - ln.start);
@@ -750,7 +751,7 @@ export class Editing {
   // Lines touched by a cursor, its selection included: [first, last] indices.
   lineSpan(b, c) {
     const s = sel(c) ?? { start: c.pos, end: c.pos };
-    const L = b.text;
+    const L = b.held;
     let last = L.indexOf(s.end);
     if (s.end > s.start && s.end === L.starts[last] && last > L.indexOf(s.start)) last--;
     return [L.indexOf(s.start), last];
@@ -759,7 +760,7 @@ export class Editing {
   indent(pane, dir) {
     const v = pane.view;
     const b = v.buf;
-    const L = b.text;
+    const L = b.held;
     if (dir > 0 && v.cursors.every((c) => !sel(c))) return this.type(pane, INDENT);
     const sels = v.cursors.map((c) => ({ c, s: sel(c), span: this.lineSpan(b, c) }));
     const lines = new Set();
@@ -780,7 +781,7 @@ export class Editing {
 
   selectLine(pane) {
     const b = pane.view.buf;
-    const L = b.text;
+    const L = b.held;
     for (const c of pane.view.cursors) {
       const [a, z] = this.lineSpan(b, c);
       c.anchor = L.starts[a];
@@ -791,7 +792,7 @@ export class Editing {
 
   deleteLine(pane) {
     const b = pane.view.buf;
-    const L = b.text;
+    const L = b.held;
     this.replace(pane, (c) => {
       const [a, z] = this.lineSpan(b, c);
       const end = z + 1 < L.count ? L.starts[z + 1] : L.lineEnd(z);
@@ -802,7 +803,7 @@ export class Editing {
 
   duplicateLine(pane) {
     const b = pane.view.buf;
-    const L = b.text;
+    const L = b.held;
     this.replace(pane, (c) => {
       const [a, z] = this.lineSpan(b, c);
       const text = L.lines.slice(a, z + 1).join("\n");
@@ -820,7 +821,7 @@ export class Editing {
     this.replace(pane, (c) => {
       const s = sel(c) ?? this.wordAt(b, c.pos);
       if (!s) return KEEP;
-      const text = f(b.textRange(s.start, s.end));
+      const text = f(b.textRange(s.start, s.end) ?? "");
       return putWith(s.start, s.end, text, byteLen(text), 0);
     });
   }
@@ -829,7 +830,7 @@ export class Editing {
   // editor's Sort Lines) and selected.
   sortLines(pane) {
     const b = pane.view.buf;
-    const L = b.text;
+    const L = b.held;
     this.replace(pane, (c) => {
       const [a, z] = this.lineSpan(b, c);
       if (z <= a) return KEEP;
@@ -841,7 +842,7 @@ export class Editing {
   // Remove the spaces and tabs at the end of every line (a file held whole).
   trimTrailing(pane) {
     const b = pane.view.buf;
-    const L = b.text;
+    const L = b.held;
     if (!b.full) { this.editor.say("Only a file held whole can be trimmed"); return; }
     const ops = [];
     for (let i = L.count - 1; i >= 0; i--) {
@@ -856,7 +857,7 @@ export class Editing {
   moveLines(pane, dir) {
     const v = pane.view;
     const b = v.buf;
-    const L = b.text;
+    const L = b.held;
     if (v.cursors.length > 1) return;
     const c = v.cursors[0];
     const [a, z] = this.lineSpan(b, c);
@@ -880,14 +881,14 @@ export class Editing {
     this.editor.edit(b, [{ t: "del", pos: start, len: end - start }, { t: "ins", pos: start, text }], "none");
     c.pos = newStart + off;
     c.anchor = anchorOff != null ? newStart + anchorOff : null;
-    pane.reveal();
+    pane.reveal(false);
     pane.scheduleRender();
   }
 
   toggleComment(pane) {
     const v = pane.view;
     const b = v.buf;
-    const L = b.text;
+    const L = b.held;
     const prefix = COMMENT[this.lang(b)] || "//";
     const close = prefix === "<!--" ? " -->" : prefix === "/*" ? " */" : "";
     const lines = new Set();
@@ -923,7 +924,7 @@ export class Editing {
   addCursorVertical(pane, dir) {
     const v = pane.view;
     const b = v.buf;
-    const L = b.text;
+    const L = b.held;
     const edge = dir < 0 ? v.cursors.reduce((m, c) => (c.pos < m.pos ? c : m)) : v.cursors.reduce((m, c) => (c.pos > m.pos ? c : m));
     const ln = this.lineAt(b, edge.pos);
     const j = ln.i + dir;
@@ -945,11 +946,11 @@ export class Editing {
       pane.scheduleRender();
       return;
     }
-    const needle = b.textRange(s.start, s.end);
-    if (!needle) return;
-    const L = b.text;
+    const needle = b.textRange(s.start, s.end) ?? "";
+    if (needle === "") return;
+    const L = b.held;
     const all = L.lines.join("\n");
-    const lastSel = sel(prim) || s;
+    const lastSel = sel(prim) ?? s;
     let i = all.indexOf(needle, byteToIdx(all, lastSel.end - L.start));
     if (i < 0) i = all.indexOf(needle);
     if (i < 0) return;
@@ -957,24 +958,26 @@ export class Editing {
     if (v.cursors.some((c) => Math.min(c.pos, c.anchor ?? c.pos) === start)) { this.editor.say("All occurrences selected"); return; }
     v.cursors.push(selecting(start + byteLen(needle), start));
     v.normalize();
-    pane.reveal();
+    pane.reveal(false);
     pane.scheduleRender();
   }
 
   selectAllOccurrences(pane) {
     const v = pane.view;
     const b = v.buf;
-    let s = sel(v.cursors[0]);
-    if (!s) { const w = this.wordAt(b, v.primary.pos); if (!w) return; s = w; }
-    const needle = b.textRange(s.start, s.end);
-    const L = b.text;
+    const found = [...listOf(sel(v.cursors[0])), ...listOf(this.wordAt(b, v.primary.pos))];
+    if (found.length === 0) return;
+    const s = found[0];
+    const needle = b.textRange(s.start, s.end) ?? "";
+    if (needle === "") return;
+    const L = b.held;
     const all = L.lines.join("\n");
     const out = [];
     for (let i = all.indexOf(needle); i >= 0; i = all.indexOf(needle, i + needle.length)) {
       const start = L.start + byteLen(all.slice(0, i));
       out.push(selecting(start + byteLen(needle), start));
     }
-    if (!out.length) return;
+    if (out.length === 0) return;
     const first = out.findIndex((c) => c.anchor === s.start);
     if (first > 0) out.unshift(out.splice(first, 1)[0]);
     v.cursors = out;

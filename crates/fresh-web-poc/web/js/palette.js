@@ -147,19 +147,21 @@ export class Palette {
   }
 
   async paletteItems(q) {
-    const ed = this.editor;
+    const ed /*: PaletteEditor */ = this.editor;
     if (q.startsWith(">")) {
-      const terms = q.slice(1).toLowerCase().split(/\s+/).filter(Boolean);
-      return ed.commands()
+      const terms = q.slice(1).toLowerCase().split(/\s+/).filter((t) => t !== "");
+      const commands /*: PaletteCommand[] */ = ed.commands();
+      return commands
         .filter((c) => terms.every((t) => c.title.toLowerCase().includes(t)))
-        .map((c) => paletteItem(c.title, [c.key, c.source !== "core" ? c.source : ""].filter(Boolean).join(" · "), c.run))
+        .map((c) => paletteItem(c.title, [c.key, c.source !== "core" ? c.source : ""].filter((s) => s !== "").join(" · "), c.run))
         .sort((a, b) => a.label.localeCompare(b.label));
     }
     if (q.startsWith("#")) {
       const t = q.slice(1).toLowerCase();
-      return ed.buffers()
-        .filter((b) => (b.path || b.name).toLowerCase().includes(t))
-        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path ? relative(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
+      const buffers /*: PaletteBuffer[] */ = ed.buffers();
+      return buffers
+        .filter((b) => (b.path !== "" ? b.path : b.name).toLowerCase().includes(t))
+        .map((b) => paletteItem(`${b.modified ? "● " : ""}${b.name}`, b.path !== "" ? relative(ed.root(), b.path) : b.stored ? "unsaved" : "virtual", b.show));
     }
     const pr = this.providers.get(q[0]);
     for (const m of modeList(pr)) return await m.items(q.slice(1).trim());
@@ -170,7 +172,8 @@ export class Palette {
     const m = /^(.*?)(?::(\d+)(?::(\d+))?)?$/.exec(q);
     // Nothing typed: the files opened lately.
     if (!q.trim()) {
-      return ed.recent().map((p) => paletteItem(relative(ed.root(), p), "recent", () => { ed.open(p); }));
+      const recent /*: String[] */ = ed.recent();
+      return recent.map((p) => paletteItem(relative(ed.root(), p), "recent", () => { ed.open(p); }));
     }
     if (!m) return [];
     const files = (await rpc("fs.find", { query: m[1] })).files;

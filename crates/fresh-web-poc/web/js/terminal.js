@@ -169,15 +169,17 @@ export class Terminals {
   // The terminals' states from the workspace's status: an agent session's
   // tab shows its own.
   states(terms) {
+    const ed /*: TerminalsEditor */ = this.editor;
     for (const s of terms) {
-      for (const t of found(this.terms.get(s.id))) if (t.state !== s.state) { t.state = s.state; this.editor.changed(t.id); }
+      for (const t of found(this.terms.get(s.id))) if (t.state !== s.state) { t.state = s.state; ed.changed(t.id); }
     }
   }
 
   async add(id) {
     for (const had of found(this.terms.get(id))) return had;
-    const t = new Term(id, () => { this.editor.changed(id); });
-    t.listen(this.editor.key);
+    const ed /*: TerminalsEditor */ = this.editor;
+    const t = new Term(id, () => { ed.changed(id); });
+    t.listen((e) => ed.key(e));
     this.terms.set(id, t);
     await t.attach();
     return t;
@@ -235,12 +237,13 @@ export class Terminals {
     for (const t of this.terms.values()) { Object.assign(t.xt.options, f); t.refit(); }
   }
 
-  onEvent(ev) {
+  onEvent(ev /*: TermEvent */) {
+    const ed /*: TerminalsEditor */ = this.editor;
     if (ev.ev === "term.data") {
       const t = found(this.terms.get(ev.term));
       for (const x of t) x.data(ev);
       // Another client opened it: it shows here too.
-      if (!t.length && !this.closed.has(ev.term)) this.add(ev.term).then(() => { this.editor.appeared(ev.term); });
+      if (t.length === 0 && !this.closed.has(ev.term)) this.add(ev.term).then((_t) => { ed.appeared(ev.term); });
     } else if (ev.ev === "term.exit") {
       for (const x of found(this.terms.get(ev.term))) x.exited();
     }

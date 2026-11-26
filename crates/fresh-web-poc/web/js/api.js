@@ -14,8 +14,11 @@
 
 import { rpc } from "./rpc.js";
 import { bufferHandle, viewHandle } from "./host.js";
-import { asCommand } from "./commands.js";
+import { asCommand, asArgCommand } from "./commands.js";
 export { byteLen } from "./ot.js";
+// A value that may be missing (null) as a list of at most one, to act on
+// it if it is there.
+export { listOf } from "./maybe.js";
 export { stringWidth as textWidth } from "./layout.js";
 
 // The application's buffer a handle is of (none once it is closed).
@@ -37,6 +40,10 @@ export const saveSettings = (app) => app.saveSettings();
 // palette. The command's source is the first part of its id ("git.log").
 export const register = (app, id, spec) => {
   app.commands.set(id, { title: spec.title, run: asCommand(spec.run), source: id.split(".")[0], hidden: spec.hidden });
+};
+// A command whose action takes its argument (`runWith`'s).
+export const registerWith = (app, id, spec) => {
+  app.commands.set(id, { title: spec.title, run: asArgCommand(spec.run), source: id.split(".")[0], hidden: spec.hidden });
 };
 export const run = (app, id) => app.run(id, undefined);
 // A command with its argument (a palette prefix: "palette.open", "@").
@@ -88,7 +95,7 @@ export const buffers = (app) => [...app.buffers.values()].map((b) => bufferHandl
 export const bufferById = (app, id) => { const b = app.buffers.get(id); return b === undefined ? null : bufferHandle(app, b); };
 export const bufferByPath = (app, path) => { const b = [...app.buffers.values()].find((x) => x.path === path); return b === undefined ? null : bufferHandle(app, b); };
 // `at`: OpenOptions (types/fresh.d.js).
-export const open = async (app, path, at) => { const v = await app.openFile(path, at); return v ? bufferHandle(app, v.buf) : null; };
+export const open = async (app, path, at) => (await app.openFile(path, at)).map((v) => bufferHandle(app, v.buf)).at(0) ?? null;
 // The buffer for a file, without showing it.
 export const load = async (app, path) => bufferHandle(app, await app.loadFile(path));
 // A VirtualOptions (types/fresh.d.js).

@@ -61,12 +61,13 @@ const NO_POS = null;
 // The DOM point at client (x, y), if the browser finds one.
 function caretAt(x, y) {
   if (typeof document.caretPositionFromPoint === "function") {
-    const c = document.caretPositionFromPoint(x, y);
-    return c === null ? [] : [{ node: c.offsetNode, off: c.offset }];
+    return listOf(document.caretPositionFromPoint(x, y)).map((c) => ({ node: c.offsetNode, off: c.offset }));
   }
-  const r = document.caretRangeFromPoint(x, y);
-  return r === null ? [] : [{ node: r.startContainer, off: r.startOffset }];
+  return listOf(document.caretRangeFromPoint(x, y)).map((r) => ({ node: r.startContainer, off: r.startOffset }));
 }
+// The element a DOM point's node is in: a text node's parent, or the node.
+/** function elementAt(node: El) => El[] */
+function elementAt(node) { return node.nodeType === 3 ? listOf(node.parentElement) : [node]; }
 // A caret's box (none: not drawn).
 /** type CaretBox = {left: Number, top: Number, height: Number} */
 /** const NO_RECT: CaretBox | Null */
@@ -96,12 +97,11 @@ function noLines() { return new Map(); }
 function noInlines() { return new Map(); }
 
 // The fold hiding line `li` (of `folds`, keeping lines up to `keeps`
-// each) and the last line it keeps, or none.
-/** type Hidden = {fold: Range, keep: Number} */
-/** function hiddenBy(folds: Range[], keeps: Number[], li: Number) => Hidden | Null */
+// each) and the last line it keeps (none: the line shows).
+/** function hiddenBy(folds: Range[], keeps: Number[], li: Number) => Hidden[] */
 function hiddenBy(folds, keeps, li) {
   const i = folds.findIndex((f, k) => li > keeps[k] && li <= f.end);
-  return i < 0 ? null : { fold: folds[i], keep: keeps[i] };
+  return i < 0 ? [] : [{ fold: folds[i], keep: keeps[i] }];
 }
 
 export class DocView {
@@ -164,7 +164,7 @@ export class DocView {
   // What drawing needs for the whole frame: decorations by line, styles.
   context(v) {
     const buf = v.buf;
-    const L = buf.text;
+    const L = buf.held;
     const d = buf.decor;
     const cursors = v.cursors.map((c) => c.pos);
     const o = v.pane.layoutOpts(v, 0);
@@ -206,7 +206,7 @@ export class DocView {
   }
 
   // hidden(li): the fold hiding line `li` and the last line it keeps
-  // ({fold, keep}), or null.
+  // ({fold, keep}; none: the line shows).
   hider(ctx) {
     const keeps = ctx.v.folds.map((f) => {
       const sb = this.blockAt(ctx, f.start);
@@ -217,12 +217,12 @@ export class DocView {
 
   // The fold hiding line `li` of view `v`, as `hidden` gives it.
   hiding(v, li) {
-    return this.hider({ v, L: v.buf.text, d: v.buf.decor, mode: v.mode })(li);
+    return this.hider({ v, L: v.buf.held, d: v.buf.decor, mode: v.mode })(li);
   }
 
   // The fold the block holding line `li` offers: {start, end} lines, or null.
   foldRange(v, li) {
-    const ctx = { v, L: v.buf.text, d: v.buf.decor, mode: v.mode };
+    const ctx = { v, L: v.buf.held, d: v.buf.decor, mode: v.mode };
     return this.foldOf(ctx, this.blockAt(ctx, li), false);
   }
 
@@ -255,8 +255,8 @@ export class DocView {
   shownFrom(ctx, k, dir) {
     while (k >= 0 && k < ctx.L.count) {
       const h = ctx.hidden(k);
-      if (h === null) break;
-      k = dir > 0 ? h.fold.end + 1 : h.keep;
+      if (h.length === 0) break;
+      k = dir > 0 ? h[0].fold.end + 1 : h[0].keep;
     }
     return k;
   }
@@ -279,7 +279,7 @@ export class DocView {
   low(ctx, blk, lh, from) {
     if (!blk.node) return from > blk.last ? 0 : lh;
     let n = 0;
-    for (let k = from; k <= blk.last; k++) if (!ctx.hidden(k)) n++;
+    for (let k = from; k <= blk.last; k++) if (ctx.hidden(k).length === 0) n++;
     if (blk.node.type === "code") n -= 2;
     if (blk.node.type === "table") n -= 1;
     return Math.max(0, n) * lh;
@@ -287,9 +287,8 @@ export class DocView {
 
   pass(v, ctx, lh) {
     const { L } = ctx;
-    const h = v.pane.size.h || v.pane.surfaceEl.clientHeight;
-    const hid = ctx.hidden(L.indexOf(v.top));
-    if (hid) v.setTop(L.starts[hid.keep], 0);
+    const h = v.pane.size.h > 0 ? v.pane.size.h : v.pane.surfaceEl.clientHeight;
+    for (const k of ctx.hidden(L.indexOf(v.top))) v.setTop(L.starts[k.keep], 0);
     const ti = L.indexOf(v.top);
     // The blocks to draw: one above the top's block (more when the offset
     // is negative), and down to what surely fills the view.
@@ -349,7 +348,7 @@ export class DocView {
     const lineY = noLineTops(), yAt = new Map();
     let prev = ys.get(first) ?? 0;
     for (let k = first; k <= lastLine; k++) {
-      if (ctx.hidden(k) !== null) continue;
+      if (ctx.hidden(k).length > 0) continue;
       const y = Math.max(prev, ys.get(k) ?? prev);
       lineY.push({ line: k, y });
       yAt.set(k, y);
@@ -370,12 +369,11 @@ export class DocView {
     }
     if (this.want !== "none") {
       // A cursor in a fold is kept in view at the line before the fold.
-      let ci = L.indexOf(v.primary.pos);
-      const fh = ctx.hidden(ci);
-      if (fh !== null) ci = fh.keep;
+      const folded = ctx.hidden(L.indexOf(v.primary.pos));
+      const ci = folded.length > 0 ? folded[0].keep : L.indexOf(v.primary.pos);
       // Where the primary caret is drawn (none: not drawn).
       const drawnCaret = carets.find((x) => x.c === v.primary);
-      const pcs = drawnCaret !== undefined ? [{ y: drawnCaret.y, h: drawnCaret.h }] : fh !== null && yAt.has(ci) ? [{ y: yOf(ci), h: lh }] : [];
+      const pcs = drawnCaret !== undefined ? [{ y: drawnCaret.y, h: drawnCaret.h }] : folded.length > 0 && yAt.has(ci) ? [{ y: yOf(ci), h: lh }] : [];
       for (const pc of pcs) {
         if (this.want === "center") sy = pc.y - h / 2;
         else if (pc.y < sy) sy = pc.y;
@@ -441,7 +439,7 @@ export class DocView {
         const syn = lang ? (li) => spansFor(lang, L.lines[li]) : NO_SYNTAX;
         let html = `<div class="doc-code"${n.lang ? ` data-lang="${esc(n.lang)}"` : ""}>${tog}`;
         for (let k = blk.first; k <= blk.last; k++) {
-          if (ctx.hidden(k)) continue;
+          if (ctx.hidden(k).length > 0) continue;
           const r = this.walk(ctx, L.starts[k], L.lineEnd(k), syn);
           // A line whose text is all concealed draws nothing.
           if (!r.shown && L.lines[k] !== "") continue;
@@ -467,7 +465,7 @@ export class DocView {
     for (const list of cells.values()) { list.sort((a, b) => a.start - b.start); ncol = Math.max(ncol, list.length); }
     let html = `<table class="doc-table"><tbody>`;
     for (let k = blk.first; k <= blk.last; k++) {
-      if (ctx.hidden(k)) continue;
+      if (ctx.hidden(k).length > 0) continue;
       const ls = L.starts[k], le = L.lineEnd(k);
       const list = cells.get(k) ?? [];
       // The fold toggle sits in the first cell drawn, placed by the table.
@@ -657,8 +655,9 @@ export class DocView {
   // The byte at DOM point (`node`, `off`) in the body.
   posAt(node, off) {
     const text = node.nodeType === 3;
-    const el = text ? node.parentElement : node;
-    if (el === null) return NO_POS;
+    const within = elementAt(node);
+    if (within.length === 0) return NO_POS;
+    const el = within[0];
     const ent = el.closest("[data-p],[data-a],[data-at]");
     if (ent !== null && this.body.contains(ent) && (ent.dataset.at === undefined || ent.firstChild !== null)) {
       const ds = ent.dataset;
@@ -686,13 +685,6 @@ export class DocView {
     if (inBox(lo)) return some(near(lo, 1).start);
     if (inBox(lo - 1)) return some(near(lo - 1, -1).end);
     return NO_POS;
-  }
-
-  // Lines [first, last] drawn on screen.
-  visibleLines(v) {
-    const h = v.pane.size.h;
-    const on = this.lineY.filter((t, i) => t.y < this.sy + h && (this.lineY.at(i + 1)?.y ?? Infinity) > this.sy);
-    return on.length ? { first: on[0].line, last: on[on.length - 1].line } : null;
   }
 
   // ---------------------------------------------------------------- motion

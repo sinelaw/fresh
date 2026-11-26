@@ -71,7 +71,7 @@ export function activate(app) {
   const refreshBranch = async () => {
     baselines.clear(); // HEAD moved: every baseline may have
     const r = await git(["rev-parse", "--abbrev-ref", "HEAD"]);
-    branch.set(r.code === 0 ? `⎇ ${r.stdout.trim()}` : "", { title: "Git branch — click for the log", onClick: () => fresh.run(app, "git.log") });
+    branch.set(r.code === 0 ? `⎇ ${r.stdout.trim()}` : "", { title: "Git branch — click for the log", onClick: () => { fresh.run(app, "git.log"); } });
   };
   // HEAD changes on a checkout; the branch's ref file on a commit.
   // Stops watching the current branch's ref file (none on a detached HEAD).

@@ -467,7 +467,7 @@ export function activate(app) {
   /** const refreshHints: (BufferHandle) => Promise<Undefined> */
   const refreshHints = async (b) => {
     const deco = b.decorations("inlay");
-    if (!fresh.settings(app).inlay_hints || !fresh.lspAvailable(app, b) || !b.whole()) { deco.clear(); b.render(); return; }
+    if (fresh.settings(app).flags.inlay_hints !== true || !fresh.lspAvailable(app, b) || !b.whole()) { deco.clear(); b.render(); return; }
     const L = b.lines();
     if (!L) return;
     const len = b.length(), text0 = b.text(0, Math.min(len, 64));
@@ -492,12 +492,12 @@ export function activate(app) {
     if (pending !== undefined) clearTimeout(pending);
     hintTimers.set(b.id, setTimeout(() => { hintTimers.delete(b.id); refreshHints(b); }, 500));
   };
-  fresh.onBuffer(app, "buffer.changed", (buffer) => { if (fresh.settings(app).inlay_hints && fresh.lspAvailable(app, buffer)) hintsSoon(buffer); });
+  fresh.onBuffer(app, "buffer.changed", (buffer) => { if (fresh.settings(app).flags.inlay_hints === true && fresh.lspAvailable(app, buffer)) hintsSoon(buffer); });
   const toggleHints = () => {
-    fresh.settings(app).inlay_hints = !fresh.settings(app).inlay_hints;
+    fresh.settings(app).flags.inlay_hints = fresh.settings(app).flags.inlay_hints !== true;
     fresh.saveSettings(app);
     for (const b of fresh.buffers(app)) refreshHints(b);
-    fresh.message(app, `Inlay hints: ${fresh.settings(app).inlay_hints ? "on" : "off"}`);
+    fresh.message(app, `Inlay hints: ${fresh.settings(app).flags.inlay_hints === true ? "on" : "off"}`);
   };
   // Trusting the workspace starts its language servers.
   fresh.on(app, "workspace.trusted", () => { const b = fresh.activeBuffer(app); showStatus(b); if (b) { refreshFolds(b); refreshHints(b); } });

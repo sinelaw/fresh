@@ -3,14 +3,10 @@
 
 import { listOf, some } from "./maybe.js";
 
-// A caret's place in client pixels (none: not on screen).
-/** type ClientCaret = {x: Number, y: Number, h: Number} */
-/** const NO_CARET: ClientCaret | Null */
-const NO_CARET = null;
 import { setClass } from "./dom.js";
 import { layout, applies, cursorIn } from "./layout.js";
 import { byteLen } from "./ot.js";
-import { byteToIdx } from "./buffer.js";
+import { byteToIdx, ENSURE_AFTER, terminalOf } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, esc, cssFor, styleKey, restyler, withWavy } from "./paint.js";
@@ -46,7 +42,7 @@ function balance(line, skip) {
 function rainbowDepths(buf, lang, synFor) {
   const hit = depthCache.get(buf);
   if (hit !== undefined && hit.gen === buf.textGen && hit.lang === lang) return hit.depths;
-  const L = buf.text;
+  const L = buf.held;
   const depths = new Int32Array(L.count + 1);
   let d = 0;
   for (let i = 0; i < L.count; i++) {
@@ -71,7 +67,7 @@ const structureCache = new WeakMap();
 function markdownStructure(buf) {
   const hit = structureCache.get(buf);
   if (hit !== undefined && hit.gen === buf.textGen) return hit.struct;
-  const struct = classify(buf.text.lines);
+  const struct = classify(buf.held.lines);
   structureCache.set(buf, { gen: buf.textGen, struct });
   return struct;
 }
@@ -107,6 +103,26 @@ function rowHtml(cls, fill, cells) {
   }
   const spans = runs.map((x) => (x.key ? `<span style="${cssFor(x.style, x.key)}">${esc(x.text)}</span>` : esc(x.text))).join("");
   return `<div class="${cls}"${fill ? ` style="background:${fill}"` : ""}>${cells.length ? spans : "\u200b"}</div>`;
+}
+
+// No screen place.
+/** function noXY() => XY[] */
+function noXY() { return []; }
+/** function noByte() => Number | Null */
+function noByte() { return null; }
+/** function noCorner() => Corner[] */
+function noCorner() { return []; }
+/** function noFrame() => Number[] */
+function noFrame() { return []; }
+/** function noBytes() => Number[] */
+function noBytes() { return []; }
+
+// Presses in a row (a double or triple click): the last one's time and
+// place, and how many came each close after the one before.
+/** function nextClicks(last: Clicks, t: Number, x: Number, y: Number) => Clicks */
+function nextClicks(last, t, x, y) {
+  const close = t - last.t < 500 && Math.abs(x - last.x) < 4 && Math.abs(y - last.y) < 4;
+  return { t, x, y, n: close ? last.n + 1 : 1 };
 }
 
 // A list's first item, if it has one.
@@ -147,6 +163,20 @@ export function sel(c) {
   return a === null || a === c.pos ? null : { start: Math.min(a, c.pos), end: Math.max(a, c.pos) };
 }
 
+
+// Copies of a view's cursors, options and folds (for another split's view).
+/** function copyCursors(cs: Cursor[]) => Cursor[] */
+function copyCursors(cs) { return cs.map((c) => ({ pos: c.pos, anchor: c.anchor, goalX: c.goalX })); }
+/** function copyOptions(o: ViewOptions) => ViewOptions */
+function copyOptions(o) { return { composeWidth: o.composeWidth, wrap: o.wrap, lineNumbers: o.lineNumbers }; }
+/** function copyFolds(fs: Range[]) => Range[] */
+function copyFolds(fs) { return fs.map((f) => ({ start: f.start, end: f.end })); }
+
+// A view's options: its compose width (none: the setting's), wrapping,
+// and line numbers.
+/** function viewOptions(lineNumbers: Boolean) => ViewOptions */
+function viewOptions(lineNumbers) { return { composeWidth: null, wrap: false, lineNumbers }; }
+
 // One buffer as shown in one pane.
 export class View {
   constructor(pane, buf) {
@@ -160,7 +190,7 @@ export class View {
     // vertical motion aims for. The first is the primary.
     this.cursors = [cursorAt(0)];
     this.mode = "source"; // or "compose"
-    this.opts = { composeWidth: null, wrap: false, lineNumbers: !buf.isVirtual };
+    this.opts = viewOptions(!buf.isVirtual);
     this.folds = []; // [{start, end}] window line indices; start's line stays
     this.left = 0; // columns scrolled sideways (no wrap)
     this.preview = false; // the split's preview tab: the next preview replaces it
@@ -174,7 +204,15 @@ export class View {
   get primary() { return this.cursors[0]; }
   get top() { return this._top; }
   // Show the line starting at `b` at the top, `px` pixels into it.
-  setTop(b, px = 0) { this._top = b; this.topPx = px; }
+  setTop(b, px) { this._top = b; this.topPx = px; }
+  // The primary cursor alone (the others dropped).
+  keepPrimary() { this.cursors = [this.primary]; }
+  // A preview tab made a tab of its own: whether it was a preview.
+  keepOpen() {
+    const was = this.preview;
+    this.preview = false;
+    return was;
+  }
   shift(op) {
     const sp = (p, r) => {
       if (op.t === "ins") return p > op.pos || (p === op.pos && r) ? p + byteLen(op.text) : p;
@@ -185,7 +223,7 @@ export class View {
     this._top = sp(this._top, false);
   }
   selection() { return sel(this.cursors[0]); }
-  selections() { return this.cursors.map(sel).filter(Boolean); }
+  selections() { return this.cursors.flatMap((c) => listOf(sel(c))); }
   // Sort cursors by position (primary kept first) and merge any that met.
   normalize() {
     const prim = this.cursors[0];
@@ -200,7 +238,19 @@ export class View {
     if (i > 0) { out.splice(i, 1); out.unshift(prim); }
     this.cursors = out.length ? out : [prim];
   }
-  dispose() { this.buf.views.delete(this); }
+}
+
+// A tab of split `to` at `index` that is a copy of view `v` (of another
+// split): its cursors, scroll, mode, options and folds.
+export function copyTab(v, to, index) {
+  const nv = new View(to, v.buf);
+  v.buf.addView(nv);
+  nv.cursors = copyCursors(v.cursors);
+  nv.setTop(v.top, v.topPx);
+  nv.mode = v.mode;
+  nv.opts = copyOptions(v.opts);
+  nv.folds = copyFolds(v.folds);
+  to.views.splice(Math.min(index, to.views.length), 0, nv);
 }
 
 export class Pane {
@@ -245,6 +295,7 @@ export class Pane {
     this.brackets = new Map();
     this.maxCols = 0; // the widest row drawn, in columns
     this.frame = { id: NO_FRAME }; // the frame the next draw is asked for
+    this.clicks = { t: -Infinity, x: 0, y: 0, n: 0 }; // presses in a row
   }
 
   // The view shown, if any.
@@ -283,14 +334,11 @@ export class Pane {
 
   // ---------------------------------------------------------------- tabs
 
-  // Show `buf` in its tab here, made if there is none. `preview` true: a
-  // new tab is the split's preview tab, in the place of the one there was
-  // (unless that one holds unsaved changes: it is kept); false: the tab is
-  // kept (no longer a preview); null: as it is.
+  // Show `buf` in its tab here, made if there is none. `preview`: a new
+  // tab is the split's preview tab, in the place of the one there was
+  // (unless that one holds unsaved changes: it is kept).
   show(buf, preview) {
-    const had = this.views.find((x) => x.buf === buf);
-    if (had !== undefined && preview === false) had.preview = false;
-    const v = had ?? this.newTab(buf, preview === true);
+    const v = this.views.find((x) => x.buf === buf) ?? this.newTab(buf, preview);
     this.shown = [v];
     this.editor.shown(this, v);
     this.renderTabs();
@@ -301,11 +349,11 @@ export class Pane {
   // unless that one holds unsaved changes: it is kept), or a kept one.
   newTab(buf, preview) {
     const v = new View(this, buf);
-    buf.views.add(v);
+    buf.addView(v);
     const old = preview ? this.views.find((x) => x.preview) : undefined;
     if (old !== undefined && !old.buf.modified) {
       this.views.splice(this.views.indexOf(old), 1, v);
-      old.dispose();
+      old.buf.dropView(old);
       this.editor.dropIfUnshown(old.buf);
     } else {
       if (old !== undefined) old.preview = false;
@@ -318,7 +366,7 @@ export class Pane {
     const i = this.views.indexOf(v);
     if (i < 0) return;
     this.views.splice(i, 1);
-    v.dispose();
+    v.buf.dropView(v);
     if (this.view === v) this.shown = this.views.slice(Math.max(0, i - 1), Math.max(0, i - 1) + 1);
     if (this.view) this.editor.shown(this, this.view);
     this.renderTabs();
@@ -335,11 +383,11 @@ export class Pane {
       const dup = names.filter((n) => n === v.buf.name).length > 1 && v.buf.path !== "";
       const label = dup ? v.buf.path.split("/").slice(-2).join("/") : v.buf.name;
       t.textContent = (v.buf.modified ? "● " : "") + label + (v.buf.readOnly && !v.buf.isVirtual ? " [RO]" : "");
-      t.title = (v.buf.path || v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
+      t.title = (v.buf.path !== "" ? v.buf.path : v.buf.name) + (v.preview ? " (preview: the next preview replaces it; edit, double-click or Keep Open to keep it)" : "");
       // A press shows it (and may drag it: app.tabPress); the middle button
       // closes it; the right one opens its menu.
       t.onmousedown = (e) => { e.preventDefault(); if (e.button === 1) this.editor.closeTab(this, v); else if (e.button === 0) this.editor.tabPress(e, this, v); };
-      t.oncontextmenu = (e) => { e.preventDefault(); this.show(v.buf); this.editor.focus(this); this.editor.tabMenu(this, v, { x: e.clientX, y: e.clientY }); };
+      t.oncontextmenu = (e) => { e.preventDefault(); this.show(v.buf, false); this.editor.focus(this); this.editor.tabMenu(this, v, { x: e.clientX, y: e.clientY }); };
       const x = document.createElement("span");
       x.className = "x";
       x.textContent = "×";
@@ -360,15 +408,15 @@ export class Pane {
 
   geometry(v) {
     const { cols, rows } = this.metrics();
-    const L = v.buf.text;
     const compose = v.mode === "compose";
-    // Line numbers, when the text's place in the file is known.
-    const first = v.opts.lineNumbers && !compose && L !== null ? L.firstLine : null;
-    const nums = first !== null;
-    const digits = first !== null && L !== null ? String(first + L.count).length : 0;
+    // Line numbers, when the text's place in the file is known: the last
+    // one's digits.
+    const last = v.opts.lineNumbers && !compose ? listOf(v.buf.text).flatMap((L) => listOf(L.firstLine).map((f) => f + L.count)) : [];
+    const nums = last.length > 0;
+    const digits = last.map((n) => String(n).length).at(0) ?? 0;
     const gutter = (nums ? digits + 1 : 0) + 2;
     const avail = cols - gutter;
-    const width = compose ? Math.min(v.opts.composeWidth || this.editor.settings().page_width, avail) : avail;
+    const width = compose ? Math.min(v.opts.composeWidth ?? this.editor.settings().page_width, avail) : avail;
     const margin = compose ? Math.max(0, Math.floor((avail - width) / 2)) : 0;
     return { cols, rows, gutter, digits, width, margin, nums };
   }
@@ -382,8 +430,8 @@ export class Pane {
 
   layoutOpts(v, width) {
     const buf = v.buf;
-    const L = buf.text;
-    const lang = buf.language ?? (/\.(md|markdown)$/.test(buf.path ?? "") ? "markdown" : null);
+    const L = buf.held;
+    const lang = buf.language ?? (/\.(md|markdown)$/.test(buf.path) ? "markdown" : null);
     const sels = v.selections();
     const s = this.editor.settings();
     // Fenced blocks in markdown are highlighted in the fence's language.
@@ -406,19 +454,19 @@ export class Pane {
     // line (the interval index makes that cost what the line has), in order
     // of precedence: overlays, occurrences, diagnostics, selection, then
     // the overlays drawn above the selection.
-    const w = s.highlight_occurrences ? v.selection() ?? this.editor.wordAt(buf, v.primary.pos) : null;
-    const t = w !== null ? buf.textRange(w.start, w.end) : null;
+    const w = s.flags.highlight_occurrences === true ? v.selection() ?? this.editor.wordAt(buf, v.primary.pos) : null;
+    const t /*: String | Null */ = w !== null ? buf.textRange(w.start, w.end) : null;
     /** const occ: String | Null */
     const occ = t !== null && t.length >= 2 && !t.includes("\n") ? t : null;
     // The bracket at the cursor and its match, drawn bold in the theme's
     // colour for them (found once per cursor position and text).
-    const brackets = s.highlight_brackets
+    const brackets = s.flags.highlight_brackets === true
       ? remember(this.brackets, `${buf.id}:${buf.textGen}:${v.primary.pos}`, () => this.editor.bracketPair(buf, v.primary.pos))
       : null;
     // Rainbow brackets: each bracket in the colour of its nesting depth,
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
-    const depths = s.rainbow_brackets && buf.full ? rainbowDepths(buf, lang, synFor) : null;
+    const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, lang, synFor) : null;
     const DIAG = ["", THEME["diagnostic.error"] ?? "", THEME["diagnostic.warning"] ?? "", THEME["diagnostic.info"] ?? "", THEME["diagnostic.hint"] ?? ""];
     const lineCache = new Map();
     const lineDecos = (li) => {
@@ -428,12 +476,12 @@ export class Pane {
       const ls = L.starts[li], le = L.lineEnd(li) + 1;
       const above = [];
       for (const o of buf.decor.overlaysIn(ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
-      if (depths) {
+      for (const ds of listOf(depths)) {
         const line = L.lines[li];
         const skip = synFor(li).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
-        let depth = depths[li];
+        let depth = ds[li];
         for (let k = 0; k < line.length; k++) {
-          const c = line[k];
+          const c = line.charAt(k);
           const opens = c === "(" || c === "[" || c === "{", closes = c === ")" || c === "]" || c === "}";
           if (!opens && !closes) continue;
           if (skip.some((x) => k >= x.s && k < x.e)) continue;
@@ -444,12 +492,12 @@ export class Pane {
           out.push({ s: at, e: at + 1, f });
         }
       }
-      if (occ) {
+      for (const word of listOf(occ)) {
         const line = L.lines[li];
-        for (let k = line.indexOf(occ); k >= 0; k = line.indexOf(occ, k + occ.length)) {
-          if ((k === 0 || !/\w/.test(line[k - 1])) && !/\w/.test(line[k + occ.length] || "")) {
+        for (let k = line.indexOf(word); k >= 0; k = line.indexOf(word, k + word.length)) {
+          if ((k === 0 || !/\w/.test(line.charAt(k - 1))) && !/\w/.test(line.charAt(k + word.length))) {
             const st0 = ls + byteLen(line.slice(0, k));
-            out.push({ s: st0, e: st0 + byteLen(occ), f: OCCURRENCE });
+            out.push({ s: st0, e: st0 + byteLen(word), f: OCCURRENCE });
           }
         }
       }
@@ -472,7 +520,7 @@ export class Pane {
       tab: 4,
       cursors: v.cursors.map((c) => c.pos),
       folds: v.folds,
-      whitespace: s.show_whitespace,
+      whitespace: s.flags.show_whitespace === true,
       // The background an overlay at `b` carries to the row's end, if any.
       extendAt: (b) => {
         const o = buf.decor.overlaysIn(b, b + 1).find((x) => x.style.extendToLineEnd && x.style.bg !== null);
@@ -490,23 +538,29 @@ export class Pane {
   }
 
   computeRows(v, extra) {
-    const L = v.buf.text;
+    const L = v.buf.held;
     const g = this.geometry(v);
     const r = layout(v.buf, Math.max(0, L.indexOf(v.top)), g.rows + extra, this.layoutOpts(v, g.width));
     return { ...r, g };
   }
 
-  // Window line indices [first, last] on screen.
-  visibleLineRange(v) {
-    if (!v.buf.text || this.view !== v) return null;
-    if (v.mode === "compose") return this.doc.visibleLines(v);
-    const { consumed } = this.computeRows(v, 0);
-    return consumed.length ? { first: consumed[0], last: consumed[consumed.length - 1] } : null;
+  ready(v) {
+    return listOf(v.buf.text).some((L) => L.indexOf(v.top) >= 0 && (v.buf.full || L.eof || L.count - L.indexOf(v.top) > this.metrics().rows + 2));
   }
 
-  ready(v) {
-    const L = v.buf.text;
-    return !!L && L.indexOf(v.top) >= 0 && (v.buf.full || L.eof || L.count - L.indexOf(v.top) > this.metrics().rows + 2);
+  // Fetch the text at view `v`'s top (and a screen past it), then draw.
+  async fetch(v) {
+    await v.buf.ensure(v.top, this.metrics().rows + 50);
+    for (const L of listOf(v.buf.text)) {
+      if (L.indexOf(v.top) < 0) v.setTop(L.starts[0], 0);
+      if (this.ready(v) || L.eof) this.render();
+    }
+  }
+  // Fetch the text from byte `p` (before the held window), then scroll `n`
+  // lines.
+  async scrollPast(v, p, n) {
+    await v.buf.ensure(Math.max(0, p), ENSURE_AFTER);
+    this.scrollLines(n);
   }
 
   // Clear the drawn rows (a pane with nothing to show, or still loading).
@@ -528,27 +582,22 @@ export class Pane {
   }
 
   render() {
-    const v = this.view;
-    setClass(this.el, "terminal", v !== undefined && v.buf.terminal.length > 0);
-    if (!v) { this.clearRows(); return; }
+    setClass(this.el, "terminal", this.shown.some((x) => terminalOf(x.buf.source).length > 0));
+    if (this.shown.length === 0) { this.clearRows(); return; }
+    const v = this.shown[0];
     const buf = v.buf;
-    for (const id of buf.terminal) { this.editor.mountTerminal(id, this.termEl); this.editor.updateStatus(); return; }
+    for (const id of terminalOf(buf.source)) { this.editor.mountTerminal(id, this.termEl); this.editor.updateStatus(); return; }
     if (!this.ready(v)) {
-      buf.ensure(v.top, this.metrics().rows + 50).then(() => {
-        const L2 = buf.text;
-        if (L2 !== null && L2.indexOf(v.top) < 0) v.setTop(L2.starts[0]);
-        if (this.ready(v) || (L2 !== null && L2.eof)) this.render();
-      });
-      if (!buf.text || buf.text.indexOf(v.top) < 0) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
+      this.fetch(v);
+      if (!listOf(buf.text).some((L) => L.indexOf(v.top) >= 0)) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
     }
-    const L = buf.text;
+    const L = buf.held;
     v.setTop(L.starts[L.indexOf(v.top)], v.topPx);
     const compose = v.mode === "compose";
     if (this.surfaceEl.classList.contains("compose") !== compose) { this.clearRows(); setClass(this.surfaceEl, "compose", compose); }
     if (compose) { this.renderDoc(v); return; }
     const { rows, g } = this.computeRows(v, 0);
     this.rows = rows;
-    this.geom = g;
     const { cw, lh } = this.metrics();
     const s = this.editor.settings();
     this.gutterEl.style.width = `${g.gutter * cw}px`;
@@ -558,9 +607,10 @@ export class Pane {
     if (v.opts.wrap) v.left = 0;
     else {
       if (this.wantX) {
-        const at = this.caretXY(v.primary.pos);
-        if (at !== null && at.x < v.left) v.left = Math.max(0, at.x - 4);
-        else if (at !== null && at.x > v.left + g.width - 2) v.left = at.x - g.width + 6;
+        for (const at of this.caretXY(v.primary.pos)) {
+          if (at.x < v.left) v.left = Math.max(0, at.x - 4);
+          else if (at.x > v.left + g.width - 2) v.left = at.x - g.width + 6;
+        }
       }
       v.left = Math.max(0, Math.min(v.left, this.maxCols - 1));
     }
@@ -585,20 +635,23 @@ export class Pane {
     const textEls = [], gutEls = [];
     let lastLine = -1;
     for (const r of rows) {
-      const current = s.highlight_current_line && r.kind === "text" && curLines.has(r.lineIdx) && !v.selection();
+      // A text row's line (a virtual row has none).
+      const line = r.kind === "text" ? listOf(r.lineIdx) : [];
+      const current = s.flags.highlight_current_line === true && line.some((li) => curLines.has(li)) && v.selection() === null;
       const cls = "row" + (r.kind === "virtual" ? " virtual" : "") + (current && !r.fill ? " current" : "");
       textEls.push(take(textPool, rowHtml(cls, r.fill, r.cells)));
       // The gutter: line number and one mark (fold, diagnostic or plugin).
       let ghtml = `<div class="row">\u200b</div>`;
-      if (r.kind === "text" && !r.cont && r.lineIdx !== lastLine) {
-        lastLine = r.lineIdx;
-        const m = marks.get(r.lineIdx);
-        const sev = dline.get(r.lineIdx);
-        const mark = folded.has(r.lineIdx) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m !== undefined ? m.glyph : " ";
+      for (const li of line) {
+        if (r.cont || li === lastLine) continue;
+        lastLine = li;
+        const m = marks.get(li);
+        const sev = dline.get(li);
+        const mark = folded.has(li) ? "▸" : sev ? (sev === 1 ? "●" : "▲") : m !== undefined ? m.glyph : " ";
         const mcol = sev ? THEME[sev === 1 ? "diagnostic.error" : "diagnostic.warning"] ?? "" : m !== undefined ? color(m.color) ?? "" : "";
-        const num = g.nums && L.firstLine !== null ? String(L.firstLine + r.lineIdx + 1).padStart(g.digits) + " " : "";
+        const num = g.nums && L.firstLine !== null ? String(L.firstLine + li + 1).padStart(g.digits) + " " : "";
         const title = m !== undefined && !sev && m.title ? ` title="${esc(m.title)}"` : "";
-        ghtml = `<div class="row${current ? " current" : ""}" data-line="${r.lineIdx}"${title}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
+        ghtml = `<div class="row${current ? " current" : ""}" data-line="${li}"${title}>${num}<span class="mark"${mcol ? ` style="color:${mcol}"` : ""}>${esc(mark)}</span></div>`;
       }
       gutEls.push(take(gutPool, ghtml));
     }
@@ -610,7 +663,7 @@ export class Pane {
     // line's leading whitespace (a blank line takes the next line's).
     let guides = "";
     for (const col of s.rulers) guides += `<div class="ruler" style="left:${(col - 1) * cw}px"></div>`;
-    if (s.show_indent_guides) {
+    if (s.flags.show_indent_guides === true) {
       const indentOf = (li) => {
         const lead = /^[ \t]*/.exec(L.lines[li]);
         const m = lead ? lead[0] : "";
@@ -637,8 +690,7 @@ export class Pane {
     let html = "";
     if (this.active) {
       for (const c of v.cursors) {
-        const at = this.caretXY(c.pos);
-        if (at !== null) html += `<div class="caret" style="left:${at.x * cw}px;top:${at.r * lh}px;height:${lh}px"></div>`;
+        for (const at of this.caretXY(c.pos)) html += `<div class="caret" style="left:${at.x * cw}px;top:${at.r * lh}px;height:${lh}px"></div>`;
       }
     }
     if (this.drawn.carets !== html) { this.caretsEl.innerHTML = html; this.drawn.carets = html; }
@@ -648,7 +700,6 @@ export class Pane {
   // A view in compose mode: a document (doc.js).
   renderDoc(v) {
     const g = this.geometry(v);
-    this.geom = g;
     this.doc.render(v);
     this.finishRender(v, g);
   }
@@ -664,16 +715,13 @@ export class Pane {
   }
 
   renderScrollbar(v, g) {
-    const L = v.buf.text;
+    const L = v.buf.held;
     const buf = v.buf;
-    let frac, size;
-    if (L.firstLine != null && buf.totalLines) {
-      frac = (L.firstLine + L.indexOf(v.top)) / Math.max(1, buf.totalLines);
-      size = Math.min(1, g.rows / Math.max(1, buf.totalLines));
-    } else {
-      frac = v.top / Math.max(1, buf.len);
-      size = 0.02;
-    }
+    // Where the view is: by lines when the file's are counted and the held
+    // window's place among them is known, else by bytes.
+    const counted = listOf(buf.totalLines).filter((n) => n > 0).flatMap((n) => listOf(L.firstLine).map((first) => ({ n, first })));
+    const frac = counted.map((c) => (c.first + L.indexOf(v.top)) / c.n).at(0) ?? v.top / Math.max(1, buf.len);
+    const size = counted.map((c) => Math.min(1, g.rows / c.n)).at(0) ?? 0.02;
     const h = this.size.sb;
     this.thumbEl.style.top = `${frac * h}px`;
     this.thumbEl.style.height = `${Math.max(16, size * h)}px`;
@@ -687,13 +735,14 @@ export class Pane {
   // changed. Only a buffer held whole has them (a huge file's lines are
   // not all known).
   renderMarks(v, h) {
-    const b = v.buf, L = b.text;
+    const b = v.buf;
     const d = b.decor;
-    const cursor = b.full ? L.indexOf(v.primary.pos) : -1;
-    const sig = b.full ? `${b.id}:${d.gen}:${b.textGen}:${L.count}:${cursor}:${h}` : "";
+    const sig = b.full ? `${b.id}:${d.gen}:${b.textGen}:${b.held.count}:${b.held.indexOf(v.primary.pos)}:${h}` : "";
     if (sig === this.marksSig) return;
     this.marksSig = sig;
-    if (!sig || !h) { this.marksEl.replaceChildren(); return; }
+    if (sig === "" || h === 0) { this.marksEl.replaceChildren(); return; }
+    const L = b.held;
+    const cursor = L.indexOf(v.primary.pos);
     const n = Math.max(1, L.count);
     const lanes = [noMarks(), noMarks(), noMarks()]; // y -> its mark
     // A mark in `lane` at the row of byte `pos` (one of a lower rank wins).
@@ -725,33 +774,30 @@ export class Pane {
     this.marksEl.replaceChildren(...els);
   }
 
-  // Where a caret at byte `p` is drawn, in client pixels: {x, y, h}, or
-  // null when it is not on screen.
+  // Where a caret at byte `p` is drawn, in client pixels: {x, y, h} (none
+  // when it is not on screen).
   caretBox(p) {
-    if (this.view?.mode === "compose") {
-      return listOf(this.doc.caretRect(p)).map((r) => ({ x: r.left, y: r.top, h: r.height || this.metrics().lh })).at(0) ?? NO_CARET;
+    if (this.shown.some((v) => v.mode === "compose")) {
+      return listOf(this.doc.caretRect(p)).map((r) => ({ x: r.left, y: r.top, h: r.height || this.metrics().lh }));
     }
-    const at = this.caretXY(p);
-    if (!at) return NO_CARET;
     const { cw, lh } = this.metrics();
     const rect = this.textEl.getBoundingClientRect();
-    return some({ x: rect.left + at.x * cw, y: rect.top + at.r * lh, h: lh });
+    return this.caretXY(p).map((at) => ({ x: rect.left + at.x * cw, y: rect.top + at.r * lh, h: lh }));
   }
 
   // The byte drawn at client point (x, y).
   posFromPoint(x, y) {
-    const v = this.view;
-    if (v && v.mode === "compose") return this.doc.posFromPoint(v, x, y);
+    for (const v of this.shown) if (v.mode === "compose") return this.doc.posFromPoint(v, x, y);
     const { cw, lh } = this.metrics();
     const rect = this.textEl.getBoundingClientRect();
     return this.posAt(Math.floor((y - rect.top) / lh), Math.max(0, (x - rect.left) / cw));
   }
 
-  // The fold hiding line `li`, with the last line it keeps: {fold, keep}.
+  // The fold hiding line `li`, with the last line it keeps: {fold, keep}
+  // (none: the line shows).
   foldHiding(v, li) {
     if (v.mode === "compose") return this.doc.hiding(v, li);
-    const f = v.folds.find((f) => li > f.start && li <= f.end);
-    return f ? { fold: f, keep: f.start } : null;
+    return v.folds.filter((f) => li > f.start && li <= f.end).slice(0, 1).map((f) => ({ fold: f, keep: f.start }));
   }
 
   // Where a caret can stand at or beyond `p` (in direction `dir`): not on
@@ -760,8 +806,7 @@ export class Pane {
   settle(v, p, dir) {
     const L = v.buf.text;
     if (L !== null) {
-      const h = this.foldHiding(v, L.indexOf(p));
-      if (h !== null) p = dir < 0 || h.fold.end + 1 >= L.count ? L.lineEnd(h.keep) : L.starts[h.fold.end + 1];
+      for (const h of this.foldHiding(v, L.indexOf(p))) p = dir < 0 || h.fold.end + 1 >= L.count ? L.lineEnd(h.keep) : L.starts[h.fold.end + 1];
     }
     for (let guard = 0; guard < 64; guard++) {
       const c = v.buf.decor.concealsIn(p, p + 1).find((c) => c.start < p && p < c.end && applies(c, v.mode) && !(c.reveal && cursorIn([p], c.reveal)));
@@ -771,60 +816,66 @@ export class Pane {
     return p;
   }
 
-  // Where byte `p` is drawn: {r, x} in rows and columns.
+  // Where byte `p` is drawn: {r, x} in rows and columns (none when it is
+  // not on screen).
   caretXY(p) {
-    let best = null;
+    // The end of the last cell before `p` (at most one).
+    let best = noXY();
     for (let r = 0; r < this.rows.length; r++) {
       const row = this.rows[r];
       if (row.kind !== "text") continue;
       let x = 0;
       for (const c of row.cells) {
-        if (c.src === p) return { r, x };
-        if (c.src != null && c.src < p) best = { r, x: x + c.w };
+        if (c.src === p) return [{ r, x }];
+        for (const src of listOf(c.src)) if (src < p) best = [{ r, x: x + c.w }];
         x += c.w;
       }
-      if (row.eol === p) return { r, x: row.col };
-      if (row.eol != null && row.eol > p && best && best.r === r) return best;
+      if (row.eol === p) return [{ r, x: row.col }];
+      for (const eol of listOf(row.eol)) if (eol > p) for (const b of best) if (b.r === r) return [b];
     }
-    return null;
+    return noXY();
   }
 
   // The byte under row `r`, column `x`.
-  posAt(r, x) {
-    r = Math.max(0, Math.min(this.rows.length - 1, r));
-    let row = this.rows[r];
-    while (row && row.kind !== "text" && r < this.rows.length - 1) row = this.rows[++r];
-    if (!row || row.kind !== "text") return null;
-    let col = 0, last = null;
+  posAt(r0, x) {
+    const from = Math.max(0, Math.min(this.rows.length - 1, r0));
+    const r = this.rows.findIndex((row, k) => k >= from && row.kind === "text");
+    if (r < 0) return noByte();
+    const row = this.rows[r];
+    let col = 0;
+    let last = noBytes(); // the last byte before `x` (at most one)
     for (const c of row.cells) {
-      if (c.src != null) {
-        if (col + c.w / 2 > x) return c.src;
-        last = c.src;
+      for (const b of listOf(c.src)) {
+        if (col + c.w / 2 > x) return some(b);
+        last = [b];
       }
       col += c.w;
     }
-    if (row.eol != null) return row.eol;
+    for (const b of listOf(row.eol)) return some(b);
     const next = this.rows[r + 1];
-    const first = next === undefined ? undefined : next.cells.find((c) => c.src != null);
-    return first !== undefined ? first.src : last;
+    const after = next === undefined ? [] : next.cells.flatMap((c) => listOf(c.src));
+    for (const b of [...after, ...last]) return some(b);
+    return noByte();
   }
+
 
   // ---------------------------------------------------------------- motion
 
   scrollLines(n) {
-    const v = this.view;
-    if (!v || !v.buf.text) return;
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
+    if (v.buf.text === null) return;
     if (v.mode === "compose") { v.setTop(v.top, v.topPx + n * this.metrics().lh); this.scheduleRender(); return; }
-    const L = v.buf.text;
+    const L = v.buf.held;
     const i = L.indexOf(v.top);
     if (i < 0) return;
     let j = Math.max(0, Math.min(L.count - 1, i + n));
     for (const f of v.folds) if (j > f.start && j <= f.end) j = n > 0 ? Math.min(L.count - 1, f.end + 1) : f.start;
     if (j === i && n < 0 && !L.bof) {
-      v.buf.ensure(Math.max(0, L.start - 1)).then(() => this.scrollLines(n));
+      this.scrollPast(v, L.start - 1, n);
       return;
     }
-    v.setTop(L.starts[j]);
+    v.setTop(L.starts[j], 0);
     if (!v.buf.full && ((!L.eof && L.count - j < 400) || (!L.bof && j < 50))) v.buf.ensure(v.top, 400);
     this.scheduleRender();
   }
@@ -832,41 +883,42 @@ export class Pane {
   // Scroll `n` columns sideways (no wrap), as far as the widest row on
   // screen goes.
   scrollCols(n) {
-    const v = this.view;
-    if (!v || v.opts.wrap || v.mode === "compose") return;
-    const width = this.geom ? this.geom.width : this.metrics().cols;
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
+    if (v.opts.wrap || v.mode === "compose") return;
+    const width = this.geometry(v).width;
     v.left = Math.max(0, Math.min(v.left + n, (this.maxCols || 0) - width + 4));
     this.scheduleRender();
   }
 
   // Keep the primary cursor on screen; `center` puts it mid-screen.
   // Sideways, the next draw keeps it in view (it measures the rows).
-  reveal(center = false) {
-    const v = this.view;
-    if (!v || !v.buf.text) return;
+  reveal(center) {
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
+    if (v.buf.text === null) return;
     this.wantX = true;
     // A document keeps the cursor in view as it draws (it measures there).
     if (v.mode === "compose") { this.doc.want = center ? "center" : this.doc.want === "none" ? "keep" : this.doc.want; this.scheduleRender(); return; }
-    const L = v.buf.text;
+    const L = v.buf.held;
     const ci = L.indexOf(v.primary.pos);
     if (ci < 0) return;
-    if (center) { v.setTop(L.starts[Math.max(0, ci - Math.floor(this.metrics().rows / 2))]); return; }
-    if (ci < L.indexOf(v.top)) { v.setTop(L.starts[ci]); return; }
+    if (center) { v.setTop(L.starts[Math.max(0, ci - Math.floor(this.metrics().rows / 2))], 0); return; }
+    if (ci < L.indexOf(v.top)) { v.setTop(L.starts[ci], 0); return; }
     for (let guard = 0; guard < 2000; guard++) {
       const { rows, g } = this.computeRows(v, 0);
       this.rows = rows;
-      const at = this.caretXY(v.primary.pos);
-      if (at && at.r < g.rows) return;
+      if (this.caretXY(v.primary.pos).some((at) => at.r < g.rows)) return;
       const ti = L.indexOf(v.top);
       if (ti >= ci || ti >= L.count - 1) return;
-      v.setTop(L.starts[ti + 1]);
+      v.setTop(L.starts[ti + 1], 0);
     }
   }
 
   // Move the primary cursor by visual rows.
   moveRows(n, extend) {
-    const v = this.view;
-    if (!v) return;
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
     if (v.mode === "compose") {
       const c = v.primary;
       this.renderNow();
@@ -882,26 +934,25 @@ export class Pane {
       c.goalX = goal;
       return;
     }
-    const L = v.buf.text;
+    const L = v.buf.held;
     const c = v.primary;
-    this.reveal();
+    this.reveal(false);
     let { rows } = this.computeRows(v, Math.abs(n) + 2);
     this.rows = rows;
-    let at = this.caretXY(c.pos);
-    if (!at) return;
-    const goal = c.goalX ?? at.x;
-    let r = at.r, left = Math.abs(n);
+    const start = this.caretXY(c.pos);
+    if (start.length === 0) return;
+    const goal = c.goalX ?? start[0].x;
+    let r = start[0].r, left = Math.abs(n);
     while (left > 0) {
       let t = r + Math.sign(n);
       while (t >= 0 && t < rows.length && rows[t].kind !== "text") t += Math.sign(n);
       if (t < 0) {
         const ti = L.indexOf(v.top);
         if (ti === 0) break;
-        v.setTop(L.starts[ti - 1]);
+        v.setTop(L.starts[ti - 1], 0);
         ({ rows } = this.computeRows(v, Math.abs(n) + 2));
         this.rows = rows;
-        at = this.caretXY(c.pos);
-        r = at ? at.r : 0;
+        r = this.caretXY(c.pos).map((at) => at.r).at(0) ?? 0;
         continue;
       }
       if (t >= rows.length) break;
@@ -915,8 +966,8 @@ export class Pane {
   // A page up or down: the view scrolls a screen and the cursor keeps its
   // place on it.
   page(dir, extend) {
-    const v = this.view;
-    if (!v) return;
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
     if (v.mode !== "compose") {
       const n = this.metrics().rows;
       this.scrollLines(dir * n);
@@ -932,7 +983,7 @@ export class Pane {
     // The caret moves a page through the document; the view moved `shift`.
     const shift = this.doc.scrollBy(v, dist);
     this.finishRender(v, this.geometry(v));
-    const y = (at ? at.y + at.h / 2 : sr.top + sr.height / 2) + dist - shift;
+    const y = (at.map((a) => a.y + a.h / 2).at(0) ?? sr.top + sr.height / 2) + dist - shift;
     const p = this.posFromPoint(this.doc.content.getBoundingClientRect().left + goal, y);
     if (p != null) { this.editor.place(this, p, extend); c.goalX = goal; }
   }
@@ -943,13 +994,11 @@ export class Pane {
     if (e.target === this.scrollbarEl || e.target === this.thumbEl || this.gutterEl.contains(e.target)) return;
     e.preventDefault();
     this.editor.focus(this);
-    const v = this.view;
-    if (!v) return;
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
     // A document's fold toggle.
-    const fold = e.target.closest?.("[data-fold]");
-    if (fold) { this.editor.toggleFold(this, +fold.dataset.fold); return; }
-    const toPos = (ev) => this.posFromPoint(ev.clientX, ev.clientY);
-    const p = toPos(e);
+    for (const fold of listOf(e.target.closest("[data-fold]"))) { this.editor.toggleFold(this, Number(fold.dataset.fold)); return; }
+    const p = this.posFromPoint(e.clientX, e.clientY);
     if (p == null) return;
     // A right press moves the caret there unless it is in the selection
     // (the context menu acts on it); the menu opens on `contextmenu`.
@@ -959,54 +1008,57 @@ export class Pane {
     }
     // Alt+drag or a middle-button drag selects a rectangle (a block); an
     // Alt+click without a drag adds a cursor.
-    if (e.button === 1 || (e.button === 0 && e.altKey)) { this.blockDrag(e, p); return; }
+    if (e.button === 1 || (e.button === 0 && e.altKey)) { this.blockDrag(v, e, p); return; }
     if (e.button !== 0) return;
+    this.clicks = nextClicks(this.clicks, e.timeStamp, e.clientX, e.clientY);
     this.editor.place(this, p, e.shiftKey);
-    if (e.ctrlKey && e.button === 0) { this.editor.run("lsp.definition"); return; }
-    if (e.detail === 2) this.editor.selectWord(this);
-    if (e.detail === 3) this.editor.selectLine(this);
-    const extend = (ev) => { const q = toPos(ev); if (q != null) this.editor.place(this, q, true); };
+    if (e.ctrlKey) { this.editor.run("lsp.definition"); return; }
+    if (this.clicks.n === 2) this.editor.selectWord(this);
+    if (this.clicks.n === 3) this.editor.selectLine(this);
+    const extend = (at) => { const q = this.posFromPoint(at.x, at.y); if (q != null) this.editor.place(this, q, true); };
     // Held past the top or bottom edge, the view scrolls each frame (faster
     // the farther out) and the selection follows to the edge.
-    let last = null, frame = null;
-    const tick = () => {
-      frame = null;
+    // Where the mouse was last, and the frame asked for (at most one).
+    let last = { x: e.clientX, y: e.clientY };
+    let frame = noFrame();
+    const tick = (_t) => {
+      frame = noFrame();
       const sr = this.surfaceEl.getBoundingClientRect();
-      const d = last.clientY < sr.top ? last.clientY - sr.top : last.clientY > sr.bottom ? last.clientY - sr.bottom : 0;
-      if (!d) return;
+      const d = last.y < sr.top ? last.y - sr.top : last.y > sr.bottom ? last.y - sr.bottom : 0;
+      if (d === 0) return;
       this.scrollLines(Math.sign(d) * Math.min(10, 1 + Math.floor(Math.abs(d) / this.metrics().lh)));
       this.renderNow();
       extend(last);
-      frame = requestAnimationFrame(tick);
+      frame = [requestAnimationFrame(tick)];
     };
-    const move = (ev) => { last = ev; extend(ev); if (!frame) frame = requestAnimationFrame(tick); };
-    const up = () => { cancelAnimationFrame(frame); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    const move = (ev) => { last = { x: ev.clientX, y: ev.clientY }; extend(last); if (frame.length === 0) frame = [requestAnimationFrame(tick)]; };
+    const up = (_ev) => { for (const f of frame) cancelAnimationFrame(f); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   }
 
   // The screen line and column at client point (x, y), for a block's
-  // corner: {line, col} (the column may be past the line's end).
-  cornerFromPoint(x, y) {
-    const v = this.view;
+  // corner: {line, col} (the column may be past the line's end); none
+  // off the text.
+  cornerFromPoint(v, x, y) {
+    const L = v.buf.text;
     const p = this.posFromPoint(x, y);
-    if (p == null || !v.buf.text) return null;
+    if (p == null || L === null) return noCorner();
     const rect = this.textEl.getBoundingClientRect();
-    return { line: v.buf.text.indexOf(p), col: Math.max(0, Math.round((x - rect.left) / this.metrics().cw)) };
+    return [{ line: L.indexOf(p), col: Math.max(0, Math.round((x - rect.left) / this.metrics().cw)) }];
   }
-  blockDrag(e, p) {
-    const v = this.view;
+  blockDrag(v, e, p) {
     if (v.mode === "compose") return;
     const x0 = e.clientX, y0 = e.clientY;
-    const anchor = this.cornerFromPoint(x0, y0);
+    const anchor = this.cornerFromPoint(v, x0, y0);
     let dragged = false;
     const move = (ev) => {
       if (!dragged && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
       dragged = true;
-      const head = this.cornerFromPoint(ev.clientX, ev.clientY);
-      if (anchor && head) this.editor.setBlock(this, anchor, head);
+      const head = this.cornerFromPoint(v, ev.clientX, ev.clientY);
+      for (const a of anchor) for (const h of head) this.editor.setBlock(this, a, h);
     };
-    const up = () => {
+    const up = (_ev) => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       if (!dragged && e.button === 0) { v.cursors.push(cursorAt(p)); v.normalize(); this.scheduleRender(); }
@@ -1023,8 +1075,9 @@ export class Pane {
   }
 
   onHover(e) {
-    const v = this.view;
-    if (!v || !v.buf.text) return;
+    if (this.shown.length === 0) return;
+    const v = this.shown[0];
+    if (v.buf.text === null) return;
     this.editor.hover(this, this.posFromPoint(e.clientX, e.clientY), e.clientX, e.clientY);
   }
 
@@ -1036,7 +1089,7 @@ export class Pane {
       this.editor.scrollTo(this, Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)));
     };
     go(e);
-    const up = () => { window.removeEventListener("mousemove", go); window.removeEventListener("mouseup", up); };
+    const up = (_ev) => { window.removeEventListener("mousemove", go); window.removeEventListener("mouseup", up); };
     window.addEventListener("mousemove", go);
     window.addEventListener("mouseup", up);
   }

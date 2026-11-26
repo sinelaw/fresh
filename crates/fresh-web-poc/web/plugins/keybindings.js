@@ -17,7 +17,8 @@ export function activate(app) {
     const byCmd = new Map();
     km.forEach((c, k) => { byCmd.set(c, [...(byCmd.get(c) ?? []), k]); });
     const q = query.toLowerCase();
-    return fresh.commands(app)
+    const all /*: CommandInfo[] */ = fresh.commands(app);
+    return all
       .filter((c) => !q || c.title.toLowerCase().includes(q) || c.id.includes(q) || (byCmd.get(c.id) || []).some((k) => k.toLowerCase().includes(q)))
       .sort((a, b) => a.title.localeCompare(b.title))
       .map((c) => ({ ...c, keys: byCmd.get(c.id) || [], custom: (byCmd.get(c.id) || []).some((k) => user.get(k) === c.id) }));

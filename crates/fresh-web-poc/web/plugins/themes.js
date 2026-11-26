@@ -160,18 +160,18 @@ export function activate(app) {
   // Applying in order: a slow fetch for an earlier preview never lands
   // after a later one.
   let shown = Promise.resolve(undefined);
-  const show = (key) => (shown = shown.then(() => load(key)).then((vars) => fresh.setTheme(app, vars)).catch((e) => fresh.message(app, `Theme ${key}: ${e.message || e}`)));
+  const show = (key) => (shown = shown.then(() => load(key)).then((vars) => fresh.setTheme(app, vars)).catch((e) => fresh.message(app, `Theme ${key}: ${String(e)}`)));
   const choose = (key) => {
     current = key;
     fresh.settings(app).theme = key;
     try { localStorage.setItem(STORE, key); } catch {}
-    item.set(key.replace(/^skin\//, ""), { title: "Theme: Select Theme…", onClick: () => fresh.run(app, "theme.select") });
+    item.set(key.replace(/^skin\//, ""), { title: "Theme: Select Theme…", onClick: () => { fresh.run(app, "theme.select"); } });
     return show(key);
   };
   fresh.on(app, "app.ready", () => { choose(savedTheme() ?? "dark"); });
   // A theme chosen by another part of the client: a skin's editor theme
   // comes with the skin when it is picked.
-  fresh.register(app, "theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key) });
+  fresh.registerWith(app, "theme.use", { title: "Use Theme", hidden: true, run: (key) => choose(key ?? "") });
   fresh.register(app, "theme.select", {
     title: "Select Theme…",
     hidden: false,

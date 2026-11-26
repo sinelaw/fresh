@@ -35,6 +35,22 @@
 
 // A byte range [start, end).
 /** type Range = {start: Number, end: Number} */
+// A fold hiding a line, and the last line it keeps.
+/** type Hidden = {fold: Range, keep: Number} */
+// A screen place: row and column.
+/** type XY = {r: Number, x: Number} */
+// Mouse presses in a row: the last one's time and client place, and how
+// many there were.
+/** type Clicks = {t: Number, x: Number, y: Number, n: Number} */
+// What a sash does (sash.js): measure as a drag starts (its context `C`),
+// apply a move of so many pixels, finish, and put the default size back.
+/** type SashOptions<C> = {begin: () => C, drag: (C, Number) => Undefined, end: () => Undefined, reset: () => Undefined} */
+// A block selection's corner: a line and a screen column (perhaps past
+// the line's end).
+/** type Corner = {line: Number, col: Number} */
+// A view's options: its compose width in columns (none: the setting's),
+// whether lines wrap, and whether line numbers show.
+/** type ViewOptions = {composeWidth: Number | Null, wrap: Boolean, lineNumbers: Boolean} */
 
 // A buffer's held lines (a BufferHandle's lines()): their text, their byte
 // starts, and the document line of the first (null without a line index).
@@ -266,6 +282,28 @@
  *   readonly: Boolean,
  * } */
 
+// A buffer's replica of a server document (buffer.js): the log version
+// seen; this client's edits sent and not yet sequenced (a batch at most),
+// and those not yet sent; the log as sequenced lately (for a window
+// fetched late); the window being fetched (at most one).
+/** type LogEntry = {version: Number, ops: LoggedOp[]} */
+/** type Replica = {
+ *   doc: Number,
+ *   version: Number,
+ *   inflight: Op[][],
+ *   pending: Op[],
+ *   recent: LogEntry[],
+ *   fetching: Promise<Undefined>[],
+ * } */
+// A plugin's entry in its buffer: its bytes, properties and style.
+/** type EntryRange = {start: Number, end: Number, props: Dict<String>, style: Style | Null} */
+// Where a buffer's text comes from: a server document (its replica), a
+// plugin's entries, or a terminal (its tab has no text).
+/** type Source =
+ *   | {kind: "file", replica: Replica}
+ *   | {kind: "virtual", ranges: EntryRange[]}
+ *   | {kind: "terminal", term: Number} */
+
 // A language server's diagnostic, at byte offsets.
 /** type Diagnostic = {start: Number, end: Number, severity: Number, message: String, source: String | Null} */
 
@@ -410,9 +448,65 @@
  *   error: String | Null,
  * } */
 
+// A command's argument: what the palette passes after a prefix, a
+// plugin's own (a theme's key); none for most.
+/** type CommandArg = String | Undefined */
+// A command: its title, what it does, where it came from (a plugin's
+// name, "core"), and whether the palette leaves it out.
+/** type Command = {title: String, run: (CommandArg) => Promise<Undefined>, source: String, hidden: Boolean} */
+// A command as the plugin API lists it.
+/** type CommandInfo = {id: String, title: String, source: String, hidden: Boolean} */
+// The palette's rows for commands (`key`: its keys, "" for none) and open
+// buffers (`stored`: the server keeps it; `path` "" for none).
+/** type PaletteCommand = {title: String, key: String, source: String, run: () => Undefined} */
+/** type PaletteBuffer = {name: String, path: String, modified: Boolean, stored: Boolean, show: () => Undefined} */
+// What the menu bar asks of the editor (menubar.js): a command's title
+// (none: no such command), its keys, run it, whether a toggle is on (a
+// "setting" or a view "state"), and focus.
+/** type MenuEditor = {
+ *   title: (String) => String | Null,
+ *   keyLabel: (String) => String,
+ *   run: (String) => Undefined,
+ *   isOn: ("setting" | "state" | "read", String) => Boolean,
+ *   focus: () => Undefined,
+ * } */
+// What terminals ask of the editor (terminal.js): to take a key pressed
+// in a terminal (true: it did), and that a terminal's label changed or a
+// terminal appeared (another client opened it).
+/** type TerminalsEditor = {
+ *   key: (DomEvent<El>) => Boolean,
+ *   changed: (Number) => Undefined,
+ *   appeared: (Number) => Undefined,
+ * } */
+// What the palette asks of the editor (palette.js): where the active view
+// is, go to a line (from 0), the commands, buffers, root and recent files
+// it lists, open a file (at a line and column, from 1), and focus.
+/** type PaletteEditor = {
+ *   here: () => Spot[],
+ *   goto: (Number) => Undefined,
+ *   commands: () => PaletteCommand[],
+ *   buffers: () => PaletteBuffer[],
+ *   root: () => String,
+ *   recent: () => String[],
+ *   open: (String) => Undefined,
+ *   openAt: (String, Number, Number) => Undefined,
+ *   focus: () => Undefined,
+ * } */
+
+// An operation's outcome (rpc.js `attempt`): its answer, or the server's
+// refusal (`code`: its stable reason, `detail`: its words).
+/** type Outcome<T> = {kind: "ok", value: T} | {kind: "refused", code: String, detail: String} */
+
 // What the server pushes over the event stream.
+// A terminal's output (from stream offset `at`), its exit, its new size.
+/** type TermEvent =
+ *   | {ev: "term.data", term: Number, at: Number, data: String}
+ *   | {ev: "term.exit", term: Number}
+ *   | {ev: "term.size", term: Number, cols: Number, rows: Number} */
+// Edits the server sequenced, as a document's log pushes them.
+/** type DocOps = {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: LoggedOp[], len: Number, modified: Boolean} */
 /** type ServerEvent =
- *   | {ev: "doc.ops", doc: Number, version: Number, client: Number, ops: LoggedOp[], len: Number, modified: Boolean}
+ *   | DocOps
  *   | {ev: "doc.saved", doc: Number, info: DocInfo}
  *   | {ev: "doc.renamed", doc: Number, info: DocInfo}
  *   | {ev: "doc.info", doc: Number, info: DocInfo}
@@ -428,9 +522,7 @@
  *   | {ev: "doc.indexing", doc: Number, done: Number, total: Number}
  *   | {ev: "doc.indexed", doc: Number, lines: Number, version: Number}
  *   | {ev: "lsp.diagnostics", doc: Number, version: Number, items: Diagnostic[]}
- *   | {ev: "term.data", term: Number, at: Number, data: String}
- *   | {ev: "term.exit", term: Number}
- *   | {ev: "term.size", term: Number, cols: Number, rows: Number}
+ *   | TermEvent
  *   | {ev: "proc.exit", proc: Number, code: Number, stdout: String, stderr: String}
  *   | {ev: "fs.changed", watch: Number, path: String}
  *   | {ev: "workspace.trusted", lsp: String[]}

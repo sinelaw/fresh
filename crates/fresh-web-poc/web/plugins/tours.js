@@ -4,6 +4,7 @@
 // step opens its file at its line and marks it.
 
 import * as fresh from "../js/api.js";
+import { listOf } from "../js/api.js";
 import { h } from "../js/ui.js";
 
 // The step's line.
@@ -54,17 +55,19 @@ export function activate(app) {
     const file = s.file, line = s.line;
     if (!file) return;
     const path = `${root}/${file}`;
-    const b = await fresh.open(app, path, { line: line || null, column: 1, place: "tab", preview: null, focus: true });
-    const L = b ? b.lines() : null;
-    if (!b || !L || !line) return;
-    marked = path;
-    const li = line - 1 - (L.firstLine ?? 0);
-    if (li >= 0 && li < L.starts.length) {
-      const d = b.decorations("tour");
-      d.overlay(L.starts[li], L.starts[li] + fresh.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
-      d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
+    for (const b of listOf(await fresh.open(app, path, { line: line || null, column: 1, place: "tab", preview: null, focus: true }))) {
+      if (!line) return;
+      for (const L of listOf(b.lines())) {
+        marked = path;
+        const li = line - 1 - (L.firstLine ?? 0);
+        if (li >= 0 && li < L.starts.length) {
+          const d = b.decorations("tour");
+          d.overlay(L.starts[li], L.starts[li] + fresh.byteLen(L.lines[li]) + 1, STEP, { when: "always", mark: false, above: false });
+          d.gutter(L.starts[li], { glyph: "▶", color: "syntax.function", title: s.title || `Step ${step + 1}` });
+        }
+        b.render();
+      }
     }
-    b.render();
   };
   const render = () => {
     const now = taking;

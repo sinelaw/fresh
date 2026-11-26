@@ -17,7 +17,7 @@
 // clients and undo all see the change.
 
 import * as fresh from "../js/api.js";
-import { byteLen } from "../js/api.js";
+import { byteLen, listOf } from "../js/api.js";
 import { h } from "../js/ui.js";
 
 // The searched range, the matches and the current match.
@@ -473,14 +473,14 @@ export function activate(app) {
   // tab of its own.
   const openMatch = async (m, preview) => {
     if (!m || m.header) return;
-    const b = await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview, focus: !preview });
-    const v = fresh.activeView(app);
-    if (b === null || v === null) return;
-    const L = b.lines();
-    if (L === null) return;
-    const i = m.line - (L.firstLine ?? 0);
-    const start = L.starts[i] + m.col;
-    await v.select(start, start + m.len, { center: true });
+    for (const b of listOf(await fresh.open(app, m.path, { line: null, column: 1, place: "tab", preview, focus: !preview }))) {
+      for (const v of listOf(fresh.activeView(app))) {
+        for (const L of listOf(b.lines())) {
+          const start = L.starts[m.line - (L.firstLine ?? 0)] + m.col;
+          await v.select(start, start + m.len, { center: true });
+        }
+      }
+    }
   };
   const replaceEverywhere = async () => {
     const byFile = new Map();

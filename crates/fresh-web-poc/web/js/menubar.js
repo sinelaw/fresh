@@ -12,6 +12,7 @@
 import { makeMenu, menuSpec, actionOf, submenu, SEPARATOR } from "./menu.js";
 
 import { $ } from "./dom.js";
+import { listOf } from "./maybe.js";
 
 // A menu bar row: a command (its label, keys and, for a toggle, the check
 // `checked(app)` reads when the menu opens; none given: the command's
@@ -366,17 +367,20 @@ export class MenuBar {
       const row = commandRow(r);
       if (row === null) continue;
       const command = row.command;
-      const title = this.editor.title(command);
-      if (title === null) continue;
+      const ed /*: MenuEditor */ = this.editor;
+      const titles = listOf(ed.title(command));
+      if (titles.length === 0) continue;
+      const title = titles[0];
       const checked = row.checked;
-      out.push(actionOf(row.label ?? title, row.keys ?? this.editor.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => { this.editor.run(command); }));
+      out.push(actionOf(row.label ?? title, row.keys ?? ed.keyLabel(command), checked !== null ? this.isChecked(checked) : null, false, () => { ed.run(command); }));
     }
     return lastIsRow() || !out.length ? out : out.slice(0, -1);
   }
 
   // Whether a toggle's check is on now.
   isChecked(c) {
-    return c.kind === "read" ? readOf(this.readers.get(c.name)) : this.editor.isOn(c.kind, c.name);
+    const ed /*: MenuEditor */ = this.editor;
+    return c.kind === "read" ? readOf(this.readers.get(c.name)) : ed.isOn(c.kind, c.name);
   }
 
   isOpen(i) { return this.opened.some((o) => o.i === i); }

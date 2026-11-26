@@ -30,7 +30,7 @@
 // work nobody has seen), idle; its attention says why it needs the user.
 // Viewing it clears that (`workspace.seen`).
 
-import { rpc, failure } from "./rpc.js";
+import { rpc, attempt, failure } from "./rpc.js";
 import { h } from "./ui.js";
 import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
 import { $ } from "./dom.js";
@@ -618,12 +618,12 @@ export class Orchestrator {
     const wt = worktree ? ` Its worktree ${w.root} is deleted, with any uncommitted changes; the branch ${w.worktree.branch} stays.` : "";
     if (!(await this.editor.confirm(`Close ${displayName(w)}?${what}${wt}`, worktree ? "Close and Delete Worktree" : "Close"))) return;
     const args = { workspace: w.id, remove_worktree: worktree };
-    try {
-      await rpc("workspace.close", args);
-    } catch (e) {
-      if (e.code !== "unsaved") { this.editor.say(`Not closed: ${e.detail}`); return; }
-      if (!(await this.editor.confirm(`${e.detail}. Close it and discard them?`, "Discard and Close"))) return;
-      await rpc("workspace.close", { ...args, discard: true }).catch((e2) => this.editor.say(`Not closed: ${failure(e2)}`));
+    const o = await attempt("workspace.close", args);
+    if (o.kind === "refused") {
+      if (o.code !== "unsaved") { this.editor.say(`Not closed: ${o.detail}`); return; }
+      if (!(await this.editor.confirm(`${o.detail}. Close it and discard them?`, "Discard and Close"))) return;
+      const again = await attempt("workspace.close", { ...args, discard: true });
+      if (again.kind === "refused") { this.editor.say(`Not closed: ${again.detail}`); return; }
     }
     this.editor.say(`Closed ${displayName(w)}`);
   }

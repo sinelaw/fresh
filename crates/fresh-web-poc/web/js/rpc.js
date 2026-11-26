@@ -19,11 +19,7 @@ export class RpcError {
 
 // What to say of a failure: a refusal's own words, an error's message,
 // or the value thrown.
-export function failure(e) {
-  if (e instanceof RpcError) return e.detail;
-  if (e instanceof Error) return e.message;
-  return String(e);
-}
+export function failure(e) { return String(e); }
 
 // Operations that change documents or files. A client's are sent one at a
 // time, each once the one before it is answered, so the server applies them
@@ -37,12 +33,27 @@ const ORDERED = new Set([
 // Settles once the last ordered operation is answered (or refused).
 let ordered = Promise.resolve(undefined);
 
+// Operation `op`: its answer, or (thrown) an RpcError.
 export function rpc(op, args) {
+  return attempt(op, args).then((o) => {
+    if (o.kind === "refused") throw new RpcError(op, { code: o.code, message: o.detail });
+    return o.value;
+  });
+}
+
+// Operation `op`, a refusal being an answer too: `{kind: "ok", value}`,
+// or `{kind: "refused", code, detail}` with the server's reason (for the
+// callers that act on it).
+export function attempt(op, args) {
   if (!ORDERED.has(op)) return send(op, args);
   const p = ordered.then(() => send(op, args));
   ordered = p.then(() => undefined).catch(() => undefined);
   return p;
 }
+/** function answered<T>(value: T) => Outcome<T> */
+function answered(value) { return { kind: "ok", value }; }
+/** function refused<T>(code: String, detail: String) => Outcome<T> */
+function refused(code, detail) { return { kind: "refused", code, detail }; }
 
 // The answer is `{ok: result}` or `{error: {code, message}}`.
 async function send(op, args) {
@@ -51,8 +62,8 @@ async function send(op, args) {
     body: JSON.stringify({ ...args, op, client: session.client }),
   });
   const j = await r.json();
-  if (j.error) throw new RpcError(op, j.error);
-  return j.ok;
+  const e = j.error;
+  return e ? refused(e.code, e.message) : answered(j.ok);
 }
 
 /** function connectEvents(onEvent: (ServerEvent) => Undefined) => EventSource */

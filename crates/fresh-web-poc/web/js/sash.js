@@ -7,14 +7,14 @@
 // starts, and then only writes sizes, at most once a frame: a drag never
 // reads layout after writing it. A double click puts the default size back.
 
-/**
- * Make `el` a sash along `axis` ("x": it moves left and right, "y": up and
- * down). `o.begin()` measures and returns the drag's context; `o.drag(ctx, d)`
- * applies a move of `d` pixels from where the drag started; `o.end()` runs
- * once it is let go; `o.reset()` on a double click.
- */
+// Make `el` a sash along `axis` ("x": it moves left and right, "y": up and
+// down). `o.begin()` measures and returns the drag's context; `o.drag(ctx,
+// d)` applies a move of `d` pixels from where the drag started; `o.end()`
+// runs once it is let go; `o.reset()` on a double click.
+/** function sash<C>(el: El, axis: String, o: SashOptions<C>) => Undefined */
 export function sash(el, axis, o) {
-  el.classList.add("sash", axis);
+  el.classList.add("sash");
+  el.classList.add(axis);
   el.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -25,16 +25,18 @@ export function sash(el, axis, o) {
     const at = (ev) => (axis === "x" ? ev.clientX : ev.clientY);
     const from = at(e);
     const ctx = o.begin();
-    let to = from, frame = 0;
+    let to = from;
+    // The frame asked for, to apply the move (at most one).
+    let frame = noFrame();
     const move = (ev) => {
       to = at(ev);
-      if (!frame) frame = requestAnimationFrame(() => { frame = 0; o.drag(ctx, to - from); });
+      if (frame.length === 0) frame = [requestAnimationFrame((_t) => { frame = noFrame(); o.drag(ctx, to - from); })];
     };
     const up = (_e) => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);
-      if (frame) { cancelAnimationFrame(frame); o.drag(ctx, to - from); }
+      for (const f of frame) { cancelAnimationFrame(f); o.drag(ctx, to - from); }
       el.classList.remove("dragging");
       document.documentElement.classList.remove("sash-dragging");
       o.end();
@@ -43,7 +45,10 @@ export function sash(el, axis, o) {
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
   });
-  if (o.reset) el.addEventListener("dblclick", () => o.reset());
+  el.addEventListener("dblclick", (_e) => { o.reset(); });
 }
+
+/** function noFrame() => Number[] */
+function noFrame() { return []; }
 
 export const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));

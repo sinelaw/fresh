@@ -94,7 +94,7 @@ function noFolds() { return new Map(); }
 // o: {mode, wrap, width, tab, cursors, folds:[{start,end}] (line indices),
 //     styleAt(b, li, idx), styleAtByte(b), whitespace, extendAt(b)}
 export function layout(buf, top, maxRows, o) {
-  const L = buf.text;
+  const L = buf.held;
   const d = buf.decor;
   const rows = [];
   const consumed = [];

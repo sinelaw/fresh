@@ -4,10 +4,10 @@
 // own (explorer, search, git, language-server panels, markdown, tours,
 // keybindings, themes) are plugins in `web/plugins/`.
 
-import { rpc, session, connectEvents, failure } from "./rpc.js";
+import { rpc, attempt, session, connectEvents, failure } from "./rpc.js";
 import { byteLen, shiftPos } from "./ot.js";
-import { fileBuffer, virtualBuffer, terminalBuffer, byteToIdx } from "./buffer.js";
-import { Pane, View, cursorAt, selecting, sel } from "./view.js";
+import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, byteToIdx, ENSURE_AFTER, synced, opsSince } from "./buffer.js";
+import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
 import { put, KEEP } from "./editing.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
@@ -15,8 +15,8 @@ import { sash, clamp } from "./sash.js";
 import { $, setClass } from "./dom.js";
 
 
-import { asCommand } from "./commands.js";
-import { listOf, found } from "./maybe.js";
+import { asCommand, asArgCommand } from "./commands.js";
+import { listOf, found, some, none } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { action, actionOf, SEPARATOR } from "./menu.js";
 import { rowOf, SEP } from "./menubar.js";
@@ -25,16 +25,35 @@ import { rowOf, SEP } from "./menubar.js";
 // show them.
 const CLIPBOARD_KEYS = new Map([["edit.cut", "Ctrl+X"], ["edit.copy", "Ctrl+C"], ["edit.paste", "Ctrl+V"]]);
 
-export const DEFAULT_SETTINGS = {
-  auto_close: true, auto_save: false, auto_save_seconds: 30, highlight_current_line: true, highlight_occurrences: true,
-  show_whitespace: false, show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rainbow_brackets: true, scroll_sync: false, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1,
+// The settings that are on or off, by name (menus check them, commands
+// toggle them).
+/** const DEFAULT_FLAGS: Dict<Boolean> */
+const DEFAULT_FLAGS = {
+  auto_close: true, auto_save: false, highlight_current_line: true, highlight_occurrences: true, show_whitespace: false,
+  show_indent_guides: true, preview_tabs: true, inlay_hints: true, highlight_brackets: true, rainbow_brackets: true, scroll_sync: false,
 };
+export const DEFAULT_SETTINGS = { flags: DEFAULT_FLAGS, auto_save_seconds: 30, rulers: [], page_width: 80, keymap: "default", theme: "dark", zoom: 1 };
+// The settings' storage key (it names their shape: settings kept in
+// another shape are left alone).
+const SETTINGS_KEY = "fresh-poc:settings2";
 
 // The settings and the user's own key bindings this browser remembers.
 export function loadSettings() {
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem("fresh-poc:settings") || "{}"); } catch {}
-  return { ...DEFAULT_SETTINGS, ...saved };
+  for (const k of kept(SETTINGS_KEY)) return { ...DEFAULT_SETTINGS, ...k, flags: flagsFrom(k.flags ?? DEFAULT_FLAGS) };
+  return DEFAULT_SETTINGS;
+}
+// What this browser kept under `key`, parsed (a list of at most one: none
+// when nothing was kept, or it cannot be read).
+function kept(key) {
+  try { const t = localStorage.getItem(key); return t === null ? [] : [JSON.parse(t)]; } catch { return []; }
+}
+// The flags kept, each one not kept at its default.
+/** function flagsFrom(kept: Dict<Boolean>) => Dict<Boolean> */
+function flagsFrom(kept) {
+  /** const flags: Dict<Boolean> */
+  const flags = {};
+  for (const [k, v] of Object.entries(DEFAULT_FLAGS)) flags[k] = kept[k] ?? v;
+  return flags;
 }
 export function loadUserKeys() {
   let keys = {};
@@ -96,6 +115,48 @@ function savedPane(tabs, active) { return { kind: "pane", tabs, active }; }
 /** function savedSplit(dir: String, ratio: Number, a: SavedNode, b: SavedNode) => SavedNode */
 function savedSplit(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
 
+// A language server's (line, character) as a byte in the held lines (a
+// list of at most one), and back: byte `pos` on held line `i` (none: -1).
+/** function offsetIn(held: HeldLines[], line: Number, character: Number) => Number | Null */
+function offsetIn(held, line, character) {
+  for (const L of held) {
+    const first = L.firstLine;
+    if (first === null) return null;
+    const i = line - first;
+    if (i < 0 || i >= L.lines.length) return null;
+    return L.starts[i] + byteLen(L.lines[i].slice(0, character));
+  }
+  return null;
+}
+/** function positionIn(L: HeldLines, i: Number, pos: Number) => LspPos | Null */
+function positionIn(L, i, pos) {
+  if (i < 0) return null;
+  return { line: (L.firstLine ?? 0) + i, character: byteToIdx(L.lines[i], pos - L.starts[i]) };
+}
+
+// A process's exit: its code and output.
+/** type ProcResult = {code: Number, stdout: String, stderr: String} */
+/** function procResult(code: Number, stdout: String, stderr: String) => ProcResult */
+function procResult(code, stdout, stderr) { return { code, stdout, stderr }; }
+// A part's item in the status bar.
+/** type StatusFact = {text: String, title: String, onClick: (() => Undefined) | Null} */
+/** function statusFact() => StatusFact */
+function statusFact() { return { text: "", title: "", onClick: null }; }
+/** function statusFactOf(text: String, title: String, onClick: (() => Undefined) | Null) => StatusFact */
+function statusFactOf(text, title, onClick) { return { text, title, onClick }; }
+/** function noFacts() => Map<String, StatusFact> */
+function noFacts() { return new Map(); }
+/** function noBytes() => Number[] */
+function noBytes() { return []; }
+/** function noCommands() => Map<String, Command> */
+function noCommands() { return new Map(); }
+/** function noStatus() => Dict<Boolean> */
+function noStatus() { return {}; }
+/** function noWaiting() => Map<Number, (ProcResult) => Undefined> */
+function noWaiting() { return new Map(); }
+/** function noExits() => Map<Number, ProcResult> */
+function noExits() { return new Map(); }
+
 // The buffer modes' keys, typed; the key `k` of mode `mode` (none: a
 // buffer of no mode, or a key it leaves alone).
 /** function noModes() => Map<String, ModeKey[]> */
@@ -105,6 +166,12 @@ function noModes() { return new Map(); }
 function noKeys() { return new Map(); }
 // The keys a text field keeps for its own editing.
 const FIELD_KEYS = new Set(["C-a", "C-c", "C-v", "C-x", "C-z", "C-S-z", "C-y", "C-Left", "C-Right", "C-S-Left", "C-S-Right", "C-Backspace", "C-Delete", "C-Home", "C-End", "C-S-Home", "C-S-End"]);
+
+// Line endings, as the pickers say them.
+const LINE_ENDINGS = new Map([["LF", "LF — Unix, macOS"], ["CRLF", "CRLF — Windows"], ["CR", "CR — classic Mac"]]);
+
+// Keys the keymap names its own way.
+const KEY_NAMES = new Map([["ArrowUp", "Up"], ["ArrowDown", "Down"], ["ArrowLeft", "Left"], ["ArrowRight", "Right"], [" ", "Space"], ["Escape", "Esc"]]);
 
 // How a key's modifiers are written for people.
 const MODIFIERS = new Map([["C", "Ctrl"], ["M", "Alt"], ["S", "Shift"]]);
@@ -118,19 +185,23 @@ export class App {
   constructor(c) {
     this.buffers = new Map();
     this.docs = new Map();
-    this.commands = new Map(); // id -> {title, run, source, hidden}
+    this.commands = noCommands(); // by id
+    this.navSeq = 0; // the latest navigation (gotoLine)
     this.modes = noModes(); // buffer mode -> its keys
     this.keys = noKeys(); // key -> command, from plugins
     // Keys a focused terminal leaves to the editor: its toggle, moving
     // between tabs, and the command palette's keys a shell does not use.
     this.terminalKeys = new Set(["C-`", "C-Tab", "C-S-Tab", "C-PageDown", "C-PageUp", "F1", "C-S-p"]);
-    this.statusItems = new Map();
-    this.procs = new Map();
+    this.statusItems = noFacts();
+    // Processes run (`runProcess`): the callers waiting for their exit,
+    // and exits that came before the request was answered.
+    this.waiting = noWaiting();
+    this.exited = noExits();
     this.watches = new Map();
     this.hoverProviders = [];
     this.history = { back: [], fwd: [] };
     this.opening = Promise.resolve(undefined); // the file being opened (openFile)
-    this.scrollDriver = null; // the split the pointer scrolled last (syncScroll)
+    this.scrollDriver = []; // the split the pointer scrolled last, if any (syncScroll)
     this.scrollLinks = []; // [{a, b, aToB, bToA}]: buffers scrolled together
     this.killRing = [];
     this.metrics = { cw: 8, lh: 18 };
@@ -150,11 +221,12 @@ export class App {
     // orchestrator's dock alone), and the URL's parameters.
     this.workspace = c.workspace;
     this.params = c.params;
-    this.root = c.workspace ? c.workspace.root : "";
-    this.hostName = c.workspace ? c.workspace.host : "";
-    this.trusted = c.workspace ? c.workspace.trusted : false;
-    this.lspLanguages = new Set(c.workspace ? c.workspace.lsp : []);
-    this.lspStatus = {}; // {language: running}, as `lsp.status` events say
+    const ws = listOf(c.workspace);
+    this.root = ws.map((w) => w.root).at(0) ?? "";
+    this.hostName = ws.map((w) => w.host).at(0) ?? "";
+    this.trusted = ws.some((w) => w.trusted);
+    this.lspLanguages = new Set(ws.flatMap((w) => w.lsp));
+    this.lspStatus = noStatus(); // {language: running}, as `lsp.status` events say
     this.orchestrator = c.orchestrator;
     this.skins = c.skins;
     this.editing = c.editing;
@@ -201,7 +273,7 @@ export class App {
     // The plugins ([{name, activate}], see plugins/index.js), in order; one
     // that throws is reported and the rest still load.
     for (const { name, activate } of plugins) {
-      try { await activate(this); } catch (e) { this.report(`plugin ${name}: ${String(e)}`); }
+      try { activate(this); } catch (e) { this.report(`plugin ${name}: ${failure(e)}`); }
     }
     await this.terminals.adopt(ws.terminals);
     // What was open in this workspace last time, unless a file is named;
@@ -250,10 +322,10 @@ export class App {
     const tabs = (views) => views.flatMap((v) => this.tabRef(v.buf).map((ref) => savedTab(ref, v.primary.pos, v.top, v.preview)));
     const node = (n) => {
       const pane = paneAt(n), f = forkAt(n);
-      if (pane !== null) { const shown = pane.view; return savedPane(tabs(pane.views), shown ? this.tabKey(shown.buf) : null); }
+      if (pane !== null) return savedPane(tabs(pane.views), pane.shown.map((v) => this.tabKey(v.buf)).at(0) ?? null);
       return f !== null ? savedSplit(f.dir, f.size.ratio, node(f.a), node(f.b)) : savedPane([], null);
     };
-    return { tree: node(this.layoutTree), active: this.panes().indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden") };
+    return { tree: node(this.layoutTree), active: panesOf(this.layoutTree).indexOf(this.activePane), sidebar: !$("#sidebar").classList.contains("hidden") };
   }
   rememberLayout() {
     if (this.restoring) return;
@@ -265,18 +337,17 @@ export class App {
   tabRef(b) {
     if (b.path) return [tabFile(b.path)];
     for (const n of listOf(b.untitled)) return [tabUntitled(n)];
-    for (const id of b.terminal) return [tabTerminal(id)];
+    for (const id of terminalOf(b.source)) return [tabTerminal(id)];
     return [];
   }
   tabKey(b) { return this.tabRef(b).map(refKey).at(0) ?? null; }
   // Put the remembered layout back: the splits, then each split's
   // documents (one that cannot be opened any more is left out — an
   // untitled one is there only while the server keeps it for its unsaved
-  // text — and a split left with none closes). Resolves false when there
-  // was nothing to restore.
+  // text — and a split left with none closes).
   async restoreLayout() {
     const s = this.session.layout;
-    if (s === null) return false;
+    if (s === null) return;
     if (s.sidebar) $("#sidebar").classList.remove("hidden"); else $("#sidebar").classList.add("hidden");
     const specs = [];
     const build = (n) => {
@@ -288,30 +359,30 @@ export class App {
     this.relayout();
     for (const { pane, tabs, active: shown } of specs) {
       for (const t of tabs) {
-        const b = await this.loadTab(t);
-        if (!b) continue;
-        const v = pane.show(b, t.preview ? true : null);
-        const pos = Math.max(0, Math.min(t.pos | 0, b.len));
-        v.cursors = [cursorAt(pos)];
-        v.setTop(Math.max(0, Math.min(t.top | 0, pos)));
+        for (const b of await this.loadTab(t)) {
+          const v = pane.show(b, t.preview);
+          const pos = Math.max(0, Math.min(t.pos | 0, b.len));
+          v.cursors = [cursorAt(pos)];
+          v.setTop(Math.max(0, Math.min(t.top | 0, pos)), 0);
+        }
       }
       const active = pane.views.find((v) => this.tabKey(v.buf) === shown);
-      if (active) pane.show(active.buf, null);
+      if (active) pane.show(active.buf, false);
     }
-    for (const { pane } of specs) if (!pane.views.length && this.panes().length > 1) await this.closePane(pane);
+    for (const { pane } of specs) if (!pane.views.length && panesOf(this.layoutTree).length > 1) await this.closePane(pane);
     this.focusPane(this.activePane);
     this.renderAll();
-    return true;
   }
 
-  // A remembered tab's document, or null when it cannot be opened any more.
+  // A remembered tab's buffer (a list of at most one: none when it cannot
+  // be opened any more).
   async loadTab(t) {
     const ref = t.ref;
     try {
-      if (ref.kind === "file") return await this.loadFile(ref.path);
-      if (ref.kind === "untitled") return await this.loadUntitled(ref.n);
-      return this.terminals.has(ref.term) ? this.terminalBuffer(ref.term) : null;
-    } catch { return null; }
+      if (ref.kind === "file") return [await this.loadFile(ref.path)];
+      if (ref.kind === "untitled") return [await this.loadUntitled(ref.n)];
+      return this.terminals.has(ref.term) ? [this.terminalBuffer(ref.term)] : [];
+    } catch { return []; }
   }
 
   // Files opened lately in this workspace, the latest first.
@@ -338,7 +409,7 @@ export class App {
     this.measure();
     this.terminals.applyFont();
     if (cw === this.metrics.cw && lh === this.metrics.lh) return;
-    for (const p of this.panes()) p.clearRows();
+    for (const p of panesOf(this.layoutTree)) p.clearRows();
     this.renderAll();
   }
 
@@ -350,7 +421,7 @@ export class App {
 
   // ------------------------------------------------------------- panes
 
-  panes() { return panesOf(this.layoutTree); }
+  panes() { return panesOf(this.layoutTree); } // for the plugin API
   relayout() {
     const area = $("#editor-area");
     area.innerHTML = "";
@@ -376,7 +447,7 @@ export class App {
           size.ratio = clamp(c.at + delta / Math.max(1, c.size), min, 1 - min);
           flex();
         },
-        end: () => this.rememberLayout(),
+        end: () => { this.rememberLayout(); },
         reset: () => { size.ratio = 0.5; flex(); this.rememberLayout(); },
       });
       d.append(a);
@@ -387,7 +458,7 @@ export class App {
     const el = build(this.layoutTree);
     el.style.flex = "1 1 0";
     area.appendChild(el);
-    for (const p of this.panes()) setClass(p.el, "active", p === this.activePane);
+    for (const p of panesOf(this.layoutTree)) setClass(p.el, "active", p === this.activePane);
     this.showMaximized();
     this.renderAll();
     this.rememberLayout();
@@ -408,7 +479,7 @@ export class App {
       const name = p.name;
       const kept = sizeOf(name);
       if (kept) p.el.style[prop(p)] = `${kept}px`;
-      sash(document.querySelector(`.sash[data-sash="${name}"]`), p.axis, {
+      for (const el of listOf(document.querySelector(`.sash[data-sash="${name}"]`))) sash(el, p.axis, {
         // The most a part takes is a share of its container.
         begin: () => {
           const r = p.el.getBoundingClientRect(), box = p.el.parentElement.getBoundingClientRect();
@@ -423,34 +494,34 @@ export class App {
       });
     }
   }
-  renderAll() { for (const p of this.panes()) { p.renderTabs(); p.scheduleRender(); } }
-  renderBuffer(id) { for (const p of this.panes()) if (p.view?.buf.id === id) p.scheduleRender(); }
-  view() { return this.activePane.view ?? null; }
+  renderAll() { for (const p of panesOf(this.layoutTree)) { p.renderTabs(); p.scheduleRender(); } }
+  renderBuffer(id) { for (const p of panesOf(this.layoutTree)) if (p.shown.some((v) => v.buf.id === id)) p.scheduleRender(); }
+  // The active view (none: the active split shows nothing).
+  view() { return this.activePane.shown.length > 0 ? some(this.activePane.shown[0]) : none(); }
   // Where the active view is, to go back to (a list of at most one):
   // remembered for Go Back, or restored.
   here() {
     const v = this.view();
     if (!v) return [];
     const pos = v.primary.pos, top = v.top;
-    return [spot(() => { this.pushHistory(v, pos); }, () => { v.setTop(top); this.editing.place(v.pane, pos, false); })];
+    return [spot(() => { this.pushHistory(v, pos); }, () => { v.setTop(top, 0); this.editing.place(v.pane, pos, false); })];
   }
   focusPane(p) {
-    if (!p) return;
-    this.scrollDriver = null;
+    this.scrollDriver = [];
     const changed = this.activePane !== p;
     this.activePane = p;
-    for (const x of this.panes()) setClass(x.el, "active", x === p);
+    for (const x of panesOf(this.layoutTree)) setClass(x.el, "active", x === p);
     this.giveKeyboard(p);
     // A maximized split gives way to the one focused.
     if (this.maximized.length > 0 && !this.maximized.includes(p)) { this.maximized = [p]; this.showMaximized(); }
-    if (changed) { this.renderAll(); if (p.view) this.bufferEvent("buffer.activated", p.view.buf, [], false); }
+    if (changed) { this.renderAll(); for (const v of p.shown) this.bufferEvent("buffer.activated", v.buf, [], false); }
   }
   // ------------------------------------------------------------- terminals, as tabs
 
   // The tab buffer of terminal `id` (made the first time): kept while no
   // tab shows it (a split closed, or Terminal: Toggle hid it).
   terminalBuffer(id) {
-    const had = [...this.buffers.values()].find((b) => b.terminal.includes(id));
+    const had = [...this.buffers.values()].find((b) => terminalOf(b.source).includes(id));
     if (had !== undefined) return had;
     const b = terminalBuffer(id, this.terminals.label(id));
     b.keep = true;
@@ -458,19 +529,19 @@ export class App {
     return b;
   }
   // The tabs showing terminal `id`.
-  terminalViews(id) { return this.panes().flatMap((p) => p.views.filter((v) => v.buf.terminal.includes(id))); }
+  terminalViews(id) { return panesOf(this.layoutTree).flatMap((p) => p.views.filter((v) => terminalOf(v.buf.source).includes(id))); }
   // Show terminal `id` in a tab of split `p`, which takes the keyboard.
   showTerminal(id, p) {
-    p.show(this.terminalBuffer(id), null);
+    p.show(this.terminalBuffer(id), false);
     this.focusPane(p);
     this.rememberLayout();
   }
   // The split terminals go to: the active one if it shows a terminal, else
   // the last one that does, else a new one under the active split.
   terminalPane() {
-    const showing = (p) => p.view !== undefined && p.view.buf.terminal.length > 0;
+    const showing = (p) => p.shown.some((v) => terminalOf(v.buf.source).length > 0);
     if (showing(this.activePane)) return this.activePane;
-    return this.panes().filter(showing).at(-1) ?? this.split("v", 0.65, []);
+    return panesOf(this.layoutTree).filter(showing).at(-1) ?? this.split("v", 0.65, []);
   }
   // Terminal: Toggle. From a terminal, back to the editor (its split
   // closes, its terminals kept, when there is another); to a terminal: the
@@ -478,11 +549,11 @@ export class App {
   // under the editor.
   async toggleTerminal() {
     const p = this.activePane;
-    if (p.view !== undefined && p.view.buf.terminal.length > 0) {
-      if (this.panes().length > 1 && p.views.every((v) => v.buf.terminal.length > 0)) await this.closePane(p);
+    if (p.shown.some((v) => terminalOf(v.buf.source).length > 0)) {
+      if (panesOf(this.layoutTree).length > 1 && p.views.every((v) => terminalOf(v.buf.source).length > 0)) await this.closePane(p);
       return;
     }
-    const showing = this.panes().filter((x) => x.view !== undefined && x.view.buf.terminal.length > 0).at(-1);
+    const showing = panesOf(this.layoutTree).filter((x) => x.shown.some((v) => terminalOf(v.buf.source).length > 0)).at(-1);
     if (showing !== undefined) { this.focusPane(showing); return; }
     const hidden = this.terminals.ids().filter((id) => this.terminalViews(id).length === 0);
     let id = hidden.at(0);
@@ -490,7 +561,7 @@ export class App {
       try { id = await this.terminals.create(null, null, null); } catch (e) { this.setStatus(`No terminal: ${failure(e)}`); return; }
     }
     this.showTerminal(id, this.terminalPane());
-    for (const other of hidden.slice(1)) this.terminalPane().show(this.terminalBuffer(other), null);
+    for (const other of hidden.slice(1)) this.terminalPane().show(this.terminalBuffer(other), false);
   }
   // A terminal running `command` (an agent; `resume` takes it up again
   // later), in a tab of the active split.
@@ -499,15 +570,15 @@ export class App {
   }
   // Terminal `id`'s label changed: its tabs say so.
   terminalChanged(id) {
-    for (const b of this.buffers.values()) if (b.terminal.includes(id)) b.name = this.terminals.label(id);
-    for (const p of this.panes()) if (p.views.some((v) => v.buf.terminal.includes(id))) p.renderTabs();
+    for (const b of this.buffers.values()) if (terminalOf(b.source).includes(id)) b.name = this.terminals.label(id);
+    for (const p of panesOf(this.layoutTree)) if (p.views.some((v) => terminalOf(v.buf.source).includes(id))) p.renderTabs();
   }
   // Another client opened terminal `id`: it gets a tab here too, in the
   // split showing terminals (not taking the keyboard).
   terminalAppeared(id) {
     if (this.terminalViews(id).length > 0) return;
     const p = this.terminalPane();
-    p.show(this.terminalBuffer(id), null);
+    p.show(this.terminalBuffer(id), false);
     p.scheduleRender();
   }
 
@@ -515,11 +586,11 @@ export class App {
   // `ratio` of it, showing `shown` (a list of at most one buffer).
   split(dir, ratio, shown) {
     const old = this.activePane;
-    if (old.view) this.keep(old.view);
+    for (const v of old.shown) this.keep(v);
     const np = new Pane(this.paneEditor);
     np.listen();
     this.layoutTree = withSplit(this.layoutTree, old, np, dir, ratio);
-    for (const b of shown) np.show(b, null);
+    for (const b of shown) np.show(b, false);
     this.activePane = np;
     this.relayout();
     this.focusPane(np);
@@ -527,25 +598,24 @@ export class App {
   }
   // Split the active split in half, showing its buffer in both.
   splitActive(dir) {
-    const v = this.activePane.view;
-    return this.split(dir, 0.5, v ? [v.buf] : []);
+    return this.split(dir, 0.5, this.activePane.shown.map((v) => v.buf));
   }
   // Close a split. Files whose last views are in it and have unsaved
   // changes are asked about first (see `mayClose`).
   // One split filling the editor area (the others hidden, not closed), or
   // none.
   showMaximized() {
-    const panes = this.panes();
+    const panes = panesOf(this.layoutTree);
     this.maximized = this.maximized.filter((m) => panes.includes(m));
     setClass($("#editor-area"), "maximized", this.maximized.length > 0);
     for (const p of panes) setClass(p.el, "max", this.maximized.includes(p));
   }
   async closePane(p) {
-    if (this.panes().length === 1) return;
+    if (panesOf(this.layoutTree).length === 1) return;
     for (const b of new Set(p.views.map((v) => v.buf))) if (!(await this.mayClose(b, p.views))) return;
     this.layoutTree = without(this.layoutTree, p);
-    for (const v of [...p.views]) { v.dispose(); this.dropIfUnshown(v.buf); }
-    this.activePane = this.panes()[0];
+    for (const v of [...p.views]) { v.buf.dropView(v); this.dropIfUnshown(v.buf); }
+    this.activePane = panesOf(this.layoutTree)[0];
     this.relayout();
     this.focusPane(this.activePane);
   }
@@ -555,9 +625,9 @@ export class App {
     if (!p.views.includes(v)) return true; // closed meanwhile
     p.closeView(v);
     // A terminal's last tab closed closes the terminal.
-    for (const id of v.buf.terminal) if (this.terminalViews(id).length === 0) { this.buffers.delete(v.buf.id); this.terminals.close(id); }
+    terminalOf(v.buf.source).forEach((id) => { if (this.terminalViews(id).length === 0) { this.buffers.delete(v.buf.id); this.terminals.close(id); } });
     this.dropIfUnshown(v.buf);
-    if (!p.views.length && this.panes().length > 1) await this.closePane(p);
+    if (!p.views.length && panesOf(this.layoutTree).length > 1) await this.closePane(p);
     this.renderAll();
     this.updateStatus();
     this.rememberLayout();
@@ -569,35 +639,35 @@ export class App {
   // `dropIfUnshown`), or Cancel.
   async mayClose(b, views) {
     if (!b.doc || !b.modified) return true;
-    if (this.panes().some((p) => p.views.some((v) => v.buf === b && !views.includes(v)))) return true;
+    if (panesOf(this.layoutTree).some((p) => p.views.some((v) => v.buf === b && !views.includes(v)))) return true;
     const pick = await this.choose(`${b.name} has unsaved changes`, [
       { label: "Save", value: "save" },
       { label: "Discard", value: "discard" },
       { label: "Cancel", value: "cancel" },
     ]);
-    if (pick === "save") { await this.saveBuffer(b); return !b.modified; }
+    if (pick === "save") { await this.saveBuffer(b, true); return !b.modified; }
     if (pick === "discard") { b.discard = true; return true; }
     return false;
   }
   // Let go of a buffer no view shows. A file's document is closed; with
   // `discard` its unsaved changes go too, unless another client holds it.
   dropIfUnshown(b) {
-    if (this.panes().some((x) => x.views.some((y) => y.buf === b))) return;
+    if (panesOf(this.layoutTree).some((x) => x.views.some((y) => y.buf === b))) return;
     if (b.keep) return;
     this.buffers.delete(b.id);
-    if (b.doc) {
-      this.docs.delete(b.doc);
-      const discard = !!b.discard;
-      rpc("doc.close", { doc: b.doc, discard }).then((r) => {
+    for (const doc of listOf(b.doc)) {
+      this.docs.delete(doc);
+      const discard = b.discard;
+      rpc("doc.close", { doc, discard }).then((r) => {
         if (!discard) return;
         if (r.dropped) this.setStatus(`Discarded the changes to ${b.name}`);
         else if (r.others) this.setStatus(`${b.name} is open in ${r.others} other window${r.others === 1 ? "" : "s"}; its unsaved changes stay there`);
-      }).catch((e) => this.report(String(e.message || e)));
+      }).catch((e) => { this.report(failure(e)); });
     }
     this.bufferEvent("buffer.closed", b, [], false);
   }
   async closeBuffer(b) {
-    for (const p of this.panes()) for (const v of [...p.views]) if (v.buf === b && !(await this.closeTab(p, v))) return false;
+    for (const p of panesOf(this.layoutTree)) for (const v of [...p.views]) if (v.buf === b && !(await this.closeTab(p, v))) return false;
     if (!(await this.mayClose(b, []))) return false;
     this.dropIfUnshown(b);
     return true;
@@ -605,8 +675,8 @@ export class App {
   // The keyboard to what split `p` shows: a terminal's tab gives it to the
   // terminal, any other to the editor.
   giveKeyboard(p) {
-    const terms = p.view === undefined ? [] : p.view.buf.terminal;
-    if (terms.length > 0) for (const id of terms) this.terminals.focus(id);
+    const terms = p.shown.filter((v) => terminalOf(v.buf.source).length > 0);
+    if (terms.length > 0) terms.forEach((v) => { terminalOf(v.buf.source).forEach((id) => { this.terminals.focus(id); }); });
     else { this.terminals.unfocus(); this.input.focus({ preventScroll: true }); }
   }
   onViewShown(pane, v) {
@@ -619,19 +689,20 @@ export class App {
   // `preview` and `focus` as for `openFile`; preview tabs are a setting.
   showBuffer(b, place, { preview, focus }) {
     if (place === "split" || place === "right") {
-      const existing = this.panes().find((p) => p.view?.buf === b);
-      if (existing) { this.focusPane(existing); return existing.view; }
-      return this.split(place === "split" ? "v" : "h", 0.6, [b]).view;
+      const existing = panesOf(this.layoutTree).filter((p) => p.shown.some((v) => v.buf === b));
+      for (const p of existing.slice(0, 1)) { this.focusPane(p); return p.shown; }
+      return this.split(place === "split" ? "v" : "h", 0.6, [b]).shown;
     }
-    const v = this.activePane.show(b, preview && !this.settings.preview_tabs ? false : preview);
+    const v = this.activePane.show(b, preview === true && this.settings.flags.preview_tabs === true);
+    // Opened to stay (not as a preview): a preview tab of it is kept.
+    if (preview === false) this.keep(v);
     if (focus) this.focusPane(this.activePane);
-    return v;
+    return [v];
   }
   // A preview tab made a tab of its own (it was edited, clicked, split or
   // kept open).
   keep(v) {
-    if (!v.preview) return;
-    v.preview = false;
+    if (!v.keepOpen()) return;
     v.pane.renderTabs();
     this.rememberLayout();
   }
@@ -644,24 +715,25 @@ export class App {
   // editor's same-buffer sync), and those showing a buffer linked to it
   // (a comparison's two sides) always, through the link's line mapping.
   syncScroll(pane, v) {
-    if (pane !== (this.scrollDriver || this.activePane) || v.mode !== "source") return;
-    const L = v.buf.text;
-    const line = L ? L.indexOf(v.top) : -1;
-    if (line < 0) return;
-    for (const p of this.panes()) {
-      const w = p.view;
-      if (p === pane || !w || w.mode !== "source" || !w.buf.text) continue;
-      let top = null;
-      if (w.buf === v.buf) { if (this.settings.scroll_sync) top = v.top; }
-      else {
-        const link = this.scrollLinks.find((k) => (k.a === v.buf && k.b === w.buf) || (k.b === v.buf && k.a === w.buf));
-        if (link && v.buf.full && w.buf.full) {
-          const M = w.buf.text;
-          const to = link.a === v.buf ? link.aToB(line) : link.bToA(line);
-          top = M.starts[Math.max(0, Math.min(M.count - 1, to))];
+    if (pane !== (this.scrollDriver.at(0) ?? this.activePane) || v.mode !== "source") return;
+    for (const L of listOf(v.buf.text)) {
+      const line = L.indexOf(v.top);
+      if (line < 0) return;
+      for (const p of panesOf(this.layoutTree)) {
+        if (p === pane) continue;
+        for (const w of p.shown) {
+          if (w.mode !== "source") continue;
+          for (const M of listOf(w.buf.text)) {
+            // Where its top goes: the same line (the same buffer), or the
+            // linked one (its link's mapping, both held whole).
+            const links = this.scrollLinks.filter((k) => (k.a === v.buf && k.b === w.buf) || (k.b === v.buf && k.a === w.buf));
+            const tops = w.buf === v.buf
+              ? (this.settings.flags.scroll_sync === true ? [v.top] : [])
+              : links.slice(0, v.buf.full && w.buf.full ? 1 : 0).map((k) => M.starts[Math.max(0, Math.min(M.count - 1, k.a === v.buf ? k.aToB(line) : k.bToA(line)))]);
+            for (const top of tops) if (top !== w.top) { w.setTop(top, 0); p.scheduleRender(); }
+          }
         }
       }
-      if (top != null && top !== w.top) { w.setTop(top); p.scheduleRender(); }
     }
   }
   // Scroll buffers `a` and `b` together through a line mapping (each
@@ -680,6 +752,7 @@ export class App {
   // the tab it lands beside (`.drop-before` / `.drop-after`) or the split
   // (`.drop-into`).
   tabPress(e, pane, v) {
+    this.keep(v);
     pane.show(v.buf, false);
     this.focusPane(pane);
     const x0 = e.clientX, y0 = e.clientY;
@@ -708,7 +781,7 @@ export class App {
   tabDropAt(x, y) {
     const el = document.elementFromPoint(x, y);
     const paneEl = el === null ? null : el.closest(".pane");
-    return this.panes().filter((p) => paneEl !== null && p.el === paneEl).map((pane) => {
+    return panesOf(this.layoutTree).filter((p) => paneEl !== null && p.el === paneEl).map((pane) => {
       const tab = el === null ? null : el.closest(".tab");
       if (tab !== null && pane.tabsEl.contains(tab)) {
         const r = tab.getBoundingClientRect();
@@ -733,20 +806,10 @@ export class App {
       this.rememberLayout();
       return;
     }
-    let nv = to.views.find((x) => x.buf === v.buf);
-    if (!nv) {
-      nv = new View(to, v.buf);
-      v.buf.views.add(nv);
-      nv.cursors = v.cursors.map((c) => ({ ...c }));
-      nv.setTop(v.top, v.topPx);
-      nv.mode = v.mode;
-      nv.opts = { ...v.opts };
-      nv.folds = v.folds.map((f) => ({ ...f }));
-      to.views.splice(Math.min(index, to.views.length), 0, nv);
-    }
-    to.show(v.buf, null);
+    if (!to.views.some((x) => x.buf === v.buf)) copyTab(v, to, index);
+    to.show(v.buf, false);
     from.closeView(v);
-    if (!from.views.length && this.panes().length > 1) this.closePane(from);
+    if (from.views.length === 0 && panesOf(this.layoutTree).length > 1) this.closePane(from);
     this.focusPane(to);
     this.renderAll();
     this.rememberLayout();
@@ -760,7 +823,7 @@ export class App {
   // A tab's menu: closing it and its neighbours, splitting it, its path.
   tabMenu(pane, v, at) {
     const b = v.buf;
-    const rel = b.path && b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
+    const rel = b.path.startsWith(this.root + "/") ? b.path.slice(this.root.length + 1) : b.path;
     const copy = (t) => navigator.clipboard?.writeText(t).then((_r) => this.setStatus(`Copied ${t}`)).catch((_e) => this.setStatus("The browser did not allow writing the clipboard"));
     const path = b.path;
     this.ui.menu([
@@ -773,11 +836,11 @@ export class App {
       SEPARATOR,
       action("Split Right", this.keyLabel("view.splitRight"), () => { this.focusPane(pane); this.splitActive("h"); }),
       action("Split Down", null, () => { this.focusPane(pane); this.splitActive("v"); }),
-      ...(path ? [
+      ...(path !== "" ? [
         SEPARATOR,
         action("Copy Path", null, () => copy(path)),
-        action("Copy Relative Path", null, () => copy(rel ?? path)),
-        action("Reveal in Explorer", null, () => this.run("explorer.reveal")),
+        action("Copy Relative Path", null, () => copy(rel)),
+        action("Reveal in Explorer", null, () => this.run("explorer.reveal", undefined)),
       ] : []),
     ], at);
   }
@@ -785,7 +848,8 @@ export class App {
   // what is under the caret, and editing the selection.
   editorMenu(pane, at) {
     this.focusPane(pane);
-    const b = pane.view.buf;
+    if (pane.shown.length === 0) return;
+    const b = pane.shown[0].buf;
     const lsp = this.lspAvailable(b);
     // A command's row, its title without its group ("Edit: ").
     const row = (id) => {
@@ -823,7 +887,9 @@ export class App {
   // The buffer for an untitled document the server keeps (the page was
   // reloaded with its unsaved text).
   async loadUntitled(n) {
-    return [...this.buffers.values()].find((x) => x.untitled === n) ?? this.adoptDoc(await rpc("doc.open", { untitled: n }));
+    const open = [...this.buffers.values()].find((x) => x.untitled === n);
+    if (open !== undefined) return open;
+    return this.adoptDoc(await rpc("doc.open", { untitled: n }));
   }
   // A new untitled document, shown: an empty buffer bound to no file,
   // named Untitled-N, until it is saved as one.
@@ -835,12 +901,12 @@ export class App {
   // The buffer of an opened document ({doc, path, ...} from the server).
   async adoptDoc(info) {
     const known = this.docs.get(info.doc);
-    if (known) return known;
+    if (known !== undefined) return known;
     const b = fileBuffer(info);
     this.buffers.set(b.id, b);
-    this.docs.set(b.doc, b);
+    this.docs.set(info.doc, b);
     this.watchBuffer(b);
-    await b.ensure(0);
+    await b.ensure(0, ENSURE_AFTER);
     this.bufferEvent("buffer.opened", b, [], false);
     return b;
   }
@@ -854,20 +920,20 @@ export class App {
     const { line, column, place, preview, focus } = at;
     const turn = this.opening;
     let done = () => {};
-    this.opening = new Promise((r) => { done = r; });
+    this.opening = new Promise((r) => { done = () => { r(undefined); }; });
     try {
       await turn;
       const from = this.view();
       const b = await this.loadFile(path);
-      if (from) this.pushHistory(from);
+      for (const f of listOf(from)) this.pushHistory(f, f.primary.pos);
       const v = this.showBuffer(b, place, { preview, focus });
       this.noteRecent(b.path);
-      if (line != null) await this.gotoLine(line - 1, column - 1, { history: false });
+      for (const l of listOf(line)) await this.gotoLine(l - 1, column - 1, false);
       this.updateStatus();
       return v;
     } catch (e) {
-      this.setStatus(String(e.message || e));
-      return null;
+      this.setStatus(failure(e));
+      return [];
     } finally {
       done();
     }
@@ -881,8 +947,7 @@ export class App {
     this.buffers.set(b.id, b);
     this.watchBuffer(b);
     if (o.place) {
-      const v = this.showBuffer(b, o.place, { preview: null, focus: true });
-      if (!o.lineNumbers) v.opts.lineNumbers = false;
+      for (const v of this.showBuffer(b, o.place, { preview: null, focus: true })) if (!o.lineNumbers) v.opts.lineNumbers = false;
     }
     return b;
   }
@@ -897,16 +962,16 @@ export class App {
 
   // Whether a menu's check is on: a setting, or a piece of the editor's
   // state by name.
-  isOn(kind, name) { return kind === "setting" ? !!this.settings[name] : this.stateOn(name); }
+  isOn(kind, name) { return kind === "setting" ? this.settings.flags[name] === true : this.stateOn(name); }
   stateOn(name) {
-    const v = this.activePane.view;
-    if (name === "readOnly") return v !== undefined && v.buf.readOnly;
-    if (name === "lineNumbers") return v !== undefined && v.opts.lineNumbers;
-    if (name === "wrap") return v !== undefined && v.opts.wrap;
-    if (name === "compose") return v !== undefined && v.mode === "compose";
+    const v = this.activePane.shown;
+    if (name === "readOnly") return v.some((x) => x.buf.readOnly);
+    if (name === "lineNumbers") return v.some((x) => x.opts.lineNumbers);
+    if (name === "wrap") return v.some((x) => x.opts.wrap);
+    if (name === "compose") return v.some((x) => x.mode === "compose");
     if (name === "orchestrator") return this.orchestrator.dockOpen();
     if (name === "explorer") return !$("#sidebar").classList.contains("hidden");
-    if (name === "terminal") return this.panes().some((p) => p.view !== undefined && p.view.buf.terminal.length > 0);
+    if (name === "terminal") return panesOf(this.layoutTree).some((p) => p.shown.some((x) => terminalOf(x.buf.source).length > 0));
     if (name === "keymapDefault") return this.settings.keymap !== "emacs";
     if (name === "keymapEmacs") return this.settings.keymap === "emacs";
     return false;
@@ -931,26 +996,28 @@ export class App {
     if (local) for (const v of b.views) this.keep(v);
     this.bufferEvent("buffer.changed", b, [op], local);
     this.renderBuffer(b.id);
-    for (const p of this.panes()) if (p.views.some((v) => v.buf === b)) p.renderTabs();
+    for (const p of panesOf(this.layoutTree)) if (p.views.some((v) => v.buf === b)) p.renderTabs();
   }
 
   // Save a file. The server refuses when the file changed on disk since it
   // was opened or last saved; an explicit save (`ask`) then offers to
   // overwrite it, auto-save leaves it and says so.
-  async saveBuffer(b, { ask = true } = {}) {
-    if (!b.doc) return;
+  // `ask`: a file changed on disk asks whether to overwrite it.
+  async saveBuffer(b, ask) {
+    if (b.file.length === 0) return;
     // An untitled document is saved as a file, asked for.
     if (!b.path) { await this.saveBufferAs(b); return; }
     try {
       // Keeping one's changes over the file's (`askChangedOnDisk`) was the
       // choice to overwrite it.
-      await b.save(b.keepMine);
+      const refused = await b.save(b.keepMine);
       b.keepMine = false;
-    } catch (e) {
-      if (!ask || e.code !== "changed_on_disk") { this.setStatus(`Not saved: ${failure(e)}`); return; }
-      if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
-      await b.save(true);
-    }
+      for (const r of refused) {
+        if (!ask || r.code !== "changed_on_disk") { this.setStatus(`Not saved: ${r.detail}`); return; }
+        if (!(await this.confirm(`${b.name} changed on disk since it was opened. Overwrite it?`, "Overwrite"))) { this.setStatus(`Not saved: ${b.name}`); return; }
+        for (const again of await b.save(true)) { this.setStatus(`Not saved: ${again.detail}`); return; }
+      }
+    } catch (e) { this.setStatus(`Not saved: ${failure(e)}`); return; }
     this.setStatus(`Saved ${b.name}`);
     this.renderAll();
     this.bufferEvent("buffer.saved", b, [], false);
@@ -962,17 +1029,18 @@ export class App {
   // overwritten once confirmed. A buffer with no document (a plugin's
   // panel) has its text written to the file, which then opens.
   async saveBufferAs(b) {
-    const rel = (p) => (p && p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p || "");
+    const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
     const name = await this.prompt.ask({ title: "Save as", value: rel(b.path) || b.name, hint: "", select: true });
     if (!name) return;
     const path = name.startsWith("/") ? name : `${this.root}/${name}`;
-    if (path === b.path) { await this.saveBuffer(b); return; }
+    if (path === b.path) { await this.saveBuffer(b, true); return; }
     const st = await rpc("fs.stat", { path });
     if (st.dir) { this.setStatus(`${name} is a folder`); return; }
     if (st.exists && !(await this.confirm(`${name} exists. Overwrite it?`, "Overwrite"))) return;
     try {
-      if (b.doc) {
-        while (!b.synced) await new Promise((r) => setTimeout(r, 20));
+      const f = b.file.at(0);
+      if (f !== undefined) {
+        while (!synced(f)) await new Promise((r) => { setTimeout(() => { r(undefined); }, 20); });
         const info = await rpc("doc.save_as", { doc: b.doc, path, overwrite: st.exists });
         b.setInfo(info);
         b.modified = info.modified;
@@ -1005,13 +1073,13 @@ export class App {
   }
 
   autoSave() {
-    if (!this.settings.auto_save) return;
+    if (this.settings.flags.auto_save !== true) return;
     const now = Date.now();
     for (const b of this.buffers.values()) {
       // An untitled document waits for a name.
-      if (b.path && b.modified && b.synced && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
+      if (b.path && b.modified && b.file.some(synced) && now - b.lastEdit > this.settings.auto_save_seconds * 1000) {
         b.lastEdit = now;
-        this.saveBuffer(b, { ask: false });
+        this.saveBuffer(b, false);
       }
     }
   }
@@ -1026,10 +1094,10 @@ export class App {
   // `center`: scroll it to the middle; `extend`: extend the selection;
   // `history`: remember where the view was, for Go Back.
   async moveTo(v, pos, { center, extend, history }) {
-    if (history) this.pushHistory(v);
+    if (history) this.pushHistory(v, v.primary.pos);
     const pane = v.pane;
     await v.buf.ensure(pos, pane.metrics().rows + 10);
-    if (pane.view !== v) pane.show(v.buf, null);
+    if (!pane.shown.includes(v)) pane.show(v.buf, false);
     this.editing.place(pane, pos, extend);
     if (center) pane.reveal(true);
     pane.scheduleRender();
@@ -1042,56 +1110,62 @@ export class App {
   }
 
   // `history`: remember where the view was, for Go Back.
-  async gotoLine(line, col, { history }) {
+  // Go to line `line` and column `col` (both from 0); `history`: remember
+  // where the cursor was.
+  async gotoLine(line, col, history) {
     const v = this.view();
-    if (!v) return;
+    if (v === null) return;
     // Only the latest navigation lands: a newer one (the palette previews a
     // jump on every keystroke) supersedes any still waiting on the server.
-    const seq = (this.navSeq = (this.navSeq || 0) + 1);
+    this.navSeq += 1;
+    const seq = this.navSeq;
     const b = v.buf;
-    let p;
-    if (b.text && b.full) p = b.text.starts[Math.max(0, Math.min(line, b.text.count - 1))];
-    else if (b.doc) {
-      const r = await rpc("doc.line_start", { doc: b.doc, line });
+    // Where the line starts (none: not known yet).
+    let start = noBytes();
+    const held = b.text;
+    if (held !== null && b.full) start = [held.starts[Math.max(0, Math.min(line, held.count - 1))]];
+    else for (const doc of listOf(b.doc)) {
+      const r = await rpc("doc.line_start", { doc, line });
       if (seq !== this.navSeq) return;
-      if (r.pos == null) { this.setStatus("The line index is still being built"); return; }
-      p = r.pos;
+      if (r.pos === null) { this.setStatus("The line index is still being built"); return; }
+      start = [r.pos];
     }
-    if (p == null) return;
-    await b.ensure(p, 100);
-    if (seq !== this.navSeq) return;
-    const L = b.text;
-    const i = L.indexOf(p);
-    p += byteLen(L.lines[i].slice(0, col || 0));
-    if (history) this.pushHistory(v);
-    await this.moveTo(v, p, { center: true, extend: false, history: false });
+    for (const s of start) {
+      await b.ensure(s, 100);
+      if (seq !== this.navSeq) return;
+      for (const L of listOf(b.text)) {
+        const p = s + byteLen(L.lines[L.indexOf(s)].slice(0, col));
+        if (history) this.pushHistory(v, v.primary.pos);
+        await this.moveTo(v, p, { center: true, extend: false, history: false });
+      }
+    }
   }
 
   async scrollToFraction(pane, f) {
-    const v = pane.view;
-    if (!v) return;
+    if (pane.shown.length === 0) return;
+    const v = pane.shown[0];
     const b = v.buf;
+    // The document's line count, when its line index is built.
+    const lines = b.doc === null ? [] : listOf(b.totalLines).filter((n) => n > 0);
     if (b.full) {
-      const L = b.text;
-      v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))]);
-    } else if (b.totalLines) {
-      const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * b.totalLines) });
-      if (r.pos != null) { await b.ensure(r.pos, 200); v.setTop(r.pos); }
+      for (const L of listOf(b.text)) v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))], 0);
+    } else if (lines.length > 0) {
+      const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * lines[0]) });
+      if (r.pos !== null) { await b.ensure(r.pos, 200); v.setTop(r.pos, 0); }
     } else {
       const p = Math.floor(f * b.len);
       await b.ensure(p, 200);
-      const L = b.text;
-      v.setTop(L.starts[Math.max(0, L.indexOf(p))]);
+      for (const L of listOf(b.text)) v.setTop(L.starts[Math.max(0, L.indexOf(p))], 0);
     }
     pane.scheduleRender();
   }
 
   // ------------------------------------------------------------- position history
 
-  pushHistory(v, pos = v.primary.pos) {
+  pushHistory(v, pos) {
     const h = this.history;
-    const top = h.back[h.back.length - 1];
-    if (top && top.buf === v.buf && top.pos === pos) return;
+    const top = h.back.at(-1);
+    if (top !== undefined && top.buf === v.buf && top.pos === pos) return;
     h.back.push({ buf: v.buf, pos });
     if (h.back.length > 100) h.back.shift();
     h.fwd = [];
@@ -1100,148 +1174,148 @@ export class App {
     const h = this.history;
     const from = dir < 0 ? h.back : h.fwd, to = dir < 0 ? h.fwd : h.back;
     const e = from.pop();
-    if (!e) return;
+    if (e === undefined) return;
     const v = this.view();
     // An entry for a closed buffer, or for where the view already is, is
     // passed over.
-    if (!this.buffers.has(e.buf.id) || (v && v.buf === e.buf && v.primary.pos === e.pos)) return this.historyStep(dir);
-    if (v) to.push({ buf: v.buf, pos: v.primary.pos });
-    const nv = this.showBuffer(e.buf, "tab", { preview: null, focus: true });
-    await this.moveTo(nv, Math.min(e.pos, e.buf.len), { center: true, extend: false, history: false });
+    if (!this.buffers.has(e.buf.id) || (v !== null && v.buf === e.buf && v.primary.pos === e.pos)) { await this.historyStep(dir); return; }
+    if (v !== null) to.push({ buf: v.buf, pos: v.primary.pos });
+    for (const nv of this.showBuffer(e.buf, "tab", { preview: null, focus: true })) await this.moveTo(nv, Math.min(e.pos, e.buf.len), { center: true, extend: false, history: false });
   }
 
   // ------------------------------------------------------------- server events
 
-  onEvent(ev) {
-    switch (ev.ev) {
-      case "doc.ops": {
-        const b = this.docs.get(ev.doc);
-        if (b) { b.onOps(ev, session.client); this.renderBuffer(b.id); }
-        break;
-      }
-      case "doc.indexing": {
-        const b = this.docs.get(ev.doc);
-        if (b) this.setStatus(`Indexing lines of ${b.name}: ${Math.round((100 * ev.done) / Math.max(1, ev.total))}%`);
-        break;
-      }
-      case "doc.indexed": {
-        // The document has a line index now: fetch the window again, and it
-        // comes with line numbers.
-        const b = this.docs.get(ev.doc);
-        if (!b) break;
-        b.totalLines = ev.lines;
-        const v = [...b.views][0];
-        b.text = null;
-        b.ensure(v ? v.top : 0).then(() => { this.renderBuffer(b.id); this.updateStatus(); });
-        this.setStatus(`${b.name}: ${ev.lines} lines`);
-        break;
-      }
-      case "doc.saved": {
-        const b = this.docs.get(ev.doc);
-        // Saved, or reloaded (its encoding may be another now).
-        if (b) { b.setInfo(ev.info); this.renderAll(); this.updateStatus(); }
-        break;
-      }
-      case "doc.renamed": {
-        // The file was renamed or moved (here or by another client): the
-        // buffer follows it.
-        const b = this.docs.get(ev.doc);
-        if (!b) break;
-        b.setInfo(ev.info);
-        this.renderAll();
-        this.updateStatus();
-        this.bufferEvent("buffer.renamed", b, [], false);
-        break;
-      }
-      case "doc.info": {
-        // Its language, line ending or encoding changed (`doc.set`).
-        const b = this.docs.get(ev.doc);
-        if (!b) break;
-        b.setInfo(ev.info);
-        this.renderAll();
-        this.updateStatus();
-        this.bufferEvent("buffer.info", b, [], false);
-        break;
-      }
-      case "doc.reloaded": {
-        // A huge file changed on disk and was loaded again.
-        const b = this.docs.get(ev.doc);
-        if (!b) break;
-        b.reloaded(ev.info).then(() => { this.renderAll(); this.updateStatus(); });
-        this.setStatus(ev.lost ? `${b.name} changed on disk and was reloaded; its unsaved changes are lost` : `${b.name} changed on disk and was reloaded`);
-        break;
-      }
-      case "doc.changed_on_disk": {
-        // Changed on disk under unsaved changes: reload the file (giving
-        // them up), or keep them, and the next save overwrites the file.
-        const b = this.docs.get(ev.doc);
-        if (b) this.askChangedOnDisk(b);
-        break;
-      }
-      case "doc.deleted": {
-        // The file was deleted: the buffer keeps its text, unsaved, and
-        // saving writes the file again.
-        const b = this.docs.get(ev.doc);
-        if (!b) break;
-        b.setInfo(ev.info);
-        this.renderAll();
-        this.setStatus(`${b.name} was deleted; its text is kept unsaved (save to write it again)`);
-        this.bufferEvent("buffer.deleted", b, [], false);
-        break;
-      }
-      case "lsp.diagnostics": {
-        const b = this.docs.get(ev.doc);
-        if (!b) break;
-        // Anchored at the version they describe, then carried through every
-        // edit applied since, ours included.
-        const items = ev.items.map((d) => ({ ...d }));
-        const move = (op) => { for (const d of items) { d.start = shiftPos(d.start, op, true); d.end = Math.max(d.start, shiftPos(d.end, op, false)); } };
-        for (const op of b.opsSince(ev.version)) move(op);
-        b.decor.setDiagnostics(items);
-        this.renderBuffer(b.id);
-        this.bufferEvent("diagnostics.changed", b, [], false);
-        this.updateStatus();
-        break;
-      }
-      case "term.data": case "term.exit": case "term.size":
-        this.terminals.onEvent(ev);
-        break;
-      case "proc.exit": {
-        const done = this.procs.get(ev.proc);
-        if (done) { this.procs.delete(ev.proc); done({ code: ev.code, stdout: ev.stdout, stderr: ev.stderr }); }
-        else this.procs.set(ev.proc, ev); // arrived before the request returned
-        break;
-      }
-      case "lsp.status":
-        // A language server was stopped or restarted: {language: running}.
-        this.lspStatus = ev.status || {};
-        this.host.emitStatus({ ...this.lspStatus });
-        this.updateStatus();
-        break;
-      case "workspace.trusted":
-        // The language servers start now: the event names them.
-        this.trusted = true;
-        this.lspLanguages = new Set(ev.lsp);
-        $("#ws-name").textContent = $("#ws-name").textContent.replace(" · restricted", "");
-        this.host.emit("workspace.trusted");
-        break;
-      case "fs.changed":
-        this.watches.get(ev.watch)?.(ev.path);
-        break;
-      case "workspace.added": this.orchestrator.added(ev.workspace); break;
-      case "workspace.changed": this.orchestrator.changed(ev.workspace); break;
-      case "workspace.removed": this.orchestrator.removed(ev.workspace); break;
-      case "workspace.status": this.orchestrator.statusOf(ev.workspace, ev.status); break;
-      case "orchestrator.folders": this.orchestrator.foldersChanged(ev.folders); break;
+  // The server's news, in order.
+  onEvent(news) {
+    const ev /*: ServerEvent */ = news;
+    if (ev.ev === "doc.ops") {
+      const b = this.docs.get(ev.doc);
+      if (b) { b.onOps(ev, session.client); this.renderBuffer(b.id); }
+      return;
     }
+    if (ev.ev === "doc.indexing") {
+      const b = this.docs.get(ev.doc);
+      if (b) this.setStatus(`Indexing lines of ${b.name}: ${Math.round((100 * ev.done) / Math.max(1, ev.total))}%`);
+      return;
+    }
+    if (ev.ev === "doc.indexed") {
+      // The document has a line index now: fetch the window again, and it
+      // comes with line numbers.
+      for (const b of found(this.docs.get(ev.doc))) {
+        this.reindexed(b, ev.lines);
+        this.setStatus(`${b.name}: ${ev.lines} lines`);
+      }
+      return;
+    }
+    if (ev.ev === "doc.saved") {
+      const b = this.docs.get(ev.doc);
+      // Saved, or reloaded (its encoding may be another now).
+      if (b) { b.setInfo(ev.info); this.renderAll(); this.updateStatus(); }
+      return;
+    }
+    if (ev.ev === "doc.renamed") {
+      // The file was renamed or moved (here or by another client): the
+      // buffer follows it.
+      const b = this.docs.get(ev.doc);
+      if (!b) return;
+      b.setInfo(ev.info);
+      this.renderAll();
+      this.updateStatus();
+      this.bufferEvent("buffer.renamed", b, [], false);
+      return;
+    }
+    if (ev.ev === "doc.info") {
+      // Its language, line ending or encoding changed (`doc.set`).
+      const b = this.docs.get(ev.doc);
+      if (!b) return;
+      b.setInfo(ev.info);
+      this.renderAll();
+      this.updateStatus();
+      this.bufferEvent("buffer.info", b, [], false);
+      return;
+    }
+    if (ev.ev === "doc.reloaded") {
+      // A huge file changed on disk and was loaded again.
+      const b = this.docs.get(ev.doc);
+      if (!b) return;
+      b.reloaded(ev.info).then(() => { this.renderAll(); this.updateStatus(); });
+      this.setStatus(ev.lost ? `${b.name} changed on disk and was reloaded; its unsaved changes are lost` : `${b.name} changed on disk and was reloaded`);
+      return;
+    }
+    if (ev.ev === "doc.changed_on_disk") {
+      // Changed on disk under unsaved changes: reload the file (giving
+      // them up), or keep them, and the next save overwrites the file.
+      const b = this.docs.get(ev.doc);
+      if (b) this.askChangedOnDisk(b);
+      return;
+    }
+    if (ev.ev === "doc.deleted") {
+      // The file was deleted: the buffer keeps its text, unsaved, and
+      // saving writes the file again.
+      const b = this.docs.get(ev.doc);
+      if (!b) return;
+      b.setInfo(ev.info);
+      this.renderAll();
+      this.setStatus(`${b.name} was deleted; its text is kept unsaved (save to write it again)`);
+      this.bufferEvent("buffer.deleted", b, [], false);
+      return;
+    }
+    if (ev.ev === "lsp.diagnostics") {
+      const b = this.docs.get(ev.doc);
+      if (!b) return;
+      // Anchored at the version they describe, then carried through every
+      // edit applied since, ours included.
+      const items = ev.items.map((d) => ({ ...d }));
+      const move = (op) => { for (const d of items) { d.start = shiftPos(d.start, op, true); d.end = Math.max(d.start, shiftPos(d.end, op, false)); } };
+      for (const op of b.file.flatMap((f) => opsSince(f, ev.version))) move(op);
+      b.decor.setDiagnostics(items);
+      this.renderBuffer(b.id);
+      this.bufferEvent("diagnostics.changed", b, [], false);
+      this.updateStatus();
+      return;
+    }
+    if (ev.ev === "term.data") { this.terminals.onEvent(ev); return; }
+    if (ev.ev === "term.exit") { this.terminals.onEvent(ev); return; }
+    if (ev.ev === "term.size") { this.terminals.onEvent(ev); return; }
+    if (ev.ev === "proc.exit") {
+      const r = procResult(ev.code, ev.stdout, ev.stderr);
+      const done = this.waiting.get(ev.proc);
+      if (done !== undefined) { this.waiting.delete(ev.proc); done(r); } else this.exited.set(ev.proc, r);
+      return;
+    }
+    if (ev.ev === "lsp.status") {
+      // A language server was stopped or restarted: {language: running}.
+      this.lspStatus = ev.status;
+      this.host.emitStatus(ev.status);
+      this.updateStatus();
+      return;
+    }
+    if (ev.ev === "workspace.trusted") {
+      // The language servers start now: the event names them.
+      this.trusted = true;
+      this.lspLanguages = new Set(ev.lsp);
+      $("#ws-name").textContent = $("#ws-name").textContent.replace(" · restricted", "");
+      this.host.emit("workspace.trusted");
+      return;
+    }
+    if (ev.ev === "fs.changed") {
+      this.watches.get(ev.watch)?.(ev.path);
+      return;
+    }
+    if (ev.ev === "workspace.added") { this.orchestrator.added(ev.workspace); return; }
+    if (ev.ev === "workspace.changed") { this.orchestrator.changed(ev.workspace); return; }
+    if (ev.ev === "workspace.removed") { this.orchestrator.removed(ev.workspace); return; }
+    if (ev.ev === "workspace.status") { this.orchestrator.statusOf(ev.workspace, ev.status); return; }
+    if (ev.ev === "orchestrator.folders") { this.orchestrator.foldersChanged(ev.folders); return; }
   }
 
+
   // A process on the workspace's host; resolves with {code, stdout, stderr}.
-  async runProcess(program, args, { cwd } = {}) {
-    const { proc } = await rpc("proc.run", { program, args, cwd });
-    const early = this.procs.get(proc);
-    if (early) { this.procs.delete(proc); return { code: early.code, stdout: early.stdout, stderr: early.stderr }; }
-    return new Promise((resolve) => this.procs.set(proc, resolve));
+  async runProcess(program /*: String */, args /*: String[] */, opts /*: {cwd: String} */) {
+    const { proc } = await rpc("proc.run", { program, args, cwd: opts.cwd });
+    const early = this.exited.get(proc);
+    if (early !== undefined) { this.exited.delete(proc); return early; }
+    return new Promise((resolve) => { this.waiting.set(proc, resolve); });
   }
 
   async watch(path, f) {
@@ -1252,22 +1326,20 @@ export class App {
 
   // A language server answers for `b`: one is installed for its language
   // and not stopped (`lsp.stop`).
-  lspAvailable(b) { return !!(b.doc && b.language && !b.large && this.lspLanguages?.has(b.language) && this.lspStatus[b.language] !== false); }
+  lspAvailable(b) {
+    const lang = b.language;
+    return b.doc !== null && lang !== null && !b.large && this.lspLanguages.has(lang) && this.lspStatus[lang] !== false;
+  }
 
   // A language server's (line, UTF-16 column) as a byte offset in a held buffer.
   lspOffset(b, line, character) {
     const L = b.text;
-    if (!L || L.firstLine == null) return null;
-    const i = line - L.firstLine;
-    if (i < 0 || i >= L.count) return null;
-    return L.starts[i] + byteLen(L.lines[i].slice(0, character));
+    return offsetIn(L === null ? [] : [{ lines: L.lines, starts: L.starts, firstLine: L.firstLine }], line, character);
   }
-
+  // Byte `pos` as a language server's (line, UTF-16 column), when held.
   lspPosition(b, pos) {
     const L = b.text;
-    const i = L ? L.indexOf(pos) : -1;
-    if (i < 0) return null;
-    return { line: (L.firstLine ?? 0) + i, character: byteToIdx(L.lines[i], pos - L.starts[i]) };
+    return L === null ? null : positionIn({ lines: L.lines, starts: L.starts, firstLine: L.firstLine }, L.indexOf(pos), pos);
   }
 
   // ------------------------------------------------------------- input
@@ -1289,8 +1361,7 @@ export class App {
   // run, as typing) or pasted.
   insertText(text, typed) {
     const pane = this.activePane;
-    const v = pane.view;
-    if (v === undefined || v.buf.readOnly) return;
+    if (!pane.shown.some((v) => !v.buf.readOnly)) return;
     if (typed) this.editing.type(pane, text, true);
     else this.paste(text);
   }
@@ -1312,19 +1383,24 @@ export class App {
     } else this.editing.type(this.activePane, text);
   }
 
+  // The browser's copy and cut (Ctrl+C, Ctrl+X): the text copied, as
+  // `copied` takes it.
   onCopy(e, cut) {
+    for (const text of this.copied(cut)) { e.preventDefault(); e.clipboardData.setData("text/plain", text); }
+  }
+  // What a copy takes from the active view (a list of at most one: none
+  // without a view): its selections in document order, as paste hands
+  // them out, or with nothing selected the cursor's line; a cut deletes it.
+  copied(cut) {
     const v = this.view();
-    if (!v) return;
-    // In document order, as paste hands them out.
+    if (v === null) return [];
     const sels = v.selections().sort((x, y) => x.start - y.start);
-    // With nothing selected, copy (or cut) the cursor's line.
-    const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end)) : [this.editing.lineAt(v.buf, v.primary.pos).text + "\n"];
-    e.preventDefault();
-    e.clipboardData.setData("text/plain", texts.join("\n"));
+    const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "") : [this.editing.lineAt(v.buf, v.primary.pos).text + "\n"];
     if (cut && !v.buf.readOnly) {
       if (sels.length) this.editing.replace(this.activePane, (c) => { const s = sel(c); return s ? put(s.start, s.end, "") : KEEP; });
       else this.editing.deleteLine(this.activePane);
     }
+    return [texts.join("\n")];
   }
 
   // A key pressed in a panel (a button, a list, a field) that the control
@@ -1338,7 +1414,7 @@ export class App {
     const cmd = this.keymap().get(k);
     if (cmd === undefined || !(e.ctrlKey || e.altKey || e.metaKey || /^F\d+$/.test(e.key))) return false;
     if (t.matches("input, textarea, select, [contenteditable]") && FIELD_KEYS.has(k)) return false;
-    this.run(cmd);
+    this.run(cmd, undefined);
     return true;
   }
 
@@ -1351,13 +1427,12 @@ export class App {
     const cmd = this.keymap().get(k);
     if (!this.terminalKeys.has(k) || cmd === undefined) return false;
     e.preventDefault();
-    this.run(cmd);
+    this.run(cmd, undefined);
     return true;
   }
 
   keyName(e) {
-    const names = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", " ": "Space", Escape: "Esc" };
-    let k = names[e.key] || e.key;
+    let k = KEY_NAMES.get(e.key) ?? e.key;
     // A digit is named by its key, shifted or not (Shift+1 is "S-1", not "!").
     if (/^Digit\d$/.test(e.code)) k = e.code.slice(5);
     if (k.length === 1) k = k.toLowerCase();
@@ -1372,7 +1447,7 @@ export class App {
     const bound = v ? modeKey(this.modes, v.buf.mode, k) : undefined;
     if (bound !== undefined) { e.preventDefault(); bound.run(); return; }
     const cmd = this.keymap().get(k);
-    if (cmd !== undefined) { e.preventDefault(); this.run(cmd); }
+    if (cmd !== undefined) { e.preventDefault(); this.run(cmd, undefined); }
   }
 
   bindKey(key, command) { this.keys.set(key, command); }
@@ -1461,17 +1536,16 @@ export class App {
   // commands it runs itself).
   run(id, arg) {
     const c = this.commands.get(id);
-    if (!c) { this.setStatus(`No command “${id}”`); return Promise.resolve(); }
+    if (c === undefined) { this.setStatus(`No command “${id}”`); return Promise.resolve(undefined); }
     this.macros.command(id, arg);
-    if (this.macros) this.macros.depth++;
+    this.macros.depth++;
     try {
-      const r = c.run(arg);
-      return Promise.resolve(r).catch((e) => this.report(`${id}: ${e.stack || e}`));
+      return c.run(arg).catch((e) => { this.report(`${id}: ${failure(e)}`); });
     } catch (e) {
-      this.report(`${id}: ${e.stack || e}`);
-      return Promise.resolve();
+      this.report(`${id}: ${failure(e)}`);
+      return Promise.resolve(undefined);
     } finally {
-      if (this.macros) this.macros.depth--;
+      this.macros.depth--;
     }
   }
 
@@ -1482,15 +1556,24 @@ export class App {
     const P = () => this.activePane;
     const V = () => this.view();
     const ro = () => { const v = V(); return !v || v.buf.readOnly; };
-    const cmd = (id, title, run, hidden = false) => { this.commands.set(id, { title, run: asCommand(run), source: "core", hidden }); };
-    const toggle = (k) => () => { this.settings[k] = !this.settings[k]; this.saveSettings(); this.setStatus(`${k.replace(/_/g, " ")}: ${this.settings[k] ? "on" : "off"}`); };
+    // A command, listed in the palette or not (`hiddenCmd`). Declared
+    // functions, so each takes an action of its own kind.
+    const commands = this.commands;
+    function cmd(id, title, run) { commands.set(id, { title, run: asCommand(run), source: "core", hidden: false }); }
+    function hiddenCmd(id, title, run) { commands.set(id, { title, run: asCommand(run), source: "core", hidden: true }); }
+    const toggle = (k) => () => {
+      const on = this.settings.flags[k] !== true;
+      this.settings.flags[k] = on;
+      this.saveSettings();
+      this.setStatus(`${k.replace(/_/g, " ")}: ${on ? "on" : "off"}`);
+    };
     const page = (dir, extend) => () => P().page(dir, extend);
     const mutate = (f) => () => { if (!ro()) f(); };
 
-    cmd("file.save", "File: Save", () => { for (const v of listOf(V())) if (v.buf.doc !== null) this.saveBuffer(v.buf); });
+    cmd("file.save", "File: Save", () => { for (const v of listOf(V())) if (v.buf.doc !== null) this.saveBuffer(v.buf, true); });
     cmd("file.saveAll", "File: Save All", async () => {
-      const mod = [...this.buffers.values()].filter((b) => b.doc && b.modified);
-      for (const b of mod) await this.saveBuffer(b);
+      const mod = [...this.buffers.values()].filter((b) => b.doc !== null && b.modified);
+      for (const b of mod) await this.saveBuffer(b, true);
       this.setStatus(mod.length ? `Saved ${mod.length} file(s)` : "Nothing to save");
     });
     cmd("file.toggleReadOnly", "Toggle Read-Only Mode (Current Buffer)", () => { const b = V()?.buf; if (b) { b.readOnly = !b.readOnly; this.renderAll(); } });
@@ -1507,10 +1590,10 @@ export class App {
       if (b.modified && !(await this.confirm(`Revert ${b.name}? Its unsaved changes are lost`, "Revert"))) return;
       try { await rpc("doc.reload", { doc: b.doc }); this.setStatus(`Reverted ${b.name}`); } catch (e) { this.setStatus(`Not reverted: ${failure(e)}`); }
     });
-    // The clipboard, from a menu: copy and cut go through the browser's own
-    // copy (onCopy); paste reads the clipboard where the browser allows it.
-    cmd("edit.copy", "Edit: Copy", () => { this.input.focus({ preventScroll: true }); document.execCommand("copy"); });
-    cmd("edit.cut", "Edit: Cut", () => { this.input.focus({ preventScroll: true }); document.execCommand("cut"); });
+    // The clipboard, from a menu: written and read where the browser allows
+    // it (the keys go through the browser's own copy and paste).
+    cmd("edit.copy", "Edit: Copy", async () => { for (const t of this.copied(false)) await navigator.clipboard.writeText(t); });
+    cmd("edit.cut", "Edit: Cut", async () => { for (const t of this.copied(true)) await navigator.clipboard.writeText(t); });
     cmd("edit.paste", "Edit: Paste", async () => {
       try { this.paste(await navigator.clipboard.readText()); } catch { this.setStatus("The browser did not allow reading the clipboard here: paste with Ctrl+V"); }
     });
@@ -1520,13 +1603,13 @@ export class App {
     cmd("palette.files", "Open File…", () => this.prompt.palette(""));
     cmd("palette.buffers", "Switch Buffer…", () => this.prompt.palette("#"));
     cmd("palette.line", "Go to Line…", () => this.prompt.palette(":"));
-    cmd("palette.open", "Palette with a Prefix", (prefix) => this.prompt.palette(prefix || ""), true);
+    commands.set("palette.open", { title: "Palette with a Prefix", run: asArgCommand((prefix) => this.prompt.palette(prefix ?? "")), source: "core", hidden: true });
     cmd("terminal.toggle", "Terminal: Toggle", () => this.toggleTerminal());
     cmd("terminal.new", "Terminal: New", async () => { this.showTerminal(await this.terminals.create(null, null, null), this.terminalPane()); });
     // The current terminal closed and a new one started in its tab's place.
     cmd("terminal.restart", "Terminal: Restart", async () => {
       const p = this.terminalPane();
-      for (const v of found(p.view)) if (v.buf.terminal.length > 0) await this.closeTab(p, v);
+      for (const v of p.shown) if (terminalOf(v.buf.source).length > 0) await this.closeTab(p, v);
       this.showTerminal(await this.terminals.create(null, null, null), p);
     });
     // The selection (or the cursor's line) typed into the terminal shown
@@ -1535,9 +1618,9 @@ export class App {
       const v = V();
       if (!v) return;
       const sels = v.selections().sort((x, y) => x.start - y.start);
-      const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end)).join("\n") : this.editing.lineAt(v.buf, v.primary.pos).text + "\n";
+      const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "").join("\n") : this.editing.lineAt(v.buf, v.primary.pos).text + "\n";
       const p = this.terminalPane();
-      const id = (p.view === undefined ? [] : p.view.buf.terminal).at(0) ?? await this.terminals.create(null, null, null);
+      const id = p.shown.flatMap((v) => terminalOf(v.buf.source)).at(0) ?? await this.terminals.create(null, null, null);
       this.showTerminal(id, p);
       await this.terminals.send(id, text);
     });
@@ -1546,9 +1629,9 @@ export class App {
     cmd("view.splitRight", "View: Split Right", () => this.splitActive("h"));
     cmd("view.splitDown", "View: Split Down", () => this.splitActive("v"));
     cmd("view.closeSplit", "View: Close Split", () => this.closePane(P()));
-    cmd("view.nextSplit", "View: Next Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
-    cmd("view.prevSplit", "View: Previous Split", () => { const ps = this.panes(); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
-    cmd("view.closeTab", "View: Close Tab", () => { const p = P(); if (p.view) this.closeTab(p, p.view); });
+    cmd("view.nextSplit", "View: Next Split", () => { const ps = panesOf(this.layoutTree); this.focusPane(ps[(ps.indexOf(P()) + 1) % ps.length]); });
+    cmd("view.prevSplit", "View: Previous Split", () => { const ps = panesOf(this.layoutTree); this.focusPane(ps[(ps.indexOf(P()) - 1 + ps.length) % ps.length]); });
+    cmd("view.closeTab", "View: Close Tab", () => { const p = P(); for (const v of p.shown) this.closeTab(p, v); });
     cmd("view.keepOpen", "View: Keep Tab Open (preview tab)", () => { const v = V(); if (v) this.keep(v); });
     cmd("settings.previewTabs", "Settings: Toggle Preview Tabs", toggle("preview_tabs"));
     // Zoom: the editor's and the terminals' text, a tenth at a time.
@@ -1563,7 +1646,7 @@ export class App {
     cmd("view.zoomOut", "View: Zoom Out", () => zoom(this.settings.zoom - 0.1));
     cmd("view.zoomReset", "View: Reset Zoom", () => zoom(1));
     cmd("view.toggleSidebar", "View: Toggle Sidebar", () => { $("#sidebar").classList.toggle("hidden"); this.renderAll(); this.rememberLayout(); });
-    cmd("view.showSidebar", "View: Show Sidebar", () => { $("#sidebar").classList.remove("hidden"); this.renderAll(); this.rememberLayout(); }, true);
+    hiddenCmd("view.showSidebar", "View: Show Sidebar", () => { $("#sidebar").classList.remove("hidden"); this.renderAll(); this.rememberLayout(); });
     cmd("file.recent", "File: Open Recent…", () => {
       const rel = (p) => (p.startsWith(this.root + "/") ? p.slice(this.root.length + 1) : p);
       const list = this.recentFiles();
@@ -1578,12 +1661,12 @@ export class App {
       });
     });
     cmd("view.maximizeSplit", "View: Toggle Maximize Split", () => {
-      this.maximized = this.maximized.length > 0 || this.panes().length < 2 ? [] : [P()];
+      this.maximized = this.maximized.length > 0 || panesOf(this.layoutTree).length < 2 ? [] : [P()];
       this.showMaximized();
       this.renderAll();
     });
-    cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); if (p.view) this.closeTabs(p, (x, _i) => x !== p.view); });
-    cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of this.panes()) await this.closeTabs(p, (_x, _i) => true); });
+    cmd("view.closeOtherTabs", "View: Close Other Tabs", () => { const p = P(); for (const v of p.shown) this.closeTabs(p, (x, _i) => x !== v); });
+    cmd("view.closeAllTabs", "View: Close All Tabs", async () => { for (const p of panesOf(this.layoutTree)) await this.closeTabs(p, (_x, _i) => true); });
     cmd("view.nextTab", "View: Next Tab", () => this.cycleTab(1));
     cmd("view.prevTab", "View: Previous Tab", () => this.cycleTab(-1));
     cmd("view.toggleWrap", "View: Toggle Line Wrap (Current Buffer)", () => { const v = V(); if (v) { v.opts.wrap = !v.opts.wrap; P().scheduleRender(); } });
@@ -1595,8 +1678,8 @@ export class App {
     cmd("view.toggleBrackets", "View: Toggle Matching Bracket Highlight", toggle("highlight_brackets"));
     cmd("view.toggleRainbow", "View: Toggle Rainbow Brackets", toggle("rainbow_brackets"));
     cmd("view.toggleScrollSync", "View: Toggle Scroll Sync", toggle("scroll_sync"));
-    cmd("view.scrollUp", "View: Scroll Up", () => P().scrollLines(-1), true);
-    cmd("view.scrollDown", "View: Scroll Down", () => P().scrollLines(1), true);
+    hiddenCmd("view.scrollUp", "View: Scroll Up", () => P().scrollLines(-1));
+    hiddenCmd("view.scrollDown", "View: Scroll Down", () => P().scrollLines(1));
     cmd("view.addRuler", "View: Add Ruler", async () => {
       const t = await this.prompt.ask({ title: "Ruler at column", value: "80", hint: "", select: true });
       const n = parseInt(t, 10);
@@ -1609,7 +1692,7 @@ export class App {
     cmd("settings.keymapEmacs", "Keymap: Emacs", () => { this.settings.keymap = "emacs"; this.saveSettings(); });
     cmd("go.back", "Go Back", () => this.historyStep(-1));
     cmd("go.forward", "Go Forward", () => this.historyStep(1));
-    cmd("view.focusEditor", "View: Focus Editor", () => this.focusPane(P()), true);
+    hiddenCmd("view.focusEditor", "View: Focus Editor", () => this.focusPane(P()));
     cmd("workspace.trust", "Workspace: Trust (allow processes, terminals and language servers)", async () => {
       if (this.trusted) { this.setStatus("The workspace is trusted"); return; }
       await rpc("workspace.trust", {});
@@ -1620,8 +1703,9 @@ export class App {
     }));
 
     // Motion and selection: nothing to do without a view.
-    const vcmd = (id, title, f, hidden = false) => cmd(id, title, () => (V() ? f() : undefined), hidden);
-    const mv = (id, title, f) => vcmd(id, title, f, true);
+    // Commands on the active view (nothing without one); a motion's is hidden.
+    function vcmd(id, title, f) { commands.set(id, { title, run: asCommand(() => (V() ? f() : undefined)), source: "core", hidden: false }); }
+    function mv(id, title, f) { commands.set(id, { title, run: asCommand(() => (V() ? f() : undefined)), source: "core", hidden: true }); }
     mv("cursor.left", "Left", () => ed().left(P(), false)); mv("cursor.right", "Right", () => ed().right(P(), false));
     mv("select.left", "Select Left", () => ed().left(P(), true)); mv("select.right", "Select Right", () => ed().right(P(), true));
     mv("cursor.wordLeft", "Word Left", () => ed().left(P(), false, true)); mv("cursor.wordRight", "Word Right", () => ed().right(P(), false, true));
@@ -1630,8 +1714,8 @@ export class App {
     mv("select.up", "Select Up", () => ed().vertical(P(), -1, true)); mv("select.down", "Select Down", () => ed().vertical(P(), 1, true));
     mv("cursor.home", "Line Start", () => ed().home(P(), false)); mv("cursor.end", "Line End", () => ed().end(P(), false));
     mv("select.home", "Select to Line Start", () => ed().home(P(), true)); mv("select.end", "Select to Line End", () => ed().end(P(), true));
-    mv("cursor.docStart", "Document Start", () => { this.pushHistory(V()); return this.gotoByte(0, false); });
-    mv("cursor.docEnd", "Document End", () => { this.pushHistory(V()); return this.gotoByte(V().buf.len, false); });
+    mv("cursor.docStart", "Document Start", () => { for (const v of listOf(V())) this.pushHistory(v, v.primary.pos); return this.gotoByte(0, false); });
+    mv("cursor.docEnd", "Document End", () => { for (const v of listOf(V())) this.pushHistory(v, v.primary.pos); return this.gotoByte(V().buf.len, false); });
     mv("select.docStart", "Select to Document Start", () => this.gotoByte(0, true));
     mv("select.docEnd", "Select to Document End", () => this.gotoByte(V().buf.len, true));
     mv("cursor.pageUp", "Page Up", page(-1, false)); mv("cursor.pageDown", "Page Down", page(1, false));
@@ -1682,17 +1766,17 @@ export class App {
       const v = V();
       const ln = ed().lineAt(v.buf, v.primary.pos);
       const end = v.primary.pos === ln.end ? ln.end + 1 : ln.end;
-      this.killRing.unshift(v.buf.textRange(v.primary.pos, end) || "");
+      this.killRing.unshift(v.buf.textRange(v.primary.pos, end) ?? "");
       ed().replace(P(), (c) => (c === v.primary ? { start: c.pos, end, text: "", caret: 0 } : null));
     }));
     mv("edit.killRegion", "Kill Region", mutate(() => {
       const s = V().selection();
-      if (!s) return;
-      this.killRing.unshift(V().buf.textRange(s.start, s.end) || "");
+      if (s === null) return;
+      this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? "");
       ed().replace(P(), (c) => (c === V().primary ? { ...s, text: "" } : null));
     }));
-    mv("edit.copyRegion", "Copy Region", () => { const s = V().selection(); if (s) { this.killRing.unshift(V().buf.textRange(s.start, s.end) || ""); V().primary.anchor = null; P().scheduleRender(); } });
-    mv("edit.yank", "Yank", mutate(() => this.killRing.length && ed().type(P(), this.killRing[0])));
+    mv("edit.copyRegion", "Copy Region", () => { for (const s of listOf(V().selection())) { this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? ""); V().primary.anchor = null; P().scheduleRender(); } });
+    mv("edit.yank", "Yank", mutate(() => { for (const text of this.killRing.slice(0, 1)) ed().type(P(), text); }));
   }
 
   // ------------------------------------------------------------- a document's format
@@ -1703,59 +1787,81 @@ export class App {
     if (!this.formats) this.formats = await rpc("doc.formats", {});
     return this.formats;
   }
-  // Pick one of `choices` ({label, detail, value}) for the active file;
-  // the current one is marked and first selected. Resolves with the value,
-  // or null.
-  async pickFor(title, choices, current) {
-    const b = this.view()?.buf;
-    if (!b?.doc) { this.setStatus("Not a file"); return null; }
-    const items = choices.map((c) => (c.value === current ? { ...c, detail: c.detail ? `${c.detail} · current` : "current" } : c));
+  // The active view's buffer, when it is a document's (a list of at most
+  // one).
+  activeFile() { const v = this.view(); return v !== null && v.buf.doc !== null ? [v.buf] : []; }
+  // Pick one of `choices` ({label, detail, value}): the current one is
+  // marked and first selected. Resolves with the value picked (a list of at
+  // most one: none when given up).
+  pickFor(title, choices, current) {
+    const items = choices.map((c) => (c.value === current ? { label: c.label, detail: c.detail ? `${c.detail} · current` : "current", value: c.value } : c));
     const i = Math.max(0, items.findIndex((c) => c.value === current));
-    return new Promise((resolve) => this.prompt.open({ title, value: "", items: [...items.slice(i), ...items.slice(0, i)], onAccept: (it) => { resolve(it.value); }, onChange: (_it) => {}, onCancel: () => { resolve(null); } }));
-  }
-  async setFormat(b, change) {
-    try { await rpc("doc.set", { doc: b.doc, ...change }); } catch (e) { this.setStatus(failure(e)); }
+    return new Promise((resolve) => {
+      this.prompt.open({ title, value: "", items: [...items.slice(i), ...items.slice(0, i)], onAccept: (it) => { resolve([it.value]); }, onChange: (_it) => {}, onCancel: () => { resolve([]); } });
+    });
   }
   async pickLanguage() {
-    const b = this.view()?.buf;
+    const b = this.activeFile().at(0);
+    if (b === undefined) { this.setStatus("Not a file"); return; }
     const f = await this.docFormats();
-    const lang = await this.pickFor("Language", [{ label: "plain text", value: "" }, ...f.languages.map((l) => ({ label: l, value: l }))], b?.language || "");
-    if (lang != null) await this.setFormat(b, { language: lang || null });
+    const choices = [{ label: "plain text", detail: "", value: "" }, ...f.languages.map((l) => ({ label: l, detail: "", value: l }))];
+    for (const lang of await this.pickFor("Language", choices, b.language ?? "")) {
+      const o = await attempt("doc.set", { doc: b.doc, language: lang === "" ? null : lang });
+      if (o.kind === "refused") this.setStatus(o.detail);
+    }
   }
   async pickLineEnding() {
-    const b = this.view()?.buf;
+    const b = this.activeFile().at(0);
+    if (b === undefined) { this.setStatus("Not a file"); return; }
     const f = await this.docFormats();
-    const names = { LF: "LF — Unix, macOS", CRLF: "CRLF — Windows", CR: "CR — classic Mac" };
-    const le = await this.pickFor("Line ending (saving converts the file)", f.line_endings.map((l) => ({ label: names[l] || l, value: l })), b?.lineEnding);
-    if (le && le !== b.lineEnding) { await this.setFormat(b, { line_ending: le }); this.setStatus(`${b.name} is saved with ${le} line endings`); }
+    const choices = f.line_endings.map((l) => ({ label: LINE_ENDINGS.get(l) ?? l, detail: "", value: l }));
+    for (const le of await this.pickFor("Line ending (saving converts the file)", choices, b.lineEnding ?? "")) {
+      if (le === b.lineEnding) continue;
+      const o = await attempt("doc.set", { doc: b.doc, line_ending: le });
+      this.setStatus(o.kind === "refused" ? o.detail : `${b.name} is saved with ${le} line endings`);
+    }
   }
   // An encoding, then what to do with it: read the file again in it, or
   // write the file in it on the next save.
   async pickEncoding() {
-    const b = this.view()?.buf;
+    const b = this.activeFile().at(0);
+    if (b === undefined) { this.setStatus("Not a file"); return; }
     const f = await this.docFormats();
-    const enc = await this.pickFor("Encoding", f.encodings.map((e) => ({ label: e.name, detail: e.description, value: e.name })), b?.encoding);
-    if (!enc) return;
-    const how = await this.choose(`${b.name} in ${enc}`, [
-      ...(b.large ? [] : [{ label: `Reopen with ${enc} (read the file again in it)`, value: "reopen" }]),
-      { label: `Save with ${enc} (the next save writes it)`, value: "save" },
-    ]);
-    if (how === "save") await this.setFormat(b, { encoding: enc });
-    if (how === "reopen") {
-      if (b.modified && !(await this.confirm(`Reopening ${b.name} gives up its unsaved changes`, "Reopen"))) return;
-      try { await rpc("doc.reload", { doc: b.doc, encoding: enc }); this.setStatus(`Reopened ${b.name} with ${enc}`); } catch (e) { this.setStatus(failure(e)); }
+    const choices = f.encodings.map((e) => ({ label: e.name, detail: e.description, value: e.name }));
+    for (const enc of await this.pickFor("Encoding", choices, b.encoding ?? "")) {
+      const how = await this.choose(`${b.name} in ${enc}`, [
+        ...(b.large ? [] : [{ label: `Reopen with ${enc} (read the file again in it)`, value: "reopen" }]),
+        { label: `Save with ${enc} (the next save writes it)`, value: "save" },
+      ]);
+      if (how === "save") {
+        const o = await attempt("doc.set", { doc: b.doc, encoding: enc });
+        if (o.kind === "refused") this.setStatus(o.detail);
+      }
+      if (how === "reopen") {
+        if (b.modified && !(await this.confirm(`Reopening ${b.name} gives up its unsaved changes`, "Reopen"))) return;
+        const o = await attempt("doc.reload", { doc: b.doc, encoding: enc });
+        this.setStatus(o.kind === "refused" ? o.detail : `Reopened ${b.name} with ${enc}`);
+      }
     }
+  }
+
+  // Buffer `b`'s document has a line index (`lines` long) now: its window
+  // is fetched again, with line numbers.
+  async reindexed(b, lines) {
+    await b.indexed(lines);
+    this.renderBuffer(b.id);
+    this.updateStatus();
   }
 
   afterUndo(v, ops) {
     const last = ops.at(-1);
     if (last === undefined) return;
-    v.cursors = [v.primary];
+    v.keepPrimary();
     this.editing.place(v.pane, last.t === "ins" ? last.pos + byteLen(last.text) : last.pos, false);
   }
 
   saveSettings() {
-    try { localStorage.setItem("fresh-poc:settings", JSON.stringify(this.settings)); } catch {}
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings)); } catch {}
     this.renderAll();
   }
   saveKeys() {
@@ -1763,9 +1869,9 @@ export class App {
   }
   cycleTab(d) {
     const p = this.activePane;
-    if (!p.views.length) return;
-    const i = (p.views.indexOf(p.view) + d + p.views.length) % p.views.length;
-    p.show(p.views[i].buf, null);
+    if (p.views.length === 0 || p.shown.length === 0) return;
+    const i = (p.views.indexOf(p.shown[0]) + d + p.views.length) % p.views.length;
+    p.show(p.views[i].buf, false);
   }
 
   // ------------------------------------------------------------- hover and popups
@@ -1774,9 +1880,9 @@ export class App {
 
   onHover(pane, p, x, y) {
     clearTimeout(this.hoverTimer);
-    if (p == null || !pane.view) return;
+    if (p == null || pane.shown.length === 0) return;
+    const b = pane.shown[0].buf;
     this.hoverTimer = setTimeout(async () => {
-      const b = pane.view.buf;
       const parts = [];
       for (const f of this.hoverProviders) {
         try { const t = await f(b, p); if (t) parts.push(t); } catch {}
@@ -1796,10 +1902,9 @@ export class App {
   // `text` in the popup under the active view's caret.
   popupAtCaret(text) {
     const pane = this.activePane;
-    const v = pane.view;
-    const c = v ? pane.caretBox(v.primary.pos) : null;
     const r = pane.surfaceEl.getBoundingClientRect();
-    this.popup(text, c ? { x: c.x, y: c.y + c.h } : { x: r.left, y: r.top });
+    const under = pane.shown.flatMap((v) => pane.caretBox(v.primary.pos)).map((c) => ({ x: c.x, y: c.y + c.h }));
+    this.popup(text, under.at(0) ?? { x: r.left, y: r.top });
   }
   hidePopup() { $("#popup").classList.add("hidden"); }
 
@@ -1817,19 +1922,19 @@ export class App {
   }
   // Ask a yes/no question: resolves true when `yes` is picked.
   async confirm(title, yes) {
-    return (await this.choose(title, [{ label: yes, value: true }, { label: "Cancel", value: false }])) === true;
+    return (await this.choose(title, [{ label: yes, value: "yes" }, { label: "Cancel", value: "cancel" }])) === "yes";
   }
 
   // ------------------------------------------------------------- status
 
   setStatus(m) { this.status = m; this.updateStatus(); }
 
+  // A status bar item of a part's own (made the first time): `set(text,
+  // {title, onClick})` shows it (onClick null: not clickable).
   statusItem(id) {
-    const app = this;
-    if (!this.statusItems.has(id)) this.statusItems.set(id, { text: "", title: "", onClick: null });
-    const it = this.statusItems.get(id);
-    // `o`: {title, onClick} (onClick null: not clickable).
-    return { set(text, o) { it.text = text; it.title = o.title; it.onClick = o.onClick; app.updateStatus(); } };
+    const it = this.statusItems.get(id) ?? statusFact();
+    this.statusItems.set(id, it);
+    return { set: (text, o) => { it.text = text; it.title = o.title; it.onClick = o.onClick; this.updateStatus(); } };
   }
 
   // The status bar: the message, then the facts. A fact that has an action
@@ -1842,11 +1947,12 @@ export class App {
     if (!left) return;
     if (left.textContent !== this.status) left.textContent = this.status;
     const items = [];
-    const add = (text, title, run) => items.push({ text, title, run });
-    const cmd = (id) => () => this.run(id);
+    // A fact, its tooltip and what clicking it does (none: not clickable).
+    const add = (text, title, run) => { items.push(statusFactOf(text, title, run)); };
+    const cmd = (id) => () => { this.run(id, undefined); };
     const titled = (what, id) => { const k = this.keyLabel(id); return k ? `${what} (${k})` : what; };
     // A document's facts (a terminal's tab has none).
-    if (v && v.buf.terminal.length === 0) {
+    if (v !== null && terminalOf(v.buf.source).length === 0) {
       const b = v.buf;
       const L = b.text;
       const c = v.primary;
@@ -1858,28 +1964,28 @@ export class App {
       if (v.cursors.length > 1) add(`${v.cursors.length} cursors`, titled("Remove the other cursors", "edit.escape"), cmd("edit.escape"));
       for (const r of this.macros.recording) add(`● REC ${r.register}`, titled("Recording a macro: Stop Recording Macro", "macro.stop"), cmd("macro.stop"));
       if (b.readOnly && !b.isVirtual) add("[RO]", "Read-only: click to allow editing", cmd("file.toggleReadOnly"));
-      if (b.large) add("large file", "Read from disk as it is viewed; lines are counted in the background");
+      if (b.large) add("large file", "Read from disk as it is viewed; lines are counted in the background", null);
       if (b.doc) {
         if (b.lineEnding) add(b.lineEnding, titled("Line ending: Set Line Ending", "file.lineEnding"), cmd("file.lineEnding"));
         if (b.encoding) add(b.encoding, titled("Encoding: Reopen or Save with Encoding", "file.encoding"), cmd("file.encoding"));
         add(b.language || "plain text", titled("Language: Set Language", "file.language"), cmd("file.language"));
-      } else if (b.language) add(b.language);
+      } else if (b.language) add(b.language, "", null);
       const ds = b.decor.diags;
       if (ds.length) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
       if (v.mode === "compose") add("compose", titled("Markdown: Toggle Compose", "markdown.toggleCompose"), cmd("markdown.toggleCompose"));
-      if (b.doc) add(b.synced ? `v${b.version}` : `v${b.version}…`, "Document log version");
+      for (const f of b.file) add(synced(f) ? `v${f.version}` : `v${f.version}…`, "Document log version", null);
     }
     for (const it of this.statusItems.values()) if (it.text) add(it.text, it.title, it.onClick);
-    add(this.hostName, "Workspace host");
-    const sig = items.map((x) => `${x.text}\u0001${x.title || ""}\u0001${x.run ? 1 : 0}`).join("\u0002");
-    this.statusRuns = items.map((x) => x.run);
+    add(this.hostName, "Workspace host", null);
+    const sig = items.map((x) => `${x.text}\u0001${x.title || ""}\u0001${x.onClick ? 1 : 0}`).join("\u0002");
+    this.statusRuns = items.map((x) => x.onClick);
     if (sig === this.statusSig) return;
     this.statusSig = sig;
     right.replaceChildren(...items.map((x, k) => {
       const s = document.createElement("span");
       s.textContent = x.text;
       if (x.title) s.title = x.title;
-      if (x.run) { s.className = "click"; s.onclick = () => this.statusRuns[k]?.(); }
+      if (x.onClick) { s.className = "click"; s.onclick = () => this.statusRuns[k]?.(); }
       return s;
     }));
   }
