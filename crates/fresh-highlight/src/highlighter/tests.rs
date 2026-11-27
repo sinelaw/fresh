@@ -601,10 +601,12 @@ fn roles_follow_edits_as_a_fresh_parse_gives_them() {
             "after {needle:?}"
         );
     }
-    // And a table at the very end, without a final newline.
+    // And a table of its own at the very end, without a final newline (a
+    // blank line first: right after a paragraph line the grammar opens the
+    // table a line earlier, which is not what this checks).
     let end = text.len();
-    h.edit(1, end, 0, "| g |\n|---|\n| h |").unwrap();
-    text.push_str("| g |\n|---|\n| h |");
+    h.edit(1, end, 0, "\n| g |\n|---|\n| h |").unwrap();
+    text.push_str("\n| g |\n|---|\n| h |");
     while h.work(16).unwrap() {}
     assert_eq!(highlights(&h, 1), fresh("Markdown", &text));
     assert_eq!(

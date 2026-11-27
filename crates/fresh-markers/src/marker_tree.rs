@@ -1832,7 +1832,8 @@ mod tests {
         /// Fold one interval through the edits the way the per-edit path
         /// does: highest position first, shifting a coordinate at or after
         /// the edit (strictly after, for a left-gravity marker meeting an
-        /// insertion) and never letting the end precede the start.
+        /// insertion), clamping a coordinate inside a deletion to the
+        /// deletion point, and never letting the end precede the start.
         fn shadow_adjust(
             mut start: i64,
             mut end: i64,
@@ -1855,7 +1856,12 @@ mod tests {
                     end >= pos
                 };
                 if shift_end {
-                    end = (end + delta).max(start);
+                    end = if delta < 0 {
+                        (end + delta).max(pos)
+                    } else {
+                        end + delta
+                    }
+                    .max(start);
                 }
             }
             (start.max(0) as u64, end.max(0) as u64)
