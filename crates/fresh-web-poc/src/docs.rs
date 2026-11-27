@@ -385,6 +385,120 @@ impl Doc {
         }))
     }
 
+    /// A window around `around`: `before` lines before the line holding it
+    /// and `after` lines from that line on, read at once (one version), but
+    /// at most `cap` bytes (and [`READ_CAP`]) on either side of `around`. A
+    /// side that reaches its cap first ends inside a line, on a character
+    /// boundary: `head_cut` when the window's first line starts before the
+    /// window, `tail_cut` when its last line goes on past it.
+    pub fn window(
+        &mut self,
+        around: usize,
+        before: usize,
+        after: usize,
+        cap: usize,
+    ) -> Result<Value> {
+        let len = self.len();
+        let around = around.min(len);
+        let cap = cap.clamp(1, READ_CAP);
+        let start = self.lines_back_from(around, before, cap)?;
+        let end = self.lines_on_from(around, after, cap)?;
+        let bytes = self.read(start, end - start)?;
+        let head_cut = start > 0 && self.read(start - 1, 1)? != b"\n";
+        let tail_cut = end < len && bytes.last() != Some(&b'\n');
+        Ok(json!({
+            "start": start,
+            "end": end,
+            "text": String::from_utf8_lossy(&bytes),
+            "first_line": self.first_line(start),
+            "bof": start == 0,
+            "eof": end >= len,
+            "head_cut": head_cut,
+            "tail_cut": tail_cut,
+            "len": len,
+            "version": self.version,
+        }))
+    }
+
+    /// The start of the line `count` lines before the one holding `pos`,
+    /// looking back at most `cap` bytes: the earliest line start found in
+    /// that much, or, when the line holding `pos` starts further back, a
+    /// character boundary in it, on a 4 KB grid so that windows read near
+    /// one another start alike.
+    fn lines_back_from(&mut self, pos: usize, count: usize, cap: usize) -> Result<usize> {
+        let floor = pos.saturating_sub(cap);
+        let mut earliest = None;
+        let mut found = 0;
+        let mut end = pos;
+        while end > floor {
+            let s = end.saturating_sub(CHUNK).max(floor);
+            let bytes = self.read(s, end - s)?;
+            for i in (0..bytes.len()).rev() {
+                if bytes[i] == b'\n' {
+                    // The first newline ends the line before the one holding
+                    // `pos`; each one after it, one more line back.
+                    earliest = Some(s + i + 1);
+                    if found == count {
+                        return Ok(s + i + 1);
+                    }
+                    found += 1;
+                }
+            }
+            end = s;
+        }
+        if end == 0 {
+            return Ok(0);
+        }
+        if let Some(start) = earliest {
+            return Ok(start);
+        }
+        let mut cut = floor.next_multiple_of(4096).min(pos);
+        while cut < pos && self.read(cut, 1)?[0] & 0xC0 == 0x80 {
+            cut += 1;
+        }
+        Ok(cut)
+    }
+
+    /// The end (past its newline) of the line `count` lines on from the one
+    /// holding `pos` (that one counted), looking at most `cap` bytes on: the
+    /// last line end found in that much, or, when the line holding `pos`
+    /// ends further on, a character boundary in it, on a 4 KB grid.
+    fn lines_on_from(&mut self, pos: usize, count: usize, cap: usize) -> Result<usize> {
+        let len = self.len();
+        let limit = pos.saturating_add(cap).min(len);
+        let mut last = None;
+        let mut found = 0;
+        let mut at = pos;
+        while at < limit {
+            let chunk = self.read(at, CHUNK.min(limit - at))?;
+            if chunk.is_empty() {
+                break;
+            }
+            for (i, &c) in chunk.iter().enumerate() {
+                if c == b'\n' {
+                    last = Some(at + i + 1);
+                    found += 1;
+                    if found >= count {
+                        return Ok(at + i + 1);
+                    }
+                }
+            }
+            at += chunk.len();
+        }
+        if limit >= len {
+            return Ok(len);
+        }
+        if let Some(end) = last {
+            return Ok(end);
+        }
+        let grid = limit - limit % 4096;
+        let mut cut = if grid > pos { grid } else { limit };
+        while cut > pos && self.read(cut, 1)?[0] & 0xC0 == 0x80 {
+            cut -= 1;
+        }
+        Ok(cut)
+    }
+
     pub fn text(&mut self, start: usize, end: usize) -> Result<String> {
         let end = end.min(self.len());
         let start = start.min(end);
@@ -858,6 +972,47 @@ mod tests {
         assert_eq!(b["text"], "line 8\nline 9\n");
         let b = d.lines_backward(d.len(), 1).unwrap();
         assert_eq!(b["text"], "line 99\n");
+    }
+
+    #[test]
+    fn a_window_holds_whole_lines_around_a_position() {
+        let text: String = (0..100).map(|i| format!("line {i}\n")).collect();
+        let (_d, mut docs, id) = doc_with(&text);
+        let d = docs.get(id).unwrap();
+        let w = d
+            .window(text.find("line 10\n").unwrap() + 3, 2, 3, 1 << 20)
+            .unwrap();
+        assert_eq!(w["text"], "line 8\nline 9\nline 10\nline 11\nline 12\n");
+        assert_eq!(w["first_line"], 8);
+        assert_eq!(w["head_cut"], false);
+        assert_eq!(w["tail_cut"], false);
+    }
+
+    #[test]
+    fn a_window_of_a_huge_line_is_cut_inside_it_on_character_boundaries() {
+        // One line of three-byte characters, far longer than the cap.
+        let text: String = "€".repeat(50_000);
+        let (_d, mut docs, id) = doc_with(&text);
+        let d = docs.get(id).unwrap();
+        let around = 3 * 25_000;
+        let w = d.window(around, 10, 10, 10_000).unwrap();
+        let (start, end) = (
+            w["start"].as_u64().unwrap() as usize,
+            w["end"].as_u64().unwrap() as usize,
+        );
+        assert!(start <= around && around - start <= 10_000);
+        assert!(end >= around && end - around <= 10_000);
+        assert!(text.is_char_boundary(start) && text.is_char_boundary(end));
+        assert_eq!(w["text"], text[start..end]);
+        assert_eq!(w["head_cut"], true);
+        assert_eq!(w["tail_cut"], true);
+        assert_eq!(w["bof"], false);
+        assert_eq!(w["eof"], false);
+        // Near the start, the window starts with the line.
+        let w = d.window(30, 10, 10, 10_000).unwrap();
+        assert_eq!(w["start"], 0);
+        assert_eq!(w["head_cut"], false);
+        assert_eq!(w["tail_cut"], true);
     }
 
     #[test]

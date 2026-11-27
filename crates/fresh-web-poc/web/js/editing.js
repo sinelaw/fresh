@@ -6,10 +6,11 @@
 
 import { listOf, found, some, none } from "./maybe.js";
 import { insOp, delOp } from "./ot.js";
-import { byteLen, byteToIdx } from "./utf8.js";
+import { byteLen } from "./utf8.js";
 import { sel, cursorAt, selecting } from "./view.js";
 import { rpc } from "./rpc.js";
-import { charWidth } from "./layout.js";
+import { clustersOf, clustersAround, unitsOf, widthOf } from "./clusters.js";
+import { crBefore } from "./layout.js";
 import { foldRange as docFoldRange } from "./doc.js";
 import { CLOSE, partnerOf, openerBefore } from "./brackets.js";
 
@@ -27,27 +28,36 @@ const NO_RANGES = null;
 const TAB = 4;
 
 // The screen column of UTF-16 index `idx` in `line` (tabs to the next stop,
-// wide characters two columns), and the index at or before column `col`.
+// each cluster as wide as it is drawn), and the index of the cluster at or
+// before column `col`.
 /** function colOf(line: String, idx: Number) => Number */
 function colOf(line, idx) {
-  let c = 0;
-  for (let i = 0; i < idx && i < line.length; i++) {
-    const u = line.charCodeAt(i);
-    if (u >= 0xdc00 && u < 0xe000) continue; // the second half of a pair
-    c = line[i] === "\t" ? c + TAB - (c % TAB) : c + charWidth(line.codePointAt(i));
+  const c = clustersOf(line);
+  let col = 0, i = 0;
+  for (let k = 0; k < c.n && i < idx; k++) {
+    col += line.charCodeAt(i) === 9 ? TAB - (col % TAB) : widthOf(c, k);
+    i += unitsOf(c, k);
   }
-  return c;
+  return col;
 }
 /** function idxAt(line: String, col: Number) => Number */
 function idxAt(line, col) {
-  let c = 0, i = 0;
-  while (i < line.length) {
-    const w = line[i] === "\t" ? TAB - (c % TAB) : charWidth(line.codePointAt(i));
-    if (c + w > col) break;
-    c += w;
-    i += line.codePointAt(i) > 0xffff ? 2 : 1;
+  const c = clustersOf(line);
+  let at = 0, i = 0;
+  for (let k = 0; k < c.n; k++) {
+    const w = line.charCodeAt(i) === 9 ? TAB - (at % TAB) : widthOf(c, k);
+    if (at + w > col) break;
+    at += w;
+    i += unitsOf(c, k);
   }
   return i;
+}
+// The cluster boundary at or before UTF-16 index `i` of `line`.
+/** function clusterAt(line: String, i: Number) => Number */
+function clusterAt(line, i) {
+  const at = Math.min(i, line.length);
+  const around = clustersAround(line, at);
+  return around.on ? at : around.prev;
 }
 
 // The line holding a position: its index among the held lines, its start
@@ -173,26 +183,34 @@ function placesAfter(reps) {
   });
 }
 
-// The character before byte `p` of buffer `b` (a newline between lines;
-// none at the start, or outside the held text).
+// The character (grapheme cluster) before byte `p` of buffer `b` (a line
+// break between lines, CRLF as one; none at the start, or outside the held
+// text).
 function charBefore(b, p) {
   if (p <= 0) return none();
   for (const ln of linesAt(b, p)) {
-    const idx = byteToIdx(ln.text, p - ln.start);
-    if (idx === 0) return ln.i > 0 || b.held.start < ln.start ? some("\n") : none();
-    const c = ln.text.charCodeAt(idx - 1);
-    return some(idx >= 2 && c >= 0xdc00 && c < 0xe000 ? ln.text.slice(idx - 2, idx) : ln.text.charAt(idx - 1));
+    const L = b.held;
+    const idx = L.idxOf(ln.i, p);
+    if (idx === 0) {
+      if (ln.i === 0 && L.start >= ln.start) return none();
+      return some(ln.i > 0 && L.lines[ln.i - 1].endsWith("\r") ? "\r\n" : "\n");
+    }
+    const around = clustersAround(ln.text, idx);
+    return some(ln.text.slice(around.prev, idx));
   }
   return none();
 }
 
-// The character at byte `p` of buffer `b` (a newline at a line's end;
-// none at the end, or outside the held text).
+// The character (grapheme cluster) at byte `p` of buffer `b` (a line
+// break at a line's end, CRLF as one; none at the end, or outside the
+// held text).
 function charAtPos(b, p) {
   if (p >= b.len) return none();
   for (const ln of linesAt(b, p)) {
-    const idx = byteToIdx(ln.text, p - ln.start);
-    return some(idx >= ln.text.length ? "\n" : String.fromCodePoint(ln.text.codePointAt(idx)));
+    const idx = b.held.idxOf(ln.i, p);
+    if (idx >= ln.text.length) return some("\n");
+    if (idx === ln.text.length - 1 && ln.text.endsWith("\r") && ln.next !== null) return some("\r\n");
+    return some(ln.text.slice(idx, clustersAround(ln.text, idx).next));
   }
   return none();
 }
@@ -209,7 +227,7 @@ function openerAt(syn, b, p) {
   const L = b.held;
   const li = L.indexOf(p);
   if (li < 0) return null;
-  return openerBefore((k) => syn.brackets(k), L, li, byteToIdx(L.lines[li], p - L.starts[li]));
+  return openerBefore((k) => syn.brackets(k), L, li, L.idxOf(li, p));
 }
 
 export function shrinkSelection(pane) {
@@ -230,7 +248,7 @@ function blockKey(v) { return v.cursors.map((c) => `${c.anchor}:${c.pos}`).join(
 function cornerAt(b, p) {
   const L = b.text;
   const li = L.indexOf(p);
-  return { line: li, col: colOf(L.lines[li], byteToIdx(L.lines[li], p - L.starts[li])) };
+  return { line: li, col: colOf(L.lines[li], L.idxOf(li, p)) };
 }
 
 // The block that starts at window line `li`: the language server's range
@@ -276,26 +294,74 @@ export function addCursorVertical(pane, dir) {
   const ln = lineAt(b, edge.pos);
   const j = ln.i + dir;
   if (j < 0 || j >= L.count) return;
-  const col = byteToIdx(ln.text, edge.pos - ln.start);
-  v.cursors.push(cursorAt(L.starts[j] + byteLen(L.lines[j].slice(0, Math.min(col, L.lines[j].length)))));
+  const col = L.idxOf(ln.i, edge.pos);
+  v.cursors.push(cursorAt(L.posAt(j, clusterAt(L.lines[j], L.idxFrom(j, col)))));
   v.normalize();
   pane.scheduleRender();
 }
 
-function wordEdge(b, p, dir) {
-  const step = (x) => (dir < 0 ? charBefore(b, x) : charAtPos(b, x));
-  let q = p;
-  while (step(q) !== null && !isWord(step(q)) && step(q) !== "\n") q += dir * lenOf(step(q));
-  while (isWord(step(q))) q += dir * lenOf(step(q));
-  if (q === p && step(q) !== null) q += dir * lenOf(step(q));
-  return q;
+// Characters of words: letters (with their marks), digits and `_`.
+const WORD = /[\p{L}\p{N}\p{M}_]/u;
+/** function wordChar(text: String, i: Number) => Boolean */
+function wordChar(text, i) { return WORD.test(String.fromCodePoint(text.codePointAt(i) ?? 0)); }
+// Where a run of characters that are (`word`) or are not words, from
+// UTF-16 index `i` of `text` in direction `dir`, ends, at most `max` units
+// on.
+/** function runEnd(text: String, i: Number, dir: Number, word: Boolean, max: Number) => Number */
+function runEnd(text, i, dir, word, max) {
+  let k = i;
+  while (Math.abs(k - i) < max) {
+    if (dir > 0) {
+      if (k >= text.length || wordChar(text, k) !== word) return k;
+      k += (text.codePointAt(k) ?? 0) > 0xffff ? 2 : 1;
+    } else {
+      if (k <= 0) return k;
+      const at = k >= 2 && isLowUnit(text.charCodeAt(k - 1)) ? k - 2 : k - 1;
+      if (wordChar(text, at) !== word) return k;
+      k = at;
+    }
+  }
+  return k;
+}
+/** function isLowUnit(u: Number) => Boolean */
+function isLowUnit(u) { return u >= 0xdc00 && u < 0xe000; }
+// UTF-16 index `i` of `text` on a cluster boundary: `i`, or the boundary
+// before it (`dir` < 0) or after it.
+/** function onCluster(text: String, i: Number, dir: Number) => Number */
+function onCluster(text, i, dir) {
+  const around = clustersAround(text, i);
+  return around.on ? i : dir < 0 ? around.prev : around.next;
 }
 
-export function wordAt(b, p) {
-  let s = p, e = p;
-  while (isWord(charBefore(b, s))) s -= lenOf(charBefore(b, s));
-  while (isWord(charAtPos(b, e))) e += lenOf(charAtPos(b, e));
-  return s < e ? { start: s, end: e } : null;
+// Where a word motion from byte `p` of buffer `b` goes in direction `dir`:
+// past what is not a word on the line, then the word after it (or a
+// character, the line break at a line's edge).
+function wordEdge(b, p, dir) {
+  for (const ln of linesAt(b, p)) {
+    const L = b.held;
+    const text = ln.text;
+    const i = L.idxOf(ln.i, p);
+    if (dir > 0 ? i >= text.length : i === 0) return p + dir * lenOf(dir > 0 ? charAtPos(b, p) : charBefore(b, p));
+    const k = runEnd(text, runEnd(text, i, dir, false, Infinity), dir, true, Infinity);
+    const to = k === i ? (dir > 0 ? clustersAround(text, i).next : clustersAround(text, i).prev) : onCluster(text, k, dir);
+    return L.posAt(ln.i, to);
+  }
+  return p;
+}
+
+// The word at byte `p` of buffer `b` ({start, end}; none: not in or next
+// to a word), looked for at most `max` UTF-16 units either side (a word
+// reaching further: none).
+export function wordAt(b, p, max) {
+  for (const ln of linesAt(b, p)) {
+    const L = b.held;
+    const text = ln.text;
+    const i = L.idxOf(ln.i, p);
+    const s = runEnd(text, i, -1, true, max), e = runEnd(text, i, 1, true, max);
+    if (i - s >= max || e - i >= max || s === e) return null;
+    return { start: L.posAt(ln.i, onCluster(text, s, -1)), end: L.posAt(ln.i, onCluster(text, e, 1)) };
+  }
+  return null;
 }
 
 // A rectangle of text, from screen column and line `anchor` to `head`
@@ -312,7 +378,7 @@ export function setBlock(pane, anchor, head) {
   for (let k = lo; k <= hi; k++) if (k !== head.line) lines.push(k);
   v.cursors = lines.map((k) => {
     const line = L.lines[k];
-    const at = (col) => L.starts[k] + byteLen(line.slice(0, idxAt(line, col)));
+    const at = (col) => L.posAt(k, idxAt(line, col));
     return selecting(at(head.col), at(anchor.col));
   });
   v.block = [{ anchor, head, key: blockKey(v) }];
@@ -360,10 +426,14 @@ export function foldAll(pane) {
  * ) => {at: Number, match: Number} | Null */
 export function bracketPair(syn, b, p) {
   for (const L of listOf(b.text)) {
-    for (const at of [p, p - 1]) {
-      const li = L.indexOf(at);
-      if (li < 0) continue;
-      const match = partnerOf((k) => syn.brackets(k), L, li, byteToIdx(L.lines[li], at - L.starts[li]));
+    const li = L.indexOf(p);
+    if (li < 0) return null;
+    // The character at `p`, then the one before it on its line (a bracket
+    // is one byte).
+    const k = L.idxOf(li, p);
+    for (const [at, i] of [[p, k], [p - 1, k - 1]]) {
+      if (i < 0) continue;
+      const match = partnerOf((n) => syn.brackets(n), L, li, i);
       if (match !== null) return { at, match };
     }
   }
@@ -389,7 +459,7 @@ function structureAround(syn, b, s) {
   const L = b.held;
   const out = [];
   const add = (start, end) => { if (start <= s.start && end >= s.end && end > start) out.push({ start, end }); };
-  const w = wordAt(b, s.start);
+  const w = wordAt(b, s.start, Infinity);
   if (w) add(w.start, w.end);
   const li = L.indexOf(s.start);
   if (li < 0) return out;
@@ -398,7 +468,7 @@ function structureAround(syn, b, s) {
   // inside and the string.
   const closed = (x) => x.e - x.s >= 2 && line[x.e - 1] === line[x.s];
   for (const x of syn.ranges(li, ["syntax.string"]).filter(closed)) {
-    const a = ls + byteLen(line.slice(0, x.s)), z = ls + byteLen(line.slice(0, x.e));
+    const a = L.posAt(li, x.s), z = L.posAt(li, x.e);
     add(a + 1, z - 1);
     add(a, z);
   }
@@ -412,8 +482,8 @@ function structureAround(syn, b, s) {
     }
   }
   // The line's text, then the line with its break.
-  const text0 = ls + byteLen((/^\s*/.exec(line) ?? [""])[0]);
-  add(text0, ls + byteLen(line.replace(/\s+$/, "")));
+  const text0 = L.posAt(li, (/^\s*/.exec(line) ?? [""])[0].length);
+  add(text0, L.posAt(li, line.replace(/\s+$/, "").length));
   add(ls, li + 1 < L.count ? L.starts[li + 1] : L.lineEnd(li));
   // Indentation blocks: the lines around it indented at least as deep,
   // then with the line that opens them, outwards.
@@ -452,7 +522,7 @@ export function blockSelect(pane, dl, dc) {
 
 export function selectWord(pane) {
   const v = pane.view;
-  const w = wordAt(v.buf, v.primary.pos);
+  const w = wordAt(v.buf, v.primary.pos, Infinity);
   for (const x of listOf(w)) { v.primary.anchor = some(x.start); v.primary.pos = x.end; }
   pane.scheduleRender();
 }
@@ -618,7 +688,7 @@ export class Editing {
     this.replace(pane, (c) => {
       if (sel(c)) return KEEP;
       const ln = lineAt(b, c.pos);
-      const i = byteToIdx(ln.text, c.pos - ln.start);
+      const i = b.held.idxOf(ln.i, c.pos);
       const chars = [...ln.text];
       // The character index of the caret.
       const ci = [...ln.text.slice(0, i)].length;
@@ -664,17 +734,29 @@ export class Editing {
       return word ? wordEdge(b, c.pos, 1) : c.pos + lenOf(charAtPos(b, c.pos));
     }, extend);
   }
+  // Home: on a wrapped line's later rows, the start of the caret's row
+  // (from there, the row before's); on a line's first row, its text's
+  // start, then the line's.
   home(pane, extend) {
-    const b = pane.view.buf;
+    const v = pane.view;
+    const b = v.buf;
     this.move(pane, (c) => {
+      for (const p of v.opts.wrap && v.mode === "source" ? pane.rowHome(v, c.pos) : []) return p;
       const ln = lineAt(b, c.pos);
-      const indent = ln.start + byteLen(ln.text.slice(0, ln.text.length - ln.text.trimStart().length));
+      const indent = b.held.posAt(ln.i, ln.text.length - ln.text.trimStart().length);
       return c.pos === indent ? ln.start : indent;
     }, extend);
   }
+  // End: the end of the caret's row of a wrapped line (from there, the next
+  // row's), else of its line.
   end(pane, extend) {
-    const b = pane.view.buf;
-    this.move(pane, (c) => lineAt(b, c.pos).end, extend);
+    const v = pane.view;
+    const b = v.buf;
+    this.move(pane, (c) => {
+      if (v.opts.wrap && v.mode === "source") return pane.rowEnd(v, c.pos);
+      const ln = lineAt(b, c.pos);
+      return crBefore(ln.text, ln.next !== null) ? ln.end - 1 : ln.end;
+    }, extend);
   }
   vertical(pane, dir, extend) {
     const v = pane.view;
@@ -686,8 +768,8 @@ export class Editing {
       const L = b.held;
       const j = ln.i + dir;
       if (j < 0 || j >= L.count) return c.pos;
-      const col = byteToIdx(ln.text, c.pos - ln.start);
-      return L.starts[j] + byteLen(L.lines[j].slice(0, col));
+      const col = L.idxOf(ln.i, c.pos);
+      return L.posAt(j, clusterAt(L.lines[j], L.idxFrom(j, col)));
     }, extend);
   }
   paragraph(pane, dir, extend) {
@@ -760,7 +842,7 @@ export class Editing {
     this.replace(pane, (c) => {
       const s = sel(c) ?? { start: c.pos, end: c.pos };
       const ln = lineAt(b, s.start);
-      const before = ln.text.slice(0, byteToIdx(ln.text, s.start - ln.start));
+      const before = ln.text.slice(0, b.held.idxOf(ln.i, s.start));
       const indent = ln.text.slice(0, ln.text.length - ln.text.replace(/^[ \t]+/, "").length);
       if (lang === "markdown") {
         // Continue a list item.
@@ -790,7 +872,7 @@ export class Editing {
       if (c.pos === 0) return KEEP;
       if (word) return put(wordEdge(b, c.pos, -1), c.pos, "");
       const ln = lineAt(b, c.pos);
-      const before = ln.text.slice(0, byteToIdx(ln.text, c.pos - ln.start));
+      const before = ln.text.slice(0, b.held.idxOf(ln.i, c.pos));
       // In leading whitespace, remove one indent level.
       if (before.length > 0 && /^ +$/.test(before)) {
         const n = before.length % 4 === 0 ? 4 : before.length % 4;
@@ -866,7 +948,7 @@ export class Editing {
   // selected afterwards.
   transform(pane, f) {
     const b = pane.view.buf;
-    for (const held of this.held(b, pane.view.cursors, (c) => sel(c) ?? wordAt(b, c.pos))) {
+    for (const held of this.held(b, pane.view.cursors, (c) => sel(c) ?? wordAt(b, c.pos, Infinity))) {
       this.replace(pane, (c) => {
         for (const s of found(held.get(c))) {
           const text = f(s.text);
@@ -971,7 +1053,7 @@ export class Editing {
     const prim = v.cursors[v.cursors.length - 1];
     const s = sel(v.cursors[0]);
     if (!s) {
-      const w = wordAt(b, v.primary.pos);
+      const w = wordAt(b, v.primary.pos, Infinity);
       for (const x of listOf(w)) { v.primary.anchor = some(x.start); v.primary.pos = x.end; }
       pane.scheduleRender();
       return;
@@ -983,11 +1065,10 @@ export class Editing {
   selectNext(pane, needle, lastSel) {
     const v = pane.view;
     const L = v.buf.held;
-    const all = L.lines.join("\n");
-    let i = all.indexOf(needle, byteToIdx(all, lastSel.end - L.start));
-    if (i < 0) i = all.indexOf(needle);
-    if (i < 0) return;
-    const start = L.start + byteLen(all.slice(0, i));
+    const found = nextIn(L, needle, lastSel.end);
+    const wrapped = found.length > 0 ? found : nextIn(L, needle, L.start);
+    if (wrapped.length === 0) return;
+    const start = wrapped[0];
     if (v.cursors.some((c) => Math.min(c.pos, c.anchor ?? c.pos) === start)) { this.editor.say("All occurrences selected"); return; }
     v.cursors.push(selecting(start + byteLen(needle), start));
     v.normalize();
@@ -998,7 +1079,7 @@ export class Editing {
   selectAllOccurrences(pane) {
     const v = pane.view;
     const b = v.buf;
-    const found = [...listOf(sel(v.cursors[0])), ...listOf(wordAt(b, v.primary.pos))];
+    const found = [...listOf(sel(v.cursors[0])), ...listOf(wordAt(b, v.primary.pos, Infinity))];
     if (found.length === 0) return;
     const s = found[0];
     for (const needle of listOf(b.textRange(s.start, s.end))) this.selectAll(pane, needle, s.start);
@@ -1008,12 +1089,9 @@ export class Editing {
   selectAll(pane, needle, from) {
     const v = pane.view;
     const L = v.buf.held;
-    const all = L.lines.join("\n");
     const out = [];
-    for (let i = all.indexOf(needle); i >= 0; i = all.indexOf(needle, i + needle.length)) {
-      const start = L.start + byteLen(all.slice(0, i));
-      out.push(selecting(start + byteLen(needle), start));
-    }
+    const n = byteLen(needle);
+    for (let at = nextIn(L, needle, L.start); at.length > 0; at = nextIn(L, needle, at[0] + n)) out.push(selecting(at[0] + n, at[0]));
     if (out.length === 0) return;
     const first = out.findIndex((c) => c.anchor === from);
     if (first > 0) out.unshift(out.splice(first, 1)[0]);

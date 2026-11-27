@@ -35,3 +35,14 @@ export function byteToIdx(s, b) {
   }
   return i;
 }
+
+// The code points among the first `n` UTF-16 units of `s` (a pair is one).
+/** function codePoints(s: String, n: Number) => Number */
+export function codePoints(s, n) {
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    if (pairAt(s, i)) i++;
+    k++;
+  }
+  return k;
+}

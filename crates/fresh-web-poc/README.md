@@ -221,7 +221,10 @@ Operations:
 - `doc.new` (an untitled document), `doc.open` (`{path}`, or `{untitled:
   N}` to join an untitled document the server keeps), `doc.close`
   (`discard` to give up unsaved edits; answers `{dropped, others}`), `doc.info`, `doc.lines`, `doc.lines_before`,
-  `doc.window`, `doc.text`, `doc.search`, `doc.line_start`, `doc.edit`,
+  `doc.window` (`{around, before, after, bytes}`: lines around a byte, at
+  most `bytes` on either side; a window of a huge line starts or ends inside
+  it, on a character boundary, and says so with `head_cut` / `tail_cut`),
+  `doc.text`, `doc.search`, `doc.line_start`, `doc.edit`,
   `doc.save` (`force` to overwrite an external change; an untitled
   document has no file to save to: `bad_request`), `doc.save_as` (`{doc,
   path, overwrite}`: write it to `path` and bind it there; `exists` when a

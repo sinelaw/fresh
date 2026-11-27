@@ -485,30 +485,19 @@ impl Session {
             }
             "doc.window" => {
                 // Lines before and after `around` in one read, so both halves
-                // are of one version.
+                // are of one version, at most `bytes` on either side.
                 let mut docs = self.docs.lock().unwrap();
                 let d = docs.get(u(m, "doc")?)?;
                 let before = m.get("before").and_then(Value::as_u64).unwrap_or(100) as usize;
                 let after = m.get("after").and_then(Value::as_u64).unwrap_or(400) as usize;
-                let at = d.line_start(u(m, "around")? as usize)?;
-                let back = if before > 0 {
-                    Some(d.lines_backward(at, before)?)
-                } else {
-                    None
-                };
-                let mut fwd = d.lines_forward(at, after)?;
-                if let Some(b) = back {
-                    let text = format!(
-                        "{}{}",
-                        b["text"].as_str().unwrap_or(""),
-                        fwd["text"].as_str().unwrap_or("")
-                    );
-                    fwd["text"] = json!(text);
-                    fwd["start"] = b["start"].clone();
-                    fwd["first_line"] = b["first_line"].clone();
-                    fwd["bof"] = b["bof"].clone();
-                }
-                fwd
+                // No cap asked for: as much as one read returns.
+                let bytes = m.get("bytes").and_then(Value::as_u64).unwrap_or(u64::MAX);
+                d.window(
+                    u(m, "around")? as usize,
+                    before,
+                    after,
+                    usize::try_from(bytes).unwrap_or(usize::MAX),
+                )?
             }
             "doc.text" => {
                 let mut docs = self.docs.lock().unwrap();

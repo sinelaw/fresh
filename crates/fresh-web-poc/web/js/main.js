@@ -19,9 +19,15 @@ import { MenuBar } from "./menubar.js";
 import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
 import { loadWasm } from "./wasm.js";
+import { useClusters } from "./clusters.js";
 
 import { $ } from "./dom.js";
 import { found, listOf, some, none } from "./maybe.js";
+
+// The longest word, in UTF-16 units either side of the cursor, whose
+// occurrences are highlighted (a run of letters longer than that, as CJK
+// prose without spaces is, has none).
+const OCCURRENCE_MAX = 256;
 
 // The page cannot start: it says why, in place of the editor.
 function cannotStart(why) {
@@ -35,6 +41,7 @@ async function main() {
   /** let wasm: Wasm */
   let wasm;
   try { wasm = await loadWasm(); } catch (e) { cannotStart(`its WebAssembly module did not load (${failure(e)}).`); return; }
+  useClusters(wasm);
   // The workspace this page views: `?ws=<id>`, or the server's first. None
   // when it was closed (or none is open): the page is then the
   // orchestrator's dock alone.
@@ -135,7 +142,7 @@ async function main() {
     setBlock: (pane, anchor, head) => { setBlock(pane, anchor, head); },
     toggleFold: (pane, line) => { toggleFoldAt(pane, line); },
     mountTerminal: (id, box) => { app.terminals.mount(id, box); },
-    wordAt: (buf, pos) => wordAt(buf, pos),
+    wordAt: (buf, pos) => wordAt(buf, pos, OCCURRENCE_MAX),
     bracketPair: (buf, pos) => bracketPair(app.syntaxOf(buf), buf, pos),
     syntaxOf: (buf) => app.syntaxOf(buf),
     wantColours: (buf, from, to) => { for (const hl of app.hl) hl.want(buf, from, to); },

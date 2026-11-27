@@ -225,7 +225,7 @@ function walk(ctx, a, z, syn) {
       }
     };
     const styleAt = (p, idx) => {
-      let st = o.decoStyle(p, li, synAt(spans, idx));
+      let st = o.decoStyle(p, li, idx, synAt(spans, idx));
       for (const c of rev) if (p >= c.start && p < c.end) { st = asMarkup(st); break; }
       return st;
     };
@@ -234,7 +234,7 @@ function walk(ctx, a, z, syn) {
       while (ci < act.length && act[ci].end <= p) ci++;
       return ci < act.length && act[ci].start <= p ? act[ci] : null;
     };
-    let i = byteToIdx(text, b - ls);
+    let i = L.idxOf(li, b);
     let jumped = false;
     const stop = Math.min(z, le);
     while (b < stop) {
@@ -246,7 +246,7 @@ function walk(ctx, a, z, syn) {
         if (c.text) shown = true;
         b = c.end;
         if (b > le) { jumped = true; break; }
-        i = byteToIdx(text, b - ls);
+        i = L.idxOf(li, b);
         continue;
       }
       const cp = text.codePointAt(i);

@@ -6,10 +6,18 @@ import { color } from "./highlight.js";
 
 /** const EMPTY: Drawn */
 export const EMPTY = Object.freeze({ fg: "", bg: "", bold: false, italic: false, underline: false, strike: false, mono: false, markup: false, wavy: "" });
-// The style of UTF-16 index `idx` among a line's syntax spans.
+// The style of UTF-16 index `idx` among a line's syntax spans (in order,
+// apart).
 /** function synAt(spans: Span[], idx: Number) => Drawn */
 export function synAt(spans, idx) {
-  for (const x of spans) if (idx >= x.s && idx < x.e) return x.style;
+  let lo = 0, hi = spans.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const x = spans[mid];
+    if (idx < x.s) hi = mid - 1;
+    else if (idx >= x.e) lo = mid + 1;
+    else return x.style;
+  }
   return EMPTY;
 }
 

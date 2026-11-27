@@ -1,6 +1,7 @@
 // The client's one WebAssembly module (crates/fresh-highlight-wasm): the
-// syntax engine (hl.js) and the buffers' marker lists (markers.js). main.js
-// loads it once, before anything else; the app starts with it.
+// syntax engine (hl.js), the buffers' marker lists (markers.js) and the
+// grapheme clusters text is laid out by (clusters.js). main.js loads it
+// once, before anything else; the app starts with it.
 //
 // Its ABI is raw: every argument is a u32; a call that can fail returns a
 // code (0: ok) or a pointer to its answer (0: failed), and `hl_error` then
@@ -30,6 +31,7 @@ const dec = new TextDecoder();
  *   mk_edit: (Number, Number, Number, Number) => Number,
  *   mk_get: (Number, Number) => Number,
  *   mk_query: (Number, Number, Number) => Number,
+ *   uc_clusters: (Number, Number) => Number,
  * } */
 export class Wasm {
   constructor(exports) {

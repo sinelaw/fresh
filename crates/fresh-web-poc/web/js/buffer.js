@@ -14,14 +14,20 @@
 import { rpc, attempt, failure } from "./rpc.js";
 import { some, none, listOf } from "./maybe.js";
 import { transformSeqs, insOp, delOp } from "./ot.js";
-import { byteLen, byteToIdx } from "./utf8.js";
+import { byteLen } from "./utf8.js";
 import { baseName } from "./paths.js";
 import { Decor } from "./decor.js";
 
-// A window: this many lines before and after the line asked for. A file
-// shorter than that arrives whole in its first window; nothing else differs.
+// A window: this many lines before and after the line asked for, and of
+// a huge file at most WINDOW_BYTES on either side (a huge line is held as
+// a part of it). A file shorter than that arrives whole in its first
+// window; nothing else differs.
 const WINDOW_BEFORE = 2000;
 const WINDOW_AFTER = 6000;
+const WINDOW_BYTES = 1024 * 1024;
+// A window is fetched again once a position needed is this close to its
+// cut edge, in bytes (or in lines, as asked).
+const WINDOW_MARGIN = 256 * 1024;
 
 let nextBufferId = 1;
 
@@ -44,8 +50,6 @@ export function nl(s) {
   return n;
 }
 
-export function idxToByte(s, idx) { return byteLen(s.slice(0, idx)); }
-
 // The byte start of each line, for lines of byte lengths `lens` starting
 // at byte `start`.
 /** function lineStarts(start: Number, lens: Number[]) => Number[] */
@@ -59,34 +63,105 @@ function lineStarts(start, lens) {
   return starts;
 }
 
-// The text of a buffer as lines, with each line's byte length cached and
-// its byte start kept. An edit re-measures only the lines it touches; the
-// starts after them move by a sum, not a re-measure.
 // A window of a document's text: it starts at byte `start`, at the
 // document's start (`bof`) or end (`eof`) or not, at document line
-// `firstLine` (null: the document has no line index).
+// `firstLine` (null: the document has no line index). A window of a huge
+// line starts or ends inside it: `headCut`, its first line's start is not
+// held; `tailCut`, its last line's end is not.
 /** type Window = {
  *   start: Number,
  *   text: String,
  *   bof: Boolean,
  *   eof: Boolean,
  *   firstLine: Number | Null,
+ *   headCut: Boolean,
+ *   tailCut: Boolean,
  * } */
 /** function windowOf(w: Window) => Window */
 function windowOf(w) { return w; }
+// The whole of a text, as a window.
+/** function wholeText(text: String) => Window */
+export function wholeText(text) { return { start: 0, text, bof: true, eof: true, firstLine: 0, headCut: false, tailCut: false }; }
 /** function asOp(o: Op) => Op */
 function asOp(o) { return o; }
 // No text there (outside the window).
 /** const NO_TEXT: String | Null */
 const NO_TEXT = null;
 
-class Lines {
+// A long line's offset checkpoints: UTF-16 indices and the byte offsets
+// they are at, every OFFSET_STEP units or so (each on a code point
+// boundary), so a conversion scans from the nearest one instead of from
+// the line's start. A line shorter than OFFSET_LONG, or of ASCII alone
+// (its bytes are its units), keeps none.
+/** type Offsets = {idx: Number[], bytes: Number[]} */
+const OFFSET_STEP = 512;
+const OFFSET_LONG = 2048;
+/** function noOffsets() => Offsets | Null */
+function noOffsets() { return null; }
+/** function offsetsOf(s: String) => Offsets */
+function offsetsOf(s) {
+  const idx = [0], bytes = [0];
+  let b = 0, next = OFFSET_STEP;
+  for (let i = 0; i < s.length;) {
+    if (i >= next) { idx.push(i); bytes.push(b); next = i + OFFSET_STEP; }
+    const c = s.charCodeAt(i);
+    if (c < 0x80) { b += 1; i += 1; }
+    else if (c < 0x800) { b += 2; i += 1; }
+    else if (pairStarts(s, i)) { b += 4; i += 2; }
+    else { b += 3; i += 1; }
+  }
+  return { idx, bytes };
+}
+// Whether `s` has a surrogate pair at `i`.
+/** function pairStarts(s: String, i: Number) => Boolean */
+function pairStarts(s, i) {
+  const c = s.charCodeAt(i);
+  if (c < 0xd800 || c >= 0xdc00 || i + 1 >= s.length) return false;
+  const d = s.charCodeAt(i + 1);
+  return d >= 0xdc00 && d < 0xe000;
+}
+// The last checkpoint at or before `x` in sorted `xs`.
+/** function floorIn(xs: Number[], x: Number) => Number */
+function floorIn(xs, x) {
+  let lo = 0, hi = xs.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (xs[mid] <= x) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+// Checkpoints moved through an edit of their line that replaced UTF-16
+// units [si, ei) (bytes [sb, eb)) with `du` units (`db` bytes) more or
+// fewer: those before it kept, those inside it dropped, those after it
+// moved.
+/** function offsetsThrough(
+ *   o: Offsets,
+ *   si: Number,
+ *   ei: Number,
+ *   du: Number,
+ *   db: Number,
+ * ) => Offsets */
+function offsetsThrough(o, si, ei, du, db) {
+  const idx = [], bytes = [];
+  o.idx.forEach((i, k) => {
+    if (i <= si) { idx.push(i); bytes.push(o.bytes[k]); }
+    else if (i >= ei) { idx.push(i + du); bytes.push(o.bytes[k] + db); }
+  });
+  return { idx, bytes };
+}
+
+// The text of a buffer as lines, with each line's byte length cached and
+// its byte start kept. An edit re-measures only the text it inserts; the
+// starts after it move by a sum, not a re-measure.
+export class Lines {
   constructor(window) {
     const w = windowOf(window);
     this.start = w.start;
     this.bof = w.bof;
     this.eof = w.eof;
     this.firstLine = w.firstLine;
+    this.headCut = w.headCut;
+    this.tailCut = w.tailCut;
     const lines = w.text.split("\n");
     // A trailing empty piece after the last newline is a real (empty) line
     // only at the end of the document; otherwise the next line is unloaded.
@@ -94,6 +169,8 @@ class Lines {
     this.lines = lines;
     this.lens = lines.map((t) => byteLen(t));
     this.starts = lineStarts(w.start, this.lens);
+    /** this.offs: (Offsets | Null)[] */
+    this.offs = lines.map(noOffsets);
   }
   recount(from) {
     const b = from === 0 ? this.start : this.starts[from - 1] + this.lens[from - 1] + 1;
@@ -107,16 +184,16 @@ class Lines {
   }
   get count() { return this.lines.length; }
   // End of the covered bytes, short of the document's end (past the last
-  // held line's newline).
+  // held line's newline, when it is held).
   heldEnd() {
     const k = this.lines.length - 1;
-    return this.starts[k] + this.lens[k] + 1;
+    return this.lineEnd(k) + (this.hasNewline(k) ? 1 : 0);
   }
   // Index of the line holding byte `b`, or -1 outside.
   indexOf(b) {
-    const { starts, lens } = this;
+    const { starts } = this;
     let hi = starts.length - 1;
-    if (b < this.start || b > starts[hi] + lens[hi] + (this.eof ? 0 : 1)) return -1;
+    if (b < this.start || b > this.lineEnd(hi) + (this.hasNewline(hi) ? 1 : 0)) return -1;
     let lo = 0;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
@@ -125,26 +202,119 @@ class Lines {
     return lo;
   }
   lineEnd(i) { return this.starts[i] + this.lens[i]; }
-  hasNewline(i) { return i < this.lines.length - 1 || !this.eof; }
+  // Whether line `i` ends in a newline that is held (the last line of the
+  // document, or of a window cut inside it, does not).
+  hasNewline(i) { return i < this.lines.length - 1 || (!this.eof && !this.tailCut); }
+  // Whether line `i` starts where it is held from: false for a window's
+  // first line when the window starts inside it.
+  startsLine(i) { return i > 0 || !this.headCut; }
+
+  // ---- offsets within a line: UTF-16 indices of its text and the byte
+  // offsets from its start. Positions are on code point boundaries; one
+  // that is not is refused, never rounded.
+
+  // Line `i`'s checkpoints (none for a short or ASCII one).
+  /** method checkpoints(i: Number) => Offsets[] */
+  checkpoints(i) {
+    const s = this.lines[i];
+    if (s.length < OFFSET_LONG || this.lens[i] === s.length) return [];
+    const have = this.offs[i];
+    if (have !== null) return [have];
+    const made = offsetsOf(s);
+    this.offs[i] = made;
+    return [made];
+  }
+  // The byte offset of UTF-16 index `idx` of line `i`.
+  byteAt(i, idx) {
+    const s = this.lines[i];
+    if (idx < 0 || idx > s.length) throw new Error(`index ${idx} is outside line ${i} (${s.length} units)`);
+    if (this.lens[i] === s.length) return idx;
+    let at = 0, b = 0;
+    for (const o of this.checkpoints(i)) { const k = floorIn(o.idx, idx); at = o.idx[k]; b = o.bytes[k]; }
+    while (at < idx) {
+      const c = s.charCodeAt(at);
+      if (c < 0x80) { b += 1; at += 1; }
+      else if (c < 0x800) { b += 2; at += 1; }
+      else if (pairStarts(s, at)) { b += 4; at += 2; }
+      else { b += 3; at += 1; }
+    }
+    if (at !== idx) throw new Error(`index ${idx} of line ${i} is inside a character`);
+    return b;
+  }
+  // The UTF-16 index of byte offset `b` of line `i`.
+  idxAt(i, b) {
+    const s = this.lines[i];
+    if (b < 0 || b > this.lens[i]) throw new Error(`byte ${b} is outside line ${i} (${this.lens[i]} bytes)`);
+    if (this.lens[i] === s.length) return b;
+    let at = 0, n = 0;
+    for (const o of this.checkpoints(i)) { const k = floorIn(o.bytes, b); at = o.idx[k]; n = o.bytes[k]; }
+    while (n < b) {
+      const c = s.charCodeAt(at);
+      if (c < 0x80) { n += 1; at += 1; }
+      else if (c < 0x800) { n += 2; at += 1; }
+      else if (pairStarts(s, at)) { n += 4; at += 2; }
+      else { n += 3; at += 1; }
+    }
+    if (n !== b) throw new Error(`byte ${b} of line ${i} is inside a character`);
+    return at;
+  }
+  // The UTF-16 index of the last code point boundary at or before byte
+  // offset `b` of line `i` (where a cut by bytes, such as the coloured
+  // part's end, falls inside a character).
+  idxBefore(i, b) {
+    const s = this.lines[i];
+    const to = Math.max(0, Math.min(b, this.lens[i]));
+    if (this.lens[i] === s.length) return to;
+    let at = 0, n = 0;
+    for (const o of this.checkpoints(i)) { const k = floorIn(o.bytes, to); at = o.idx[k]; n = o.bytes[k]; }
+    for (;;) {
+      const c = s.charCodeAt(at);
+      const w = c < 0x80 ? 1 : c < 0x800 ? 2 : pairStarts(s, at) ? 4 : 3;
+      if (at >= s.length || n + w > to) return at;
+      n += w;
+      at += w === 4 ? 2 : 1;
+    }
+  }
+  // The UTF-16 index `idx` of line `i` from outside (a language server's
+  // column, a column typed): clamped to the line, and back to a code point
+  // boundary from the second half of a surrogate pair.
+  idxFrom(i, idx) {
+    const s = this.lines[i];
+    const at = Math.max(0, Math.min(idx, s.length));
+    return at > 0 && at < s.length && pairStarts(s, at - 1) ? at - 1 : at;
+  }
+  // The document byte of UTF-16 index `idx` of line `i`, and back.
+  posAt(i, idx) { return this.starts[i] + this.byteAt(i, idx); }
+  idxOf(i, p) { return this.idxAt(i, p - this.starts[i]); }
+
   text(s, e) {
     const a = this.indexOf(s), b = this.indexOf(e);
     if (a < 0 || b < 0) return NO_TEXT;
-    if (a === b) { const l = this.lines[a]; return some(l.slice(byteToIdx(l, s - this.starts[a]), byteToIdx(l, e - this.starts[a]))); }
-    const seg = this.lines.slice(a, b + 1).join("\n");
-    const off = this.starts[a];
-    return some(seg.slice(byteToIdx(seg, s - off), byteToIdx(seg, e - off)));
+    const from = this.idxOf(a, s), to = this.idxOf(b, Math.min(e, this.lineEnd(b)));
+    if (a === b) return some(this.lines[a].slice(from, to));
+    return some([this.lines[a].slice(from), ...this.lines.slice(a + 1, b), this.lines[b].slice(0, to)].join("\n"));
   }
   // Splice a primitive that lies within the window.
   splice(o) {
     const op = asOp(o);
     const s = op.pos, e = op.t === "del" ? op.pos + op.len : op.pos;
     const a = this.indexOf(s), b = this.indexOf(e);
-    const seg = a === b ? this.lines[a] : this.lines.slice(a, b + 1).join("\n");
-    const off = this.starts[a];
-    const si = byteToIdx(seg, s - off), ei = byteToIdx(seg, e - off);
-    const out = (seg.slice(0, si) + (op.t === "ins" ? op.text : "") + seg.slice(ei)).split("\n");
+    const si = this.idxOf(a, s), ei = this.idxOf(b, Math.min(e, this.lineEnd(b)));
+    const ins = (op.t === "ins" ? op.text : "").split("\n");
+    const insLens = ins.map((t) => byteLen(t));
+    const head = this.lines[a].slice(0, si), tail = this.lines[b].slice(ei);
+    const headBytes = s - this.starts[a], tailBytes = this.lens[b] - (Math.min(e, this.lineEnd(b)) - this.starts[b]);
+    const last = ins.length - 1;
+    const out = ins.map((t, k) => (k === 0 ? head : "") + t + (k === last ? tail : ""));
+    const outLens = insLens.map((n, k) => (k === 0 ? headBytes : 0) + n + (k === last ? tailBytes : 0));
+    // An edit inside one line keeps its checkpoints, moved; any other
+    // measures its lines again when they are next converted.
+    const offs = a === b && last === 0
+      ? [listOf(this.offs[a]).map((x) => offsetsThrough(x, si, ei, ins[0].length - (ei - si), insLens[0] - (e - s))).at(0) ?? null]
+      : out.map(noOffsets);
     this.lines = [...this.lines.slice(0, a), ...out, ...this.lines.slice(b + 1)];
-    this.lens = [...this.lens.slice(0, a), ...out.map((t) => byteLen(t)), ...this.lens.slice(b + 1)];
+    this.lens = [...this.lens.slice(0, a), ...outLens, ...this.lens.slice(b + 1)];
+    this.offs = [...this.offs.slice(0, a), ...offs, ...this.offs.slice(b + 1)];
     this.recount(a);
   }
 }
@@ -235,8 +405,11 @@ function spliceHeld(L, op, deleted, len) {
     L.firstLine = movedBy(L.firstLine, r.lines);
     return OUTSIDE;
   }
-  if (r.pos > we || (r.pos === we && !L.eof)) return OUTSIDE; // wholly after it
-  if (r.pos >= ws && (r.end < we || (r.end <= we && L.eof))) {
+  // Wholly after it (at the end of a window cut inside a line, text goes
+  // on the held part).
+  const open = L.eof || L.tailCut;
+  if (r.pos > we || (r.pos === we && !open)) return OUTSIDE;
+  if (r.pos >= ws && (r.end < we || (r.end <= we && open))) {
     const gone = r.ins ? NO_TEXT : L.text(r.pos, r.end);
     L.splice(op);
     return inside(gone);
@@ -455,8 +628,8 @@ export class Buffer {
   }
 
   // Make sure the held text has the line at `pos` and `after` lines past
-  // it. Resolves when it does (immediately when it already does).
-  // Hold the text from `pos` for at least `after` bytes.
+  // it (or, in a huge line, WINDOW_MARGIN bytes on either side). Resolves
+  // when it does (immediately when it already does).
   ensure(pos, after) {
     for (const f of fileOf(this.source)) return this.fetchWindow(f, pos, after);
     return Promise.resolve(undefined); // held whole, or no text at all
@@ -535,7 +708,7 @@ export class Buffer {
     }
     this.source = virtualSource(ranges);
     this.len = byteLen(text);
-    const L = new Lines({ start: 0, text, bof: true, eof: true, firstLine: 0 });
+    const L = new Lines(wholeText(text));
     this.setHeld(some(L));
     this.totalLines = some(L.count);
     this.decor.clearNamespace("entry-style");
@@ -556,10 +729,16 @@ export class Buffer {
   fetchWindow(f, pos, after) {
     for (const L of heldList(this.text)) {
       const i = L.indexOf(pos);
-      if (i >= 0 && (L.eof || L.count - i > after) && (L.bof || i > 50)) return Promise.resolve(undefined);
+      const ahead = L.eof || L.count - i > after || L.heldEnd() - pos > WINDOW_MARGIN;
+      const behind = L.bof || i > 50 || pos - L.start > WINDOW_MARGIN;
+      if (i >= 0 && ahead && behind) return Promise.resolve(undefined);
     }
-    for (const p of f.fetching) return p;
-    const args = { doc: f.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2) };
+    // A fetch in flight is for some position: once it is in, this one is
+    // looked at again.
+    for (const p of f.fetching) return p.then(() => this.fetchWindow(f, pos, after));
+    // A file read whole arrives whole (but for a line longer than the
+    // server reads at once); a huge one a window at a time.
+    const args = { doc: f.doc, around: pos, before: WINDOW_BEFORE, after: Math.max(WINDOW_AFTER, after * 2), bytes: this.large ? WINDOW_BYTES : null };
     const fetching = (async () => {
       for (;;) {
         await until(f, () => synced(f));
@@ -568,7 +747,7 @@ export class Buffer {
         // after the answer); edits made here meanwhile: ask again.
         await until(f, () => f.version >= w.version);
         if (!synced(f)) continue;
-        const L2 = new Lines({ start: w.start, text: w.text, bof: w.bof, eof: w.eof, firstLine: w.first_line });
+        const L2 = new Lines({ start: w.start, text: w.text, bof: w.bof, eof: w.eof, firstLine: w.first_line, headCut: w.head_cut, tailCut: w.tail_cut });
         // Bring it to this replica's version: the entries sequenced since
         // it was read (none known that far back, or one crossing its edge:
         // ask again).
@@ -778,7 +957,7 @@ export function terminalBuffer(term, name, wasm) {
   const b = new Buffer(terminalSource(term), wasm);
   b.name = name;
   b.readOnly = true;
-  const L = new Lines({ start: 0, text: "", bof: true, eof: true, firstLine: 0 });
+  const L = new Lines(wholeText(""));
   b.setHeld(some(L));
   b.totalLines = some(L.count);
   return b;

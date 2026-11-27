@@ -98,6 +98,13 @@ body {
 .text { position: absolute; top: 0; right: 12px; white-space: pre; user-select: none; }
 .carets { position: absolute; top: 0; right: 12px; pointer-events: none; }
 .row { height: var(--lh); white-space: pre; overflow: hidden; }
+/* A cluster other than one printable ASCII character, in a box exactly its
+   columns wide (--cw: a cell's width, set by the pane), so a fallback font
+   drawing it wider cannot move the columns after it. */
+.row .cl { display: inline-block; vertical-align: top; height: var(--lh); }
+.row .cl.w0 { width: 0; overflow: hidden; }
+.row .cl.w1 { width: var(--cw); }
+.row .cl.w2 { width: calc(2 * var(--cw)); }
 .row.virtual { color: var(--muted); }
 .caret { position: absolute; width: 2px; background: var(--caret); animation: blink 1.1s steps(1) infinite; }
 #editor-area:not(.keyboard) .caret { display: none; }

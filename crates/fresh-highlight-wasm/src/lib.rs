@@ -1,7 +1,8 @@
 //! The web client's WebAssembly module, with a raw C ABI (no bindings
 //! generator): its syntax highlighter ([`fresh_highlight::Highlighter`],
-//! the `hl_*` calls) and its buffers' marker lists ([`markers`], the `mk_*`
-//! calls).
+//! the `hl_*` calls), its buffers' marker lists ([`markers`], the `mk_*`
+//! calls) and the grapheme clusters it lays text out by ([`clusters`], the
+//! `uc_*` call).
 //!
 //! One highlighter per module instance, and any number of marker lists.
 //! Text crosses as UTF-8 in memory the caller gets from [`hl_alloc`] and
@@ -10,9 +11,10 @@
 //! result pointer that is null on failure; after a failure [`hl_error`]
 //! describes it.
 //!
-//! Results ([`hl_take`], [`hl_error`], [`hl_categories`] and the `mk_*`
-//! answers) live in the module's own buffers: valid until the next call.
+//! Results ([`hl_take`], [`hl_error`], [`hl_categories`], the `mk_*` and
+//! `uc_*` answers) live in the module's own buffers: valid until the next call.
 
+mod clusters;
 mod markers;
 
 use fresh_highlight::{Category, Highlighter, LineRuns};
@@ -497,5 +499,27 @@ pub extern "C" fn mk_query(list: u32, start: u32, end: u32) -> *const u32 {
             Ok(found.into_iter().flat_map(placed_words).collect())
         })();
         m.answer(found)
+    })
+}
+
+// ---------------------------------------------------------------- clusters
+
+/// The grapheme clusters of a UTF-8 text: answers `[bytes, units, width]`
+/// each, in order (UTF-8 bytes, UTF-16 code units, columns). The text's last
+/// cluster may continue past its end.
+///
+/// # Safety
+/// `ptr` points to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn uc_clusters(ptr: *const u8, len: u32) -> *const u32 {
+    with(|m| {
+        // SAFETY: the caller's contract.
+        let measured = unsafe { text(ptr, len) }.map(|t| {
+            clusters::clusters(t)
+                .into_iter()
+                .flat_map(|c| [word(c.bytes), word(c.units), word(c.width)])
+                .collect()
+        });
+        m.answer(measured)
     })
 }

@@ -206,29 +206,33 @@ export class Colours {
     this.gen++;
   }
 
-  // Line `li`'s syntax spans (UTF-16 indices into `text`) with their style.
-  spans(li, text) {
+  // Line `li` of held lines `L`: its syntax spans (UTF-16 indices into its
+  // text) with their style.
+  spans(li, L) {
     const lc = this.lines[li] ?? UNKNOWN;
     if (lc.state === "unknown") return [];
+    const text = L.lines[li];
     const hit = this.spanCache.get(lc);
     if (hit !== undefined && hit.text === text) return hit.spans;
-    const spans = utf16Runs(lc.runs, text).map((r) => ({ s: r.s, e: r.e, style: styleOf(this.keys[r.c]) }));
+    const spans = utf16Runs(lc.runs, L, li).map((r) => ({ s: r.s, e: r.e, style: styleOf(this.keys[r.c]) }));
     this.spanCache.set(lc, { text, spans });
     return spans;
   }
   // Line `li`'s ranges (UTF-16) of the categories `keys` (e.g. strings and
   // comments).
-  rangesOf(li, text, keys) {
+  rangesOf(li, L, keys) {
     const lc = this.lines[li] ?? UNKNOWN;
     if (lc.state === "unknown") return [];
-    return utf16Runs(lc.runs.filter((r) => keys.includes(this.keys[r.c])), text).map((r) => ({ s: r.s, e: r.e }));
+    return utf16Runs(lc.runs.filter((r) => keys.includes(this.keys[r.c])), L, li).map((r) => ({ s: r.s, e: r.e }));
   }
-  // Line `li`'s brackets outside its strings and comments.
-  brackets(li, text) {
+  // Line `li`'s brackets outside its strings and comments, in its
+  // coloured part (past the cut, the text is plain: no bracket counts).
+  brackets(li, L) {
     const lc = this.lines[li] ?? UNKNOWN;
+    const text = L.lines[li];
     const hit = this.bracketCache.get(lc);
     if (hit !== undefined && hit.text === text) return hit.brackets;
-    const brackets = bracketsIn(text, this.rangesOf(li, text, LITERAL));
+    const brackets = bracketsIn(text, this.rangesOf(li, L, LITERAL), colouredUnits(L, li));
     this.bracketCache.set(lc, { text, brackets });
     return brackets;
   }
@@ -269,25 +273,19 @@ function moved(li, changes) {
   }
   return [at];
 }
-// Runs in bytes as UTF-16 index ranges into `text`, in one pass.
-/** function utf16Runs(runs: Run[], text: String) => Run[] */
-function utf16Runs(runs, text) {
-  const out = [];
-  let b = 0, i = 0;
-  const to = (target) => {
-    while (b < target && i < text.length) {
-      const cp = text.codePointAt(i);
-      b += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
-      i += cp >= 0x10000 ? 2 : 1;
-    }
-    return i;
-  };
-  for (const r of [...runs].sort((x, y) => x.s - y.s)) {
-    const s = to(r.s);
-    out.push({ s, e: to(r.e), c: r.c });
-  }
-  return out;
+// Line `li`'s runs in bytes as UTF-16 index ranges into its text (held
+// lines `L` convert them), in order.
+/** function utf16Runs(runs: Run[], L: Lines, li: Number) => Run[] */
+function utf16Runs(runs, L, li) {
+  return [...runs].sort((x, y) => x.s - y.s).map((r) => ({ s: L.idxAt(li, r.s), e: L.idxAt(li, r.e), c: r.c }));
 }
+// The bytes of a line the engine colours (fresh-highlight's
+// MAX_LINE_BYTES); past them a line is plain text.
+const COLOURED_BYTES = 20000;
+// How much of line `li` is coloured, in UTF-16 units: all of it, or up to
+// the last character boundary within COLOURED_BYTES.
+/** function colouredUnits(L: Lines, li: Number) => Number */
+function colouredUnits(L, li) { return L.idxBefore(li, COLOURED_BYTES); }
 // The style a category's theme key draws with: a syntax key colours the
 // text; a diff key fills the row behind it.
 /** const styles: Map<String, Drawn> */
@@ -310,13 +308,18 @@ export class LineSyntax {
   constructor(colours, L) { this.colours = colours; this.L = L; }
   // Bumped whenever what it answers may change.
   get gen() { return this.colours.map((c) => c.gen).at(0) ?? 0; }
-  spans(li) { return this.colours.flatMap((c) => c.spans(li, this.L.lines[li])); }
+  // Line `li`'s spans: its colours' own (not a copy: a layout asks for
+  // them at every cell).
+  spans(li) {
+    for (const c of this.colours) return c.spans(li, this.L);
+    return [];
+  }
   brackets(li) {
-    for (const c of this.colours) return c.brackets(li, this.L.lines[li]);
-    return bracketsIn(this.L.lines[li], []);
+    for (const c of this.colours) return c.brackets(li, this.L);
+    return bracketsIn(this.L.lines[li], [], colouredUnits(this.L, li));
   }
   // Line `li`'s UTF-16 ranges coloured as one of `keys`.
-  ranges(li, keys) { return this.colours.flatMap((c) => c.rangesOf(li, this.L.lines[li], keys)); }
+  ranges(li, keys) { return this.colours.flatMap((c) => c.rangesOf(li, this.L, keys)); }
   // The category at byte `p`.
   categoryAt(p) {
     const li = this.L.indexOf(p);

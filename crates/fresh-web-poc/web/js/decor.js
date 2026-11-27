@@ -75,6 +75,10 @@ export class Decor {
     this.diags = noDiagnostics();
     this.namespaces = noNamespaces();
     this.gen = 0; // bumped on every change
+    // Bumped when what lays text out into rows changes: conceals, inline
+    // texts and virtual lines added or removed (rows.js keys its index by
+    // it; an edit moves them with the text, which the index follows).
+    this.layoutGen = 0;
   }
 
   // Move every position through primitive `op` (ot.js).
@@ -168,14 +172,15 @@ export class Decor {
 
   addOverlay(o) { const id = this.range(o.start, o.end); this.overlays.set(id, o); this.joined(o.ns, id); }
   addConceal(c) {
+    this.layoutGen++;
     const id = this.range(c.start, c.end);
     this.conceals.set(id, c);
     const rv = c.reveal;
     if (rv !== null) this.reveals.set(id, this.range(rv.start, rv.end));
     this.joined(c.ns, id);
   }
-  addInline(t) { const id = this.markers.point(t.pos, t.side === "before" ? RIGHT : LEFT); this.inlines.set(id, t); this.joined(t.ns, id); }
-  addLine(l) { const id = this.markers.point(l.pos, LEFT); this.lines.set(id, l); this.joined(l.ns, id); }
+  addInline(t) { this.layoutGen++; const id = this.markers.point(t.pos, t.side === "before" ? RIGHT : LEFT); this.inlines.set(id, t); this.joined(t.ns, id); }
+  addLine(l) { this.layoutGen++; const id = this.markers.point(l.pos, LEFT); this.lines.set(id, l); this.joined(l.ns, id); }
   addNode(n) { const id = this.range(n.start, n.end); this.nodes.set(id, n); this.joined(n.ns, id); }
   addGutter(g) { const id = this.markers.point(g.start, LEFT); this.gutters.set(id, g); this.joined(g.ns, id); }
 
@@ -189,6 +194,7 @@ export class Decor {
 
   // Remove item `id` of namespace `ns`, with its markers.
   remove(ns, id) {
+    if (this.conceals.has(id) || this.inlines.has(id) || this.lines.has(id)) this.layoutGen++;
     this.markers.delete(id);
     for (const r of found(this.reveals.get(id))) this.markers.delete(r);
     this.reveals.delete(id);

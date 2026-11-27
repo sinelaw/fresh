@@ -1595,6 +1595,8 @@ dependencies = [
  "fresh-markers",
  "proptest",
  "syntect",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

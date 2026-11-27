@@ -3,7 +3,7 @@ name = "fresh-highlight-wasm"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "The web client's WebAssembly module, with a raw C ABI: fresh-highlight and fresh-markers"
+description = "The web client's WebAssembly module, with a raw C ABI: fresh-highlight, fresh-markers and grapheme clusters"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -16,6 +16,9 @@ crate-type = ["cdylib"]
 fresh-highlight.workspace = true
 fresh-markers.workspace = true
 syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "regex-fancy"] }
+# The terminal editor's measure of a character cell (fresh-core display_width).
+unicode-width = "0.2"
+unicode-segmentation = "1.12"
 
 [dev-dependencies]
 proptest = "1.9"

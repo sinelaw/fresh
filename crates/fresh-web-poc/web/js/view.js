@@ -4,8 +4,10 @@
 import { listOf, found, some } from "./maybe.js";
 
 import { setClass, escapeHtml } from "./dom.js";
-import { layout, applies, cursorIn } from "./layout.js";
-import { byteLen, byteToIdx } from "./utf8.js";
+import { layoutOf, measuring, layoutKey, rowsFrom, blockRows, blockOf, ignoreMark, applies, cursorIn, columnIn, byteAtColumn, rowEndOf } from "./layout.js";
+import { RowIndex, rowStart, settledTop, rowsDown, rowsUp, columnStart, columnOf, fractionOf, topAtFraction } from "./rows.js";
+import { byteLen } from "./utf8.js";
+import { clustersAround } from "./clusters.js";
 import { shiftPos } from "./ot.js";
 import { ENSURE_AFTER, terminalOf, filePath } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
@@ -64,22 +66,29 @@ function noMarks() { return new Map(); }
 function diagKey(severity) { return ["diagnostic.error", "diagnostic.warning", "diagnostic.info", "diagnostic.hint"].at(severity - 1) ?? "diagnostic.error"; }
 
 // A row's HTML: its cells in runs of one style, each run a span (a run
-// of no style, key "", plain text); `fill`: the background to its edge.
-/** type Run = {key: String, style: Drawn, text: String} */
-/** function rowHtml(cls: String, fill: String | Null, cells: Cell[]) => String */
-function rowHtml(cls, fill, cells) {
+// of no style, key "", plain text); `fill`: the background to its edge;
+// `col0`: the column its first cell is at. A cell of anything but one
+// printable ASCII character is drawn in a box exactly its columns wide, so
+// a fallback font that draws it wider cannot move the columns after it.
+/** type Run = {key: String, style: Drawn, html: String} */
+/** function rowHtml(cls: String, fill: String | Null, cells: Cell[], col0: Number) => String */
+function rowHtml(cls, fill, cells, col0) {
   /** const runs: Run[] */
   const runs = [];
   for (const c of cells) {
     const key = c.style === EMPTY ? "" : styleKey(c.style);
+    const html = PRINTABLE.test(c.ch) ? escapeHtml(c.ch) : `<span class="cl w${Math.min(c.w, 2)}">${escapeHtml(c.ch)}</span>`;
     const last = runs.at(-1);
-    if (last !== undefined && last.key === key) last.text += c.ch;
-    else runs.push({ key, style: c.style, text: c.ch });
+    if (last !== undefined && last.key === key) last.html += html;
+    else runs.push({ key, style: c.style, html });
   }
-  const spans = runs.map((x) => (x.key !== "" ? `<span style="${cssFor(x.style, x.key)}">${escapeHtml(x.text)}</span>` : escapeHtml(x.text))).join("");
-  const bg = fill === null ? "" : ` style="background:${fill}"`;
-  return `<div class="${cls}"${bg}>${cells.length > 0 ? spans : "\u200b"}</div>`;
+  const spans = runs.map((x) => (x.key !== "" ? `<span style="${cssFor(x.style, x.key)}">${x.html}</span>` : x.html)).join("");
+  const css = [fill === null ? "" : `background:${fill}`, col0 > 0 ? `margin-left:calc(${col0} * var(--cw))` : ""].filter((x) => x !== "").join(";");
+  return `<div class="${cls}"${css === "" ? "" : ` style="${css}"`}>${cells.length > 0 ? spans : "\u200b"}</div>`;
 }
+// One printable ASCII character: a cell the editor's font draws one
+// column wide.
+const PRINTABLE = /^[\x20-\x7e]$/;
 
 // No screen place.
 /** function noXY() => XY[] */
@@ -101,6 +110,12 @@ function nextClicks(last, t, x, y) {
   return { t, x, y, n: close ? last.n + 1 : 1 };
 }
 
+
+// A line's decorations are gathered this many UTF-16 units at a time.
+const DECO_UNITS = 4096;
+// Text held past a view's top, in bytes, enough for a screen of a huge
+// line (fewer: the window is fetched again around the top).
+const READY_BYTES = 64 * 1024;
 
 // The scrollbar's width, in px (style.css `.scrollbar`): text stops short
 // of it.
@@ -159,10 +174,17 @@ export class View {
   constructor(pane, buf) {
     this.pane = pane;
     this.buf = buf;
-    // The scroll position: the first visible source line's start, and (in a
-    // compose view) how many pixels of that line are scrolled past.
+    // The scroll position: the byte where the top row starts (any byte of
+    // a line: a row of a wrapped line starts inside it), and (in a compose
+    // view, whose top is a line's start) how many pixels of that line are
+    // scrolled past.
     this._top = 0;
     this.topPx = 0;
+    // The byte the view was scrolled to: the top row is the one holding it
+    // (at another width, another row; a resize keeps it at the top).
+    this.scrolledTo = 0;
+    // Where the rows of its long lines start, at its width (rows.js).
+    this.index = new RowIndex();
     // Every cursor: position, selection anchor (or null) and the column
     // vertical motion aims for. The first is the primary.
     this.cursors = [cursorAt(0)];
@@ -180,8 +202,12 @@ export class View {
   }
   get primary() { return this.cursors[0]; }
   get top() { return this._top; }
-  // Show the line starting at `b` at the top, `px` pixels into it.
-  setTop(b, px) { this._top = b; this.topPx = px; }
+  // Show the row starting at `b` at the top (in a compose view, the line
+  // starting there, `px` pixels into it).
+  setTop(b, px) { this._top = b; this.scrolledTo = b; this.topPx = px; }
+  // The top row found to start at `b` (the view still scrolled to the
+  // byte it was).
+  rowTop(b) { this._top = b; }
   // The primary cursor alone (the others dropped).
   keepPrimary() { this.cursors = [this.primary]; }
   // A preview tab made a tab of its own: whether it was a preview.
@@ -194,6 +220,7 @@ export class View {
     const sp = (p, r) => shiftPos(p, op, r);
     this.cursors = this.cursors.map((c) => shiftCursor(c, sp));
     this._top = sp(this._top, false);
+    this.scrolledTo = sp(this.scrolledTo, false);
   }
   selection() { return sel(this.cursors[0]); }
   selections() { return this.cursors.flatMap((c) => listOf(sel(c))); }
@@ -258,7 +285,7 @@ export class Pane {
     // carets' HTML.
     this.rowsDrawn = [];
     this.gutterDrawn = [];
-    this.drawn = { rulers: "", carets: "" };
+    this.drawn = { rulers: "", carets: "", cw: 0 };
     this.lastWidth = new Map();
     // Sizes come from a ResizeObserver, never read while drawing: reading
     // layout after writing rows would force a synchronous reflow.
@@ -268,6 +295,14 @@ export class Pane {
     // was found for (the last one only).
     this.brackets = new Map();
     this.maxCols = 0; // the widest row drawn, in columns
+    // The edits to the shown buffer since the rows were drawn: what a click
+    // on them is mapped through (rows drawn before an edit name the bytes
+    // as they were).
+    /** this.sinceDrawn: Op[] */
+    this.sinceDrawn = [];
+    // A slice of row index work asked for (none: none).
+    /** this.indexing: Number[] */
+    this.indexing = [];
     this.frame = { id: NO_FRAME }; // the frame the next draw is asked for
     this.clicks = { t: -Infinity, x: 0, y: 0, n: 0 }; // presses in a row
   }
@@ -301,7 +336,7 @@ export class Pane {
       this.editor.drive(this);
       const dx = e.shiftKey ? e.deltaY || e.deltaX : Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0;
       if (dx) this.scrollCols(Math.sign(dx) * 6);
-      else this.scrollLines(Math.sign(e.deltaY) * 3);
+      else this.scrollRows(Math.sign(e.deltaY) * 3);
     }, { passive: false });
     this.surfaceEl.addEventListener("mousemove", (e) => this.onHover(e));
     this.scrollbarEl.addEventListener("mousedown", (e) => this.onScrollbar(e));
@@ -326,7 +361,14 @@ export class Pane {
   }
   // A view of this split follows its buffer's edits (its cursors and
   // scroll move through them) until it is closed.
-  track(v) { this.unfollow.set(v, v.buf.follow((op) => { v.shift(op); })); }
+  track(v) {
+    const offOps = v.buf.follow((op) => {
+      v.shift(op);
+      if (this.shown.includes(v)) this.sinceDrawn.push(op);
+    });
+    const offText = v.buf.followText((c) => { v.index.change(c); });
+    this.unfollow.set(v, () => { offOps(); offText(); });
+  }
   untrack(v) {
     for (const off of found(this.unfollow.get(v))) off();
     this.unfollow.delete(v);
@@ -427,10 +469,10 @@ export class Pane {
     // language: the grammar embeds it).
     const syn = this.editor.syntaxOf(buf);
     const synFor = (li) => syn.spans(li);
-    // Each line's decorations, gathered when the layout first reaches the
-    // line (the interval index makes that cost what the line has), in order
-    // of precedence: overlays, occurrences, diagnostics, selection, then
-    // the overlays drawn above the selection.
+    // Each line's decorations, gathered a stretch of DECO_UNITS at a time
+    // where the layout reaches it (the interval index makes that cost what
+    // the stretch has), in order of precedence: overlays, occurrences,
+    // diagnostics, selection, then the overlays drawn above the selection.
     const w = s.flags.highlight_occurrences === true ? v.selection() ?? this.editor.wordAt(buf, v.primary.pos) : null;
     const t /*: String | Null */ = w !== null ? buf.textRange(w.start, w.end) : null;
     /** const occ: String | Null */
@@ -444,31 +486,38 @@ export class Pane {
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
     const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, syn) : null;
-    const lineCache = new Map();
-    const lineDecos = (li) => {
-      const hit = lineCache.get(li);
+    const stretches = new Map();
+    const decosAt = (li, idx) => {
+      const n = Math.floor(idx / DECO_UNITS);
+      const key = `${li}:${n}`;
+      const hit = stretches.get(key);
       if (hit !== undefined) return hit;
+      const text = L.lines[li];
+      // The stretch [i0, i1) of the line's text, and its bytes.
+      const i0 = L.idxFrom(li, n * DECO_UNITS), i1 = L.idxFrom(li, (n + 1) * DECO_UNITS);
+      const ls = L.posAt(li, i0), le = i1 >= text.length ? L.lineEnd(li) + 1 : L.posAt(li, i1);
       const out = [];
-      const ls = L.starts[li], le = L.lineEnd(li) + 1;
       const above = [];
       for (const o of buf.decor.overlaysIn(ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
       for (const ds of listOf(depths)) {
-        const line = L.lines[li];
         let depth = ds[li];
         for (const x of syn.brackets(li)) {
           const opens = OPEN.has(x.c);
           if (!opens) depth--;
-          const f = RAINBOW[Math.max(0, depth) % RAINBOW.length];
+          if (x.k >= i0 && x.k < i1) {
+            const at = L.posAt(li, x.k);
+            out.push({ s: at, e: at + 1, f: RAINBOW[Math.max(0, depth) % RAINBOW.length] });
+          }
           if (opens) depth++;
-          const at = L.starts[li] + byteLen(line.slice(0, x.k));
-          out.push({ s: at, e: at + 1, f });
         }
       }
       for (const word of listOf(occ)) {
-        const line = L.lines[li];
-        for (let k = line.indexOf(word); k >= 0; k = line.indexOf(word, k + word.length)) {
-          if ((k === 0 || !/\w/.test(line.charAt(k - 1))) && !/\w/.test(line.charAt(k + word.length))) {
-            const st0 = ls + byteLen(line.slice(0, k));
+        // Occurrences that start in the stretch (read a word's length past it).
+        const from = Math.max(0, i0 - 1), part = text.slice(from, Math.min(text.length, i1 + word.length + 1));
+        for (let k = part.indexOf(word, i0 - from); k >= 0 && from + k < i1; k = part.indexOf(word, k + word.length)) {
+          const at = from + k;
+          if ((at === 0 || !/\w/.test(text.charAt(at - 1))) && !/\w/.test(text.charAt(at + word.length))) {
+            const st0 = L.posAt(li, at);
             out.push({ s: st0, e: st0 + byteLen(word), f: OCCURRENCE });
           }
         }
@@ -477,12 +526,13 @@ export class Pane {
       for (const g of buf.decor.diagsIn(ls, le)) { const wavy = THEME[diagKey(g.severity)] ?? ""; out.push({ s: g.start, e: Math.max(g.end, g.start + 1), f: (st) => withWavy(st, wavy) }); }
       for (const x of sels) if (x.start < le && x.end > ls) out.push({ s: x.start, e: x.end, f: SELECTED });
       out.push(...above);
-      lineCache.set(li, out);
+      stretches.set(key, out);
       return out;
     };
-    // Decorations over style `st` (the syntax style) at byte b of line li.
-    const decoStyle = (b, li, st) => {
-      for (const x of lineDecos(li)) if (b >= x.s && x.e > b) st = x.f(st);
+    // Decorations over style `st` (the syntax style) at byte b, UTF-16
+    // index `idx` of line li.
+    const decoStyle = (b, li, idx, st) => {
+      for (const x of decosAt(li, idx)) if (b >= x.s && x.e > b) st = x.f(st);
       return st;
     };
     return {
@@ -505,26 +555,50 @@ export class Pane {
       },
       decoStyle,
       // The style at byte `b`, the `idx`th UTF-16 unit of line `li`.
-      styleAt: (b, li, idx) => (li >= 0 ? decoStyle(b, li, synAt(synFor(li), idx)) : EMPTY),
+      styleAt: (b, li, idx) => (li >= 0 ? decoStyle(b, li, idx, synAt(synFor(li), idx)) : EMPTY),
       // The style at byte `b`, its line found.
       styleAtByte: (b) => {
         const li = L.indexOf(b);
-        return li >= 0 ? decoStyle(b, li, synAt(synFor(li), byteToIdx(L.lines[li], b - L.starts[li]))) : EMPTY;
+        if (li < 0) return EMPTY;
+        const idx = L.idxOf(li, Math.min(b, L.lineEnd(li)));
+        return decoStyle(b, li, idx, synAt(synFor(li), idx));
       },
     };
   }
 
-  computeRows(v, extra) {
+  // The layout of view `v` as it is now (its rows' index keyed to it).
+  layoutFor(v) {
+    const buf = v.buf;
+    const g = this.geometry(v);
+    const x = layoutOf(buf.held, buf.decor, this.layoutOpts(v, g.width));
+    v.index.use(layoutKey(x, buf.decor.layoutGen), v.opts.wrap);
+    return x;
+  }
+
+  // The rows from view `v`'s top, at most `n` (a long line drawn without
+  // wrapping from the columns on screen, `left` on).
+  rowsOf(v, x, n) {
+    const g = this.geometry(v);
+    const from = (li) => columnStart(x, v.index, li, v.left);
+    return rowsFrom(x, v.top, n, from, v.left + g.width + 1);
+  }
+
+  // The rows view `v` draws (layout `x`), its colours asked for.
+  computeRows(v, x) {
     const L = v.buf.held;
     const g = this.geometry(v);
     const top = Math.max(0, L.indexOf(v.top));
-    this.editor.wantColours(v.buf, top, Math.min(L.count, top + g.rows + extra));
-    const r = layout(L, v.buf.decor, top, g.rows + extra, this.layoutOpts(v, g.width));
-    return { rows: r.rows, g };
+    this.editor.wantColours(v.buf, top, Math.min(L.count, top + g.rows));
+    return { rows: this.rowsOf(v, x, g.rows), g };
   }
 
+  // Whether the text at view `v`'s top is held, with a screen's worth past
+  // it (in lines, or in a huge line READY_BYTES).
   ready(v) {
-    return listOf(v.buf.text).some((L) => L.indexOf(v.top) >= 0 && (v.buf.full || L.eof || L.count - L.indexOf(v.top) > this.metrics().rows + 2));
+    return listOf(v.buf.text).some((L) => {
+      const i = L.indexOf(v.top);
+      return i >= 0 && (v.buf.full || L.eof || L.count - i > this.metrics().rows + 2 || L.heldEnd() - v.top > READY_BYTES);
+    });
   }
 
   // Fetch the text at view `v`'s top (and a screen past it), then draw.
@@ -536,10 +610,10 @@ export class Pane {
     }
   }
   // Fetch the text from byte `p` (before the held window), then scroll `n`
-  // lines.
+  // rows.
   async scrollPast(v, p, n) {
     await v.buf.ensure(Math.max(0, p), ENSURE_AFTER);
-    this.scrollLines(n);
+    this.scrollRows(n);
   }
 
   // Clear the drawn rows (a pane with nothing to show, or still loading).
@@ -571,29 +645,35 @@ export class Pane {
       if (!listOf(buf.text).some((L) => L.indexOf(v.top) >= 0)) { this.clearRows(); this.textEl.textContent = "Loading…"; return; }
     }
     const L = buf.held;
-    v.setTop(L.starts[L.indexOf(v.top)], v.topPx);
     const compose = v.mode === "compose";
     if (this.surfaceEl.classList.contains("compose") !== compose) { this.clearRows(); setClass(this.surfaceEl, "compose", compose); }
-    if (compose) { this.renderDoc(v); return; }
-    const { rows, g } = this.computeRows(v, 0);
-    this.rows = rows;
+    if (compose) { v.setTop(L.starts[L.indexOf(v.top)], v.topPx); this.renderDoc(v); return; }
     const { cw, lh } = this.metrics();
-    const s = this.editor.settings();
-    this.gutterEl.style.width = `${g.gutter * cw}px`;
-    // Sideways: the widest row on screen bounds the scroll, and a cursor
-    // that moved is kept in view (a few columns in from the edge).
-    this.maxCols = rows.reduce((m, r) => Math.max(m, r.col), 0);
+    if (this.drawn.cw !== cw) { this.surfaceEl.style.setProperty("--cw", `${cw}px`); this.drawn.cw = cw; }
+    const g0 = this.geometry(v);
+    const x = this.layoutFor(v);
+    // The top: where the row holding the byte scrolled to starts, once the
+    // rows there are known.
+    v.rowTop(settledTop(measuring(x), v.index, v.scrolledTo));
+    // Sideways: a cursor that moved is kept in view (a few columns in from
+    // the edge), and the widest row on screen bounds the scroll.
     if (v.opts.wrap) v.left = 0;
-    else {
-      if (this.wantX) {
-        for (const at of this.caretXY(v.primary.pos)) {
-          if (at.x < v.left) v.left = Math.max(0, at.x - 4);
-          else if (at.x > v.left + g.width - 2) v.left = at.x - g.width + 6;
-        }
-      }
-      v.left = Math.max(0, Math.min(v.left, this.maxCols - 1));
+    else if (this.wantX) {
+      const col = columnOf(measuring(x), v.index, v.primary.pos);
+      if (col < v.left) v.left = Math.max(0, col - 4);
+      else if (col > v.left + g0.width - 2) v.left = col - g0.width + 6;
     }
     this.wantX = false;
+    let { rows, g } = this.computeRows(v, x);
+    this.maxCols = rows.reduce((m, r) => Math.max(m, r.col), 0);
+    if (!v.opts.wrap && v.left > Math.max(0, this.maxCols - 1)) {
+      v.left = Math.max(0, this.maxCols - 1);
+      ({ rows, g } = this.computeRows(v, x));
+    }
+    this.rows = rows;
+    this.sinceDrawn = [];
+    const s = this.editor.settings();
+    this.gutterEl.style.width = `${g.gutter * cw}px`;
     const left = (g.gutter + g.margin - v.left) * cw;
     this.textEl.style.left = this.caretsEl.style.left = this.rulersEl.style.left = `${left}px`;
     // Gutter marks and the worst diagnostic, by line, over the lines drawn.
@@ -623,7 +703,7 @@ export class Pane {
       const line = r.kind === "text" ? listOf(r.lineIdx) : [];
       const current = s.flags.highlight_current_line === true && line.some((li) => curLines.has(li)) && v.selection() === null;
       const cls = "row" + (r.kind === "virtual" ? " virtual" : "") + (current && !r.fill ? " current" : "");
-      textEls.push(take(textPool, rowHtml(cls, r.fill, r.cells)));
+      textEls.push(take(textPool, rowHtml(cls, r.fill, r.cells, r.col0)));
       // The gutter: line number and one mark (fold, diagnostic or plugin).
       let ghtml = `<div class="row">\u200b</div>`;
       for (const li of line) {
@@ -679,6 +759,18 @@ export class Pane {
     }
     if (this.drawn.carets !== html) { this.caretsEl.innerHTML = html; this.drawn.carets = html; }
     this.finishRender(v, g);
+    this.indexLater(v);
+  }
+
+  // Index the long lines view `v` reached, a slice at a time between
+  // frames.
+  indexLater(v) {
+    if (this.indexing.length > 0) return;
+    this.indexing = [setTimeout(() => {
+      this.indexing = [];
+      if (!this.shown.includes(v) || v.mode !== "source" || v.buf.text === null) return;
+      if (v.index.work(measuring(this.layoutFor(v)))) this.indexLater(v);
+    }, 0)];
   }
 
   // A view in compose mode: a document (doc.js).
@@ -701,15 +793,37 @@ export class Pane {
   renderScrollbar(v, g) {
     const L = v.buf.held;
     const buf = v.buf;
-    // Where the view is: by lines when the file's are counted and the held
-    // window's place among them is known, else by bytes.
+    // Where the view is: without wrapping, by lines (in a window, when the
+    // file's are counted and the window's place among them is known),
+    // else by bytes; with it, by bytes (rows.js).
     const counted = listOf(buf.totalLines).filter((n) => n > 0).flatMap((n) => listOf(L.firstLine).map((first) => ({ n, first })));
-    const frac = counted.map((c) => (c.first + L.indexOf(v.top)) / c.n).at(0) ?? v.top / Math.max(1, buf.len);
-    const size = counted.map((c) => Math.min(1, g.rows / c.n)).at(0) ?? 0.02;
+    const shown = this.rows.map((r) => r.end ?? v.top).reduce((m, e) => Math.max(m, e), v.top) - v.top;
+    const wrapped = v.opts.wrap && v.mode === "source";
+    const whole = buf.full && v.mode === "source" ? [fractionOf(this.layoutFor(v), v.top, g.rows, shown)] : wrapped ? [{ at: v.top / Math.max(1, buf.len), size: Math.min(1, shown / Math.max(1, buf.len)) }] : [];
+    const frac = whole.map((f) => f.at).at(0) ?? counted.map((c) => (c.first + L.indexOf(v.top)) / c.n).at(0) ?? v.top / Math.max(1, buf.len);
+    const size = whole.map((f) => f.size).at(0) ?? counted.map((c) => Math.min(1, g.rows / c.n)).at(0) ?? 0.02;
     const h = this.size.sb;
     this.thumbEl.style.top = `${frac * h}px`;
     this.thumbEl.style.height = `${Math.max(16, size * h)}px`;
     this.renderMarks(v, h);
+  }
+
+  // View `v`'s top for byte `p` of its held text: the cluster boundary at
+  // or before it (trusted as where a row starts until the rows there are
+  // known).
+  topNear(v, p) {
+    const L = v.buf.held;
+    const li = L.indexOf(p);
+    const i = L.idxBefore(li, p - L.starts[li]);
+    const around = clustersAround(L.lines[li], i);
+    return L.posAt(li, around.on ? i : around.prev);
+  }
+
+  // View `v`'s top for fraction `f` of a buffer held whole (the
+  // scrollbar's place).
+  topAtFraction(v, f) {
+    if (v.mode !== "source") return v.buf.held.starts[Math.min(v.buf.held.count - 1, Math.floor(f * v.buf.held.count))];
+    return topAtFraction(measuring(this.layoutFor(v)), v.index, f);
   }
 
   // Marks on the scrollbar, by where their line is in the file: git
@@ -810,7 +924,7 @@ export class Pane {
     for (let r = 0; r < this.rows.length; r++) {
       const row = this.rows[r];
       if (row.kind !== "text") continue;
-      let x = 0;
+      let x = row.col0;
       for (const c of row.cells) {
         if (c.src === p) return [{ r, x }];
         for (const src of listOf(c.src)) if (src < p) best = [{ r, x: x + c.w }];
@@ -822,47 +936,74 @@ export class Pane {
     return noXY();
   }
 
-  // The byte under row `r`, column `x`.
+  // The byte under row `r`, column `x` of the rows drawn, as the text is
+  // now (moved through the edits made since they were drawn).
   posAt(r0, x) {
     const from = Math.max(0, Math.min(this.rows.length - 1, r0));
     const r = this.rows.findIndex((row, k) => k >= from && row.kind === "text");
     if (r < 0) return noByte();
-    const row = this.rows[r];
-    let col = 0;
-    let last = noBytes(); // the last byte before `x` (at most one)
-    for (const c of row.cells) {
-      for (const b of listOf(c.src)) {
-        if (col + c.w / 2 > x) return some(b);
-        last = [b];
-      }
-      col += c.w;
-    }
-    for (const b of listOf(row.eol)) return some(b);
-    const next = this.rows[r + 1];
-    const after = next === undefined ? [] : next.cells.flatMap((c) => listOf(c.src));
-    for (const b of [...after, ...last]) return some(b);
-    return noByte();
+    const at = byteAtColumn(this.rows[r], x);
+    return some(this.sinceDrawn.reduce((p, op) => shiftPos(p, op, true), at));
+  }
+
+  // The text row of view `v` (layout `x`) starting at byte `top` (without
+  // wrapping: its line's row, drawn from near column `col`).
+  textRowAt(v, x, top, col) {
+    const L = x.L;
+    const li = blockOf(x, L.indexOf(top));
+    const from = x.o.wrap ? { at: top, col: 0 } : columnStart(x, v.index, li, col);
+    for (const r of blockRows(x, li, from.at, from.col, x.o.wrap ? Infinity : col + 2, ignoreMark)) if (r.kind === "text") return r;
+    throw new Error(`no text row at byte ${top}`);
+  }
+  // The start of the row holding byte `p` of view `v` (without wrapping,
+  // its line's start).
+  rowOf(v, x, p) {
+    const L = x.L;
+    return x.o.wrap ? rowStart(x, v.index, p) : L.starts[blockOf(x, L.indexOf(p))];
+  }
+
+  // Where Home goes from byte `p` in a wrapped line, by rows: the start of
+  // the row holding it, or from there the row before's (a list of at most
+  // one: none on a line's first row, where Home is the line's).
+  rowHome(v, p) {
+    if (v.buf.held.indexOf(p) < 0) return noBytes();
+    const x = measuring(this.layoutFor(v));
+    const row = this.textRowAt(v, x, this.rowOf(v, x, p), 0);
+    const start = row.start ?? p;
+    if (!row.cont) return noBytes();
+    return [p === start ? rowsUp(x, v.index, start, 1, true).top : start];
+  }
+  // Where End goes from byte `p` in a wrapped line, by rows: the end of the
+  // row holding it (its line's end, or before the row's last cluster), or
+  // from there the next row's.
+  rowEnd(v, p) {
+    if (v.buf.held.indexOf(p) < 0) return p;
+    const x = measuring(this.layoutFor(v));
+    const row = this.textRowAt(v, x, this.rowOf(v, x, p), 0);
+    const end = rowEndOf(row);
+    if (p !== end || row.eol !== null) return end;
+    return rowEndOf(this.textRowAt(v, x, rowsDown(x, v.index, row.start ?? p, 1, true).top, 0));
   }
 
 
   // ---------------------------------------------------------------- motion
 
-  scrollLines(n) {
+  // Scroll `n` rows (a compose view: `n` line heights).
+  scrollRows(n) {
     if (this.shown.length === 0) return;
     const v = this.shown[0];
     if (v.buf.text === null) return;
     if (v.mode === "compose") { v.setTop(v.top, v.topPx + n * this.metrics().lh); this.scheduleRender(); return; }
     const L = v.buf.held;
-    const i = L.indexOf(v.top);
-    if (i < 0) return;
-    let j = Math.max(0, Math.min(L.count - 1, i + n));
-    for (const f of v.folds) if (j > f.start && j <= f.end) j = n > 0 ? Math.min(L.count - 1, f.end + 1) : f.start;
-    if (j === i && n < 0 && !L.bof) {
-      this.scrollPast(v, L.start - 1, n);
-      return;
-    }
-    v.setTop(L.starts[j], 0);
-    if (!v.buf.full && ((!L.eof && L.count - j < 400) || (!L.bof && j < 50))) v.buf.ensure(v.top, 400);
+    if (L.indexOf(v.top) < 0) return;
+    const x = measuring(this.layoutFor(v));
+    const to = n > 0 ? rowsDown(x, v.index, v.top, n, false) : rowsUp(x, v.index, v.top, -n, false);
+    v.setTop(to.top, 0);
+    // Past the start of a window: the text before it, then the rest.
+    if (n < 0 && to.moved < -n && !L.bof) { this.scrollPast(v, L.start - 1, n + to.moved); return; }
+    const li = L.indexOf(v.top);
+    const near = (!L.eof && (L.count - li < 400 || L.heldEnd() - v.top < READY_BYTES * 4)) || (!L.bof && (li < 50 || v.top - L.start < READY_BYTES * 4));
+    if (!v.buf.full && near) v.buf.ensure(v.top, 400);
     this.scheduleRender();
   }
 
@@ -887,18 +1028,17 @@ export class Pane {
     // A document keeps the cursor in view as it draws (it measures there).
     if (v.mode === "compose") { this.doc.want = center ? "center" : this.doc.want === "none" ? "keep" : this.doc.want; this.scheduleRender(); return; }
     const L = v.buf.held;
-    const ci = L.indexOf(v.primary.pos);
-    if (ci < 0) return;
-    if (center) { v.setTop(L.starts[Math.max(0, ci - Math.floor(this.metrics().rows / 2))], 0); return; }
-    if (ci < L.indexOf(v.top)) { v.setTop(L.starts[ci], 0); return; }
-    for (let guard = 0; guard < 2000; guard++) {
-      const { rows, g } = this.computeRows(v, 0);
-      this.rows = rows;
-      if (this.caretXY(v.primary.pos).some((at) => at.r < g.rows)) return;
-      const ti = L.indexOf(v.top);
-      if (ti >= ci || ti >= L.count - 1) return;
-      v.setTop(L.starts[ti + 1], 0);
-    }
+    if (L.indexOf(v.primary.pos) < 0) return;
+    const x = measuring(this.layoutFor(v));
+    const rows = this.metrics().rows;
+    const caret = this.rowOf(v, x, v.primary.pos);
+    // Mid-screen, as asked or from a top no longer held (a jump far into a
+    // huge file).
+    if (center || L.indexOf(v.top) < 0) { v.setTop(rowsUp(x, v.index, caret, Math.floor(rows / 2), false).top, 0); return; }
+    if (caret < v.top) { v.setTop(caret, 0); return; }
+    // On screen: at or before the last row drawn from the top.
+    if (caret <= rowsDown(x, v.index, v.top, rows - 1, false).top) return;
+    v.setTop(rowsUp(x, v.index, caret, rows - 1, false).top, 0);
   }
 
   // Move the primary cursor by visual rows.
@@ -920,33 +1060,15 @@ export class Pane {
       c.goalX = goal;
       return;
     }
-    const L = v.buf.held;
     const c = v.primary;
-    this.reveal(false);
-    let { rows } = this.computeRows(v, Math.abs(n) + 2);
-    this.rows = rows;
-    const start = this.caretXY(c.pos);
-    if (start.length === 0) return;
-    const goal = c.goalX ?? start[0].x;
-    let r = start[0].r, left = Math.abs(n);
-    while (left > 0) {
-      let t = r + Math.sign(n);
-      while (t >= 0 && t < rows.length && rows[t].kind !== "text") t += Math.sign(n);
-      if (t < 0) {
-        const ti = L.indexOf(v.top);
-        if (ti === 0) break;
-        v.setTop(L.starts[ti - 1], 0);
-        ({ rows } = this.computeRows(v, Math.abs(n) + 2));
-        this.rows = rows;
-        r = this.caretXY(c.pos).map((at) => at.r).at(0) ?? 0;
-        continue;
-      }
-      if (t >= rows.length) break;
-      r = t;
-      left--;
-    }
-    const p = this.posAt(r, goal);
-    if (p != null) { this.editor.place(this, p, extend); c.goalX = goal; }
+    if (v.buf.held.indexOf(c.pos) < 0) return;
+    const x = measuring(this.layoutFor(v));
+    const here = this.rowOf(v, x, c.pos);
+    const goal = c.goalX ?? (v.opts.wrap ? columnIn(this.textRowAt(v, x, here, 0), c.pos) : columnOf(x, v.index, c.pos));
+    const to = n > 0 ? rowsDown(x, v.index, here, n, true) : rowsUp(x, v.index, here, -n, true);
+    if (to.moved === 0) return;
+    this.editor.place(this, byteAtColumn(this.textRowAt(v, x, to.top, goal), goal), extend);
+    c.goalX = goal;
   }
 
   // A page up or down: the view scrolls a screen and the cursor keeps its
@@ -956,7 +1078,7 @@ export class Pane {
     const v = this.shown[0];
     if (v.mode !== "compose") {
       const n = this.metrics().rows;
-      this.scrollLines(dir * n);
+      this.scrollRows(dir * n);
       this.moveRows(dir * n, extend);
       return;
     }
@@ -1012,7 +1134,7 @@ export class Pane {
       const sr = this.surfaceEl.getBoundingClientRect();
       const d = last.y < sr.top ? last.y - sr.top : last.y > sr.bottom ? last.y - sr.bottom : 0;
       if (d === 0) return;
-      this.scrollLines(Math.sign(d) * Math.min(10, 1 + Math.floor(Math.abs(d) / this.metrics().lh)));
+      this.scrollRows(Math.sign(d) * Math.min(10, 1 + Math.floor(Math.abs(d) / this.metrics().lh)));
       this.renderNow();
       extend(last);
       frame = [requestAnimationFrame(tick)];

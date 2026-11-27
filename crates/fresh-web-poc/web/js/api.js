@@ -63,7 +63,7 @@ export function heldIndex(L, line) {
 // A value that may be missing (null) as a list of at most one, to act on
 // it if it is there.
 export { listOf, found } from "./maybe.js";
-export { stringWidth as textWidth } from "./layout.js";
+export { textWidth } from "./clusters.js";
 
 // The application's buffer a handle is of (none once it is closed).
 const held = (app, buffer) => app.buffers.get(buffer.id);

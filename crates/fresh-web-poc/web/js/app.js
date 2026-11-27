@@ -6,7 +6,7 @@
 
 import { rpc, attempt, clientId, connectEvents, failure } from "./rpc.js";
 import { shiftRange } from "./decor.js";
-import { byteLen, byteToIdx } from "./utf8.js";
+import { byteLen, codePoints } from "./utf8.js";
 import { shownFrom } from "./paths.js";
 import { hostText } from "./hosts.js";
 import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince, filePath, untitledNumber } from "./buffer.js";
@@ -126,23 +126,23 @@ function savedSplit(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b
 
 // A language server's (line, character) as a byte in the held lines (a
 // list of at most one), and back: byte `pos` on held line `i` (none: -1).
-/** function offsetIn(held: HeldLines[], line: Number, character: Number) => Number | Null */
+/** function offsetIn(held: Lines[], line: Number, character: Number) => Number | Null */
 function offsetIn(held, line, character) {
   for (const L of held) {
     const first = L.firstLine;
     if (first === null) return null;
     const i = line - first;
     if (i < 0 || i >= L.lines.length) return null;
-    return L.starts[i] + byteLen(L.lines[i].slice(0, character));
+    return L.posAt(i, L.idxFrom(i, character));
   }
   return null;
 }
 // (none also when the lines' place in the file is not known yet).
-/** function positionIn(L: HeldLines, i: Number, pos: Number) => LspPos | Null */
+/** function positionIn(L: Lines, i: Number, pos: Number) => LspPos | Null */
 function positionIn(L, i, pos) {
   const first = L.firstLine;
   if (i < 0 || first === null) return null;
-  return { line: first + i, character: byteToIdx(L.lines[i], pos - L.starts[i]) };
+  return { line: first + i, character: L.idxOf(i, pos) };
 }
 
 // A process's exit: its code and output.
@@ -242,7 +242,12 @@ export async function scrollToFraction(pane, f) {
   // The document's line count, when its line index is built.
   const lines = b.doc === null ? [] : listOf(b.totalLines).filter((n) => n > 0);
   if (b.full) {
-    for (const L of listOf(b.text)) v.setTop(L.starts[Math.min(L.count - 1, Math.floor(f * L.count))], 0);
+    if (b.text !== null) v.setTop(pane.topAtFraction(v, f), 0);
+  } else if (v.opts.wrap && v.mode === "source") {
+    // Wrapped, by bytes (rows.js): the row at that byte of the file.
+    const p = Math.floor(f * b.len);
+    await b.ensure(p, ENSURE_AFTER);
+    if (b.text !== null && b.held.indexOf(p) >= 0) v.setTop(pane.topNear(v, p), 0);
   } else if (lines.length > 0) {
     const r = await rpc("doc.line_start", { doc: b.doc, line: Math.floor(f * lines[0]) });
     if (r.pos !== null) { await b.ensure(r.pos, ENSURE_AFTER); v.setTop(r.pos, 0); }
@@ -255,15 +260,12 @@ export async function scrollToFraction(pane, f) {
 }
 
 // A language server's (line, UTF-16 column) as a byte offset in a held buffer.
-export function lspOffset(b, line, character) {
-  const L = b.text;
-  return offsetIn(L === null ? [] : [{ lines: L.lines, starts: L.starts, firstLine: L.firstLine }], line, character);
-}
+export function lspOffset(b, line, character) { return offsetIn(listOf(b.text), line, character); }
 
 // Byte `pos` as a language server's (line, UTF-16 column), when held.
 export function lspPosition(b, pos) {
   const L = b.text;
-  return L === null ? null : positionIn({ lines: L.lines, starts: L.starts, firstLine: L.firstLine }, L.indexOf(pos), pos);
+  return L === null ? null : positionIn(L, L.indexOf(pos), pos);
 }
 
 /** function keyName(e: DomEvent<El>) => String */
@@ -1283,7 +1285,8 @@ export class App {
       await b.ensure(s, 100);
       if (seq !== this.navSeq) return;
       for (const L of listOf(b.text)) {
-        const p = s + byteLen(L.lines[L.indexOf(s)].slice(0, col));
+        const i = L.indexOf(s);
+        const p = L.posAt(i, L.idxFrom(i, col));
         if (history) this.pushHistory(v, v.primary.pos);
         await this.moveTo(v, p, { center: true, extend: false, history: false });
       }
@@ -1801,8 +1804,8 @@ export class App {
     cmd("view.toggleBrackets", "View: Toggle Matching Bracket Highlight", toggle("highlight_brackets"));
     cmd("view.toggleRainbow", "View: Toggle Rainbow Brackets", toggle("rainbow_brackets"));
     cmd("view.toggleScrollSync", "View: Toggle Scroll Sync", toggle("scroll_sync"));
-    hiddenCmd("view.scrollUp", "View: Scroll Up", () => P().scrollLines(-1));
-    hiddenCmd("view.scrollDown", "View: Scroll Down", () => P().scrollLines(1));
+    hiddenCmd("view.scrollUp", "View: Scroll Up", () => P().scrollRows(-1));
+    hiddenCmd("view.scrollDown", "View: Scroll Down", () => P().scrollRows(1));
     cmd("view.addRuler", "View: Add Ruler", async () => {
       const t = await this.prompt.ask({ title: "Ruler at column", value: "80", hint: "", select: true });
       const n = parseInt(t, 10);
@@ -2093,8 +2096,12 @@ export class App {
       for (const L of listOf(b.text)) {
         const i = L.indexOf(c.pos);
         if (i < 0) continue;
-        const col = [...L.lines[i].slice(0, byteToIdx(L.lines[i], c.pos - L.starts[i]))].length + 1;
-        add(listOf(L.firstLine).map((f) => `Ln ${f + i + 1}, Col ${col}`).at(0) ?? `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
+        const idx = L.idxOf(i, c.pos);
+        const col = (L.lens[i] === L.lines[i].length ? idx : codePoints(L.lines[i], idx)) + 1;
+        // A line whose start is not held (a window inside a huge line): no
+        // column to count.
+        const lineCol = L.startsLine(i) ? listOf(L.firstLine).map((f) => `Ln ${f + i + 1}, Col ${col}`) : [];
+        add(lineCol.at(0) ?? `Byte ${c.pos}`, titled("Go to Line", "palette.line"), cmd("palette.line"));
       }
       if (v.cursors.length > 1) add(`${v.cursors.length} cursors`, titled("Remove the other cursors", "edit.escape"), cmd("edit.escape"));
       for (const r of this.macros.recording) add(`● REC ${r.register}`, titled("Recording a macro: Stop Recording Macro", "macro.stop"), cmd("macro.stop"));
