@@ -9,13 +9,34 @@
 // source shows, dimmed inside the typography, where the cursor is. All of
 // it applies only in compose views (`when: "compose"`): a source view of the
 // same buffer shows the text as it is.
+//
+// Where code fences and tables are comes from the syntax engine (the line
+// roles it records as it parses, `fresh.lineRoles`), so the editor and the
+// document never disagree about where a fence ends. A line whose roles are
+// not known yet (not parsed, or just edited) is drawn as plain text, and
+// drawn again when the engine's answer comes (`onColours`).
 
-import { classify } from "../js/mdstruct.js";
 import * as fresh from "../js/api.js";
+import { listOf } from "../js/api.js";
 import * as ui from "../js/ui.js";
 
 /** const isMarkdown: (BufferHandle) => Boolean */
 const isMarkdown = (b) => b.language() === "markdown";
+
+// A line's region part and table line, where its roles are known.
+/** function regionOf(r: LineRoles) => RegionPart[] */
+function regionOf(r) { return r.kind === "known" ? [r.region] : []; }
+/** function tableOf(r: LineRoles) => TableLine[] */
+function tableOf(r) { return r.kind === "known" ? listOf(r.table) : []; }
+// Whether a line is known to be plain prose: in no fence and no table.
+/** function prose(r: LineRoles) => Boolean */
+function prose(r) { return r.kind === "known" && r.region === "none" && r.table === null; }
+// The roles as a key, to tell whether they changed since a buffer was
+// last drawn.
+/** function rolesKey(roles: LineRoles[]) => String */
+function rolesKey(roles) {
+  return roles.map((r) => (r.kind === "unknown" ? "?" : `${r.region}${listOf(r.table).map((t) => `/${t.role}`).join("")}`)).join(",");
+}
 
 // Styles: the markup itself is not restyled; inline spans.
 /** const PLAIN: Style */
@@ -41,6 +62,9 @@ function matchLength(m) { return m ? m[0].length : 0; }
 export function activate(app) {
   const B = fresh.byteLen;
   const W = fresh.textWidth;
+  // The roles each buffer was last decorated with (rolesKey).
+  /** const drawn: Map<Number, String> */
+  const drawn = new Map();
 
   // ---------------------------------------------------------------- inline markup
 
@@ -95,7 +119,14 @@ export function activate(app) {
     const L = b.lines();
     if (!L || !b.whole()) { b.render(); return; }
     const { lines, starts } = L;
-    const { region, table } = classify(lines);
+    const roles = fresh.lineRoles(app, b, 0, lines.length);
+    drawn.set(b.id, rolesKey(roles));
+    // Line `k` closes a fence; continues one (a body or closing line); is a
+    // table's line; is its table's last.
+    const closes = (k) => regionOf(roles[k]).includes("close");
+    const inCode = (k) => regionOf(roles[k]).some((p) => p === "body" || p === "close");
+    const inTable = (k) => tableOf(roles[k]).some((x) => x.role !== "header");
+    const endsTable = (k) => tableOf(roles[k]).some((x) => x.last);
     const lineEnd = (i) => starts[i] + B(lines[i]);
     /** const reveal: (Number) => Range | Null */
     const reveal = (i) => ({ start: starts[i], end: lineEnd(i) + 1 });
@@ -115,34 +146,39 @@ export function activate(app) {
     for (let i = 0; i < lines.length; i++) {
       const t = lines[i];
       const at = atOf(i);
+      const r = roles[i];
+      // Not known yet: plain text, until the engine answers.
+      if (r.kind === "unknown") { listStack = []; continue; }
       if (!LIST.test(t) && !blank(i)) listStack = [];
 
-      // Fenced code: the fence lines hidden, the body kept line by line.
-      if (region[i] === "open") {
-        let j = i + 1;
-        while (j < lines.length && region[j] === "body") j++;
-        const last = j < lines.length && region[j] === "close" ? j : j - 1;
-        const info = (/^\s*(?:`{3,}|~{3,})\s*([^\s`{]*)/.exec(t) || [])[1] || "";
+      // Fenced code: the fence lines hidden, the body kept line by line. A
+      // block whose opening line is not known yet starts at its body.
+      if (r.region !== "none") {
+        const opens = r.region === "open";
+        let last = i;
+        while (!closes(last) && last + 1 < lines.length && inCode(last + 1)) last++;
+        const info = opens ? (/^\s*(?:`{3,}|~{3,})\s*([^\s`{]*)/.exec(t) || [])[1] || "" : "";
         node(i, last, { type: "code", level: 0, depth: 0, marker: "", lang: info.toLowerCase(), align: [], header: false, delimiter: false });
-        hide(starts[i], lineEnd(i), reveal(i));
-        if (region[last] === "close") hide(starts[last], lineEnd(last), reveal(last));
+        if (opens) hide(starts[i], lineEnd(i), reveal(i));
+        if (closes(last)) hide(starts[last], lineEnd(last), reveal(last));
         i = last;
         continue;
       }
 
-      // Tables: a row per line, cells split at the pipes.
-      if (table[i]?.role === "header") {
-        let j = i;
-        while (j < lines.length && table[j]) j++;
-        const align = lines[i + 1].split("|").map((c) => c.trim()).filter(Boolean).map(alignOf);
+      // Tables: a row per line, cells split at the pipes. A table whose
+      // header is not known yet starts at the rows that are.
+      if (r.table !== null) {
+        let j = i + 1;
+        while (j < lines.length && !endsTable(j - 1) && inTable(j)) j++;
+        const delimiters = lines.slice(i, j).filter((_, k) => tableOf(roles[i + k]).some((x) => x.role === "delimiter"));
+        const align = delimiters.slice(0, 1).flatMap((l) => l.split("|").map((c) => c.trim()).filter(Boolean).map(alignOf));
         node(i, j - 1, { type: "table", level: 0, depth: 0, marker: "", lang: "", align, header: false, delimiter: false });
         for (let k = i; k < j; k++) {
           const s = lines[k];
           const rv = reveal(k);
-          const row = table[k];
-          const role = row === undefined ? "row" : row.role;
-          node(k, k, { type: "row", level: 0, depth: 0, marker: "", lang: "", align: [], header: role === "header", delimiter: role === "delimiter" });
-          if (role === "delimiter") { hide(starts[k], lineEnd(k), rv); continue; }
+          const row = tableOf(roles[k]);
+          for (const x of row) node(k, k, { type: "row", level: 0, depth: 0, marker: "", lang: "", align: [], header: x.role === "header", delimiter: x.role === "delimiter" });
+          if (row.some((x) => x.role === "delimiter")) { hide(starts[k], lineEnd(k), rv); continue; }
           const at2 = atOf(k);
           const pipes = [];
           for (let x = 0; x < s.length; x++) if (s[x] === "|" && s[x - 1] !== "\\") pipes.push(x);
@@ -206,7 +242,7 @@ export function activate(app) {
       let j = i;
       while (j + 1 < lines.length) {
         const n = lines[j + 1];
-        if (blank(j + 1) || region[j + 1] || table[j + 1] || LIST.test(n) || HEADING.test(n) || RULE.test(n) || quoteDepth(n) !== qd) break;
+        if (blank(j + 1) || !prose(roles[j + 1]) || LIST.test(n) || HEADING.test(n) || RULE.test(n) || quoteDepth(n) !== qd) break;
         // A line ending in two spaces or a backslash breaks there; other
         // trailing blanks go, and the line break draws as a space.
         const prev = lines[j], pe = lineEnd(j);
@@ -234,6 +270,12 @@ export function activate(app) {
   };
   fresh.onBuffer(app, "buffer.changed", (buffer) => schedule(buffer, 30));
   fresh.onBuffer(app, "buffer.activated", (buffer) => schedule(buffer, 0));
+  // New colours: drawn again when the roles it was drawn with changed.
+  fresh.onColours(app, (buffer) => {
+    for (const L of listOf(buffer.lines())) {
+      if (drawn.get(buffer.id) !== rolesKey(fresh.lineRoles(app, buffer, 0, L.lines.length))) schedule(buffer, 0);
+    }
+  });
 
   // ---------------------------------------------------------------- commands
 
@@ -268,15 +310,17 @@ export function activate(app) {
   const renderContents = () => {
     const contents = fresh.shown(app, "md-contents");
     if (!contents || !contents.open) return;
-    const b = fresh.activeBuffer(app);
-    const L = b && isMarkdown(b) ? b.lines() : null;
     const items = [];
-    if (L) {
-      const { region } = classify(L.lines);
-      L.lines.forEach((t, i) => {
-        const m = region[i] ? null : HEADING.exec(t);
-        if (m) items.push({ level: m[1].length, text: t.slice(m[0].length).trim(), pos: L.starts[i] });
-      });
+    for (const b of listOf(fresh.activeBuffer(app)).filter(isMarkdown)) {
+      for (const L of listOf(b.lines())) {
+        // A heading is a prose line's: one whose roles are not known yet
+        // (it may be in a fence) waits for them.
+        const roles = fresh.lineRoles(app, b, 0, L.lines.length);
+        L.lines.forEach((t, i) => {
+          const m = prose(roles[i]) ? HEADING.exec(t) : null;
+          if (m) items.push({ level: m[1].length, text: t.slice(m[0].length).trim(), pos: L.starts[i] });
+        });
+      }
     }
     contents.render(items.length
       ? ui.list({
@@ -292,6 +336,7 @@ export function activate(app) {
   };
   fresh.onBuffer(app, "buffer.activated", (_b) => { renderContents(); });
   fresh.onBuffer(app, "buffer.changed", (_b) => { later("toc", 300, renderContents); });
+  fresh.onColours(app, (_b) => { later("toc", 300, renderContents); });
 
   fresh.register(app, "markdown.toggleCompose", { title: "Markdown: Toggle Compose", hidden: false, run: toggle });
   fresh.register(app, "markdown.composeWidth", { title: "Markdown: Set Compose Width…", hidden: false, run: setWidth });

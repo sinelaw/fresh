@@ -231,8 +231,29 @@ export const categoryAt = (app, buffer, pos) => {
   return b === undefined ? { kind: "unknown" } : app.syntaxOf(b).categoryAt(pos);
 };
 // Told when a buffer's syntax colours changed, after the frame that draws
-// them.
+// them; its line roles may have changed with them.
 export const onColours = (app, f) => app.host.onBuffer("buffer.colours", (b, _change) => { f(b); });
+// The roles of lines [from, to) of a buffer's held lines (`lines()`), as
+// far as they are known now (LineRoles, types/fresh.d.js): each line's part
+// in an embedded region (a Markdown fence) and in a table, or unknown (not
+// parsed yet, or touched by an edit the engine has not answered).
+// `onColours` says when they may have changed.
+export const lineRoles = (app, buffer, from, to) => found(held(app, buffer)).flatMap((b) => b.text === null ? [] : app.syntaxOf(b).roles(from, to));
+// Colour a plugin's (virtual) buffer by the code regions in it rather than
+// by a grammar: SyntaxRegions (types/fresh.d.js), whole rows, sorted and
+// not overlapping, replacing those declared before; replacing the buffer's
+// text (setEntries) clears them. Resolves with what became of each region,
+// in order (those not kept are logged too); rejects for a file's buffer
+// or a region that does not fit the text.
+export const setSyntaxRegions = (app, buffer, regions) => {
+  const b = held(app, buffer);
+  return b === undefined ? Promise.reject(new Error("not a loaded buffer")) : app.setSyntaxRegions(b, regions);
+};
+// Add a grammar: `.sublime-syntax` YAML for `language`, used for buffers
+// in that language or with one of `extensions` ("zig" or ".zig"). It is
+// compiled in the background; resolves once buffers are coloured with it,
+// rejects with why it did not compile (the grammars there were stay).
+export const registerGrammar = (app, language, source, extensions) => app.registerGrammar(language, source, extensions);
 
 // ---------------------------------------------------------------- language servers
 

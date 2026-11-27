@@ -24,8 +24,8 @@ let loaded = [];
 export async function wasmModule() {
   for (const w of loaded) return w;
   const path = process.env.FRESH_HIGHLIGHT_WASM ?? `${workspace}target/wasm32-unknown-unknown/wasm/fresh_highlight_wasm.wasm`;
-  const { instance } = await WebAssembly.instantiate(readFileSync(path), {});
-  const w = new Wasm(instance.exports);
+  const { instance, module } = await WebAssembly.instantiate(readFileSync(path), {});
+  const w = new Wasm(instance.exports, module);
   useClusters(w);
   loaded = [w];
   return w;

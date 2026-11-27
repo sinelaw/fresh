@@ -36,6 +36,54 @@
 // A syntax span of a line: UTF-16 [s, e) and its finished style.
 /** type Span = {s: Number, e: Number, style: Drawn} */
 
+// ---------------------------------------------------------------- syntax
+
+// A line's roles as the syntax engine found them while parsing (hl.js,
+// `lineRoles`): unknown (not parsed exactly yet, or touched by an edit it
+// has not answered), or its part in an embedded region (a Markdown fence:
+// the opening line, a line inside, the closing line, or none) and its line
+// of a table (none: in no table). `firstRow`: the table's first data row;
+// `last`: its last line.
+/** type RegionPart = "open" | "body" | "close" | "none" */
+/** type TableRole = "header" | "delimiter" | "row" */
+/** type TableLine = {role: TableRole, firstRow: Boolean, last: Boolean} */
+/** type LineRoles =
+ *   | {kind: "unknown"}
+ *   | {kind: "known", region: RegionPart, table: TableLine | Null} */
+
+// Rows of a plugin's buffer that carry code (`setSyntaxRegions`): bytes
+// [start, end) from a row's first byte to just past a row's newline, the
+// language (a token such as "rust" or a path such as "src/main.rs"; it
+// only picks the grammar), the bytes at each row's start that are not code
+// (a diff's `+`), and the parse streams the rows feed, the first colouring
+// them (empty: stream 0). Regions sharing a stream continue one parse
+// across the rows between them (the two sides of a hunk).
+/** type SyntaxRegion = {
+ *   start: Number,
+ *   end: Number,
+ *   language: String,
+ *   prefix: Number,
+ *   streams: Number[],
+ * } */
+// What became of a declared region: coloured; kept but left as styled (no
+// grammar claims its language); dropped, as it overlaps the region before
+// it or is empty.
+/** type RegionStatus = "kept" | "unknown-language" | "overlaps" | "empty" */
+
+// A plugin's grammar (`registerGrammar`, grammars.js): its language, its
+// `.sublime-syntax` YAML, the file extensions it colours (no dot) and the
+// name its syntax goes by in the built set.
+/** type Grammar = {language: String, source: String, extensions: String[], syntax: String} */
+// A grammar as the grammar worker builds it: the name it is reported by.
+/** type GrammarSource = {name: String, source: String} */
+// What the grammar worker is told (grammar-worker.js), and answers.
+/** type ToGrammarWorker =
+ *   | {kind: "start", module: WasmModule, packdump: Uint8Array}
+ *   | {kind: "build", id: Number, grammars: GrammarSource[]} */
+/** type FromGrammarWorker =
+ *   | {kind: "built", id: Number, packdump: Uint8Array}
+ *   | {kind: "failed", id: Number, why: String} */
+
 // A byte range [start, end).
 /** type Range = {start: Number, end: Number} */
 // A fold hiding a line, and the last line it keeps.

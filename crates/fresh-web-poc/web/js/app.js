@@ -23,6 +23,7 @@ import { bufferHandle, viewHandle } from "./host.js";
 import { action, actionOf, SEPARATOR } from "./menu.js";
 import { rowOf, SEP } from "./menubar.js";
 import { Highlighting, LineSyntax } from "./hl.js";
+import { Grammars } from "./grammars.js";
 
 // The clipboard's keys are the browser's own (not in the keymap); menus
 // show them.
@@ -201,6 +202,23 @@ const KEY_NAMES = new Map([["ArrowUp", "Up"], ["ArrowDown", "Down"], ["ArrowLeft
 
 // How a key's modifiers are written for people.
 const MODIFIERS = new Map([["C", "Ctrl"], ["M", "Alt"], ["S", "Shift"]]);
+// A promise settled later, as what `settle` is given settles.
+/** type Deferred<T> = {promise: Promise<T>, settle: (Promise<T>) => Undefined} */
+/** function deferred<T>() => Deferred<T> */
+function deferred() {
+  let settle = (_p) => {};
+  const promise = new Promise((resolve) => { settle = (p) => { resolve(p); }; });
+  return { promise, settle };
+}
+
+// What the log says of a declared region the engine did not colour.
+/** const REGION_NOTES: Dict<String> */
+const REGION_NOTES = {
+  "kept": "is coloured",
+  "unknown-language": "is left as styled: no grammar claims its language",
+  "overlaps": "is dropped: it overlaps the region before it",
+  "empty": "is dropped: it is empty",
+};
 /** function modeKey(
  *   modes: Map<String, ModeKey[]>,
  *   mode: String | Null,
@@ -332,6 +350,12 @@ export class App {
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
     /** this.hl: Highlighting[] */
     this.hl = []; // the syntax engine, once loaded (a list of at most one)
+    // The syntax engine as `start` loads it (what waits on it before then
+    // waits for it).
+    /** this.engineLoad: Deferred<Highlighting> */
+    this.engineLoad = deferred();
+    this.highlighting = this.engineLoad.promise;
+    this.grammars = new Grammars(this.highlighting); // the plugins' (registerGrammar)
     /** this.colourNews: Set<Buffer> */
     this.colourNews = new Set(); // buffers whose new colours plugins are yet to hear of
     this.composing = false; // an input method is composing text
@@ -394,11 +418,13 @@ export class App {
     this.relayout();
     new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));
     setInterval(() => { this.autoSave(); }, 1000);
-    Highlighting.load(this.wasm, (b) => { this.coloursChanged(b); }).then((hl) => {
+    this.engineLoad.settle(Highlighting.load(this.wasm, (b) => { this.coloursChanged(b); }, (text) => { this.note(text); }).then((hl) => {
       this.hl = [hl];
       for (const b of this.buffers.values()) if (terminalOf(b.source).length === 0) hl.attach(b);
       this.renderAll();
-    }, (e) => { this.report(`syntax highlighting: ${failure(e)}`); });
+      return hl;
+    }));
+    this.highlighting.catch((e) => { this.report(`syntax highlighting: ${failure(e)}`); });
     if (!ws) return;
     // The plugins ([{name, activate}], see plugins/index.js), in order; one
     // that throws is reported and the rest still load.
@@ -540,6 +566,11 @@ export class App {
     console.error(msg);
     this.setStatus(msg.split("\n")[0]);
   }
+  // A line for the log alone (Show Log).
+  note(msg) {
+    this.log.push(msg);
+    console.warn(msg);
+  }
 
   // ------------------------------------------------------------- panes
 
@@ -633,6 +664,27 @@ export class App {
   }
   // What the editor's features read of buffer `b`'s syntax (its held text).
   syntaxOf(b) { return new LineSyntax(this.hl.flatMap((hl) => hl.colours(b)), b.held); }
+  // Colour plugin buffer `b` in declared regions (Highlighting.declare):
+  // what became of each region, in order. Those the engine dropped or
+  // cannot colour are logged; a file buffer is refused.
+  async setSyntaxRegions(b, regions) {
+    if (!b.isVirtual) throw new Error(`setSyntaxRegions: ${b.name} is a file, which its grammar colours; regions are for a plugin's buffer`);
+    const hl = await this.highlighting;
+    const statuses = await hl.declare(b, regions);
+    statuses.forEach((s, i) => {
+      const r = regions[i];
+      if (s !== "kept") this.note(`setSyntaxRegions: ${b.name}: region ${i} (bytes ${r.start}..${r.end}, ${r.language}) ${REGION_NOTES[s]}`);
+    });
+    return statuses;
+  }
+  // Add a plugin's grammar (Grammars.register); one that does not build is
+  // reported, and the plugin told why.
+  registerGrammar(language, source, extensions) {
+    return this.grammars.register(language, source, extensions).catch((e) => {
+      this.report(`registerGrammar(${language}): ${failure(e)}`);
+      throw e;
+    });
+  }
   renderBuffer(id) { for (const p of panesOf(this.layoutTree)) if (p.shown.some((v) => v.buf.id === id)) p.scheduleRender(); }
   // The active view (none: the active split shows nothing).
   view() { return this.activePane.shown.length > 0 ? some(this.activePane.view) : none(); }

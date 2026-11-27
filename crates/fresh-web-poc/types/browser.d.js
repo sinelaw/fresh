@@ -60,3 +60,21 @@ const FitAddon;
 /** type MessageChannel = {port1: MessagePort, port2: MessagePort} */
 /** const MessageChannel: new () => MessageChannel */
 const MessageChannel;
+
+// A compiled WebAssembly module (wasm.js), handed to the grammar worker.
+/** type WasmModule = {} */
+
+// A module worker taking messages `I` and answering `O` (grammars.js runs
+// grammar-worker.js in one) and, inside it, its own scope.
+/** type Worker<I, O> = {
+ *   postMessage: (I) => Undefined,
+ *   onmessage: ({data: O}) => Undefined,
+ *   onerror: ({message: String}) => Undefined,
+ * } */
+/** const Worker: <I, O>new (url: String, options: {type: String}) => Worker<I, O> */
+const Worker;
+/** const self: <I, O>{
+ *   onmessage: ({data: I}) => Undefined,
+ *   postMessage: (O, ArrayBuffer[]) => Undefined,
+ * } */
+const self;

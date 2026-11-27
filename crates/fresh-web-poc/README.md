@@ -558,7 +558,7 @@ xterm.js) in one run, with two declaration files: `types/browser.d.js`
 shapes modules share: edit primitives, the server's events, documents,
 diagnostics, colours, syntax spans, and the plugin API's records).
 
-`ot.js`, `rpc.js`'s functions, `diff.js`, `mdstruct.js` and `highlight.js`
+`ot.js`, `rpc.js`'s functions, `diff.js` and `highlight.js`
 are typed. The client keeps to what inty takes by design: no class
 inheritance (a `Buffer` holds its kind's source), no rest parameters (`h`
 takes its children as one array), no setters or dynamic import, and a
