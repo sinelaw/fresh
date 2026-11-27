@@ -65,6 +65,7 @@ impl Editor {
         if !self.active_window_mut().menu_bar_visible {
             self.active_window_mut().menu_bar_visible = true;
             self.active_window_mut().menu_bar_auto_shown = true;
+            self.relayout();
         }
         self.active_window_mut().on_editor_focus_lost();
         self.menu_state.open_menu(0);
@@ -77,6 +78,7 @@ impl Editor {
         if self.active_window_mut().menu_bar_auto_shown {
             self.active_window_mut().menu_bar_visible = false;
             self.active_window_mut().menu_bar_auto_shown = false;
+            self.relayout();
         }
     }
 
@@ -167,6 +169,7 @@ impl Editor {
         if !self.active_window_mut().menu_bar_visible {
             self.active_window_mut().menu_bar_visible = true;
             self.active_window_mut().menu_bar_auto_shown = true;
+            self.relayout();
         }
         self.active_window_mut().on_editor_focus_lost();
 
