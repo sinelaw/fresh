@@ -280,6 +280,10 @@ pub(crate) fn decoration_context(
 
         viewport_overlays.push((overlay.clone(), range));
     }
+    // `query_viewport` returns overlays in storage order, which removals
+    // shuffle (`swap_remove`). The per-cell lookup (`span_at`) walks these
+    // with a forward-only cursor, so they must be sorted by position.
+    semantic_token_spans.sort_by_key(|span| span.range.start);
 
     // Sort overlays by priority (ascending) so higher priority overlays are
     // applied last in the rendering loop.
