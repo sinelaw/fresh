@@ -15,9 +15,10 @@ homepage.workspace = true
 syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load"] }
 
 [dev-dependencies]
-# A regex engine, so the crate builds on its own for its tests, and the
-# bundled syntaxes to test against.
-syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "default-syntaxes", "regex-fancy"] }
+# A regex engine, so the crate builds on its own for its tests, the bundled
+# syntaxes to test against, and YAML loading for the editor's own grammars
+# that host embedded regions (its diff and Vue grammars).
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "default-syntaxes", "regex-fancy", "yaml-load"] }
 proptest = "1.9"
 
 [lints]

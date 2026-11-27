@@ -56,6 +56,13 @@ impl Category {
         self as u8
     }
 
+    /// Whether the category is a whole-row background wash (the diff
+    /// categories) rather than styling of the text it scopes; see
+    /// [`RowWash`](crate::RowWash).
+    pub fn bg_extends_to_line_end(self) -> bool {
+        matches!(self, Self::Inserted | Self::Deleted | Self::Changed)
+    }
+
     /// The theme key of the category's colour (e.g. "syntax.keyword").
     pub fn theme_key(self) -> &'static str {
         match self {

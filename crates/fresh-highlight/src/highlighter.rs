@@ -24,8 +24,19 @@
 //! - Provisional runs: a wanted range far past `exact_until` is parsed from a
 //!   fresh state rather than waiting for the exact parse to get there, and
 //!   marked not exact until it does.
+//!
+//! A host whose grammar marks embedded-language regions ([`crate::embedding`]:
+//! Markdown fences, Vue `<script>`/`<style>` blocks, a diff's file hunks)
+//! has their content lines coloured by a child parser in the region's
+//! language, as the editor's native engine does. The child's state is part
+//! of the parse state, so checkpoints carry it and a parse converges only
+//! where the child (its language included) is the same too.
 
-use crate::{highlighted_prefix, scope_to_category, Category};
+use crate::embedding::{
+    diff_change, fence_language, find_embedded_syntax, is_diff_source_row, scopes_contain,
+    ContentMode, Embedding, EmbeddingSpec,
+};
+use crate::{highlighted_prefix, scope_to_category, Category, RowWash};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -50,6 +61,10 @@ pub struct Run {
     /// Length in bytes.
     pub len: u32,
     pub cat: Category,
+    /// The category whose background the run sits on, when it is not
+    /// `cat`'s own: a source token an embedded parser coloured in a diff
+    /// row keeps the row's Inserted/Deleted wash under it.
+    pub background: Option<Category>,
 }
 
 /// A line's runs, as [`Highlighter::take`] reports them.
@@ -144,8 +159,11 @@ impl std::error::Error for Error {
 /// Highlights documents with the grammars of one syntax set.
 pub struct Highlighter {
     syntaxes: SyntaxSet,
+    /// Each syntax's embedded regions, by its index in `syntaxes`.
+    embeddings: Vec<Embedding>,
     documents: BTreeMap<u32, Document>,
     categories: CategoryCache,
+    languages: LanguageCache,
 }
 
 impl Highlighter {
@@ -153,9 +171,15 @@ impl Highlighter {
     /// (lines are parsed with their `\n`).
     pub fn new(syntaxes: SyntaxSet) -> Self {
         Highlighter {
+            embeddings: syntaxes
+                .syntaxes()
+                .iter()
+                .map(|syntax| Embedding::for_host(&syntax.name))
+                .collect(),
             syntaxes,
             documents: BTreeMap::new(),
             categories: CategoryCache::default(),
+            languages: LanguageCache::default(),
         }
     }
 
@@ -249,16 +273,20 @@ impl Highlighter {
             };
             let Highlighter {
                 syntaxes,
+                embeddings,
                 documents,
                 categories,
+                languages,
             } = self;
             let d = documents
                 .get_mut(&doc)
                 .expect("a task is for an open document");
             let mut parser = Parser {
                 syntax: &syntaxes.syntaxes()[d.syntax],
+                embedding: &embeddings[d.syntax],
                 syntaxes,
                 categories,
+                languages,
             };
             let done = match task {
                 Task::Exact { until } => d.parse_exact(until, budget - spent, &mut parser),
@@ -374,8 +402,22 @@ struct Highlight {
     runs: Vec<Run>,
 }
 
+/// The parse state at a line boundary: the host parser's, and the child
+/// parser's while in an embedded region that has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct State {
+    parse: ParseState,
+    scopes: ScopeStack,
+    embedded: Option<Embedded>,
+}
+
+/// An embedded region's child parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Embedded {
+    /// Index of the child's syntax in the syntax set. Part of the state's
+    /// identity: two parses that entered a region in different languages
+    /// have not converged, whatever their parsers' states.
+    syntax: usize,
     parse: ParseState,
     scopes: ScopeStack,
 }
@@ -385,6 +427,7 @@ impl State {
         State {
             parse: ParseState::new(syntax),
             scopes: ScopeStack::new(),
+            embedded: None,
         }
     }
 }
@@ -677,8 +720,14 @@ struct Parsed {
 struct Parser<'a> {
     syntaxes: &'a SyntaxSet,
     syntax: &'a SyntaxReference,
+    /// The embedded regions of `syntax`.
+    embedding: &'a Embedding,
     categories: &'a mut CategoryCache,
+    languages: &'a mut LanguageCache,
 }
+
+/// Part of a line in a category, as a parser reports it.
+type Span = (Range<usize>, Category);
 
 impl Parser<'_> {
     /// Parse one line (`text`, with its `\n` unless it is the document's
@@ -686,7 +735,8 @@ impl Parser<'_> {
     ///
     /// Only the line's [`highlighted_prefix`] is parsed, as ending there; the
     /// rest of a longer line has no runs, and the next line goes on from the
-    /// state the cut leaves — as the native engine does.
+    /// state the cut leaves — as the native engine does. A row a diff
+    /// category washes is filled to its end ([`RowWash`]).
     fn line(&mut self, state: &mut State, text: &str) -> Result<Parsed, LineError> {
         let content = text.trim_end_matches(['\r', '\n']);
         let prefix = highlighted_prefix(content);
@@ -696,41 +746,239 @@ impl Parser<'_> {
             (false, true) if text.len() == prefix.len() + 1 => Cow::Borrowed(text),
             _ => Cow::Owned(format!("{prefix}\n")),
         };
-        let ops = state
-            .parse
-            .parse_line(&input, self.syntaxes)
-            .map_err(LineError::Parse)?;
         let end = prefix.len();
         let mut runs = Vec::new();
-        let mut at = 0;
-        for (offset, op) in ops {
-            let offset = offset.min(end);
-            if offset > at {
-                push_run(&mut runs, at..offset, self.categories.of(&state.scopes));
-            }
-            at = offset;
-            state.scopes.apply(&op).map_err(LineError::Scope)?;
+        let mut wash = RowWash::new(0..end, |range, cat, background| {
+            push_run(&mut runs, range, cat, background)
+        });
+        if self.embedding.is_empty() {
+            self.spans(
+                &mut state.parse,
+                &mut state.scopes,
+                &input,
+                end,
+                &[],
+                |range, cat| wash.emit(range, cat, None),
+            )?;
+        } else {
+            self.host_line(state, &input, end, &mut wash)?;
         }
-        if end > at {
-            push_run(&mut runs, at..end, self.categories.of(&state.scopes));
-        }
+        wash.finish();
         Ok(Parsed {
             runs,
             bytes: input.len(),
         })
     }
+
+    /// [`Parser::line`] for a host with embedded regions, as the native
+    /// engine does it. The host parses every line, since only it knows
+    /// where a region ends, and its scope stack before and after the line
+    /// says whether the line opens a region (and in what language), is a
+    /// region's content, which the region's child parser colours when it
+    /// has one, or closes it; see [`crate::embedding`].
+    fn host_line<F: FnMut(Range<usize>, Category, Option<Category>)>(
+        &mut self,
+        state: &mut State,
+        input: &str,
+        end: usize,
+        wash: &mut RowWash<F>,
+    ) -> Result<(), LineError> {
+        let embedding = self.embedding;
+        let was_in = embedding.active_region(&state.scopes);
+        let mut host = Vec::new();
+        let language = self.spans(
+            &mut state.parse,
+            &mut state.scopes,
+            input,
+            end,
+            embedding.watched(was_in),
+            |range, cat| host.push((range, cat)),
+        )?;
+        let now_in = embedding.active_region(&state.scopes);
+        match (was_in, now_in) {
+            (Some(i), Some(j)) if i == j => {
+                let spec = &embedding.specs()[i];
+                if language.is_some() && spec.retargets_on_same_line {
+                    // One region handed over to the next on this line (a
+                    // diff's next file): its token restarts the child, and
+                    // the line itself is the host's.
+                    state.embedded = self.region_parser(input, language, spec);
+                } else if let Some(child) = &mut state.embedded {
+                    return self.content_line(child, spec, input, end, &host, wash);
+                }
+                // Else the region has no child: the line keeps the host's
+                // styling.
+            }
+            (None, Some(j)) => {
+                state.embedded = self.region_parser(input, language, &embedding.specs()[j]);
+            }
+            // One kind of region closed and another opened on the line.
+            // The line's language token was not watched, so the new region
+            // is in its default language.
+            (Some(_), Some(j)) => {
+                state.embedded = self.region_parser(input, None, &embedding.specs()[j]);
+            }
+            (Some(_), None) => state.embedded = None,
+            (None, None) => {}
+        }
+        emit_all(wash, &host);
+        Ok(())
+    }
+
+    /// A region's content line, coloured by its child parser `child`. The
+    /// host's spans `host` colour what the child does not see: a diff row's
+    /// patch marker, and a diff row that is not source (a file or hunk
+    /// header), which leaves the child as it was.
+    fn content_line<F: FnMut(Range<usize>, Category, Option<Category>)>(
+        &mut self,
+        child: &mut Embedded,
+        spec: &EmbeddingSpec,
+        input: &str,
+        end: usize,
+        host: &[Span],
+        wash: &mut RowWash<F>,
+    ) -> Result<(), LineError> {
+        let (at, background) = match spec.content {
+            ContentMode::WholeLine => (0, None),
+            ContentMode::UnifiedDiff => {
+                let change = diff_change(host.iter().map(|&(_, cat)| cat));
+                // The child sees the row past its one-byte marker.
+                let source = is_diff_source_row(input, change) && end >= 1;
+                if !(source && input.is_char_boundary(1)) {
+                    emit_all(wash, host);
+                    return Ok(());
+                }
+                (1, change)
+            }
+        };
+        for (range, cat) in host {
+            if range.start < at {
+                wash.emit(range.start..range.end.min(at), *cat, None);
+            }
+        }
+        self.spans(
+            &mut child.parse,
+            &mut child.scopes,
+            &input[at..],
+            end - at,
+            &[],
+            |range, cat| wash.emit(range.start + at..range.end + at, cat, background),
+        )?;
+        Ok(())
+    }
+
+    /// The child parser of a region opening on this line: in the language
+    /// its token (`language`, a range of `input`) names, else in the
+    /// region kind's default language. None when neither names a syntax.
+    fn region_parser(
+        &mut self,
+        input: &str,
+        language: Option<Range<usize>>,
+        spec: &EmbeddingSpec,
+    ) -> Option<Embedded> {
+        let syntax = language
+            .and_then(|range| self.languages.find(self.syntaxes, &input[range]))
+            .or_else(|| self.languages.find(self.syntaxes, spec.default_language?))?;
+        Some(Embedded {
+            syntax,
+            parse: ParseState::new(&self.syntaxes.syntaxes()[syntax]),
+            scopes: ScopeStack::new(),
+        })
+    }
+
+    /// Parse `input` on from `parse` and `scopes`, passing `on_span` each
+    /// part of the line's first `end` bytes that is in a category, in order.
+    /// Returns the first stretch of the line during which one of `watch` was
+    /// on the stack: where a region's language token is.
+    fn spans(
+        &mut self,
+        parse: &mut ParseState,
+        scopes: &mut ScopeStack,
+        input: &str,
+        end: usize,
+        watch: &[Scope],
+        mut on_span: impl FnMut(Range<usize>, Category),
+    ) -> Result<Option<Range<usize>>, LineError> {
+        let ops = parse
+            .parse_line(input, self.syntaxes)
+            .map_err(LineError::Parse)?;
+        let mut at = 0;
+        let mut watch_start = None;
+        let mut watched = None;
+        for (offset, op) in ops {
+            let offset = offset.min(end);
+            if offset > at {
+                if let Some(cat) = self.categories.of(scopes) {
+                    on_span(at..offset, cat);
+                }
+            }
+            at = offset;
+            scopes.apply(&op).map_err(LineError::Scope)?;
+            if watched.is_none() {
+                let active = watch.iter().any(|&scope| scopes_contain(scopes, scope));
+                match (watch_start, active) {
+                    (None, true) => watch_start = Some(offset),
+                    (Some(start), false) => watched = Some(start..offset),
+                    _ => {}
+                }
+            }
+        }
+        if end > at {
+            if let Some(cat) = self.categories.of(scopes) {
+                on_span(at..end, cat);
+            }
+        }
+        Ok(watched.or_else(|| watch_start.map(|start| start..end)))
+    }
 }
 
-/// Add `range` in `category` to a line's runs, merged into the last run when
-/// it continues it in the same category. Text in no category gets no run.
-fn push_run(runs: &mut Vec<Run>, range: Range<usize>, category: Option<Category>) {
-    let Some(cat) = category else {
-        return;
-    };
+/// Emit `spans` as they are.
+fn emit_all<F: FnMut(Range<usize>, Category, Option<Category>)>(
+    wash: &mut RowWash<F>,
+    spans: &[Span],
+) {
+    for (range, cat) in spans {
+        wash.emit(range.clone(), *cat, None);
+    }
+}
+
+/// Add `range` in `cat` on `background` to a line's runs, merged into the
+/// last run when it continues it in the same categories.
+fn push_run(runs: &mut Vec<Run>, range: Range<usize>, cat: Category, background: Option<Category>) {
     let (start, len) = (to_u32(range.start), to_u32(range.len()));
     match runs.last_mut() {
-        Some(last) if last.cat == cat && last.start + last.len == start => last.len += len,
-        _ => runs.push(Run { start, len, cat }),
+        Some(last)
+            if last.cat == cat
+                && last.background == background
+                && last.start + last.len == start =>
+        {
+            last.len += len
+        }
+        _ => runs.push(Run {
+            start,
+            len,
+            cat,
+            background,
+        }),
+    }
+}
+
+/// Language token → the syntax it names, memoised
+/// ([`find_embedded_syntax`]). The syntax set is the highlighter's for its
+/// whole life, so an answer never goes stale.
+#[derive(Default)]
+struct LanguageCache(HashMap<String, Option<usize>>);
+
+impl LanguageCache {
+    /// The syntax a region's raw language token names, if any.
+    fn find(&mut self, syntaxes: &SyntaxSet, raw: &str) -> Option<usize> {
+        let token = fence_language(raw)?;
+        if let Some(&found) = self.0.get(token) {
+            return found;
+        }
+        let found = find_embedded_syntax(syntaxes, token);
+        self.0.insert(token.to_string(), found);
+        found
     }
 }
 

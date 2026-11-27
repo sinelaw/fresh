@@ -5,13 +5,18 @@
 //! The pieces both use are here once: the categories text is coloured as
 //! ([`Category`]), the scope → category table ([`scope_to_category`]), and
 //! how much of a long line is highlighted ([`MAX_LINE_BYTES`],
-//! [`highlighted_prefix`]).
+//! [`highlighted_prefix`]). [`embedding`] holds the embedded-language
+//! regions (Markdown fences, Vue blocks, diff hunks) and how their language
+//! is found, and [`RowWash`] the filling of rows a diff category washes.
 
 mod category;
+pub mod embedding;
 mod highlighter;
+mod wash;
 
 pub use category::{scope_to_category, Category};
 pub use highlighter::{Error, Highlighter, LineRuns, Run};
+pub use wash::RowWash;
 
 /// How much of a line is highlighted: the rest of a longer one is plain text.
 ///
