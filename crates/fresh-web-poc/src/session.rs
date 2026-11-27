@@ -99,10 +99,17 @@ impl Session {
             let room = room.clone();
             let docs = docs.clone();
             let diags = diags.clone();
-            Arc::new(move |_lang, method, params| {
-                if method == "textDocument/publishDiagnostics" {
-                    publish_diagnostics(&room, &docs, &diags, params);
+            Arc::new(move |lang, event| match event {
+                lsp::ServerEvent::Notification("textDocument/publishDiagnostics", params) => {
+                    publish_diagnostics(&room, &docs, &diags, params)
                 }
+                lsp::ServerEvent::Notification(..) => {}
+                // Its viewers stop asking it (it stays failed until
+                // restarted; `lsp.status` says why).
+                lsp::ServerEvent::Ended => room.broadcast(&json!({
+                    "ev": "lsp.ended", "language": lang,
+                    "why": format!("the {lang} language server ended"),
+                })),
             })
         };
         let session = Arc::new(Session {

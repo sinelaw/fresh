@@ -17,13 +17,21 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// Called with every notification a server sends (`method`, `params`).
-pub type OnNotify = Arc<dyn Fn(&str, &str, &Value) + Send + Sync>;
+pub type OnNotify = Arc<dyn Fn(&str, ServerEvent) + Send + Sync>;
+
+/// What a language's server tells the workspace unasked: a notification
+/// (its method and params), or that its output ended (it exited, or its
+/// link went).
+pub enum ServerEvent<'a> {
+    Notification(&'a str, &'a Value),
+    Ended,
+}
 
 /// The command for a language's server.
 pub fn command_for(language: &str) -> Option<Vec<String>> {
@@ -73,6 +81,9 @@ pub struct Server {
     pub language: String,
     queue: Sender<Value>,
     pending: Arc<Mutex<HashMap<i64, Sender<Value>>>>,
+    /// Its output ended (it exited, or its link went): nothing it was
+    /// asked will be answered.
+    ended: Arc<AtomicBool>,
     next_id: AtomicI64,
     child: Mutex<Child>,
     authority: Arc<dyn Authority>,
@@ -122,10 +133,12 @@ impl Server {
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
         let (queue, rx): (Sender<Value>, Receiver<Value>) = channel();
         let pending: Arc<Mutex<HashMap<i64, Sender<Value>>>> = Arc::default();
+        let ended = Arc::new(AtomicBool::new(false));
         let server = Arc::new(Server {
             language: language.to_string(),
             queue,
             pending: pending.clone(),
+            ended: ended.clone(),
             next_id: AtomicI64::new(1),
             child: Mutex::new(child),
             authority: ws.authority.clone(),
@@ -163,10 +176,17 @@ impl Server {
                         };
                         let _ = replies.send(json!({"jsonrpc": "2.0", "id": id, "result": result}));
                     }
-                    (Some(m), None) => on_notify(&lang, m, &msg["params"]),
+                    (Some(m), None) => {
+                        on_notify(&lang, ServerEvent::Notification(m, &msg["params"]))
+                    }
                     _ => {}
                 }
             }
+            // Its output ended: what it was asked fails now (the waits'
+            // senders dropped), not when each times out.
+            ended.store(true, Ordering::SeqCst);
+            pending_r.lock().unwrap().clear();
+            on_notify(&lang, ServerEvent::Ended);
         });
 
         // The writer: initialize first, then everything queued, in order.
@@ -221,8 +241,25 @@ impl Server {
             .send(json!({"jsonrpc": "2.0", "method": method, "params": params}));
     }
 
-    /// Send a request and wait for its reply.
+    /// Whether it ended (see `ended`).
+    pub fn has_ended(&self) -> bool {
+        self.ended.load(Ordering::SeqCst)
+    }
+
+    /// Why it ended, as its process says.
+    fn ending(&self) -> String {
+        match self.child.lock().unwrap().try_wait() {
+            Ok(Some(status)) => format!("the {} language server exited ({status})", self.language),
+            _ => format!("the {} language server stopped answering", self.language),
+        }
+    }
+
+    /// Send a request and wait for its reply (failing at once once it
+    /// ended).
     pub fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
+        if self.has_ended() {
+            fail!(LanguageServer, "{method}: {}", self.ending());
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = channel();
         self.pending.lock().unwrap().insert(id, tx);
@@ -271,16 +308,19 @@ enum Slot {
 }
 
 impl Slot {
+    /// Its server, while it runs (one that ended is failed, until
+    /// restarted).
     fn running(&self) -> Option<Arc<Server>> {
         match self {
-            Slot::Running(s) => Some(s.clone()),
-            Slot::Stopped | Slot::Failed(_) => None,
+            Slot::Running(s) if !s.has_ended() => Some(s.clone()),
+            Slot::Running(_) | Slot::Stopped | Slot::Failed(_) => None,
         }
     }
 
     /// As `lsp.status` reports it (`LspState`, types/fresh.d.js).
     fn state(&self) -> Value {
         match self {
+            Slot::Running(s) if s.has_ended() => json!({"kind": "failed", "why": s.ending()}),
             Slot::Running(_) => json!({"kind": "running"}),
             Slot::Stopped => json!({"kind": "stopped"}),
             Slot::Failed(why) => json!({"kind": "failed", "why": why}),

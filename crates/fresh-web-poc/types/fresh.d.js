@@ -899,6 +899,7 @@
  *   | {ev: "doc.reloaded", doc: Number, info: DocInfo, lost: Boolean}
  *   | {ev: "doc.changed_on_disk", doc: Number}
  *   | {ev: "lsp.status", status: Dict<LspState>}
+ *   | {ev: "lsp.ended", language: String, why: String}
  *   | {ev: "workspace.added", workspace: WorkspaceEntry}
  *   | {ev: "workspace.changed", workspace: WorkspaceEntry}
  *   | {ev: "workspace.removed", workspace: Number}

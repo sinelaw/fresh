@@ -167,6 +167,8 @@ function noBytes() { return []; }
 function noCommands() { return new Map(); }
 /** function noStatus() => Dict<LspState> */
 function noStatus() { return {}; }
+/** function failedServer(why: String) => LspState */
+function failedServer(why) { return { kind: "failed", why }; }
 // Whether a language's server may be asked (not stopped, nor failed).
 /** function serverUp(s: LspState | Undefined) => Boolean */
 function serverUp(s) { return s === undefined || s.kind === "running"; }
@@ -1368,6 +1370,14 @@ export class App {
       // A language server was stopped, restarted or failed to start.
       this.lspStatus = ev.status;
       this.host.emitStatus(ev.status);
+      this.updateStatus();
+      return;
+    }
+    if (ev.ev === "lsp.ended") {
+      // A language server ended (exited, or its link went): it is failed
+      // until restarted.
+      this.lspStatus[ev.language] = failedServer(ev.why);
+      this.host.emitStatus(this.lspStatus);
       this.updateStatus();
       return;
     }
