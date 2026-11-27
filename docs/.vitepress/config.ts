@@ -44,6 +44,7 @@ export default defineConfig({
         text: "Blog",
         link: "/blog/",
         items: [
+          { text: "Slimming Down for Debian", link: "/blog/slimming-down-for-debian/" },
           { text: "Packaging for Linux", link: "/blog/packaging-for-linux/" },
           { text: "One Editor, Every Worktree", link: "/blog/orchestrator-worktrees/" },
           { text: "Fresh 0.4.0", link: "/blog/fresh-0.4.0/" },

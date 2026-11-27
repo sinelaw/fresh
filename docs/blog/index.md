@@ -13,6 +13,13 @@ Updates on new features and changes in Fresh.
 
 <div class="blog-grid">
 
+<a class="blog-card" href="./slimming-down-for-debian/">
+  <div class="blog-card-body">
+    <h3>Slimming Fresh down for Debian</h3>
+    <p>Debian builds every Rust program from crates already in its archive. Instead of packaging the crates Fresh needed, we made Fresh stop needing them: Debian's own QuickJS, esbuild instead of oxc, and 84 fewer crates.</p>
+  </div>
+</a>
+
 <a class="blog-card" href="./packaging-for-linux/">
   <div class="blog-card-body">
     <h3>I hate packaging my software for Linux</h3>
