@@ -436,6 +436,8 @@ class Panel {
     const moved = r.selected.some((s) => s !== st.sel);
     for (const s of r.selected) st.sel = s;
     st.sel = Math.max(0, Math.min(n - 1, st.sel));
+    // A header is not selected: the first row past it is.
+    while (st.sel < n - 1 && r.header(st.sel)) st.sel++;
     const el = withClass(div("ui-list"), r.class);
     el.tabIndex = 0;
     el.dataset.key = key;
@@ -531,10 +533,11 @@ class Panel {
       else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
     };
     this.movers.set(key, (d, e) => {
-      let i = st.sel + d;
-      // Skip header rows.
-      while (i > 0 && i < n - 1 && r.header(i)) i += Math.sign(d);
-      st.sel = Math.max(0, Math.min(n - 1, i));
+      // Past header rows, the way it moves; none but headers that way: it
+      // stays.
+      let i = Math.max(0, Math.min(n - 1, st.sel + d));
+      while (i >= 0 && i < n && r.header(i)) i += Math.sign(d);
+      if (i >= 0 && i < n) st.sel = i;
       show();
       draw();
       if (n > 0) r.onSelect(st.sel, "key", e);

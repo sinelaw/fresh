@@ -169,6 +169,9 @@ function noCommands() { return new Map(); }
 function noStatus() { return {}; }
 /** function failedServer(why: String) => LspState */
 function failedServer(why) { return { kind: "failed", why }; }
+// Whether the keyboard is in a panel or the palette.
+/** function keyboardInPanel() => Boolean */
+function keyboardInPanel() { return listOf(document.activeElement).some((a) => a.closest(".panel, #prompt") !== null); }
 // Whether a language's server may be asked (not stopped, nor failed).
 /** function serverUp(s: LspState | Undefined) => Boolean */
 function serverUp(s) { return s === undefined || s.kind === "running"; }
@@ -776,7 +779,12 @@ export class App {
   }
   onViewShown(pane, v) {
     this.rememberLayout();
-    if (pane === this.activePane) { this.giveKeyboard(pane); this.bufferEvent("buffer.activated", v.buf, [], false); }
+    // The keyboard follows to it, unless it is in a panel or the palette
+    // (a list previewing what it selects keeps it).
+    if (pane === this.activePane) {
+      if (!keyboardInPanel()) this.giveKeyboard(pane);
+      this.bufferEvent("buffer.activated", v.buf, [], false);
+    }
     this.updateStatus();
   }
   // Show a buffer: in the active pane ("tab"), a new split below ("split")
