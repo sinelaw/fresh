@@ -28,7 +28,9 @@ const LITERAL = ["syntax.string", "syntax.comment"];
 const SLICE_BYTES = 32 * 1024;
 
 // A run of one category on a line: byte offsets [s, e) from the line's start.
-/** type Run = {s: Number, e: Number, c: Number} */
+// `b`: the category whose background it sits on, when not its own (a
+// source token in a diff's added or removed row).
+/** type Run = {s: Number, e: Number, c: Number, b: Number | Null} */
 // What the page knows of a line's colours: exact (parsed from the true
 // state), provisional (parsed from a guessed state, until the background
 // pass reaches it), or carried (moved through an edit not yet answered).
@@ -88,7 +90,7 @@ class Engine {
       i += 3;
       /** const runs: Run[] */
       const runs = [];
-      for (let r = 0; r < n; r++, i += 3) runs.push({ s: w(i), e: w(i) + w(i + 1), c: w(i + 2) });
+      for (let r = 0; r < n; r++, i += 4) runs.push({ s: w(i), e: w(i) + w(i + 1), c: w(i + 2), b: backgroundOf(w(i + 3)) });
       out.push({ line, exact, runs });
     }
     return out;
@@ -172,9 +174,9 @@ export class Colours {
     const added = segs.length - 1;
     const first = this.lines[line] ?? UNKNOWN, last = this.lines[line + k] ?? UNKNOWN;
     const cat = categoryBefore(first, col);
-    const typed = (s, len) => (cat === null || len === 0 ? [] : [{ s, e: s + len, c: cat }]);
-    const head = runsOf(first).flatMap((r) => (r.s < col ? [{ s: r.s, e: Math.min(r.e, col), c: r.c }] : []));
-    const tail = (shift) => runsOf(last).flatMap((r) => (r.e > endCol ? [{ s: Math.max(r.s, endCol) + shift, e: r.e + shift, c: r.c }] : []));
+    const typed = (s, len) => (cat === null || len === 0 ? [] : [{ s, e: s + len, c: cat, b: null }]);
+    const head = runsOf(first).flatMap((r) => (r.s < col ? [{ s: r.s, e: Math.min(r.e, col), c: r.c, b: r.b }] : []));
+    const tail = (shift) => runsOf(last).flatMap((r) => (r.e > endCol ? [{ s: Math.max(r.s, endCol) + shift, e: r.e + shift, c: r.c, b: r.b }] : []));
     const known = first.state !== "unknown" && last.state !== "unknown";
     /** const made: LineColours[] */
     const made = [];
@@ -214,7 +216,7 @@ export class Colours {
     const text = L.lines[li];
     const hit = this.spanCache.get(lc);
     if (hit !== undefined && hit.text === text) return hit.spans;
-    const spans = utf16Runs(lc.runs, L, li).map((r) => ({ s: r.s, e: r.e, style: styleOf(this.keys[r.c]) }));
+    const spans = utf16Runs(lc.runs, L, li).map((r) => ({ s: r.s, e: r.e, style: styleOf(this.keys[r.c], listOf(r.b).map((b) => this.keys[b]).at(0) ?? null) }));
     this.spanCache.set(lc, { text, spans });
     return spans;
   }
@@ -277,7 +279,7 @@ function moved(li, changes) {
 // lines `L` convert them), in order.
 /** function utf16Runs(runs: Run[], L: Lines, li: Number) => Run[] */
 function utf16Runs(runs, L, li) {
-  return [...runs].sort((x, y) => x.s - y.s).map((r) => ({ s: L.idxAt(li, r.s), e: L.idxAt(li, r.e), c: r.c }));
+  return [...runs].sort((x, y) => x.s - y.s).map((r) => ({ s: L.idxAt(li, r.s), e: L.idxAt(li, r.e), c: r.c, b: r.b }));
 }
 // The bytes of a line the engine colours (fresh-highlight's
 // MAX_LINE_BYTES); past them a line is plain text.
@@ -286,19 +288,27 @@ const COLOURED_BYTES = 20000;
 // the last character boundary within COLOURED_BYTES.
 /** function colouredUnits(L: Lines, li: Number) => Number */
 function colouredUnits(L, li) { return L.idxBefore(li, COLOURED_BYTES); }
-// The style a category's theme key draws with: a syntax key colours the
-// text; a diff key fills the row behind it.
+// A run's background word from the module: `1 << 31 | category`, or 0.
+/** function backgroundOf(word: Number) => Number | Null */
+function backgroundOf(word) { return word >= 0x80000000 ? word - 0x80000000 : null; }
+// The style a run draws with, from its category's theme key and the key of
+// the category it sits on (none: its own): a syntax key colours the text;
+// a diff key fills the row behind it.
 /** const styles: Map<String, Drawn> */
 const styles = new Map();
-/** function styleOf(key: String) => Drawn */
-function styleOf(key) {
-  const hit = styles.get(key);
+/** function styleOf(key: String, under: String | Null) => Drawn */
+function styleOf(key, under) {
+  const id = `${key} ${under}`;
+  const hit = styles.get(id);
   if (hit !== undefined) return hit;
-  /** const c: String */
-  const c = THEME[key] ?? "";
-  const fill = key.startsWith("editor.");
-  const st = Object.freeze({ fg: fill ? "" : c, bg: fill ? c : "", bold: false, italic: false, underline: false, strike: false, mono: false, markup: false, wavy: "" });
-  styles.set(key, st);
+  const fill = (k) => k.startsWith("editor.");
+  /** const fg: String */
+  const fg = fill(key) ? "" : THEME[key] ?? "";
+  /** const bgKey: String[] */
+  const bgKey = [...listOf(under), key].filter(fill);
+  const bg = bgKey.map((k) => THEME[k] ?? "").at(0) ?? "";
+  const st = Object.freeze({ fg, bg, bold: false, italic: false, underline: false, strike: false, mono: false, markup: false, wavy: "" });
+  styles.set(id, st);
   return st;
 }
 

@@ -324,8 +324,10 @@ pub extern "C" fn hl_work(budget_bytes: u32) -> u32 {
 
 /// The lines of document `doc` whose runs changed since the last take, as
 /// words: `[total_words, n_lines]`, then per line `[line, flags (bit 0:
-/// exact), n_runs]` and `n_runs` × `[start, len, category_index]`. Null on
-/// error (see [`hl_error`]).
+/// exact), n_runs]` and `n_runs` × `[start, len, category_index,
+/// background]`, where `background` is `1 << 31 | category_index` of the
+/// category the run sits on, or 0 for none. Null on error (see
+/// [`hl_error`]).
 #[no_mangle]
 pub extern "C" fn hl_take(doc: u32) -> *const u32 {
     with(|m| {
@@ -343,16 +345,26 @@ pub extern "C" fn hl_take(doc: u32) -> *const u32 {
     })
 }
 
+/// A run's background category as one word: `BACKGROUND | index`, or 0
+/// for none.
+const BACKGROUND: u32 = 1 << 31;
+fn background(category: Option<Category>) -> u32 {
+    category.map_or(0, |c| BACKGROUND | u32::from(c.index()))
+}
+
 fn encode(lines: &[LineRuns], out: &mut Vec<u32>) {
     out.clear();
     out.extend([0, word(lines.len())]);
     for line in lines {
         out.extend([line.line, u32::from(line.exact), word(line.runs.len())]);
-        out.extend(
-            line.runs
-                .iter()
-                .flat_map(|run| [run.start, run.len, u32::from(run.cat.index())]),
-        );
+        out.extend(line.runs.iter().flat_map(|run| {
+            [
+                run.start,
+                run.len,
+                u32::from(run.cat.index()),
+                background(run.background),
+            ]
+        }));
     }
     out[0] = word(out.len());
 }
