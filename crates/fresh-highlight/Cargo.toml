@@ -1,0 +1,24 @@
+[package]
+name = "fresh-highlight"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Incremental syntect highlighting of Fresh documents, shared by the editor and its web client"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# No regex engine here: the consumer picks one (`regex-onig` natively,
+# `regex-fancy` in WebAssembly) and cargo's feature unification hands it to
+# this crate's syntect.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load"] }
+
+[dev-dependencies]
+# A regex engine, so the crate builds on its own for its tests, and the
+# bundled syntaxes to test against.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "default-syntaxes", "regex-fancy"] }
+proptest = "1.9"
+
+[lints]
+workspace = true

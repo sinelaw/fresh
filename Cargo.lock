@@ -1530,6 +1530,7 @@ dependencies = [
  "dirs",
  "encoding_rs",
  "fresh-core",
+ "fresh-highlight",
  "fresh-i18n",
  "fresh-languages",
  "jsonc-parser",
@@ -1574,6 +1575,22 @@ dependencies = [
  "tracing",
  "windows-sys 0.60.2",
  "winit",
+]
+
+[[package]]
+name = "fresh-highlight"
+version = "0.5.9"
+dependencies = [
+ "proptest",
+ "syntect",
+]
+
+[[package]]
+name = "fresh-highlight-wasm"
+version = "0.5.9"
+dependencies = [
+ "fresh-highlight",
+ "syntect",
 ]
 
 [[package]]

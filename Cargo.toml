@@ -18,10 +18,13 @@ members = [
     "crates/fresh-quickjs-sys",
     "crates/fresh-js-macros",
     "crates/fresh-web-poc",
+    "crates/fresh-highlight",
+    "crates/fresh-highlight-wasm",
 ]
 default-members = [
     "crates/fresh-editor",
     "crates/fresh-editor-core",
+    "crates/fresh-highlight",
     "crates/fresh-ui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
@@ -73,6 +76,7 @@ fresh-core = { version = "0.5.9", path = "crates/fresh-core" }
 # and with them the whole bundled tree-sitter grammar set.
 fresh-editor-core = { version = "0.5.9", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.5.9", path = "crates/fresh-gui" }
+fresh-highlight = { version = "0.5.9", path = "crates/fresh-highlight" }
 # `default-features = false` on these two so a member can build them without
 # oxc (their `oxc` feature); members that want it enable it explicitly.
 fresh-parser-js = { version = "0.5.9", path = "crates/fresh-parser-js", default-features = false }
@@ -186,6 +190,18 @@ inherits = "release"
 inherits = "release"
 panic = "abort"
 strip = true
+
+# The web client's highlighter (`crates/fresh-highlight-wasm`), built for
+# wasm32 by `crates/fresh-web-poc/build.rs`. A profile of its own, so these
+# settings reach no other crate: regex matching dominates its time, so it is
+# built for speed (opt-level 3) rather than the size `release` favours, and
+# without unwinding. Fat LTO and one codegen unit come from `release`.
+#
+#   cargo build -p fresh-highlight-wasm --target wasm32-unknown-unknown --profile wasm
+[profile.wasm]
+inherits = "release"
+opt-level = 3
+panic = "abort"
 
 # Optimize the critical dependencies in the plugin-load path at -O3 even
 # in dev/test builds. These are the only deps where unoptimized code

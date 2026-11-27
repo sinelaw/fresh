@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.95"
 components = ["rustfmt", "clippy"]
+# The web client's highlighter is built for the browser (crates/fresh-web-poc/build.rs).
+targets = ["wasm32-unknown-unknown"]

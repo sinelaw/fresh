@@ -93,23 +93,27 @@ class Engine {
   }
   // `f(ptr, len)` with `bytes` copied into the module's memory.
   withBytes(bytes, f) {
-    const p = this.x.hl_alloc(bytes.length);
+    const p = this.x.hl_alloc(bytes.length) >>> 0;
+    if (p === 0) throw new Error(this.str(this.x.hl_error() >>> 0));
     this.bytesAt(p, bytes.length).set(bytes);
     try { return f(p, bytes.length); } finally { this.x.hl_free(p, bytes.length); }
   }
-  check(code) { if (code !== 0) throw new Error(this.str(this.x.hl_error())); }
+  check(code) { if (code !== 0) throw new Error(this.str(this.x.hl_error() >>> 0)); }
   init(packdump) { this.withBytes(packdump, (p, n) => this.check(this.x.hl_init(p, n))); }
-  categories() { return JSON.parse(this.str(this.x.hl_categories())); }
+  categories() { return JSON.parse(this.str(this.x.hl_categories() >>> 0)); }
   open(doc, syntax, text) {
     this.withBytes(enc.encode(syntax), (sp, sn) => this.withBytes(enc.encode(text), (tp, tn) => this.check(this.x.hl_open(doc, sp, sn, tp, tn))));
   }
-  close(doc) { this.x.hl_close(doc); }
+  close(doc) { this.check(this.x.hl_close(doc)); }
   edit(doc, at, removed, text) { this.withBytes(enc.encode(text), (p, n) => this.check(this.x.hl_edit(doc, at, removed, p, n))); }
-  want(doc, from, to) { this.x.hl_want(doc, from, to); }
+  want(doc, from, to) { this.check(this.x.hl_want(doc, from, to)); }
+  // Parse up to `budget` bytes: whether work remains. A grammar that failed
+  // closes its document (take then fails for it).
   work(budget) { return this.x.hl_work(budget) === 1; }
   // The lines whose runs changed since the last take.
   take(doc) {
-    const ptr = this.x.hl_take(doc);
+    const ptr = this.x.hl_take(doc) >>> 0;
+    if (ptr === 0) throw new Error(this.str(this.x.hl_error() >>> 0));
     const w = (k) => this.u32(ptr + 4 * k);
     /** const out: {line: Number, exact: Boolean, runs: Run[]}[] */
     const out = [];
@@ -443,7 +447,7 @@ export class Highlighting {
   }
   colours(b) { return found(this.docs.get(b.id)).map((d) => d.colours); }
   // Lines [from, to) of `b` are about to be drawn.
-  want(b, from, to) { this.post(wantMsg(b.id, from, to)); }
+  want(b, from, to) { for (const d of found(this.docs.get(b.id))) if (d.open) this.post(wantMsg(b.id, from, to)); }
 
   // The colours of bytes [start, end) of `b`'s held text once they are
   // exact for its text as it is then: {version, runs: [{start, end, key}]}
@@ -482,11 +486,13 @@ export class Highlighting {
     this.queue = [];
     for (const m of queue) this.deliver(m);
     const more = this.engine.work(SLICE_BYTES);
-    for (const d of this.docs.values()) {
-      const lines = this.engine.take(d.buf.id);
-      if (lines.length === 0) continue;
-      d.colours.apply(d.applied, lines);
-      this.onColours(d.buf);
+    for (const d of [...this.docs.values()].filter((x) => x.open)) {
+      try {
+        const lines = this.engine.take(d.buf.id);
+        if (lines.length === 0) continue;
+        d.colours.apply(d.applied, lines);
+        this.onColours(d.buf);
+      } catch (e) { this.refused(d, e); }
     }
     this.answer();
     if (more || this.queue.length > 0) { this.scheduled = true; this.tick(); }
@@ -499,15 +505,15 @@ export class Highlighting {
       else if (m.kind === "edit") { this.engine.edit(m.doc, m.at, m.removed, m.text); for (const x of found(d)) x.applied = m.version; }
       else if (m.kind === "close") { this.engine.close(m.doc); for (const x of found(d)) x.applied = m.version; }
       else this.engine.want(m.doc, m.from, m.to);
-    } catch (e) {
-      // The engine refused (an unknown syntax, an edit it cannot place):
-      // the buffer shows plain text from now on, and says why.
-      this.engine.close(m.doc);
-      for (const x of listOf(d ?? null)) {
-        this.detach(x.buf);
-        x.buf.emit(errorNews(`${x.buf.name}: no syntax colours (${failure(e)})`));
-        this.onColours(x.buf);
-      }
-    }
+    } catch (e) { for (const x of found(d)) this.refused(x, e); }
+  }
+  // The engine refused `d`'s buffer (an unknown syntax, an edit it cannot
+  // place, a grammar that failed): it shows plain text from now on, and
+  // says why.
+  refused(d, e) {
+    d.open = false;
+    this.detach(d.buf);
+    d.buf.emit(errorNews(`${d.buf.name}: no syntax colours (${failure(e)})`));
+    this.onColours(d.buf);
   }
 }

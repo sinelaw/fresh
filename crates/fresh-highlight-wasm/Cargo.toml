@@ -1,0 +1,20 @@
+[package]
+name = "fresh-highlight-wasm"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "fresh-highlight as a WebAssembly module with a raw C ABI, for the web client"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fresh-highlight.workspace = true
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "regex-fancy"] }
+
+[lints]
+workspace = true

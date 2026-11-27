@@ -18,6 +18,7 @@ mod authority;
 mod error;
 mod docs;
 mod hub;
+mod languages;
 mod lsp;
 mod lsp_shapes;
 mod orchestrator;
@@ -38,6 +39,7 @@ use std::sync::Arc;
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+    include!(concat!(env!("OUT_DIR"), "/highlight_wasm.rs"));
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -187,7 +189,8 @@ fn main() -> Result<()> {
 /// Requests from clients: `POST /api` (one JSON operation, run on the
 /// blocking pool, since it may wait on a lock, a host or a language server),
 /// `GET /events` (the client's Server-Sent Events stream), skins' files,
-/// and the client's own files.
+/// the client's syntax highlighter and its grammars (`/hl/`), and the
+/// client's own files.
 async fn serve(orch: Arc<Orchestrator>, port: u16) -> Result<()> {
     use axum::routing::{get, post};
     let router = axum::Router::new()
@@ -195,6 +198,8 @@ async fn serve(orch: Arc<Orchestrator>, port: u16) -> Result<()> {
         .route("/events", get(events))
         .route("/skins/{id}/{*path}", get(builtin_skin_file))
         .route("/workspaces/{ws}/skins/{id}/{*path}", get(skin_file))
+        .route("/hl/highlight.wasm", get(highlight_wasm))
+        .route("/hl/syntaxes.packdump", get(syntaxes_packdump))
         .fallback(get(static_file))
         .with_state(orch.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -321,6 +326,32 @@ async fn static_file(uri: axum::http::Uri) -> axum::response::Response {
     let p = uri.path().trim_start_matches('/');
     let p = if p.is_empty() { "index.html" } else { p };
     file_response(p, asset(p))
+}
+
+/// The client's syntax highlighter, built for the browser by `build.rs`.
+async fn highlight_wasm() -> axum::response::Response {
+    built_file("application/wasm", assets::HIGHLIGHT_WASM)
+}
+
+/// The grammars the highlighter loads (`hl_init`): the editor's own syntax
+/// set, as the packdump it starts from.
+async fn syntaxes_packdump() -> axum::response::Response {
+    built_file(
+        "application/octet-stream",
+        fresh_editor_core::primitives::grammar::default_packdump(),
+    )
+}
+
+fn built_file(content_type: &'static str, bytes: &'static [u8]) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// A built-in skin's file.

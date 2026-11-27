@@ -18,6 +18,7 @@
 use crate::docs::{self, Docs};
 use crate::error::{err, Code};
 use crate::hub::{Hub, Room};
+use crate::languages;
 use crate::orchestrator::{now_ms, Meta, Record};
 use crate::workspace::{self, Workspace};
 use crate::{lsp, lsp_shapes, ot, process, terminal};
@@ -461,7 +462,7 @@ impl Session {
             }
             "doc.info" => self.docs.lock().unwrap().get(u(m, "doc")?)?.info(),
             "doc.formats" => json!({
-                "languages": docs::LANGUAGES,
+                "languages": languages::catalog(),
                 "encodings": docs::Encoding::all().iter().map(|e| json!({"name": e.display_name(), "description": e.description()})).collect::<Vec<_>>(),
                 "line_endings": ["LF", "CRLF", "CR"],
             }),
@@ -539,7 +540,7 @@ impl Session {
                 let force = m.get("force").and_then(Value::as_bool).unwrap_or(false);
                 d.save(&ws.recovery_dir(), force)?;
                 let info = d.info();
-                if let Some(server) = d.language.as_deref().and_then(|l| self.lsp.running(l)) {
+                if let Some(server) = d.language_id().and_then(|l| self.lsp.running(l)) {
                     server.notify(
                         "textDocument/didSave",
                         json!({"textDocument": {"uri": d.uri()}}),
@@ -651,7 +652,7 @@ impl Session {
     /// server; returns the primitives as applied, for [`Self::broadcast_ops`].
     fn sequence(&self, d: &mut docs::Doc, base: u64, prims: Vec<ot::Prim>) -> Result<Vec<Value>> {
         let server = (!d.buffer.is_large_file())
-            .then(|| d.language.as_deref().and_then(|l| self.lsp.running(l)))
+            .then(|| d.language_id().and_then(|l| self.lsp.running(l)))
             .flatten();
         let applied = d.edit(base, prims, server.is_some())?;
         if let Some(server) = server {
@@ -886,13 +887,13 @@ impl Session {
             }
         }
         if let Some(lang) = m.get("language") {
-            let lang = lang.as_str().map(String::from);
-            if lang
-                .as_deref()
-                .is_some_and(|l| !docs::LANGUAGES.contains(&l))
-            {
-                fail!(BadRequest, "no language {}", lang.unwrap_or_default());
-            }
+            let lang = lang
+                .as_str()
+                .map(|id| {
+                    languages::by_id(id, d.origin.path())
+                        .ok_or_else(|| err(Code::BadRequest, format!("no language {id}")))
+                })
+                .transpose()?;
             if lang != d.language {
                 self.lsp_close(d);
                 d.language = lang;
@@ -1015,7 +1016,7 @@ impl Session {
         if d.buffer.is_large_file() {
             return Ok(());
         }
-        let Some(lang) = d.language.clone() else {
+        let Some(lang) = d.language_id().map(String::from) else {
             return Ok(());
         };
         if let Some(server) = self.lsp.server(&lang) {
@@ -1032,7 +1033,7 @@ impl Session {
     }
 
     fn lsp_close(&self, d: &docs::Doc) {
-        if let Some(server) = d.language.as_deref().and_then(|l| self.lsp.running(l)) {
+        if let Some(server) = d.language_id().and_then(|l| self.lsp.running(l)) {
             server.notify(
                 "textDocument/didClose",
                 json!({"textDocument": {"uri": d.uri()}}),
@@ -1056,7 +1057,7 @@ impl Session {
             let ids: Vec<u64> = docs
                 .docs
                 .values()
-                .filter(|d| d.language.as_deref() == Some(language))
+                .filter(|d| d.language_id() == Some(language))
                 .map(|d| d.id)
                 .collect();
             for id in ids {
@@ -1082,7 +1083,7 @@ impl Session {
             let docs = self.docs.lock().unwrap();
             let mut diags = self.diags.lock().unwrap();
             for d in docs.docs.values() {
-                if d.language.as_deref() == Some(language) {
+                if d.language_id() == Some(language) {
                     diags.remove(&d.id);
                     self.send_to(
                         d,
@@ -1128,8 +1129,7 @@ impl Session {
             let mut docs = self.docs.lock().unwrap();
             let d = docs.get(u(m, "doc")?)?;
             let server = d
-                .language
-                .as_deref()
+                .language_id()
                 .and_then(|l| self.lsp.running(l))
                 .ok_or_else(|| {
                     err(
@@ -1153,8 +1153,7 @@ impl Session {
             let mut docs = self.docs.lock().unwrap();
             let d = docs.get(u(m, "doc")?)?;
             let server = d
-                .language
-                .as_deref()
+                .language_id()
                 .and_then(|l| self.lsp.running(l))
                 .ok_or_else(|| {
                     err(

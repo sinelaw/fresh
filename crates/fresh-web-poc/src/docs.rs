@@ -12,6 +12,7 @@
 //! in text it never fetched.
 
 use crate::error::{err, Code};
+use crate::languages::{self, Language};
 use crate::ot::{transform_seqs, Prim};
 use crate::workspace::{host, signature, Fs};
 use anyhow::Result;
@@ -75,7 +76,7 @@ pub struct Doc {
     /// Log version: the number of edit batches sequenced so far.
     pub version: u64,
     pub log: VecDeque<LogEntry>,
-    pub language: Option<String>,
+    pub language: Option<Language>,
     pub clients: HashSet<u64>,
     pub readonly: bool,
     /// The file's (size, mtime) when it was loaded or last saved; `None`
@@ -116,25 +117,6 @@ pub struct Docs {
     next_id: u64,
 }
 
-/// The languages a document can be set to (`doc.set`), as `language_of`
-/// names them.
-pub const LANGUAGES: &[&str] = &[
-    "c",
-    "cpp",
-    "css",
-    "go",
-    "html",
-    "javascript",
-    "json",
-    "markdown",
-    "python",
-    "rust",
-    "shell",
-    "toml",
-    "typescript",
-    "yaml",
-];
-
 /// A line ending by the name `doc.info` gives it.
 pub fn line_ending_named(name: &str) -> Option<LineEnding> {
     [LineEnding::LF, LineEnding::CRLF, LineEnding::CR]
@@ -148,28 +130,6 @@ pub fn encoding_named(name: &str) -> Option<Encoding> {
         .iter()
         .copied()
         .find(|e| e.display_name() == name)
-}
-
-pub fn language_of(path: &Path) -> Option<String> {
-    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    let lang = match ext.as_str() {
-        "rs" => "rust",
-        "py" => "python",
-        "js" | "mjs" | "cjs" => "javascript",
-        "ts" | "tsx" => "typescript",
-        "json" => "json",
-        "md" | "markdown" => "markdown",
-        "toml" => "toml",
-        "sh" | "bash" => "shell",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "hpp" => "cpp",
-        "go" => "go",
-        "html" => "html",
-        "css" => "css",
-        "yml" | "yaml" => "yaml",
-        _ => return None,
-    };
-    Some(lang.to_string())
 }
 
 /// Primitives that turn `old` into `new`, for following a change made on
@@ -261,6 +221,18 @@ impl Doc {
         }
     }
 
+    /// Its language's id: the key its language server is configured by.
+    pub fn language_id(&self) -> Option<&str> {
+        self.language.as_ref().map(|l| l.id.as_str())
+    }
+
+    /// The language of its file as named now (by name, else by its first
+    /// line); none while untitled.
+    fn detect_language(&self) -> Option<Language> {
+        let path = self.origin.path()?;
+        languages::of_path(path, self.buffer.first_line_lossy().as_deref())
+    }
+
     pub fn info(&self) -> Value {
         json!({
             "doc": self.id,
@@ -271,7 +243,9 @@ impl Doc {
             "lines": self.buffer.line_count(),
             "large": self.buffer.is_large_file(),
             "modified": self.buffer.is_modified(),
-            "language": self.language,
+            "language": self.language_id(),
+            "syntax": self.language.as_ref().and_then(|l| l.syntax.as_deref()),
+            "comment": self.language.as_ref().and_then(|l| l.comment.as_deref()),
             "encoding": self.buffer.encoding().display_name(),
             "line_ending": self.buffer.line_ending().display_name(),
             "readonly": self.readonly,
@@ -636,11 +610,12 @@ impl Docs {
         let id = self.next_id;
         let mut clients = HashSet::new();
         clients.insert(client);
+        let language = languages::of_path(&path, buffer.first_line_lossy().as_deref());
         self.docs.insert(
             id,
             Doc {
                 id,
-                language: language_of(&path),
+                language,
                 origin: Origin::File(path.clone()),
                 buffer,
                 version: 0,
@@ -729,10 +704,10 @@ impl Docs {
             .unwrap_or_else(|_| path.to_path_buf());
         d.disk = signature(&fs, &path);
         d.reported = None;
-        d.language = language_of(&path).or(d.language.take());
         let old = std::mem::replace(&mut d.origin, Origin::File(path.clone()))
             .path()
             .map(Path::to_path_buf);
+        d.language = d.detect_language().or(d.language.take());
         if let Some(o) = &old {
             self.by_path.remove(o);
         }
@@ -797,10 +772,11 @@ impl Docs {
             self.by_path.insert(np.clone(), id);
             d.buffer.rename_file_path(np.clone());
             d.origin = Origin::File(np.clone());
+            let language = d.detect_language();
             out.push(Moved {
                 id,
                 path: old,
-                language: std::mem::replace(&mut d.language, language_of(&np)),
+                language: std::mem::replace(&mut d.language, language).map(|l| l.id),
             });
         }
         out

@@ -175,6 +175,13 @@ impl GrammarEntry {
     }
 }
 
+/// The syntax set [`GrammarRegistry::defaults_only`] starts from — syntect's
+/// defaults plus the embedded grammars — as the uncompressed packdump
+/// `build.rs` compiles (`syntect::dumps::from_uncompressed_data` loads it).
+pub fn default_packdump() -> &'static [u8] {
+    include_bytes!(concat!(env!("OUT_DIR"), "/default_syntaxes.packdump"))
+}
+
 /// Syntect grammars folded into another language's catalog entry as a
 /// dialect, keyed by the dialect's own `file_extensions`.
 const SYNTECT_DIALECTS: &[(&str, &str)] = &[("TypeScriptReact", "TypeScript")];
@@ -524,10 +531,8 @@ impl GrammarRegistry {
         // build-time packdump. This avoids the expensive into_builder() + build()
         // cycle at runtime (~12s → ~300ms).
         tracing::info!("defaults_only: loading pre-compiled syntax packdump...");
-        let syntax_set: SyntaxSet = syntect::dumps::from_uncompressed_data(include_bytes!(
-            concat!(env!("OUT_DIR"), "/default_syntaxes.packdump")
-        ))
-        .expect("Failed to load pre-compiled syntax packdump");
+        let syntax_set: SyntaxSet = syntect::dumps::from_uncompressed_data(default_packdump())
+            .expect("Failed to load pre-compiled syntax packdump");
         tracing::info!(
             "defaults_only: loaded ({} syntaxes)",
             syntax_set.syntaxes().len()
