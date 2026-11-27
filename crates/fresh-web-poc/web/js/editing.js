@@ -11,70 +11,12 @@ import { sel, cursorAt, selecting } from "./view.js";
 import { rpc } from "./rpc.js";
 import { charWidth } from "./layout.js";
 import { foldRange as docFoldRange } from "./doc.js";
+import { CLOSE, partnerOf, openerBefore } from "./brackets.js";
+import { highlightLine, COMMENTS } from "./highlight.js";
 
 const PAIRS = new Map([["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["`", "`"]]);
-const CLOSERS = new Set([")", "]", "}"]);
-const COMMENT = new Map([
-  ["rust", "//"], ["javascript", "//"], ["typescript", "//"], ["go", "//"], ["c", "//"], ["cpp", "//"], ["java", "//"], ["css", "/*"],
-  ["python", "#"], ["shell", "#"], ["toml", "#"], ["yaml", "#"], ["ruby", "#"], ["markdown", "<!--"], ["html", "<!--"],
-]);
 const INDENT = "    ";
 
-// Each bracket's partner.
-const OPEN = new Map([["(", ")"], ["[", "]"], ["{", "}"]]), CLOSE = new Map([[")", "("], ["]", "["], ["}", "{"]]);
-/** function isBracket(c: String | Null) => Boolean */
-function isBracket(c) { return c !== null && (OPEN.has(c) || CLOSE.has(c)); }
-
-// The unmatched opening bracket before index `k` of line `li` (scanning
-// back at most BRACKET_SCAN lines): its byte offset, or null.
-/** function openerIn(lines: String[], starts: Number[], li: Number, k: Number) => Number | Null */
-function openerIn(lines, starts, li, k) {
-  /** const depth: Map<String, Number> */
-  const depth = new Map();
-  let line = li, i = k;
-  for (let n = 0; n < BRACKET_SCAN && line >= 0; n++) {
-    const text = lines[line];
-    for (; i >= 0; i--) {
-      const c = text[i];
-      const opener = CLOSE.get(c);
-      if (opener !== undefined) depth.set(opener, (depth.get(opener) ?? 0) + 1);
-      else if (OPEN.has(c)) {
-        const d = depth.get(c) ?? 0;
-        if (d === 0) return starts[line] + byteLen(text.slice(0, i));
-        depth.set(c, d - 1);
-      }
-    }
-    line--;
-    if (line >= 0) i = lines[line].length - 1;
-  }
-  return null;
-}
-
-// The partner of bracket `ch` at index `k` of line `li` (byte offset `at`),
-// scanning forward from an opener and back from a closer.
-/** function partnerOf(
- *   lines: String[],
- *   starts: Number[],
- *   li: Number,
- *   k: Number,
- *   ch: String,
- *   at: Number,
- * ) => {at: Number, match: Number} | Null */
-function partnerOf(lines, starts, li, k, ch, at) {
-  const opener = OPEN.get(ch), closer = CLOSE.get(ch);
-  const fwd = opener !== undefined, want = opener ?? closer ?? ch;
-  let line = li, i = k, depth = 0;
-  for (let n = 0; n < BRACKET_SCAN && line >= 0 && line < lines.length; n++) {
-    const text = lines[line];
-    for (; i >= 0 && i < text.length; i += fwd ? 1 : -1) {
-      if (text[i] === ch) depth++;
-      else if (text[i] === want && --depth === 0) return { at, match: starts[line] + byteLen(text.slice(0, i)) };
-    }
-    line += fwd ? 1 : -1;
-    if (line >= 0 && line < lines.length) i = fwd ? 0 : lines[line].length - 1;
-  }
-  return null;
-}
 // No block folds there.
 /** function noFold() => Range[] */
 function noFold() { return []; }
@@ -83,8 +25,6 @@ function noFold() { return []; }
 /** const NO_RANGES: Range[][] | Null */
 const NO_RANGES = null;
 
-// How many lines a bracket's match is looked for in.
-const BRACKET_SCAN = 5000;
 const TAB = 4;
 
 // The screen column of UTF-16 index `idx` in `line` (tabs to the next stop,
@@ -162,6 +102,35 @@ export function put(start, end, text) { return putWith(start, end, text, null, n
 /** const KEEP: Replacement | Null */
 export const KEEP = null;
 
+// What an edit says when it needs text the buffer does not hold.
+const UNHELD = "The selection reaches past the loaded part of the file";
+
+// A range and its text.
+/** type Held = {start: Number, end: Number, text: String} */
+/** function heldOf(start: Number, end: Number, text: String) => Held */
+function heldOf(start, end, text) { return { start, end, text }; }
+
+// The held text of each cursor's range (`rangeOf`: null for a cursor
+// without one), by cursor: a list of at most one, none when a range
+// reaches past the text buffer `b` holds.
+/** function heldTexts(
+ *   b: Buffer,
+ *   cursors: Cursor[],
+ *   rangeOf: (c: Cursor) => {start: Number, end: Number} | Null,
+ * ) => Map<Cursor, Held>[] */
+export function heldTexts(b, cursors, rangeOf) {
+  /** const held: Map<Cursor, Held> */
+  const held = new Map();
+  let ranged = 0;
+  for (const c of cursors) {
+    for (const r of listOf(rangeOf(c))) {
+      ranged += 1;
+      for (const text of listOf(b.textRange(r.start, r.end))) held.set(c, heldOf(r.start, r.end, text));
+    }
+  }
+  return held.size === ranged ? [held] : [];
+}
+
 // Each cursor's replacement, last in the text first.
 /** function replacements(
  *   cursors: Cursor[],
@@ -236,11 +205,12 @@ function isWord(c) { return listOf(c).some((x) => /[\p{L}\p{N}_]/u.test(x)); }
 function lenOf(c) { return listOf(c).map(byteLen).at(0) ?? 0; }
 
 // The unmatched opening bracket before `p` (in the held lines), or null.
-function openerBefore(b, p) {
+/** function openerAt(b: Buffer, p: Number) => Number | Null */
+function openerAt(b, p) {
   const L = b.held;
   const li = L.indexOf(p);
   if (li < 0) return null;
-  return openerIn(L.lines, L.starts, li, byteToIdx(L.lines[li], p - L.starts[li]) - 1);
+  return openerBefore(b.language, L, li, byteToIdx(L.lines[li], p - L.starts[li]));
 }
 
 export function shrinkSelection(pane) {
@@ -381,20 +351,20 @@ export function foldAll(pane) {
   pane.scheduleRender();
 }
 
-// The bracket at `p` (or just before it) and its match: {at, match}
-// byte offsets, or null. Scans the held lines out from it, at most
-// `BRACKET_SCAN` lines, a line at a time.
+// The bracket at `p` (else the one just before it) and its partner:
+// {at, match} byte offsets, or null (neither has one in the held lines).
+// Brackets in strings and comments do not count.
+/** function bracketPair(b: Buffer, p: Number) => {at: Number, match: Number} | Null */
 export function bracketPair(b, p) {
-  const L = b.text;
-  if (!L) return null;
-  // The bracket at the caret, else the one before it.
-  const here = charAtPos(b, p), before = charBefore(b, p);
-  const onHere = isBracket(here);
-  const ch = onHere ? here : before, at = onHere ? p : p - 1;
-  if (ch === null || !isBracket(ch)) return null;
-  const li = L.indexOf(at);
-  if (li < 0) return null;
-  return partnerOf(L.lines, L.starts, li, byteToIdx(L.lines[li], at - L.starts[li]), ch, at);
+  for (const L of listOf(b.text)) {
+    for (const at of [p, p - 1]) {
+      const li = L.indexOf(at);
+      if (li < 0) continue;
+      const match = partnerOf(b.language, L, li, byteToIdx(L.lines[li], at - L.starts[li]));
+      if (match !== null) return { at, match };
+    }
+  }
+  return null;
 }
 
 export function selectLine(pane) {
@@ -421,28 +391,22 @@ function structureAround(b, s) {
   const li = L.indexOf(s.start);
   if (li < 0) return out;
   const line = L.lines[li], ls = L.starts[li];
-  // Strings on the line: quote pairs, left to right.
-  for (let i = 0; i < line.length; i++) {
-    const q = line[i];
-    if (q !== '"' && q !== "'" && q !== "`") continue;
-    let j = i + 1;
-    while (j < line.length && line[j] !== q) j += line[j] === "\\" ? 2 : 1;
-    if (j >= line.length) break;
-    const a = ls + byteLen(line.slice(0, i)), z = ls + byteLen(line.slice(0, j + 1));
+  // The closed strings on the line (as the highlighter finds them): the
+  // inside and the string.
+  const closed = (x) => x.k === "syntax.string" && x.e - x.s >= 2 && line[x.e - 1] === line[x.s];
+  for (const x of highlightLine(b.language, line).filter(closed)) {
+    const a = ls + byteLen(line.slice(0, x.s)), z = ls + byteLen(line.slice(0, x.e));
     add(a + 1, z - 1);
     add(a, z);
-    i = j;
   }
   // Bracket pairs around it, outwards.
-  let from = s.start;
-  for (let guard = 0; guard < 64; guard++) {
-    const open = openerBefore(b, from);
-    if (open == null) break;
-    const pair = bracketPair(b, open);
-    if (!pair || pair.match < s.end) { from = open; continue; }
-    add(open + 1, pair.match);
-    add(open, pair.match + 1);
-    from = open;
+  for (let open = openerAt(b, s.start); open !== null; open = openerAt(b, open)) {
+    for (const pair of listOf(bracketPair(b, open))) {
+      if (pair.match >= s.end) {
+        add(open + 1, pair.match);
+        add(open, pair.match + 1);
+      }
+    }
   }
   // The line's text, then the line with its break.
   const text0 = ls + byteLen((/^\s*/.exec(line) ?? [""])[0]);
@@ -521,6 +485,13 @@ export class Editing {
   // KEEP to leave its text alone. One batch, one undo step; each cursor
   // ends where its replacement puts it.
   replace(pane, fn) { return this.replaceTyped(pane, fn, "none"); }
+  // The held text of each cursor's range (see heldTexts); none, said so,
+  // when a range reaches past the held text.
+  held(b, cursors, rangeOf) {
+    const held = heldTexts(b, cursors, rangeOf);
+    if (held.length === 0) this.editor.say(UNHELD);
+    return held;
+  }
   // The same, typed text (`typing`: "start" or "continue" a run, which is
   // one undo step, or "none"; see buffer.js).
   replaceTyped(pane, fn, typing) {
@@ -749,22 +720,20 @@ export class Editing {
     if (text.length === 1) {
       const closer = PAIRS.get(text);
       // Overtype a closer that is already there.
-      if ((CLOSERS.has(text) || text === '"' || text === "'" || text === "`") && v.cursors.every((c) => !sel(c) && charAtPos(b, c.pos) === text) && pairsOn) {
+      if ((CLOSE.has(text) || text === '"' || text === "'" || text === "`") && v.cursors.every((c) => !sel(c) && charAtPos(b, c.pos) === text) && pairsOn) {
         this.move(pane, (c) => c.pos + 1, false);
         return done();
       }
       if (closer && pairsOn) {
+        const held = this.held(b, v.cursors, sel);
+        if (held.length === 0) return done();
         this.replaceTyped(pane, (c) => {
-          const s = sel(c);
-          if (s) {
-            // Surround the selection.
-            const inner = b.textRange(s.start, s.end) ?? "";
-            return putWith(s.start, s.end, text + inner + closer, 1 + byteLen(inner), 1);
-          }
+          // Surround the selection.
+          for (const s of held.flatMap((h) => found(h.get(c)))) return putWith(s.start, s.end, text + s.text + closer, 1 + byteLen(s.text), 1);
           const next = charAtPos(b, c.pos);
           const prev = charBefore(b, c.pos);
           const quote = text === closer;
-          const ok = (next == null || /\s/.test(next) || CLOSERS.has(next) || next === ",") && !(quote && isWord(prev));
+          const ok = (next == null || /\s/.test(next) || CLOSE.has(next) || next === ",") && !(quote && isWord(prev));
           return ok ? putWith(c.pos, c.pos, text + closer, 1, null) : put(c.pos, c.pos, text);
         }, typing);
         return done();
@@ -797,7 +766,7 @@ export class Editing {
       const t = before.trimEnd();
       const opens = /[{([]$/.test(t) || (lang === "python" && t.endsWith(":"));
       const next = charAtPos(b, s.end);
-      if (opens && next != null && CLOSERS.has(next) && PAIRS.get(t.slice(-1)) === next) {
+      if (opens && next != null && CLOSE.has(next) && PAIRS.get(t.slice(-1)) === next) {
         const inner = "\n" + indent + INDENT;
         return putWith(s.start, s.end, inner + "\n" + indent, byteLen(inner), null);
       }
@@ -889,12 +858,15 @@ export class Editing {
   // selected afterwards.
   transform(pane, f) {
     const b = pane.view.buf;
-    this.replace(pane, (c) => {
-      const s = sel(c) ?? wordAt(b, c.pos);
-      if (!s) return KEEP;
-      const text = f(b.textRange(s.start, s.end) ?? "");
-      return putWith(s.start, s.end, text, byteLen(text), 0);
-    });
+    for (const held of this.held(b, pane.view.cursors, (c) => sel(c) ?? wordAt(b, c.pos))) {
+      this.replace(pane, (c) => {
+        for (const s of found(held.get(c))) {
+          const text = f(s.text);
+          return putWith(s.start, s.end, text, byteLen(text), 0);
+        }
+        return KEEP;
+      });
+    }
   }
 
   // The lines each selection covers, sorted (case-sensitively, as the
@@ -953,11 +925,18 @@ export class Editing {
   }
 
   toggleComment(pane) {
+    const b = pane.view.buf;
+    const comment = listOf(b.language).flatMap((l) => found(COMMENTS.get(l)));
+    if (comment.length === 0) { this.editor.say(`No comments in ${b.language ?? "plain text"}`); return; }
+    this.toggleCommentWith(pane, comment[0].open, listOf(comment[0].close).map((x) => ` ${x}`).at(0) ?? "");
+  }
+  // Comment the lines the cursors are on with `prefix` (and `close` at
+  // their end: "" for a comment that runs to the line's end), or
+  // uncomment them when they all are.
+  toggleCommentWith(pane, prefix, close) {
     const v = pane.view;
     const b = v.buf;
     const L = b.held;
-    const prefix = listOf(b.language).flatMap((l) => found(COMMENT.get(l))).at(0) ?? "//";
-    const close = prefix === "<!--" ? " -->" : prefix === "/*" ? " */" : "";
     const lines = new Set();
     for (const c of v.cursors) { const [a, z] = lineSpan(b, c); for (let i = a; i <= z; i++) lines.add(i); }
     const idx = [...lines].filter((i) => L.lines[i].trim() !== "");
@@ -999,11 +978,14 @@ export class Editing {
       pane.scheduleRender();
       return;
     }
-    const needle = b.textRange(s.start, s.end) ?? "";
-    if (needle === "") return;
-    const L = b.held;
+    for (const needle of listOf(b.textRange(s.start, s.end))) this.selectNext(pane, needle, sel(prim) ?? s);
+  }
+
+  // A cursor added selecting the next `needle` after `lastSel`.
+  selectNext(pane, needle, lastSel) {
+    const v = pane.view;
+    const L = v.buf.held;
     const all = L.lines.join("\n");
-    const lastSel = sel(prim) ?? s;
     let i = all.indexOf(needle, byteToIdx(all, lastSel.end - L.start));
     if (i < 0) i = all.indexOf(needle);
     if (i < 0) return;
@@ -1021,9 +1003,13 @@ export class Editing {
     const found = [...listOf(sel(v.cursors[0])), ...listOf(wordAt(b, v.primary.pos))];
     if (found.length === 0) return;
     const s = found[0];
-    const needle = b.textRange(s.start, s.end) ?? "";
-    if (needle === "") return;
-    const L = b.held;
+    for (const needle of listOf(b.textRange(s.start, s.end))) this.selectAll(pane, needle, s.start);
+  }
+
+  // Every `needle` selected, the one at `from` first.
+  selectAll(pane, needle, from) {
+    const v = pane.view;
+    const L = v.buf.held;
     const all = L.lines.join("\n");
     const out = [];
     for (let i = all.indexOf(needle); i >= 0; i = all.indexOf(needle, i + needle.length)) {
@@ -1031,7 +1017,7 @@ export class Editing {
       out.push(selecting(start + byteLen(needle), start));
     }
     if (out.length === 0) return;
-    const first = out.findIndex((c) => c.anchor === s.start);
+    const first = out.findIndex((c) => c.anchor === from);
     if (first > 0) out.unshift(out.splice(first, 1)[0]);
     v.cursors = out;
     this.editor.say(`${out.length} occurrences selected`);

@@ -9,6 +9,8 @@
 // comments, numbers and markdown markup, line by line (a block comment's
 // continuation lines are not tracked).
 
+import { found } from "./maybe.js";
+
 const v = (name) => `var(--${name})`;
 /** const THEME_KEYS: Dict<String> */
 const THEME_KEYS = {
@@ -121,8 +123,22 @@ const KW = {
 const kwSets = {};
 for (const [lang, words] of Object.entries(KW)) kwSets[lang] = new Set(words.split(" "));
 
-/** const COMMENT: Dict<String> */
-const COMMENT = { rust: "//", javascript: "//", typescript: "//", go: "//", c: "//", cpp: "//", python: "#", shell: "#", toml: "#", yaml: "#" };
+// Each language's comment: the text that opens one and the text that
+// closes it (none: it runs to the line's end).
+/** type Comment = {open: String, close: String | Null} */
+/** function lineComment(open: String) => Comment */
+function lineComment(open) { return { open, close: null }; }
+/** function blockComment(open: String, close: String) => Comment */
+function blockComment(open, close) { return { open, close }; }
+/** const COMMENTS: Map<String, Comment> */
+export const COMMENTS = new Map([
+  ["rust", lineComment("//")], ["javascript", lineComment("//")], ["typescript", lineComment("//")], ["go", lineComment("//")],
+  ["c", lineComment("//")], ["cpp", lineComment("//")], ["java", lineComment("//")],
+  ["python", lineComment("#")], ["shell", lineComment("#")], ["toml", lineComment("#")], ["yaml", lineComment("#")], ["ruby", lineComment("#")],
+  ["css", blockComment("/*", "*/")],
+  ["markdown", blockComment("<!--", "-->")],
+  ["html", blockComment("<!--", "-->")],
+]);
 
 /** function span(s: Number, e: Number, k: String) => Highlight */
 const span = (s, e, k) => ({ s, e, k, bold: false, italic: false });
@@ -139,11 +155,11 @@ export function highlightLine(lang, text) {
     return k ? [span(0, text.length, k)] : [];
   }
   const kws = kwSets[lang];
-  const cm = COMMENT[lang];
+  const lineComments = found(COMMENTS.get(lang)).filter((x) => x.close === null);
   let i = 0;
   while (i < text.length) {
     const c = text[i];
-    if (cm && text.startsWith(cm, i)) { out.push(span(i, text.length, "syntax.comment")); break; }
+    if (lineComments.some((x) => text.startsWith(x.open, i))) { out.push(span(i, text.length, "syntax.comment")); break; }
     if ((lang !== "python" && lang !== "shell") && text.startsWith("/*", i)) {
       const j = text.indexOf("*/", i + 2);
       const e = j < 0 ? text.length : j + 2;

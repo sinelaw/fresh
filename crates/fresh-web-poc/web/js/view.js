@@ -10,6 +10,7 @@ import { shiftPos } from "./ot.js";
 import { ENSURE_AFTER, terminalOf, filePath } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
 import { classify } from "./mdstruct.js";
+import { OPEN, bracketsOf, balanceOf } from "./brackets.js";
 import { EMPTY, spansFor, synAt, fenceLanguage, cssFor, styleKey, restyler, withWavy } from "./paint.js";
 import { DocView, hiding } from "./doc.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
@@ -24,42 +25,16 @@ const RAINBOW = [1, 2, 3, 4, 5, 6].map((n) => restyler({ fg: `editor.bracket_rai
 const OCCURRENCE = restyler({ fg: null, bg: "editor.occurrence_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
 const BRACKET = restyler({ fg: "editor.bracket_match_fg", bg: null, bold: true, italic: false, underline: true, strike: false, mono: false, extendToLineEnd: false });
 const SELECTED = restyler({ fg: null, bg: "editor.selection_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
-// Each line's bracket balance by language and text (strings and comments
-// left out), and each buffer's depth at every line start, for its text.
-/** const balanceCache: Map<String, Number> */
-const balanceCache = new Map();
+// Each buffer's bracket depth at every line start, for its text (each
+// line in its language, `langAt`).
 const depthCache = new WeakMap();
-// A line's bracket balance: openers less closers, outside `skip`'s spans.
-/** function balance(line: String, skip: Span[]) => Number */
-function balance(line, skip) {
-  let n = 0;
-  for (let k = 0; k < line.length; k++) {
-    const c = line[k];
-    const opens = c === "(" || c === "[" || c === "{", closes = c === ")" || c === "]" || c === "}";
-    if ((opens || closes) && !skip.some((x) => k >= x.s && k < x.e)) n += opens ? 1 : -1;
-  }
-  return n;
-}
-function rainbowDepths(buf, lang, synFor) {
+function rainbowDepths(buf, langAt) {
   const hit = depthCache.get(buf);
-  if (hit !== undefined && hit.gen === buf.textGen && hit.lang === lang) return hit.depths;
+  if (hit !== undefined && hit.gen === buf.textGen && hit.lang === buf.language) return hit.depths;
   const L = buf.held;
   const depths = new Int32Array(L.count + 1);
-  let d = 0;
-  for (let i = 0; i < L.count; i++) {
-    depths[i] = d;
-    const line = L.lines[i];
-    const key = `${lang}\u0000${line}`;
-    const known = balanceCache.get(key);
-    const n = known ?? balance(line, synFor(i).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]));
-    if (known === undefined) {
-      if (balanceCache.size > 100000) balanceCache.clear();
-      balanceCache.set(key, n);
-    }
-    d += n;
-  }
-  depths[L.count] = d;
-  depthCache.set(buf, { gen: buf.textGen, lang, depths });
+  for (let i = 0; i < L.count; i++) depths[i + 1] = depths[i] + balanceOf(langAt(i), L.lines[i]);
+  depthCache.set(buf, { gen: buf.textGen, lang: buf.language, depths });
   return depths;
 }
 
@@ -470,12 +445,12 @@ export class Pane {
       const m = /^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]);
       return fenceLanguage(m ? m[1] : "");
     };
-    const synFor = (li) => {
+    // Line `li`'s language (a fenced block's own in Markdown), and spans.
+    const langAt = (li) => {
       const regions = struct ? struct.region : [];
-      const inFence = li < regions.length && regions[li] === "body";
-      const l = inFence ? fenceLang(regions, li) : lang;
-      return spansFor(l, L.lines[li]);
+      return li < regions.length && regions[li] === "body" ? fenceLang(regions, li) : lang;
     };
+    const synFor = (li) => spansFor(langAt(li), L.lines[li]);
     // Each line's decorations, gathered when the layout first reaches the
     // line (the interval index makes that cost what the line has), in order
     // of precedence: overlays, occurrences, diagnostics, selection, then
@@ -492,7 +467,7 @@ export class Pane {
     // Rainbow brackets: each bracket in the colour of its nesting depth,
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
-    const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, lang, synFor) : null;
+    const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, langAt) : null;
     const lineCache = new Map();
     const lineDecos = (li) => {
       const hit = lineCache.get(li);
@@ -503,17 +478,13 @@ export class Pane {
       for (const o of buf.decor.overlaysIn(ls, le)) if (applies(o, v.mode)) (o.above ? above : out).push({ s: o.start, e: Math.max(o.end, o.start), f: restyler(o.style) });
       for (const ds of listOf(depths)) {
         const line = L.lines[li];
-        const skip = synFor(li).filter((x) => x.style.fg === THEME["syntax.string"] || x.style.fg === THEME["syntax.comment"]);
         let depth = ds[li];
-        for (let k = 0; k < line.length; k++) {
-          const c = line.charAt(k);
-          const opens = c === "(" || c === "[" || c === "{", closes = c === ")" || c === "]" || c === "}";
-          if (!opens && !closes) continue;
-          if (skip.some((x) => k >= x.s && k < x.e)) continue;
-          if (closes) depth--;
-          const f = RAINBOW[((Math.max(0, depth) % 6) + 6) % 6];
+        for (const x of bracketsOf(langAt(li), line)) {
+          const opens = OPEN.has(x.c);
+          if (!opens) depth--;
+          const f = RAINBOW[Math.max(0, depth) % RAINBOW.length];
           if (opens) depth++;
-          const at = L.starts[li] + byteLen(line.slice(0, k));
+          const at = L.starts[li] + byteLen(line.slice(0, x.k));
           out.push({ s: at, e: at + 1, f });
         }
       }

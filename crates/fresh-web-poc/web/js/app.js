@@ -11,7 +11,7 @@ import { shownFrom } from "./paths.js";
 import { hostText } from "./hosts.js";
 import { fileBuffer, virtualBuffer, terminalBuffer, terminalOf, ENSURE_AFTER, synced, whenSynced, opsSince, filePath, untitledNumber } from "./buffer.js";
 import { Pane, copyTab, cursorAt, selecting, sel } from "./view.js";
-import { put, KEEP, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
+import { put, KEEP, heldTexts, lineAt, addCursorVertical, shrinkSelection, unfoldAll, selectLine, foldAll, blockSelect, toggleFold } from "./editing.js";
 import { THEME } from "./highlight.js";
 import { sash, clamp } from "./sash.js";
 
@@ -25,6 +25,8 @@ import { rowOf, SEP } from "./menubar.js";
 
 // The clipboard's keys are the browser's own (not in the keymap); menus
 // show them.
+// What a copy says when a selection reaches past the held text.
+const UNHELD_COPY = "The selection reaches past the loaded part of the file: nothing copied";
 const CLIPBOARD_KEYS = new Map([["edit.cut", "Ctrl+X"], ["edit.copy", "Ctrl+C"], ["edit.paste", "Ctrl+V"]]);
 
 // The settings that are on or off, by name (menus check them, commands
@@ -212,6 +214,15 @@ function spot(remember, restore) { return { remember, restore }; }
 function tabKeys(b) { return tabRef(b).map(refKey); }
 // A list's first string (none: it is empty).
 /** function firstOf(xs: String[]) => String | Null */
+// What a copy takes from view `v` (a list of at most one: none when a
+// selection reaches past the held text): its selections in document
+// order, joined by newlines as paste hands them out, or with nothing
+// selected the cursor's line.
+function copyText(v) {
+  if (v.selections().length === 0) return [lineAt(v.buf, v.primary.pos).text + "\n"];
+  return heldTexts(v.buf, v.cursors, sel).map((held) => [...held.values()].sort((x, y) => x.start - y.start).map((h) => h.text).join("\n"));
+}
+
 function firstOf(xs) { return xs.length > 0 ? some(xs[0]) : none(); }
 
 // What a tab shows, to restore it: a file, an untitled document or a
@@ -1478,18 +1489,18 @@ export class App {
     for (const text of this.copied(cut)) { e.preventDefault(); e.clipboardData.setData("text/plain", text); }
   }
   // What a copy takes from the active view (a list of at most one: none
-  // without a view): its selections in document order, as paste hands
-  // them out, or with nothing selected the cursor's line; a cut deletes it.
+  // without a view, or when a selection reaches past the held text); a
+  // cut deletes it.
   copied(cut) {
-    if (this.activePane.shown.length === 0) return [];
-    const v = this.activePane.shown[0];
-    const sels = v.selections().sort((x, y) => x.start - y.start);
-    const texts = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "") : [lineAt(v.buf, v.primary.pos).text + "\n"];
-    if (cut && !v.buf.readOnly) {
-      if (sels.length) this.editing.replace(this.activePane, (c) => { const s = sel(c); return s ? put(s.start, s.end, "") : KEEP; });
-      else this.editing.deleteLine(this.activePane);
-    }
-    return [texts.join("\n")];
+    return this.activePane.shown.slice(0, 1).flatMap((v) => {
+      const text = copyText(v);
+      if (text.length === 0) this.setStatus(UNHELD_COPY);
+      else if (cut && !v.buf.readOnly) {
+        if (v.selections().length > 0) this.editing.replace(this.activePane, (c) => { const s = sel(c); return s ? put(s.start, s.end, "") : KEEP; });
+        else this.editing.deleteLine(this.activePane);
+      }
+      return text;
+    });
   }
 
   // A key pressed in a panel (a button, a list, a field) that the control
@@ -1694,8 +1705,9 @@ export class App {
     cmd("terminal.sendSelection", "Terminal: Send Selection", async () => {
       const v = V();
       if (!v) return;
-      const sels = v.selections().sort((x, y) => x.start - y.start);
-      const text = sels.length ? sels.map((s) => v.buf.textRange(s.start, s.end) ?? "").join("\n") : lineAt(v.buf, v.primary.pos).text + "\n";
+      const texts = copyText(v);
+      if (texts.length === 0) { this.setStatus(UNHELD_COPY); return; }
+      const text = texts[0];
       const p = this.terminalPane();
       const id = p.shown.flatMap((v) => terminalOf(v.buf.source)).at(0) ?? await this.terminals.create(null, null, null);
       this.showTerminal(id, p);
@@ -1839,20 +1851,24 @@ export class App {
     vcmd("fold.none", "Unfold All", () => unfoldAll(P()));
     // Emacs: mark and kill ring.
     mv("edit.setMark", "Set Mark", () => { const v = V(); v.primary.anchor = some(v.primary.pos); this.setStatus("Mark set"); });
-    mv("edit.killLine", "Kill Line", mutate(() => {
+    // The primary cursor's text from `rangeOf` onto the kill ring, and
+    // deleted (`cut`).
+    const kill = (rangeOf, cut) => {
       const v = V();
-      const ln = lineAt(v.buf, v.primary.pos);
-      const end = v.primary.pos === ln.end ? ln.end + 1 : ln.end;
-      this.killRing.unshift(v.buf.textRange(v.primary.pos, end) ?? "");
-      ed().replace(P(), (c) => (c === v.primary ? { start: c.pos, end, text: "", caret: 0 } : null));
-    }));
-    mv("edit.killRegion", "Kill Region", mutate(() => {
-      const s = V().selection();
-      if (s === null) return;
-      this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? "");
-      ed().replace(P(), (c) => (c === V().primary ? { ...s, text: "" } : null));
-    }));
-    mv("edit.copyRegion", "Copy Region", () => { for (const s of listOf(V().selection())) { this.killRing.unshift(V().buf.textRange(s.start, s.end) ?? ""); V().primary.anchor = none(); P().scheduleRender(); } });
+      for (const held of ed().held(v.buf, [v.primary], rangeOf)) {
+        for (const h of held.values()) this.killRing.unshift(h.text);
+        if (cut) ed().replace(P(), (c) => found(held.get(c)).map((h) => put(h.start, h.end, "")).at(0) ?? KEEP);
+        else { v.primary.anchor = none(); P().scheduleRender(); }
+      }
+    };
+    // To the line's end, or the line break at its end.
+    mv("edit.killLine", "Kill Line", mutate(() => kill((c) => {
+      const ln = lineAt(V().buf, c.pos);
+      const end = c.pos < ln.end ? ln.end : Math.min(ln.end + 1, V().buf.len);
+      return end > c.pos ? { start: c.pos, end } : null;
+    }, true)));
+    mv("edit.killRegion", "Kill Region", mutate(() => kill(sel, true)));
+    mv("edit.copyRegion", "Copy Region", () => kill(sel, false));
     mv("edit.yank", "Yank", mutate(() => { for (const text of this.killRing.slice(0, 1)) ed().type(P(), text, false); }));
   }
 
