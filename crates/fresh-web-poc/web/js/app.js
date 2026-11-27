@@ -792,7 +792,8 @@ export class App {
   // `preview` and `focus` as for `openFile`; preview tabs are a setting.
   showBuffer(b, place, { preview, focus }) {
     if (place === "split" || place === "right") {
-      const existing = panesOf(this.layoutTree).filter((p) => p.shown.some((v) => v.buf === b));
+      // A split beside this one that shows it already, else a new one.
+      const existing = panesOf(this.layoutTree).filter((p) => p !== this.activePane && p.shown.some((v) => v.buf === b));
       for (const p of existing.slice(0, 1)) { this.focusPane(p); return p.shown; }
       return this.split(place === "split" ? "v" : "h", 0.6, [b]).shown;
     }
