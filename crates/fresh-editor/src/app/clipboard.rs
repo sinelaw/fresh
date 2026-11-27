@@ -1649,7 +1649,7 @@ impl Editor {
                 total_cursors,
             } => {
                 // Create AddCursor event with the next cursor ID
-                let next_id = CursorId(self.active_cursors().count());
+                let next_id = self.active_cursors().next_free_id();
                 let event = Event::AddCursor {
                     cursor_id: next_id,
                     position: cursor.position,
@@ -1700,7 +1700,7 @@ impl Editor {
                 total_cursors,
             } => {
                 // Create AddCursor event with the next cursor ID
-                let next_id = CursorId(self.active_cursors().count());
+                let next_id = self.active_cursors().next_free_id();
                 let event = Event::AddCursor {
                     cursor_id: next_id,
                     position: cursor.position,
@@ -1731,7 +1731,7 @@ impl Editor {
                 total_cursors,
             } => {
                 // Create AddCursor event with the next cursor ID
-                let next_id = CursorId(self.active_cursors().count());
+                let next_id = self.active_cursors().next_free_id();
                 let event = Event::AddCursor {
                     cursor_id: next_id,
                     position: cursor.position,

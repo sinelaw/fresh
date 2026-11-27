@@ -249,6 +249,13 @@ impl Cursors {
         id
     }
 
+    /// The id the next added cursor should take: never the id of a live
+    /// cursor, even after cursors in the middle of the set were removed
+    /// (which a count-based id would collide with).
+    pub fn next_free_id(&self) -> CursorId {
+        CursorId(self.next_id)
+    }
+
     /// Insert a cursor with a specific ID (for undo/redo)
     pub fn insert_with_id(&mut self, id: CursorId, cursor: Cursor) {
         self.cursors.insert(id, cursor);
