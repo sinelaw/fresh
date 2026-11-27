@@ -9,15 +9,24 @@
 //! gives back with [`hl_free`] (calls only read it); every integer is a
 //! `u32`. Calls that can fail return a code, [`OK`] or [`ERROR`], or a
 //! result pointer that is null on failure; after a failure [`hl_error`]
-//! describes it.
+//! describes it. A list argument ([`hl_regions`], [`hl_build`]) is a
+//! compact byte encoding: little-endian `u32` words and UTF-8 texts, each
+//! text behind its byte length (`[len u32][utf8]`), each list behind its
+//! item count (`[n u32]` then the items), nothing padded.
 //!
-//! Results ([`hl_take`], [`hl_error`], [`hl_categories`], the `mk_*` and
-//! `uc_*` answers) live in the module's own buffers: valid until the next call.
+//! Results ([`hl_take`], [`hl_error`], [`hl_categories`], [`hl_build`], the
+//! `hl_regions`, `mk_*` and `uc_*` answers) live in the module's own
+//! buffers: valid until the next call.
 
 mod clusters;
+mod encoding;
 mod markers;
 
-use fresh_highlight::{Category, Highlighter, LineRuns};
+use encoding::Reader;
+use fresh_highlight::{
+    Category, DeclaredRegion, Grammar, Highlighter, LineRuns, RegionRole, RegionStatus, Roles,
+    TableLine, TableRole,
+};
 use markers::{Markers, Placed};
 use std::alloc::{alloc, dealloc, Layout};
 use std::cell::RefCell;
@@ -42,6 +51,43 @@ pub const LEFT: u32 = 0;
 /// A marker end's gravity: text inserted exactly there goes before it.
 pub const RIGHT: u32 = 1;
 
+/// [`hl_take`] line flag: the runs are exact (else provisional).
+pub const LINE_EXACT: u32 = 1 << 0;
+/// [`hl_take`] line flag: the line's roles are known. Without it the line's
+/// role bits are all clear and say nothing: its runs are provisional, or a
+/// line its roles depend on is not parsed exactly yet. With it, clear role
+/// bits mean the line has none.
+pub const LINE_ROLES_KNOWN: u32 = 1 << 1;
+/// [`hl_take`] line flag: an embedded region's opening delimiter.
+pub const LINE_REGION_OPEN: u32 = 1 << 2;
+/// [`hl_take`] line flag: a content line strictly inside a region.
+pub const LINE_REGION_BODY: u32 = 1 << 3;
+/// [`hl_take`] line flag: a region's closing delimiter.
+pub const LINE_REGION_CLOSE: u32 = 1 << 4;
+/// [`hl_take`] line flag: a table's header row.
+pub const LINE_TABLE_HEADER: u32 = 1 << 5;
+/// [`hl_take`] line flag: a table's delimiter row.
+pub const LINE_TABLE_DELIMITER: u32 = 1 << 6;
+/// [`hl_take`] line flag: a table's data row.
+pub const LINE_TABLE_ROW: u32 = 1 << 7;
+/// [`hl_take`] line flag: the table's first data row (with
+/// [`LINE_TABLE_ROW`]).
+pub const LINE_TABLE_FIRST_ROW: u32 = 1 << 8;
+/// [`hl_take`] line flag: the table's last line (with
+/// [`LINE_TABLE_DELIMITER`] or [`LINE_TABLE_ROW`]).
+pub const LINE_TABLE_LAST: u32 = 1 << 9;
+
+/// [`hl_regions`]: the region is kept.
+pub const REGION_KEPT: u32 = 0;
+/// [`hl_regions`]: the region is kept, but no syntax claims its language:
+/// its rows keep the styling they have.
+pub const REGION_UNKNOWN_LANGUAGE: u32 = 1;
+/// [`hl_regions`]: the region is dropped: it overlaps the region before it
+/// in byte order.
+pub const REGION_OVERLAPS: u32 = 2;
+/// [`hl_regions`]: the region is dropped: it ends at or before its start.
+pub const REGION_EMPTY: u32 = 3;
+
 struct Module {
     highlighter: Option<Highlighter>,
     /// The last error: `[len u32][utf8]`.
@@ -50,6 +96,8 @@ struct Module {
     taken: Vec<u32>,
     /// The category theme keys: `[len u32][utf8 JSON]`.
     categories: Vec<u8>,
+    /// The last syntax set built: `[len u32][packdump]`.
+    built: Vec<u8>,
     /// The marker lists, by handle, and the handle the next one gets.
     lists: HashMap<u32, Markers>,
     next_list: u32,
@@ -64,6 +112,7 @@ impl Default for Module {
             error: framed(&[]),
             taken: Vec::new(),
             categories: Vec::new(),
+            built: Vec::new(),
             lists: HashMap::new(),
             next_list: 0,
             answer: Vec::new(),
@@ -194,8 +243,12 @@ pub unsafe extern "C" fn hl_free(ptr: *mut u8, len: u32) {
     unsafe { dealloc(ptr, layout) }
 }
 
-/// Load the syntax set from an uncompressed packdump. Replaces any earlier
-/// highlighter, with its documents.
+/// Load the syntax set from an uncompressed packdump (the default set, or
+/// one [`hl_build`] made). Replaces any earlier highlighter: every document
+/// open in it is closed, its id free again, and the caller reopens the ones
+/// it still wants (their wanted ranges, regions and highlights go with
+/// them). When the packdump does not load, the earlier highlighter and its
+/// documents stay as they were.
 ///
 /// # Safety
 /// `ptr` points to `len` readable bytes.
@@ -237,7 +290,138 @@ pub unsafe extern "C" fn hl_open(
     })
 }
 
-/// Replace document `doc`'s whole text.
+/// Open document `doc` with a text in declared-regions mode: plain text,
+/// coloured only in the regions [`hl_regions`] declares (it has none yet).
+///
+/// # Safety
+/// `text_ptr` points to `text_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn hl_open_declared(doc: u32, text_ptr: *const u8, text_len: u32) -> u32 {
+    with(|m| {
+        let opened = (|| {
+            // SAFETY: the caller's contract.
+            let text = unsafe { text(text_ptr, text_len)? };
+            m.highlighter()?
+                .open_declared(doc, text)
+                .map_err(|e| e.to_string())
+        })();
+        m.code(opened)
+    })
+}
+
+/// Replace the regions declared over document `doc` (opened with
+/// [`hl_open_declared`]). The regions are a list (see the module docs) of
+///
+/// `[start u32][end u32][prefix u32][streams: n u32, n × stream u32]`
+/// `[language: len u32, utf8]`
+///
+/// — the byte range of whole rows in the current text, the bytes skipped at
+/// each row's start, the parse streams the rows feed (none: stream 0), and
+/// the language token or path that picks the grammar. Answers `[status]`
+/// per region, in the order given: [`REGION_KEPT`],
+/// [`REGION_UNKNOWN_LANGUAGE`], [`REGION_OVERLAPS`] or [`REGION_EMPTY`]
+/// (the last two dropped). A region past the text's end, or a malformed
+/// list, is an error, and the regions stay as they were. Every line is
+/// highlighted anew; [`hl_replace`] clears the regions.
+///
+/// # Safety
+/// `ptr` points to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn hl_regions(doc: u32, ptr: *const u8, len: u32) -> *const u32 {
+    // SAFETY: the caller's contract.
+    let encoded = unsafe { bytes(ptr, len) };
+    with(|m| {
+        let set = (|| {
+            let regions = declared_regions(encoded)?;
+            let statuses = m
+                .highlighter()?
+                .set_regions(doc, &regions)
+                .map_err(|e| e.to_string())?;
+            Ok(statuses.into_iter().map(region_status).collect())
+        })();
+        m.answer(set)
+    })
+}
+
+fn declared_regions(encoded: &[u8]) -> Result<Vec<DeclaredRegion>, String> {
+    let mut reader = Reader::new(encoded, "the region list");
+    let regions = reader.list(|r| {
+        Ok(DeclaredRegion {
+            start: r.size()?,
+            end: r.size()?,
+            prefix: r.size()?,
+            streams: r.list(Reader::word)?,
+            language: r.text()?.to_string(),
+        })
+    })?;
+    reader.finish()?;
+    Ok(regions)
+}
+
+fn region_status(status: RegionStatus) -> u32 {
+    match status {
+        RegionStatus::Kept => REGION_KEPT,
+        RegionStatus::UnknownLanguage => REGION_UNKNOWN_LANGUAGE,
+        RegionStatus::Overlaps => REGION_OVERLAPS,
+        RegionStatus::Empty => REGION_EMPTY,
+    }
+}
+
+/// Build a syntax set: the uncompressed packdump given (the one [`hl_init`]
+/// loads) with `.sublime-syntax` grammars added after its own syntaxes, so
+/// that one of a name already in the set shadows it. The sources are a list
+/// (see the module docs) of `[name: len u32, utf8][source: len u32, utf8]`:
+/// the name the grammar is reported by, and is named when its YAML names
+/// none, and its YAML. Answers `[len u32][packdump]`, uncompressed, for
+/// [`hl_init`]; null when the packdump does not load or a grammar does not
+/// parse — every grammar that does not is named in [`hl_error`].
+///
+/// Touches no highlighter: a module instance can build sets while another
+/// highlights.
+///
+/// # Safety
+/// Each pointer points to its length's readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn hl_build(
+    packdump_ptr: *const u8,
+    packdump_len: u32,
+    sources_ptr: *const u8,
+    sources_len: u32,
+) -> *const u8 {
+    // SAFETY: the caller's contract.
+    let (packdump, sources) = unsafe {
+        (
+            bytes(packdump_ptr, packdump_len),
+            bytes(sources_ptr, sources_len),
+        )
+    };
+    with(|m| {
+        let built = (|| {
+            let mut reader = Reader::new(sources, "the grammar list");
+            let grammars = reader.list(|r| {
+                Ok(Grammar {
+                    name: r.text()?,
+                    source: r.text()?,
+                })
+            })?;
+            reader.finish()?;
+            fresh_highlight::build_syntax_set(packdump, &grammars).map_err(|e| e.to_string())
+        })();
+        match built {
+            Ok(set) => {
+                m.built = framed(&set);
+                m.built.as_ptr()
+            }
+            Err(message) => {
+                m.fail(&message);
+                ptr::null()
+            }
+        }
+    })
+}
+
+/// Replace document `doc`'s whole text. A document opened for declared
+/// regions loses them: they were ranges of the text replaced.
 ///
 /// # Safety
 /// `text_ptr` points to `text_len` readable bytes.
@@ -322,12 +506,19 @@ pub extern "C" fn hl_work(budget_bytes: u32) -> u32 {
     })
 }
 
-/// The lines of document `doc` whose runs changed since the last take, as
-/// words: `[total_words, n_lines]`, then per line `[line, flags (bit 0:
-/// exact), n_runs]` and `n_runs` × `[start, len, category_index,
-/// background]`, where `background` is `1 << 31 | category_index` of the
-/// category the run sits on, or 0 for none. Null on error (see
-/// [`hl_error`]).
+/// The lines of document `doc` whose runs or roles changed since the last
+/// take, as words: `[total_words, n_lines]`, then per line `[line, flags,
+/// n_runs]` and `n_runs` × `[start, len, category_index, background]`,
+/// where `background` is `1 << 31 | category_index` of the category the run
+/// sits on, or 0 for none. Null on error (see [`hl_error`]).
+///
+/// `flags` is a set of bits: [`LINE_EXACT`] when the runs are exact, and
+/// the line's roles. [`LINE_ROLES_KNOWN`] says whether they are known;
+/// when they are, at most one of [`LINE_REGION_OPEN`], [`LINE_REGION_BODY`]
+/// and [`LINE_REGION_CLOSE`] is set (none: the line is in no embedded
+/// region), and at most one of [`LINE_TABLE_HEADER`],
+/// [`LINE_TABLE_DELIMITER`] and [`LINE_TABLE_ROW`] (none: in no table),
+/// with [`LINE_TABLE_FIRST_ROW`] and [`LINE_TABLE_LAST`] qualifying it.
 #[no_mangle]
 pub extern "C" fn hl_take(doc: u32) -> *const u32 {
     with(|m| {
@@ -352,11 +543,46 @@ fn background(category: Option<Category>) -> u32 {
     category.map_or(0, |c| BACKGROUND | u32::from(c.index()))
 }
 
+/// A line's [`hl_take`] flags.
+fn flags(line: &LineRuns) -> u32 {
+    let exact = if line.exact { LINE_EXACT } else { 0 };
+    let roles = match line.roles {
+        Roles::Unknown => 0,
+        Roles::Known { region, table } => {
+            LINE_ROLES_KNOWN | region.map_or(0, region_flag) | table.map_or(0, table_flags)
+        }
+    };
+    exact | roles
+}
+
+fn region_flag(role: RegionRole) -> u32 {
+    match role {
+        RegionRole::Open => LINE_REGION_OPEN,
+        RegionRole::Body => LINE_REGION_BODY,
+        RegionRole::Close => LINE_REGION_CLOSE,
+    }
+}
+
+fn table_flags(table: TableLine) -> u32 {
+    let role = match table.role {
+        TableRole::Header => LINE_TABLE_HEADER,
+        TableRole::Delimiter => LINE_TABLE_DELIMITER,
+        TableRole::Row => LINE_TABLE_ROW,
+    };
+    let first_row = if table.first_row {
+        LINE_TABLE_FIRST_ROW
+    } else {
+        0
+    };
+    let last = if table.last { LINE_TABLE_LAST } else { 0 };
+    role | first_row | last
+}
+
 fn encode(lines: &[LineRuns], out: &mut Vec<u32>) {
     out.clear();
     out.extend([0, word(lines.len())]);
     for line in lines {
-        out.extend([line.line, u32::from(line.exact), word(line.runs.len())]);
+        out.extend([line.line, flags(line), word(line.runs.len())]);
         out.extend(line.runs.iter().flat_map(|run| {
             [
                 run.start,
@@ -535,3 +761,6 @@ pub unsafe extern "C" fn uc_clusters(ptr: *const u8, len: u32) -> *const u32 {
         m.answer(measured)
     })
 }
+
+#[cfg(test)]
+mod tests;

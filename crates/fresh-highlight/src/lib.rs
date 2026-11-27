@@ -7,15 +7,24 @@
 //! how much of a long line is highlighted ([`MAX_LINE_BYTES`],
 //! [`highlighted_prefix`]). [`embedding`] holds the embedded-language
 //! regions (Markdown fences, Vue blocks, diff hunks) and how their language
-//! is found, and [`RowWash`] the filling of rows a diff category washes.
+//! is found, [`structure`] the roles lines play in a region or a table,
+//! [`declared`] the regions a caller declares in a document no grammar
+//! parses, and [`RowWash`] the filling of rows a diff category washes.
+//! [`build_syntax_set`] adds grammars to a syntax set.
 
+mod build;
 mod category;
+pub mod declared;
 pub mod embedding;
 mod highlighter;
+pub mod structure;
 mod wash;
 
+pub use build::{build_syntax_set, dump_syntax_set, BuildError, Grammar};
 pub use category::{scope_to_category, Category};
+pub use declared::{DeclaredRegion, RegionStatus};
 pub use highlighter::{Error, Highlighter, LineRuns, Run};
+pub use structure::{RegionRole, Roles, TableLine, TableRole};
 pub use wash::RowWash;
 
 /// How much of a line is highlighted: the rest of a longer one is plain text.

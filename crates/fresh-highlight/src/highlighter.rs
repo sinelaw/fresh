@@ -31,11 +31,24 @@
 //! language, as the editor's native engine does. The child's state is part
 //! of the parse state, so checkpoints carry it and a parse converges only
 //! where the child (its language included) is the same too.
+//!
+//! Each line exactly parsed also records whether a region and a table body
+//! were open before and after it ([`crate::structure`]); its [`Roles`] are
+//! read off those records — its own and, for a table, its neighbours' —
+//! once every line they depend on is exact, and are reported with its runs.
+//!
+//! A document opened in declared-regions mode ([`crate::declared`]) has no
+//! grammar: its rows are coloured by the parsers of the regions declared
+//! over it. Those parsers are part of the parse state too, and the regions
+//! move with edits, so the rows past an edit keep the regions they were in
+//! and a parse converges there as it does elsewhere.
 
+use crate::declared::{self, DeclaredRegion, Region, RegionStatus, MAX_STREAMS};
 use crate::embedding::{
     diff_change, fence_language, find_embedded_syntax, is_diff_source_row, scopes_contain,
     ContentMode, Embedding, EmbeddingSpec,
 };
+use crate::structure::{self, Edge, Roles, Transitions};
 use crate::{highlighted_prefix, scope_to_category, Category, RowWash};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -75,6 +88,9 @@ pub struct LineRuns {
     /// text; a provisional parse's are not.
     pub exact: bool,
     pub runs: Vec<Run>,
+    /// The line's role in a region and in a table; unknown for provisional
+    /// runs, and until the lines the roles depend on are parsed exactly.
+    pub roles: Roles,
 }
 
 #[derive(Debug)]
@@ -84,6 +100,16 @@ pub enum Error {
     UnknownDocument(u32),
     /// A document of this id is open already.
     DocumentOpen(u32),
+    /// Regions were declared for a document opened with a grammar.
+    NotDeclared(u32),
+    /// A declared region reaches past the end of the text.
+    RegionOutOfRange {
+        doc: u32,
+        /// The region's index in the list declared.
+        index: usize,
+        end: usize,
+        len: usize,
+    },
     /// The text would not fit `u32` byte offsets.
     TooLarge {
         doc: u32,
@@ -121,6 +147,19 @@ impl fmt::Display for Error {
             Error::UnknownSyntax(name) => write!(f, "no syntax named {name:?}"),
             Error::UnknownDocument(doc) => write!(f, "no document {doc}"),
             Error::DocumentOpen(doc) => write!(f, "document {doc} is open already"),
+            Error::NotDeclared(doc) => write!(
+                f,
+                "document {doc} has a grammar; only a document opened for declared regions takes them"
+            ),
+            Error::RegionOutOfRange {
+                doc,
+                index,
+                end,
+                len,
+            } => write!(
+                f,
+                "document {doc}: declared region {index} ends at byte {end}, past the text's end ({len})"
+            ),
             Error::TooLarge { doc, len } => write!(
                 f,
                 "document {doc} would be {len} bytes, more than {} can be highlighted",
@@ -161,6 +200,8 @@ pub struct Highlighter {
     syntaxes: SyntaxSet,
     /// Each syntax's embedded regions, by its index in `syntaxes`.
     embeddings: Vec<Embedding>,
+    /// Each syntax's table body scope, if it scopes tables.
+    table_scopes: Vec<Option<Scope>>,
     documents: BTreeMap<u32, Document>,
     categories: CategoryCache,
     languages: LanguageCache,
@@ -175,6 +216,11 @@ impl Highlighter {
                 .syntaxes()
                 .iter()
                 .map(|syntax| Embedding::for_host(&syntax.name))
+                .collect(),
+            table_scopes: syntaxes
+                .syntaxes()
+                .iter()
+                .map(|syntax| structure::table_body_scope(&syntax.name))
                 .collect(),
             syntaxes,
             documents: BTreeMap::new(),
@@ -199,17 +245,86 @@ impl Highlighter {
             .ok_or_else(|| Error::UnknownSyntax(syntax.to_string()))?;
         check_size(doc, text.len())?;
         self.documents
-            .insert(doc, Document::new(syntax_index, text));
+            .insert(doc, Document::new(syntax_index, Host::Grammar, text));
         Ok(())
     }
 
-    /// Replace document `doc`'s whole text. Its syntax and wanted range stay.
+    /// Open document `doc` with `text` in declared-regions mode
+    /// ([`crate::declared`]): plain text, coloured only in the regions
+    /// [`Highlighter::set_regions`] declares. It has none yet.
+    pub fn open_declared(&mut self, doc: u32, text: &str) -> Result<(), Error> {
+        if self.documents.contains_key(&doc) {
+            return Err(Error::DocumentOpen(doc));
+        }
+        let plain = self.syntaxes.find_syntax_plain_text();
+        let syntax_index = self
+            .syntaxes
+            .syntaxes()
+            .iter()
+            .position(|s| std::ptr::eq(s, plain))
+            .expect("the plain text syntax is in its set");
+        check_size(doc, text.len())?;
+        self.documents.insert(
+            doc,
+            Document::new(syntax_index, Host::Declared(Vec::new()), text),
+        );
+        Ok(())
+    }
+
+    /// Replace the regions declared over document `doc`, opened with
+    /// [`Highlighter::open_declared`], with `regions` (byte ranges in its
+    /// current text). Returns each region's [`RegionStatus`], in the order
+    /// given: one that overlaps the region before it, or is empty, is
+    /// dropped, and one in a language no syntax claims leaves its rows as
+    /// they are. Every line is highlighted anew.
+    pub fn set_regions(
+        &mut self,
+        doc: u32,
+        regions: &[DeclaredRegion],
+    ) -> Result<Vec<RegionStatus>, Error> {
+        let d = self
+            .documents
+            .get_mut(&doc)
+            .ok_or(Error::UnknownDocument(doc))?;
+        if !matches!(d.host, Host::Declared(_)) {
+            return Err(Error::NotDeclared(doc));
+        }
+        let len = d.len();
+        if let Some((index, region)) = regions
+            .iter()
+            .enumerate()
+            .find(|(_, region)| region.start.max(region.end) > len)
+        {
+            return Err(Error::RegionOutOfRange {
+                doc,
+                index,
+                end: region.start.max(region.end),
+                len,
+            });
+        }
+        let (kept, statuses) = declared::resolve(regions, |language| {
+            find_embedded_syntax(&self.syntaxes, language)
+        });
+        *d = Document {
+            wanted: d.wanted.clone(),
+            ..Document::new(d.syntax, Host::Declared(kept), &d.text())
+        };
+        Ok(statuses)
+    }
+
+    /// Replace document `doc`'s whole text. Its syntax and wanted range
+    /// stay; the regions declared over it, which were ranges of the text
+    /// replaced, do not.
     pub fn replace(&mut self, doc: u32, text: &str) -> Result<(), Error> {
         check_size(doc, text.len())?;
         let d = self.document(doc)?;
+        let host = match d.host {
+            Host::Grammar => Host::Grammar,
+            Host::Declared(_) => Host::Declared(Vec::new()),
+        };
         *d = Document {
             wanted: d.wanted.clone(),
-            ..Document::new(d.syntax, text)
+            ..Document::new(d.syntax, host, text)
         };
         Ok(())
     }
@@ -250,6 +365,9 @@ impl Highlighter {
             return Err(Error::NotCharBoundary { doc, offset: end });
         }
         d.splice(first, first_at, last, last_at, insert);
+        if let Host::Declared(regions) = &mut d.host {
+            declared::shift(regions, start, delete_len, insert.len());
+        }
         Ok(())
     }
 
@@ -274,6 +392,7 @@ impl Highlighter {
             let Highlighter {
                 syntaxes,
                 embeddings,
+                table_scopes,
                 documents,
                 categories,
                 languages,
@@ -284,6 +403,7 @@ impl Highlighter {
             let mut parser = Parser {
                 syntax: &syntaxes.syntaxes()[d.syntax],
                 embedding: &embeddings[d.syntax],
+                table_scope: table_scopes[d.syntax],
                 syntaxes,
                 categories,
                 languages,
@@ -314,14 +434,17 @@ impl Highlighter {
         Ok(changed
             .into_iter()
             .map(|line| {
-                let highlight = d.lines[line]
-                    .highlight
+                let Line {
+                    highlight, roles, ..
+                } = &d.lines[line];
+                let highlight = highlight
                     .as_ref()
                     .expect("a line is marked changed when it is highlighted");
                 LineRuns {
                     line: to_u32(line),
-                    exact: highlight.exact,
+                    exact: matches!(highlight.parse, Parse::Exact(_)),
                     runs: highlight.runs.clone(),
+                    roles: *roles,
                 }
             })
             .collect())
@@ -376,8 +499,10 @@ enum Task {
 }
 
 struct Document {
-    /// Index of the syntax in the syntax set.
+    /// Index of the syntax in the syntax set: plain text for a declared
+    /// host.
     syntax: usize,
+    host: Host,
     /// Never empty: an empty text is one empty line.
     lines: Vec<Line>,
     exact_until: usize,
@@ -388,27 +513,61 @@ struct Document {
     changed: BTreeSet<usize>,
 }
 
+/// Where a document's colours come from.
+enum Host {
+    /// Its syntax's grammar, and the embedded regions that finds.
+    Grammar,
+    /// The regions declared over it, sorted and disjoint ([`declared`]).
+    Declared(Vec<Region>),
+}
+
+/// How one line is coloured.
+#[derive(Clone, Copy)]
+enum Row<'a> {
+    /// By the document's grammar.
+    Grammar,
+    /// By the declared region the line's first byte lies in, if any.
+    Declared(Option<&'a Region>),
+}
+
 struct Line {
     text: String,
     /// `None` until the line is parsed after its text last changed.
     highlight: Option<Highlight>,
+    /// Settled from the exact parse's transitions once every line they
+    /// depend on is exact (see [`Document::settle_roles`]).
+    roles: Roles,
     /// The parse state at the line's start.
     checkpoint: Option<Box<State>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Highlight {
-    exact: bool,
     runs: Vec<Run>,
+    parse: Parse,
 }
 
-/// The parse state at a line boundary: the host parser's, and the child
-/// parser's while in an embedded region that has one.
+/// Which parse a line's highlight is from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Parse {
+    /// A parse from the top of the current text, with the structure
+    /// transitions it saw around the line.
+    Exact(Transitions),
+    /// A parse from a fresh state in mid-document.
+    Provisional,
+}
+
+/// The parse state at a line boundary: the host parser's, the child
+/// parser's while in an embedded region that has one, and a declared host's
+/// stream parsers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct State {
     parse: ParseState,
     scopes: ScopeStack,
     embedded: Option<Embedded>,
+    /// A declared host's live parsers, by stream, the most recently fed
+    /// last; at most [`MAX_STREAMS`]. Empty for a grammar host.
+    streams: Vec<(u32, Embedded)>,
 }
 
 /// An embedded region's child parser.
@@ -422,12 +581,45 @@ struct Embedded {
     scopes: ScopeStack,
 }
 
+impl Embedded {
+    /// A parser at the start of a text in syntax `syntax`.
+    fn start(syntax: usize, syntaxes: &SyntaxSet) -> Self {
+        Embedded {
+            syntax,
+            parse: ParseState::new(&syntaxes.syntaxes()[syntax]),
+            scopes: ScopeStack::new(),
+        }
+    }
+}
+
 impl State {
     fn start(syntax: &SyntaxReference) -> Self {
         State {
             parse: ParseState::new(syntax),
             scopes: ScopeStack::new(),
             embedded: None,
+            streams: Vec::new(),
+        }
+    }
+
+    /// The parser of `stream`, taken out for a row: the one it left off
+    /// with, unless that one parses another syntax, which cannot go on.
+    /// Else a fresh one.
+    fn take_stream(&mut self, stream: u32, syntax: usize, syntaxes: &SyntaxSet) -> Embedded {
+        self.streams
+            .iter()
+            .position(|(id, _)| *id == stream)
+            .map(|at| self.streams.remove(at).1)
+            .filter(|parser| parser.syntax == syntax)
+            .unwrap_or_else(|| Embedded::start(syntax, syntaxes))
+    }
+
+    /// Put `stream`'s parser back, as the most recently fed; the least
+    /// recently fed goes once there are more than [`MAX_STREAMS`].
+    fn keep_stream(&mut self, stream: u32, parser: Embedded) {
+        self.streams.push((stream, parser));
+        if self.streams.len() > MAX_STREAMS {
+            self.streams.remove(0);
         }
     }
 }
@@ -437,7 +629,18 @@ impl Line {
         Line {
             text,
             highlight: None,
+            roles: Roles::Unknown,
             checkpoint: None,
+        }
+    }
+}
+
+impl Highlight {
+    /// The structure transitions around the line, if it is parsed exactly.
+    fn transitions(&self) -> Option<Transitions> {
+        match self.parse {
+            Parse::Exact(transitions) => Some(transitions),
+            Parse::Provisional => None,
         }
     }
 }
@@ -474,9 +677,10 @@ fn splice_ranges(
 }
 
 impl Document {
-    fn new(syntax: usize, text: &str) -> Self {
+    fn new(syntax: usize, host: Host, text: &str) -> Self {
         Document {
             syntax,
+            host,
             lines: split_lines(text, true).into_iter().map(Line::new).collect(),
             exact_until: 0,
             stale: Vec::new(),
@@ -487,6 +691,31 @@ impl Document {
 
     fn len(&self) -> usize {
         self.lines.iter().map(|l| l.text.len()).sum()
+    }
+
+    fn text(&self) -> String {
+        self.lines.iter().map(|l| l.text.as_str()).collect()
+    }
+
+    /// The byte offset of `line`'s start, where a declared host needs it to
+    /// find the line's region; `None` for a grammar host, which does not.
+    fn row_offset(&self, line: usize) -> Option<usize> {
+        match self.host {
+            Host::Grammar => None,
+            Host::Declared(_) => Some(self.lines[..line].iter().map(|l| l.text.len()).sum()),
+        }
+    }
+
+    /// How the line at `offset` (from [`Document::row_offset`]) is
+    /// coloured.
+    fn row(&self, offset: Option<usize>) -> Row<'_> {
+        match (&self.host, offset) {
+            (Host::Grammar, None) => Row::Grammar,
+            (Host::Declared(regions), Some(offset)) => {
+                Row::Declared(declared::region_at(regions, offset))
+            }
+            _ => unreachable!("row_offset has an offset exactly for a declared host"),
+        }
     }
 
     fn unfinished(&self) -> bool {
@@ -581,7 +810,8 @@ impl Document {
     /// Parse exactly towards line `until`, from the nearest checkpoint at or
     /// before `exact_until`, for about `budget` bytes but at least one line
     /// past `exact_until`. Stops early when the parse converges on a stale
-    /// range. Returns the bytes parsed.
+    /// range. Settles the roles the parse may have changed. Returns the bytes
+    /// parsed.
     fn parse_exact(
         &mut self,
         until: usize,
@@ -598,37 +828,98 @@ impl Document {
             })
             .unwrap_or_else(|| (0, State::start(parser.syntax)));
         let progress_from = self.exact_until;
+        let mut offset = self.row_offset(resume);
         let mut line = resume;
         let mut spent = 0;
         let mut since_checkpoint = 0;
-        loop {
+        let stop = loop {
             if line > resume
                 && line < self.lines.len()
                 && self.arrive(line, &state, &mut since_checkpoint)
             {
-                return Ok(spent);
+                break line;
             }
             self.exact_until = self.exact_until.max(line);
             if line >= until
                 || line >= self.lines.len()
                 || (spent >= budget && line > progress_from)
             {
-                return Ok(spent);
+                break line;
             }
+            let text = &self.lines[line].text;
             let parsed = parser
-                .line(&mut state, &self.lines[line].text)
+                .line(&mut state, text, self.row(offset))
                 .map_err(|e| (line, e))?;
+            offset = offset.map(|at| at + text.len());
             spent += parsed.bytes;
             since_checkpoint += parsed.bytes;
             self.set_highlight(
                 line,
                 Highlight {
-                    exact: true,
                     runs: parsed.runs,
+                    parse: Parse::Exact(parsed.transitions),
                 },
             );
             line += 1;
+        };
+        // The roles that can have changed: the parsed lines', their
+        // neighbours' (whose table roles read theirs), and that of the last
+        // exact line, whose next line may have become exact or stopped
+        // being so when a converged stale range ended.
+        let tables = parser.table_scope.is_some();
+        let lines = self.lines.len();
+        (resume.saturating_sub(1)..=stop)
+            .chain(self.exact_until.checked_sub(1))
+            .filter(|&line| line < lines)
+            .for_each(|line| self.settle_roles(line, tables));
+        Ok(spent)
+    }
+
+    /// Settle `line`'s roles from the exact parse: known when it and the
+    /// lines they depend on are exact, unknown otherwise. `tables`: the
+    /// syntax scopes tables, so a line's roles also depend on the line after
+    /// it.
+    fn settle_roles(&mut self, line: usize, tables: bool) {
+        if self.lines[line].highlight.is_some() {
+            let roles = self.exact_roles(line, tables).unwrap_or(Roles::Unknown);
+            self.set_roles(line, roles);
         }
+    }
+
+    /// `line`'s roles, if it and the lines they depend on are exact: its
+    /// region role is its own, its table role also reads the lines either
+    /// side of it (see [`crate::structure`]).
+    fn exact_roles(&self, line: usize, tables: bool) -> Option<Roles> {
+        let this = self.exact_transitions(line)?;
+        let table = if tables {
+            let next = match line + 1 {
+                end if end == self.lines.len() => None,
+                next => Some(self.exact_transitions(next)?.table),
+            };
+            let prev = line.checked_sub(1).map(|prev| {
+                self.exact_transitions(prev)
+                    .expect("the lines before an exact line are exact")
+                    .table
+            });
+            structure::table_line(prev, this.table, next)
+        } else {
+            None
+        };
+        Some(Roles::Known {
+            region: structure::region_role(this.region),
+            table,
+        })
+    }
+
+    /// The structure transitions around `line`, if it is exact.
+    fn exact_transitions(&self, line: usize) -> Option<Transitions> {
+        (line < self.exact_until).then(|| {
+            self.lines[line]
+                .highlight
+                .as_ref()
+                .and_then(Highlight::transitions)
+                .expect("a line before exact_until is parsed exactly")
+        })
     }
 
     /// The exact parse reached the start of `line` in `state`: check it
@@ -677,19 +968,23 @@ impl Document {
         parser: &mut Parser,
     ) -> Result<usize, (usize, LineError)> {
         let mut state = State::start(parser.syntax);
+        let mut offset = self.row_offset(lines.start);
         let mut spent = 0;
         for line in lines.clone() {
+            let text = &self.lines[line].text;
             let parsed = parser
-                .line(&mut state, &self.lines[line].text)
+                .line(&mut state, text, self.row(offset))
                 .map_err(|e| (line, e))?;
+            offset = offset.map(|at| at + text.len());
             spent += parsed.bytes;
             self.set_highlight(
                 line,
                 Highlight {
-                    exact: false,
                     runs: parsed.runs,
+                    parse: Parse::Provisional,
                 },
             );
+            self.set_roles(line, Roles::Unknown);
         }
         // Their runs are no longer the stale ranges' parse.
         self.stale = splice_ranges(std::mem::take(&mut self.stale), &lines, lines.len());
@@ -703,6 +998,14 @@ impl Document {
             self.changed.insert(line);
         }
     }
+
+    fn set_roles(&mut self, line: usize, roles: Roles) {
+        let slot = &mut self.lines[line].roles;
+        if *slot != roles {
+            *slot = roles;
+            self.changed.insert(line);
+        }
+    }
 }
 
 enum LineError {
@@ -712,8 +1015,9 @@ enum LineError {
 
 struct Parsed {
     runs: Vec<Run>,
-    /// Bytes handed to the grammar.
+    /// The line's bytes, as the work budget counts them.
     bytes: usize,
+    transitions: Transitions,
 }
 
 /// What parsing a line needs besides its document.
@@ -722,6 +1026,8 @@ struct Parser<'a> {
     syntax: &'a SyntaxReference,
     /// The embedded regions of `syntax`.
     embedding: &'a Embedding,
+    /// The table body scope of `syntax`, if it scopes tables.
+    table_scope: Option<Scope>,
     categories: &'a mut CategoryCache,
     languages: &'a mut LanguageCache,
 }
@@ -731,13 +1037,13 @@ type Span = (Range<usize>, Category);
 
 impl Parser<'_> {
     /// Parse one line (`text`, with its `\n` unless it is the document's
-    /// last) on from `state`.
+    /// last) on from `state`, coloured as `row` says.
     ///
     /// Only the line's [`highlighted_prefix`] is parsed, as ending there; the
     /// rest of a longer line has no runs, and the next line goes on from the
     /// state the cut leaves — as the native engine does. A row a diff
     /// category washes is filled to its end ([`RowWash`]).
-    fn line(&mut self, state: &mut State, text: &str) -> Result<Parsed, LineError> {
+    fn line(&mut self, state: &mut State, text: &str, row: Row) -> Result<Parsed, LineError> {
         let content = text.trim_end_matches(['\r', '\n']);
         let prefix = highlighted_prefix(content);
         let cut = prefix.len() < content.len();
@@ -751,23 +1057,89 @@ impl Parser<'_> {
         let mut wash = RowWash::new(0..end, |range, cat, background| {
             push_run(&mut runs, range, cat, background)
         });
-        if self.embedding.is_empty() {
-            self.spans(
-                &mut state.parse,
-                &mut state.scopes,
-                &input,
-                end,
-                &[],
-                |range, cat| wash.emit(range, cat, None),
-            )?;
-        } else {
-            self.host_line(state, &input, end, &mut wash)?;
+        let before = self.open_blocks(&state.scopes);
+        match row {
+            Row::Grammar if self.embedding.is_empty() => {
+                self.spans(
+                    &mut state.parse,
+                    &mut state.scopes,
+                    &input,
+                    end,
+                    &[],
+                    |range, cat| wash.emit(range, cat, None),
+                )?;
+            }
+            Row::Grammar => self.host_line(state, &input, end, &mut wash)?,
+            Row::Declared(region) => self.declared_row(state, region, &input, end, &mut wash)?,
         }
         wash.finish();
+        let after = self.open_blocks(&state.scopes);
         Ok(Parsed {
             runs,
             bytes: input.len(),
+            transitions: Transitions {
+                region: Edge {
+                    before: before.region,
+                    after: after.region,
+                },
+                table: Edge {
+                    before: before.table,
+                    after: after.table,
+                },
+            },
         })
+    }
+
+    /// Whether an embedded region and a table body are open in the host's
+    /// `scopes`.
+    fn open_blocks(&self, scopes: &ScopeStack) -> OpenBlocks {
+        OpenBlocks {
+            region: self.embedding.active_region(scopes).is_some(),
+            table: self
+                .table_scope
+                .is_some_and(|scope| scopes_contain(scopes, scope)),
+        }
+    }
+
+    /// [`Parser::line`] for a declared host's row, as the native engine does
+    /// it: a row in a `region` with a language is handed, its prefix
+    /// skipped, to the parser of each stream the region names, and coloured
+    /// by the first; any other row keeps the styling it has and advances no
+    /// parser — nor does a row too short for the prefix, or whose prefix
+    /// ends inside a character.
+    fn declared_row<F: FnMut(Range<usize>, Category, Option<Category>)>(
+        &mut self,
+        state: &mut State,
+        region: Option<&Region>,
+        input: &str,
+        end: usize,
+        wash: &mut RowWash<F>,
+    ) -> Result<(), LineError> {
+        let Some((region, syntax)) = region.and_then(|r| Some((r, r.syntax?))) else {
+            return Ok(());
+        };
+        let at = region.prefix;
+        if end < at || !input.is_char_boundary(at) {
+            return Ok(());
+        }
+        for (k, &stream) in region.streams.iter().enumerate() {
+            let mut parser = state.take_stream(stream, syntax, self.syntaxes);
+            let parsed = self.spans(
+                &mut parser.parse,
+                &mut parser.scopes,
+                &input[at..],
+                end - at,
+                &[],
+                |range, cat| {
+                    if k == 0 {
+                        wash.emit(range.start + at..range.end + at, cat, None)
+                    }
+                },
+            );
+            state.keep_stream(stream, parser);
+            parsed?;
+        }
+        Ok(())
     }
 
     /// [`Parser::line`] for a host with embedded regions, as the native
@@ -879,11 +1251,7 @@ impl Parser<'_> {
         let syntax = language
             .and_then(|range| self.languages.find(self.syntaxes, &input[range]))
             .or_else(|| self.languages.find(self.syntaxes, spec.default_language?))?;
-        Some(Embedded {
-            syntax,
-            parse: ParseState::new(&self.syntaxes.syntaxes()[syntax]),
-            scopes: ScopeStack::new(),
-        })
+        Some(Embedded::start(syntax, self.syntaxes))
     }
 
     /// Parse `input` on from `parse` and `scopes`, passing `on_span` each
@@ -930,6 +1298,12 @@ impl Parser<'_> {
         }
         Ok(watched.or_else(|| watch_start.map(|start| start..end)))
     }
+}
+
+/// Which blocks are open at a line boundary.
+struct OpenBlocks {
+    region: bool,
+    table: bool,
 }
 
 /// Emit `spans` as they are.

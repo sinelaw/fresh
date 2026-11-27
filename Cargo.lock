@@ -1583,6 +1583,7 @@ dependencies = [
 name = "fresh-highlight"
 version = "0.5.9"
 dependencies = [
+ "bincode",
  "proptest",
  "syntect",
 ]

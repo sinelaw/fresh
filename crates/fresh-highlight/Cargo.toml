@@ -12,13 +12,16 @@ homepage.workspace = true
 # No regex engine here: the consumer picks one (`regex-onig` natively,
 # `regex-fancy` in WebAssembly) and cargo's feature unification hands it to
 # this crate's syntect.
-syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load"] }
+# `yaml-load` for the grammars `build_syntax_set` adds.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "yaml-load"] }
+# What syntect serializes a packdump with: `build_syntax_set` writes one in
+# memory, which syntect only offers as a file.
+bincode = "1.3"
 
 [dev-dependencies]
-# A regex engine, so the crate builds on its own for its tests, the bundled
-# syntaxes to test against, and YAML loading for the editor's own grammars
-# that host embedded regions (its diff and Vue grammars).
-syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "default-syntaxes", "regex-fancy", "yaml-load"] }
+# A regex engine, so the crate builds on its own for its tests, and the
+# bundled syntaxes to test against.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "yaml-load", "default-syntaxes", "regex-fancy"] }
 proptest = "1.9"
 
 [lints]

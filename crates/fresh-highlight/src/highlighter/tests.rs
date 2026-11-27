@@ -1,4 +1,5 @@
 use super::*;
+use crate::structure::{RegionRole, TableLine, TableRole};
 use crate::MAX_LINE_BYTES;
 use proptest::prelude::*;
 use std::sync::OnceLock;
@@ -34,17 +35,17 @@ fn finish(h: &mut Highlighter) {
     while h.work(64 * 1024).unwrap() {}
 }
 
-/// Every line's highlight, in order.
-fn highlights(h: &Highlighter, doc: u32) -> Vec<Option<Highlight>> {
+/// Every line's highlight and roles, in order.
+fn highlights(h: &Highlighter, doc: u32) -> Vec<(Option<Highlight>, Roles)> {
     h.documents[&doc]
         .lines
         .iter()
-        .map(|l| l.highlight.clone())
+        .map(|l| (l.highlight.clone(), l.roles))
         .collect()
 }
 
-/// The highlight of `text` parsed in one go in `syntax`.
-fn fresh(syntax: &str, text: &str) -> Vec<Option<Highlight>> {
+/// The highlight and roles of `text` parsed in one go in `syntax`.
+fn fresh(syntax: &str, text: &str) -> Vec<(Option<Highlight>, Roles)> {
     let mut h = highlighter();
     h.open(0, syntax, text).unwrap();
     finish(&mut h);
@@ -55,7 +56,15 @@ fn fresh(syntax: &str, text: &str) -> Vec<Option<Highlight>> {
 fn runs(h: &Highlighter, doc: u32) -> Vec<Vec<Run>> {
     highlights(h, doc)
         .into_iter()
-        .map(|highlight| highlight.expect("every line is highlighted").runs)
+        .map(|(highlight, _)| highlight.expect("every line is highlighted").runs)
+        .collect()
+}
+
+/// Every line's roles.
+fn roles(h: &Highlighter, doc: u32) -> Vec<Roles> {
+    highlights(h, doc)
+        .into_iter()
+        .map(|(_, roles)| roles)
         .collect()
 }
 
@@ -151,7 +160,9 @@ fn a_far_wanted_range_is_provisional_until_the_exact_parse_reaches_it() {
         provisional.iter().map(|l| l.line).collect::<Vec<_>>(),
         (29_000..29_010).collect::<Vec<_>>()
     );
-    assert!(provisional.iter().all(|l| !l.exact));
+    assert!(provisional
+        .iter()
+        .all(|l| !l.exact && l.roles == Roles::Unknown));
     assert!(provisional
         .iter()
         .all(|l| l.runs.iter().all(|r| r.cat != Category::Comment)));
@@ -170,7 +181,9 @@ fn a_far_wanted_range_is_provisional_until_the_exact_parse_reaches_it() {
         cat: Category::Comment,
         background: None,
     }];
-    assert!(exact.iter().all(|l| l.exact && l.runs == comment));
+    assert!(exact
+        .iter()
+        .all(|l| l.exact && l.runs == comment && l.roles == NO_ROLES));
 }
 
 #[test]
@@ -378,6 +391,455 @@ fn vue_blocks_are_coloured_in_their_default_languages() {
     );
 }
 
+/// The roles of a line in no region and no table.
+const NO_ROLES: Roles = Roles::Known {
+    region: None,
+    table: None,
+};
+
+fn region(role: RegionRole) -> Roles {
+    Roles::Known {
+        region: Some(role),
+        table: None,
+    }
+}
+
+fn table(role: TableRole, first_row: bool, last: bool) -> Roles {
+    Roles::Known {
+        region: None,
+        table: Some(TableLine {
+            role,
+            first_row,
+            last,
+        }),
+    }
+}
+
+/// Every line's roles in `text`, a Markdown document, once all is parsed.
+fn markdown_roles(text: &str) -> Vec<Roles> {
+    let mut h = highlighter();
+    h.open(1, "Markdown", text).unwrap();
+    finish(&mut h);
+    roles(&h, 1)
+}
+
+/// The native engine's `region_lines_in` case: delimiters open and close,
+/// content is body, everything else has no role — a bare fence's
+/// delimiters included, whose roles their own text does not say.
+#[test]
+fn fence_lines_are_classified_as_natively() {
+    use RegionRole::{Body, Close, Open};
+    let text = "# T\n\n```rust\nlet x = 1;\n```\n\nprose\n\n```\nbare\n```\n\nend\n";
+    assert_eq!(
+        markdown_roles(text),
+        [
+            NO_ROLES,
+            NO_ROLES,
+            region(Open),
+            region(Body),
+            region(Close),
+            NO_ROLES,
+            NO_ROLES,
+            NO_ROLES,
+            region(Open),
+            region(Body),
+            region(Close),
+            NO_ROLES,
+            NO_ROLES,
+            NO_ROLES,
+        ]
+    );
+}
+
+/// An unclosed fence runs to the document's end, through its last, empty
+/// line — a line the native engine keeps no record of.
+#[test]
+fn an_unclosed_fence_runs_to_the_end() {
+    use RegionRole::{Body, Open};
+    assert_eq!(
+        markdown_roles("```\nbare\n"),
+        [region(Open), region(Body), region(Body)]
+    );
+}
+
+/// The native engine's `structure_lines_in` table cases: the header is the
+/// line above the delimiter, the first row the one below it, and the last
+/// row the one above the line that closes the table — or the document's
+/// last line while the table is open there.
+#[test]
+fn table_lines_are_classified_as_natively() {
+    use TableRole::{Delimiter, Header, Row};
+    assert_eq!(
+        markdown_roles("intro\n\n| K | V |\n|---|---|\n| a | b |\n| c | d |\n\nafter\n"),
+        [
+            NO_ROLES,
+            NO_ROLES,
+            table(Header, false, false),
+            table(Delimiter, false, false),
+            table(Row, true, false),
+            table(Row, false, true),
+            NO_ROLES,
+            NO_ROLES,
+            NO_ROLES,
+        ]
+    );
+    // The empty line after the last `\n` closes the table.
+    assert_eq!(
+        markdown_roles("intro\n\n| K | V |\n|---|---|\n| a | b |\n"),
+        [
+            NO_ROLES,
+            NO_ROLES,
+            table(Header, false, false),
+            table(Delimiter, false, false),
+            table(Row, true, true),
+            NO_ROLES,
+        ]
+    );
+    // Without one, the document's end does.
+    assert_eq!(
+        markdown_roles("| K |\n|---|\n| a |"),
+        [
+            table(Header, false, false),
+            table(Delimiter, false, false),
+            table(Row, true, true),
+        ]
+    );
+}
+
+#[test]
+fn regions_and_tables_are_classified_together() {
+    use RegionRole::{Body, Close, Open};
+    use TableRole::{Delimiter, Header, Row};
+    assert_eq!(
+        markdown_roles("| K |\n|---|\n| a |\n\n```rust\nlet x = 1;\n```\n\nend\n"),
+        [
+            table(Header, false, false),
+            table(Delimiter, false, false),
+            table(Row, true, true),
+            NO_ROLES,
+            region(Open),
+            region(Body),
+            region(Close),
+            NO_ROLES,
+            NO_ROLES,
+            NO_ROLES,
+        ]
+    );
+}
+
+/// A line's table role reads the line after it (is that the delimiter? does
+/// it close the table?), so it is unknown until that line is exact too —
+/// and reported again once it is known.
+#[test]
+fn a_lines_roles_wait_for_the_line_after_it() {
+    let mut h = highlighter();
+    h.open(1, "Markdown", "| K |\n|---|\n| a |\n").unwrap();
+    assert!(h.work(1).unwrap());
+    let first: Vec<(u32, bool, Roles)> = h
+        .take(1)
+        .unwrap()
+        .iter()
+        .map(|l| (l.line, l.exact, l.roles))
+        .collect();
+    assert_eq!(first, [(0, true, Roles::Unknown)]);
+    finish(&mut h);
+    let rest = h.take(1).unwrap();
+    assert_eq!(rest[0].line, 0);
+    assert_eq!(rest[0].roles, table(TableRole::Header, false, false));
+}
+
+/// A syntax without tables needs no next line: an exact line's roles are
+/// known at once.
+#[test]
+fn without_tables_an_exact_lines_roles_are_known_at_once() {
+    let mut h = highlighter();
+    h.open(1, "Rust", "fn a() {}\nfn b() {}\n").unwrap();
+    assert!(h.work(1).unwrap());
+    let first: Vec<(u32, Roles)> = h
+        .take(1)
+        .unwrap()
+        .iter()
+        .map(|l| (l.line, l.roles))
+        .collect();
+    assert_eq!(first, [(0, NO_ROLES)]);
+}
+
+/// Through edits that open and close a fence over a table, take its
+/// delimiter away and back, split and join it and add tables, each worked
+/// in small slices so passes stop mid-table, every line's roles (and runs)
+/// are what a fresh parse gives.
+#[test]
+fn roles_follow_edits_as_a_fresh_parse_gives_them() {
+    let mut text = format!(
+        "{}| K | V |\n|---|---|\n| a | b |\n| c | d |\n\nprose\n```rust\nlet x = 1;\n```\n{}",
+        "intro\n".repeat(200),
+        "tail\n".repeat(200),
+    );
+    let mut h = highlighter();
+    h.open(1, "Markdown", &text).unwrap();
+    finish(&mut h);
+    h.take(1).unwrap();
+    // (where, by the text there; bytes deleted; text inserted)
+    let edits: [(&str, usize, &str); 8] = [
+        ("| K | V |", 0, "```\n"),
+        ("```\n| K | V |", 4, ""),
+        ("|---|---|\n", 10, ""),
+        ("| K | V |\n", 10, "| K | V |\n|---|---|\n"),
+        ("| c | d |\n", 0, "\n"),
+        ("\n| c | d |", 1, ""),
+        ("prose\n", 0, "| x |\n|---|\n"),
+        ("tail\ntail\n", 0, "| e |\n|---|\n| f |\n"),
+    ];
+    for (needle, delete, insert) in edits {
+        let at = text.find(needle).unwrap();
+        h.edit(1, at, delete, insert).unwrap();
+        text.replace_range(at..at + delete, insert);
+        while h.work(16).unwrap() {}
+        assert_eq!(
+            highlights(&h, 1),
+            fresh("Markdown", &text),
+            "after {needle:?}"
+        );
+    }
+    // And a table at the very end, without a final newline.
+    let end = text.len();
+    h.edit(1, end, 0, "| g |\n|---|\n| h |").unwrap();
+    text.push_str("| g |\n|---|\n| h |");
+    while h.work(16).unwrap() {}
+    assert_eq!(highlights(&h, 1), fresh("Markdown", &text));
+    assert_eq!(
+        roles(&h, 1).last(),
+        Some(&table(TableRole::Row, true, true))
+    );
+}
+
+/// A row's runs, their starts less the prefix they were shifted by.
+fn unprefixed(row: &[Run], prefix: u32) -> Vec<Run> {
+    row.iter()
+        .map(|r| Run {
+            start: r.start - prefix,
+            ..*r
+        })
+        .collect()
+}
+
+/// Rows of a composed document, each feeding the streams given or none,
+/// and their regions: one per row that feeds any, in `language`, past
+/// `prefix` bytes.
+fn composed(
+    rows: &[(&str, Option<&[u32]>)],
+    language: &str,
+    prefix: usize,
+) -> (String, Vec<DeclaredRegion>) {
+    let text: String = rows.iter().map(|(row, _)| format!("{row}\n")).collect();
+    let regions = rows
+        .iter()
+        .scan(0, |at, (row, streams)| {
+            let start = *at;
+            *at += row.len() + 1;
+            Some(streams.map(|streams| DeclaredRegion {
+                start,
+                end: *at,
+                language: language.to_string(),
+                prefix,
+                streams: streams.to_vec(),
+            }))
+        })
+        .flatten()
+        .collect();
+    (text, regions)
+}
+
+/// The two sides of a hunk interleave row by row, with a note between
+/// them and a context row both share, and each side is coloured as its own
+/// rows parsed alone: a docstring opened on an old row is still open on
+/// the next old row, while the new rows between are code.
+#[test]
+fn declared_streams_interleave_and_each_parses_as_its_rows_alone() {
+    let old = [
+        "def f(x):",
+        "    \"\"\"doc",
+        "    string\"\"\"",
+        "    return z",
+    ];
+    let new = [
+        "def g(y):",
+        "    s = '''a",
+        "    b'''",
+        "    return z",
+        "    t = 1",
+    ];
+    let rows: Vec<(String, Option<&[u32]>)> = vec![
+        ("@@ hunk @@".to_string(), None),
+        (format!("-{}", old[0]), Some(&[0])),
+        (format!("+{}", new[0]), Some(&[1])),
+        (format!("-{}", old[1]), Some(&[0])),
+        (format!("+{}", new[1]), Some(&[1])),
+        ("  [ a note ]".to_string(), None),
+        (format!("-{}", old[2]), Some(&[0])),
+        (format!("+{}", new[2]), Some(&[1])),
+        (format!(" {}", old[3]), Some(&[0, 1])),
+        (format!("+{}", new[4]), Some(&[1])),
+    ];
+    let rows: Vec<(&str, Option<&[u32]>)> =
+        rows.iter().map(|(row, s)| (row.as_str(), *s)).collect();
+    let (text, regions) = composed(&rows, "py", 1);
+    let mut h = highlighter();
+    h.open_declared(1, &text).unwrap();
+    assert_eq!(
+        h.set_regions(1, &regions).unwrap(),
+        vec![RegionStatus::Kept; regions.len()]
+    );
+    finish(&mut h);
+    let lines = runs(&h, 1);
+
+    let alone_rows = |rows: &[&str]| {
+        alone(
+            "Python",
+            &rows
+                .iter()
+                .map(|row| format!("{row}\n"))
+                .collect::<String>(),
+        )
+    };
+    let old_alone = alone_rows(&old);
+    let new_alone = alone_rows(&new);
+    let row = |i: usize| unprefixed(&lines[i], 1);
+    assert_eq!(row(1), old_alone[0]);
+    assert_eq!(row(3), old_alone[1]);
+    assert_eq!(row(6), old_alone[2]);
+    assert_eq!(row(2), new_alone[0]);
+    assert_eq!(row(4), new_alone[1]);
+    assert_eq!(row(7), new_alone[2]);
+    // The shared row is coloured by its first stream, and fed to both.
+    assert_eq!(row(8), old_alone[3]);
+    assert_eq!(row(9), new_alone[4]);
+    // Rows outside every region have no runs and advance no parser.
+    assert!(lines[0].is_empty() && lines[5].is_empty() && lines[10].is_empty());
+    // The docstring really is open across the new rows and the note.
+    assert!(row(6).iter().any(|r| r.cat == Category::Comment));
+    assert_ne!(row(7), row(6));
+}
+
+/// Four streams' parsers are kept: a stream fed again after three others
+/// goes on where it was, after four others it starts afresh.
+#[test]
+fn a_stream_fed_again_after_four_others_starts_afresh() {
+    let last_row = |others: &[u32]| {
+        let rows: Vec<(&str, Option<&[u32]>)> = std::iter::once(("\"\"\"open", Some(&[0][..])))
+            .chain(
+                others
+                    .iter()
+                    .map(|s| ("y = 2", Some(std::slice::from_ref(s)))),
+            )
+            .chain(std::iter::once(("x = 1", Some(&[0][..]))))
+            .collect();
+        let (text, regions) = composed(&rows, "py", 0);
+        let mut h = highlighter();
+        h.open_declared(1, &text).unwrap();
+        h.set_regions(1, &regions).unwrap();
+        finish(&mut h);
+        runs(&h, 1)[rows.len() - 1].clone()
+    };
+    let in_docstring = last_row(&[1, 2, 3]);
+    assert!(in_docstring.iter().all(|r| r.cat == Category::Comment));
+    assert_eq!(last_row(&[1, 2, 3, 4]), alone("Python", "x = 1\n")[0]);
+}
+
+#[test]
+fn declared_regions_report_what_became_of_them() {
+    let text = "+def f():\n+x\n";
+    let mut h = highlighter();
+    h.open_declared(1, text).unwrap();
+    let region = |start, end, language: &str| DeclaredRegion {
+        start,
+        end,
+        language: language.to_string(),
+        prefix: 1,
+        streams: Vec::new(),
+    };
+    assert_eq!(
+        h.set_regions(
+            1,
+            &[
+                region(0, 10, "src/calc.py"),
+                region(2, 10, "py"),
+                region(10, 13, "definitely-not-a-language"),
+                region(13, 13, "py"),
+            ],
+        )
+        .unwrap(),
+        [
+            RegionStatus::Kept,
+            RegionStatus::Overlaps,
+            RegionStatus::UnknownLanguage,
+            RegionStatus::Empty,
+        ]
+    );
+    finish(&mut h);
+    let lines = runs(&h, 1);
+    assert!(lines[0]
+        .iter()
+        .any(|r| r.start == 1 && r.cat == Category::Keyword));
+    assert!(
+        lines[1].is_empty(),
+        "a region in no known language stays plain"
+    );
+
+    assert!(matches!(
+        h.set_regions(1, &[region(0, 14, "py")]),
+        Err(Error::RegionOutOfRange {
+            index: 0,
+            end: 14,
+            len: 13,
+            ..
+        })
+    ));
+    h.open(2, "Rust", "fn main() {}").unwrap();
+    assert!(matches!(h.set_regions(2, &[]), Err(Error::NotDeclared(2))));
+    // Replacing the text clears the regions.
+    h.replace(1, text).unwrap();
+    finish(&mut h);
+    assert!(runs(&h, 1).iter().all(Vec::is_empty));
+}
+
+/// Regions ride the text: a row inserted before a region moves it, one
+/// inserted at its end goes into it, and the parse after each edit ends
+/// where a fresh parse with the moved regions does.
+#[test]
+fn declared_regions_follow_edits() {
+    let code = "+def f():\n";
+    let mut h = highlighter();
+    h.open_declared(1, code).unwrap();
+    h.set_regions(
+        1,
+        &[DeclaredRegion {
+            start: 0,
+            end: code.len(),
+            language: "py".to_string(),
+            prefix: 1,
+            streams: Vec::new(),
+        }],
+    )
+    .unwrap();
+    finish(&mut h);
+
+    h.edit(1, 0, 0, "HEADER\n").unwrap();
+    finish(&mut h);
+    assert_eq!(highlights(&h, 1), fresh_declared(&h, 1));
+    let lines = runs(&h, 1);
+    assert!(lines[0].is_empty());
+    assert!(lines[1].iter().any(|r| r.cat == Category::Keyword));
+
+    let end = "HEADER\n+def f():\n".len();
+    h.edit(1, end, 0, "+    return 1\n").unwrap();
+    finish(&mut h);
+    assert_eq!(highlights(&h, 1), fresh_declared(&h, 1));
+    assert!(runs(&h, 1)[2]
+        .iter()
+        .any(|r| r.start == 5 && r.cat == Category::Keyword));
+}
+
 /// Pieces of Rust that open and close multi-line constructs, and multibyte
 /// text.
 const TOKENS: &[&str] = &[
@@ -386,9 +848,13 @@ const TOKENS: &[&str] = &[
 ];
 
 /// Pieces of Markdown with fences in Rust, Python, no language and an
-/// unknown one, and pieces of those languages' multi-line constructs, so
-/// edits open, close and retarget fences around code in mid-construct.
+/// unknown one, pieces of those languages' multi-line constructs, so edits
+/// open, close and retarget fences around code in mid-construct, and table
+/// rows, so they open, split and close tables.
 const MARKDOWN_TOKENS: &[&str] = &[
+    "| a | b |\n",
+    "|---|---|\n",
+    "|",
     "```rust\n",
     "```python\n",
     "```\n",
@@ -458,35 +924,110 @@ fn floor_boundary(text: &str, at: usize) -> usize {
         .unwrap_or(0)
 }
 
-/// However edits, wanted ranges and budgets interleave, once the work is
-/// done every line of a `syntax` document opened with `initial` holds
-/// exactly what a parse of the final text gives.
-fn check_incremental(syntax: &str, initial: String, ops: Vec<Op>) -> Result<(), TestCaseError> {
-    let mut h = highlighter();
-    let mut text = initial;
-    h.open(7, syntax, &text).unwrap();
+/// Apply `ops` to document `doc`, whose text is `text`, and work until
+/// nothing remains. Returns the final text.
+fn apply(h: &mut Highlighter, doc: u32, mut text: String, ops: Vec<Op>) -> String {
     for op in ops {
         match op {
             Op::Edit { at, delete, insert } => {
                 let start = floor_boundary(&text, at % (text.len() + 1));
                 let end = floor_boundary(&text, start + delete);
-                h.edit(7, start, end - start, &insert).unwrap();
+                h.edit(doc, start, end - start, &insert).unwrap();
                 text.replace_range(start..end, &insert);
             }
-            Op::Want { from, len } => h.want(7, from, from + len).unwrap(),
+            Op::Want { from, len } => h.want(doc, from, from + len).unwrap(),
             Op::Work(budget) => {
                 h.work(budget).unwrap();
             }
         }
     }
-    finish(&mut h);
-    let expected = fresh(syntax, &text);
-    let got = highlights(&h, 7);
+    finish(h);
+    text
+}
+
+fn assert_lines_eq(
+    got: &[(Option<Highlight>, Roles)],
+    expected: &[(Option<Highlight>, Roles)],
+) -> Result<(), TestCaseError> {
     prop_assert_eq!(got.len(), expected.len());
-    for (line, (got, expected)) in got.iter().zip(&expected).enumerate() {
+    for (line, (got, expected)) in got.iter().zip(expected).enumerate() {
         prop_assert_eq!(got, expected, "line {}", line);
     }
     Ok(())
+}
+
+/// However edits, wanted ranges and budgets interleave, once the work is
+/// done every line of a `syntax` document opened with `initial` holds
+/// exactly what a parse of the final text gives, roles included.
+fn check_incremental(syntax: &str, initial: String, ops: Vec<Op>) -> Result<(), TestCaseError> {
+    let mut h = highlighter();
+    h.open(7, syntax, &initial).unwrap();
+    let text = apply(&mut h, 7, initial, ops);
+    assert_lines_eq(&highlights(&h, 7), &fresh(syntax, &text))
+}
+
+/// Pieces of Python with its multi-line constructs, for rows of a composed
+/// document.
+const PYTHON_TOKENS: &[&str] = &[
+    "def ", "x", "\"\"\"", "'''", "'", "# ", "(", ")", ":", " ", "\n", "\n", "\n", "1", "é",
+    "return ", "+", "-",
+];
+
+/// `text` as a composed document: each row a region of its own when its
+/// `kinds` entry (cycled) says so — 0: none, 1: stream 0, 2: stream 1, 3:
+/// both — in Python, past a one-byte prefix.
+fn composed_regions(text: &str, kinds: &[u8]) -> Vec<DeclaredRegion> {
+    text.split_inclusive('\n')
+        .scan(0, |at, row| {
+            let start = *at;
+            *at += row.len();
+            Some(start..*at)
+        })
+        .zip(kinds.iter().cycle())
+        .filter_map(|(range, kind)| {
+            let streams = match kind {
+                1 => vec![0],
+                2 => vec![1],
+                3 => vec![0, 1],
+                _ => return None,
+            };
+            Some(DeclaredRegion {
+                start: range.start,
+                end: range.end,
+                language: "py".to_string(),
+                prefix: 1,
+                streams,
+            })
+        })
+        .collect()
+}
+
+/// Every line of a parse in one go of declared document `doc`'s current
+/// text, with the regions it has now.
+fn fresh_declared(h: &Highlighter, doc: u32) -> Vec<(Option<Highlight>, Roles)> {
+    let d = &h.documents[&doc];
+    let Host::Declared(regions) = &d.host else {
+        panic!("document {doc} is not declared");
+    };
+    let mut fresh = highlighter();
+    fresh.documents.insert(
+        0,
+        Document::new(d.syntax, Host::Declared(regions.clone()), &d.text()),
+    );
+    finish(&mut fresh);
+    highlights(&fresh, 0)
+}
+
+/// [`check_incremental`] for a declared document: its regions move with
+/// the edits, and its stream parsers are part of the state a parse
+/// converges on.
+fn check_declared(initial: String, kinds: Vec<u8>, ops: Vec<Op>) -> Result<(), TestCaseError> {
+    let mut h = highlighter();
+    h.open_declared(7, &initial).unwrap();
+    h.set_regions(7, &composed_regions(&initial, &kinds))
+        .unwrap();
+    apply(&mut h, 7, initial, ops);
+    assert_lines_eq(&highlights(&h, 7), &fresh_declared(&h, 7))
 }
 
 proptest! {
@@ -501,12 +1042,24 @@ proptest! {
     }
 
     /// The same through Markdown fences, whose child parsers' state the
-    /// checkpoints carry.
+    /// checkpoints carry, and tables, whose lines' roles read their
+    /// neighbours'.
     #[test]
     fn incremental_highlighting_matches_a_fresh_parse_through_fences(
         initial in tokens(MARKDOWN_TOKENS, 50..400),
         ops in prop::collection::vec(op(MARKDOWN_TOKENS), 1..40),
     ) {
         check_incremental("Markdown", initial, ops)?;
+    }
+
+    /// The same for a declared document, whose regions edits move and
+    /// whose two streams interleave.
+    #[test]
+    fn incremental_declared_highlighting_matches_a_fresh_parse(
+        initial in tokens(PYTHON_TOKENS, 20..300),
+        kinds in prop::collection::vec(0u8..4, 1..20),
+        ops in prop::collection::vec(op(PYTHON_TOKENS), 1..40),
+    ) {
+        check_declared(initial, kinds, ops)?;
     }
 }

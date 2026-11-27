@@ -15,13 +15,16 @@ crate-type = ["cdylib"]
 [dependencies]
 fresh-highlight.workspace = true
 fresh-markers.workspace = true
-syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "regex-fancy"] }
+# `yaml-load` for the grammars `hl_build` adds.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "yaml-load", "regex-fancy"] }
 # The terminal editor's measure of a character cell (fresh-core display_width).
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
 
 [dev-dependencies]
 proptest = "1.9"
+# The bundled syntaxes, for the `hl_*` tests' packdump.
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes"] }
 
 [lints]
 workspace = true
