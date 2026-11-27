@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use fresh_core::api::{OverlayColorSpec, ScrollbarMarker};
 
-use crate::model::marker::{MarkerId, MarkerList};
+use fresh_markers::marker::{MarkerId, MarkerList};
 
 /// Per-namespace cap on stored markers. The track oversamples wildly at this
 /// count already (≤ ~200 cells), so the cap exists to bound *set-time* cost

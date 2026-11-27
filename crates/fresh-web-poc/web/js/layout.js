@@ -74,13 +74,20 @@ function revealed(c, cursors) { const rv = c.reveal; return rv !== null && curso
 function noConceals() { return new Map(); }
 /** function noInlines() => Map<Number, InlineText[]> */
 function noInlines() { return new Map(); }
-/** function noLines() => Map<Number, VirtualLine[]> */
-function noLines() { return new Map(); }
 /** function noFolds() => Map<Number, Range> */
 function noFolds() { return new Map(); }
+// A line's active decorations: its conceals and inline texts by position,
+// and the virtual lines at it in their order.
+/** type LineDecor = {
+ *   conceals: Map<Number, Conceal>,
+ *   inlines: Map<Number, InlineText[]>,
+ *   vlines: VirtualLine[],
+ * } */
+/** function noLineDecor() => Map<Number, LineDecor> */
+function noLineDecor() { return new Map(); }
 
-// `L`: a buffer's held lines; `d`: its conceals, inline texts and virtual
-// lines.
+// `L`: a buffer's held lines; `d`: its decorations (decor.js), asked for
+// the lines the layout reaches.
 // o: {mode, wrap, width, tab, cursors, folds:[{start,end}] (line indices),
 //     styleAt(b, li, idx), styleAtByte(b), whitespace, extendAt(b)}
 export function layout(L, d, top, maxRows, o) {
@@ -89,25 +96,30 @@ export function layout(L, d, top, maxRows, o) {
   if (top < 0) return { rows, consumed, next: top };
   const width = Math.max(8, o.width);
 
-  // Index the active decorations by position.
-  const conceals = noConceals();
-  for (const c of d.conceals) {
-    if (c.end <= c.start || !applies(c, o.mode)) continue;
-    if (revealed(c, o.cursors)) continue;
-    const prev = conceals.get(c.start);
-    if (prev === undefined || prev.end < c.end) conceals.set(c.start, c);
-  }
-  const inlines = noInlines();
-  for (const v of d.inlines) {
-    if (applies(v, o.mode)) inlines.set(v.pos, [...(inlines.get(v.pos) ?? []), v]);
-  }
-  const vlines = noLines();
-  for (const v of d.lines) {
-    if (!applies(v, o.mode)) continue;
-    const i = L.indexOf(v.pos);
-    if (i >= 0) vlines.set(i, [...(vlines.get(i) ?? []), v]);
-  }
-  for (const list of vlines.values()) list.sort((a, b) => a.order - b.order);
+  // Line `li`'s active decorations, gathered when the layout first reaches
+  // it.
+  const lineDecor = noLineDecor();
+  /** const decorOf: (Number) => LineDecor */
+  const decorOf = (li) => {
+    const hit = lineDecor.get(li);
+    if (hit !== undefined) return hit;
+    const ls = L.starts[li], le = L.lineEnd(li) + 1;
+    const conceals = noConceals();
+    for (const c of d.concealsIn(ls, le)) {
+      if (c.end <= c.start || !applies(c, o.mode)) continue;
+      if (revealed(c, o.cursors)) continue;
+      const prev = conceals.get(c.start);
+      if (prev === undefined || prev.end < c.end) conceals.set(c.start, c);
+    }
+    const inlines = noInlines();
+    for (const v of d.inlinesIn(ls, le)) {
+      if (applies(v, o.mode)) inlines.set(v.pos, [...(inlines.get(v.pos) ?? []), v]);
+    }
+    const vlines = d.linesIn(ls, le).filter((v) => applies(v, o.mode)).sort((a, b) => a.order - b.order);
+    const x = { conceals, inlines, vlines };
+    lineDecor.set(li, x);
+    return x;
+  };
   const foldAt = noFolds();
   for (const f of o.folds) foldAt.set(f.start, f);
 
@@ -127,8 +139,9 @@ export function layout(L, d, top, maxRows, o) {
     row.edge = [];
     rows.push(row);
   };
-  const inlineAt = (b, side) => {
-    for (const v of inlines.get(b) ?? []) {
+  // The inline texts at byte `b` of line `li`.
+  const inlineAt = (li, b, side) => {
+    for (const v of decorOf(li).inlines.get(b) ?? []) {
       if (v.side !== side) continue;
       if (v.edge) row.edge.push(v);
       else putText(v.text, null, drawnOf(v.style));
@@ -153,7 +166,7 @@ export function layout(L, d, top, maxRows, o) {
 
   let li = top;
   while (rows.length < maxRows && li < L.count) {
-    for (const v of vlines.get(li) ?? []) if (v.above) addVirtual(v);
+    for (const v of decorOf(li).vlines) if (v.above) addVirtual(v);
     row = newRow(li, false);
     consumed.push(li);
     let cur = li, text = L.lines[cur], i = 0, b = L.starts[cur], last = li;
@@ -165,8 +178,8 @@ export function layout(L, d, top, maxRows, o) {
     for (;;) {
       if (i >= text.length) {
         // End of a source line; b is its newline (or the end of the text).
-        inlineAt(b, "before");
-        const c = conceals.get(b);
+        inlineAt(cur, b, "before");
+        const c = decorOf(cur).conceals.get(b);
         if (c !== undefined && L.hasNewline(cur)) {
           putText(c.text, b, restyler(c.style)(o.styleAtByte(b)));
           const j = L.indexOf(c.end);
@@ -180,13 +193,13 @@ export function layout(L, d, top, maxRows, o) {
           continue;
         }
         if (fold !== undefined) putText(" ⋯", null, FOLD_MARK);
-        inlineAt(b, "after");
+        inlineAt(cur, b, "after");
         row.eol = b;
         row.fill = o.extendAt(b);
         break;
       }
-      inlineAt(b, "before");
-      const c = conceals.get(b);
+      inlineAt(cur, b, "before");
+      const c = decorOf(cur).conceals.get(b);
       if (c !== undefined) {
         putText(c.text, b, restyler(c.style)(o.styleAt(b, cur, i)));
         const j = L.indexOf(c.end);
@@ -222,7 +235,7 @@ export function layout(L, d, top, maxRows, o) {
         for (let k = 1; k < w; k++) put(" ", null, st, 1);
       } else if (cp === 32 && o.whitespace) put("·", b, WHITESPACE(st), 1);
       else put(ch, b, st, w);
-      inlineAt(b, "after");
+      inlineAt(cur, b, "after");
       if (cp === 32 || cp === 9) breakAt = [row.cells.length];
       i += ch.length;
       b += byteLen(ch);
@@ -231,7 +244,7 @@ export function layout(L, d, top, maxRows, o) {
     // A fold hides the lines after its first.
     if (fold !== undefined) last = Math.max(last, fold.end);
     const folded = fold !== undefined;
-    for (let k = li; k <= last; k++) for (const v of vlines.get(k) ?? []) if (!v.above && !(folded && k > li)) addVirtual(v);
+    for (let k = li; k <= last; k++) if (!(folded && k > li)) for (const v of decorOf(k).vlines) if (!v.above) addVirtual(v);
     li = last + 1;
   }
   return { rows, consumed, next: li };

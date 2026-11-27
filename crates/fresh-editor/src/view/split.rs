@@ -26,10 +26,10 @@
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
-use crate::model::marker::MarkerList;
 use crate::state::ViewMode;
 use crate::view::folding::FoldManager;
 use crate::view::viewport::Viewport;
+use fresh_markers::marker::MarkerList;
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -358,6 +358,7 @@ export class App {
     this.host = c.host;
     this.macros = c.macros;
     this.menubar = c.menubar;
+    this.wasm = c.wasm; // the WebAssembly module (wasm.js): buffers' marker lists, the syntax engine
     this.input = c.input;
     this.paneEditor = c.paneEditor; // what each pane asks of the editor
     const pane = new Pane(c.paneEditor);
@@ -391,7 +392,7 @@ export class App {
     this.relayout();
     new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));
     setInterval(() => { this.autoSave(); }, 1000);
-    Highlighting.load((b) => { this.coloursChanged(b); }).then((hl) => {
+    Highlighting.load(this.wasm, (b) => { this.coloursChanged(b); }).then((hl) => {
       this.hl = [hl];
       for (const b of this.buffers.values()) if (terminalOf(b.source).length === 0) hl.attach(b);
       this.renderAll();
@@ -658,7 +659,7 @@ export class App {
   terminalBuffer(id) {
     const had = [...this.buffers.values()].find((b) => terminalOf(b.source).includes(id));
     if (had !== undefined) return had;
-    const b = terminalBuffer(id, this.terminals.label(id));
+    const b = terminalBuffer(id, this.terminals.label(id), this.wasm);
     b.keep = true;
     this.buffers.set(b.id, b);
     return b;
@@ -1046,7 +1047,7 @@ export class App {
   async adoptDoc(info) {
     const known = this.docs.get(info.doc);
     if (known !== undefined) return known;
-    const b = fileBuffer(info);
+    const b = fileBuffer(info, this.wasm);
     this.buffers.set(b.id, b);
     this.docs.set(info.doc, b);
     this.watchBuffer(b);
@@ -1085,7 +1086,7 @@ export class App {
 
   // A virtual buffer (`o`: VirtualOptions, types/fresh.d.js).
   createVirtual(o) {
-    const b = virtualBuffer(o.name, o.entries, o.mode, o.readOnly);
+    const b = virtualBuffer(o.name, o.entries, o.mode, o.readOnly, this.wasm);
     b.language = o.language || null;
     // Its colours: the grammar the catalog has for its language.
     for (const lang of listOf(b.language)) {
@@ -1128,8 +1129,8 @@ export class App {
   // The open files, and the problems the language servers found in them.
   counts() {
     const bufs = [...this.buffers.values()];
-    const diags = bufs.flatMap((b) => b.decor.diags);
-    return { files: bufs.filter((b) => !b.isVirtual).length, errors: diags.filter((x) => x.severity === 1).length, warnings: diags.filter((x) => x.severity === 2).length };
+    const severities = bufs.flatMap((b) => b.decor.severities());
+    return { files: bufs.filter((b) => !b.isVirtual).length, errors: severities.filter((s) => s === 1).length, warnings: severities.filter((s) => s === 2).length };
   }
   // The editor theme `key`, when a theme plugin is there to put it on.
   async useTheme(key) { if (this.commands.has("theme.use")) await this.run("theme.use", key); }
@@ -2104,8 +2105,8 @@ export class App {
         for (const e of listOf(b.encoding)) add(e, titled("Encoding: Reopen or Save with Encoding", "file.encoding"), cmd("file.encoding"));
         add(b.language ?? "plain text", titled("Language: Set Language", "file.language"), cmd("file.language"));
       } else for (const l of listOf(b.language)) add(l, "", null);
-      const ds = b.decor.diags;
-      if (ds.length > 0) add(`● ${ds.filter((d) => d.severity === 1).length}  ▲ ${ds.filter((d) => d.severity === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
+      const ss = b.decor.severities();
+      if (ss.length > 0) add(`● ${ss.filter((x) => x === 1).length}  ▲ ${ss.filter((x) => x === 2).length}`, titled("Diagnostics: Show Panel", "lsp.diagnostics"), cmd("lsp.diagnostics"));
       if (v.mode === "compose") add("compose", titled("Markdown: Toggle Compose", "markdown.toggleCompose"), cmd("markdown.toggleCompose"));
       for (const f of b.file) add(synced(f) ? `v${f.version}` : `v${f.version}…`, "Document log version", null);
     }

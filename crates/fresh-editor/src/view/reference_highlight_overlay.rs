@@ -11,11 +11,11 @@
 //! highlighted instead.
 
 use crate::model::buffer::Buffer;
-use crate::model::marker::MarkerList;
 use crate::primitives::reference_highlighter::{
     is_matchable_selection, ReferenceHighlighter, MAX_SELECTION_MATCH_BYTES,
 };
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, OverlayNamespace};
+use fresh_markers::marker::MarkerList;
 use ratatui::style::Color;
 use std::ops::Range;
 use std::time::{Duration, Instant};

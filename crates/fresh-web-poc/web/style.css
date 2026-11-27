@@ -42,6 +42,7 @@ body {
   font: var(--ui-font-size) var(--ui-font);
 }
 #app { display: flex; flex-direction: column; height: 100vh; }
+.cannot-start { margin: 2em; font-family: var(--mono); color: var(--fg); }
 #topbar { display: flex; gap: 12px; align-items: center; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 #topbar .brand { font-weight: 600; color: var(--emphasis); }
 #ws-name { margin-left: 6px; }

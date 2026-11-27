@@ -56,65 +56,30 @@ function plainAt(exact) { return { kind: "plain", exact }; }
 // ---------------------------------------------------------------- the module
 
 const enc = new TextEncoder();
-const dec = new TextDecoder();
 
-// The WebAssembly module's raw ABI (crates/fresh-highlight-wasm).
-/** type HlExports = {
- *   memory: {buffer: ArrayBuffer},
- *   hl_alloc: (Number) => Number,
- *   hl_free: (Number, Number) => Undefined,
- *   hl_error: () => Number,
- *   hl_init: (Number, Number) => Number,
- *   hl_categories: () => Number,
- *   hl_open: (Number, Number, Number, Number, Number) => Number,
- *   hl_close: (Number) => Undefined,
- *   hl_edit: (Number, Number, Number, Number, Number) => Number,
- *   hl_want: (Number, Number, Number) => Undefined,
- *   hl_work: (Number) => Number,
- *   hl_take: (Number) => Number,
- * } */
+// The syntax engine's calls in the module (wasm.js; the `hl_*` ABI).
 class Engine {
-  constructor(exports) {
-    /** this.x: HlExports */
-    this.x = exports;
+  constructor(wasm) {
+    /** this.w: Wasm */
+    this.w = wasm;
+    this.x = wasm.x;
   }
-  // `n` bytes of the module's memory from `ptr`.
-  bytesAt(ptr, n) { return new Uint8Array(this.x.memory.buffer).subarray(ptr, ptr + n); }
-  // The little-endian u32 at byte `ptr` of the module's memory.
-  u32(ptr) {
-    const b = this.bytesAt(ptr, 4);
-    return (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)) >>> 0;
-  }
-  // A [len u32][utf8] string at `ptr`.
-  /** method str(ptr: Number) => String */
-  str(ptr) {
-    const n = this.u32(ptr);
-    return dec.decode(this.bytesAt(ptr + 4, n));
-  }
-  // `f(ptr, len)` with `bytes` copied into the module's memory.
-  withBytes(bytes, f) {
-    const p = this.x.hl_alloc(bytes.length) >>> 0;
-    if (p === 0) throw new Error(this.str(this.x.hl_error() >>> 0));
-    this.bytesAt(p, bytes.length).set(bytes);
-    try { return f(p, bytes.length); } finally { this.x.hl_free(p, bytes.length); }
-  }
-  check(code) { if (code !== 0) throw new Error(this.str(this.x.hl_error() >>> 0)); }
-  init(packdump) { this.withBytes(packdump, (p, n) => this.check(this.x.hl_init(p, n))); }
-  categories() { return JSON.parse(this.str(this.x.hl_categories() >>> 0)); }
+  init(packdump) { this.w.withBytes(packdump, (p, n) => this.w.check(this.x.hl_init(p, n))); }
+  categories() { return JSON.parse(this.w.str(this.x.hl_categories() >>> 0)); }
   open(doc, syntax, text) {
-    this.withBytes(enc.encode(syntax), (sp, sn) => this.withBytes(enc.encode(text), (tp, tn) => this.check(this.x.hl_open(doc, sp, sn, tp, tn))));
+    this.w.withBytes(enc.encode(syntax), (sp, sn) => this.w.withBytes(enc.encode(text), (tp, tn) => this.w.check(this.x.hl_open(doc, sp, sn, tp, tn))));
   }
-  close(doc) { this.check(this.x.hl_close(doc)); }
-  edit(doc, at, removed, text) { this.withBytes(enc.encode(text), (p, n) => this.check(this.x.hl_edit(doc, at, removed, p, n))); }
-  want(doc, from, to) { this.check(this.x.hl_want(doc, from, to)); }
+  close(doc) { this.w.check(this.x.hl_close(doc)); }
+  edit(doc, at, removed, text) { this.w.withBytes(enc.encode(text), (p, n) => this.w.check(this.x.hl_edit(doc, at, removed, p, n))); }
+  want(doc, from, to) { this.w.check(this.x.hl_want(doc, from, to)); }
   // Parse up to `budget` bytes: whether work remains. A grammar that failed
   // closes its document (take then fails for it).
   work(budget) { return this.x.hl_work(budget) === 1; }
   // The lines whose runs changed since the last take.
   take(doc) {
     const ptr = this.x.hl_take(doc) >>> 0;
-    if (ptr === 0) throw new Error(this.str(this.x.hl_error() >>> 0));
-    const w = (k) => this.u32(ptr + 4 * k);
+    if (ptr === 0) throw this.w.failed();
+    const w = (k) => this.w.u32(ptr + 4 * k);
     /** const out: {line: Number, exact: Boolean, runs: Run[]}[] */
     const out = [];
     let i = 2;
@@ -395,12 +360,12 @@ export class Highlighting {
   }
   tick() { this.channel.port2.postMessage(null); }
 
-  // Load the module and grammars the server serves.
-  static async load(onColours) {
-    const [wasm, packdump] = await Promise.all([fetch("/hl/highlight.wasm"), fetch("/hl/syntaxes.packdump")]);
-    if (!wasm.ok || !packdump.ok) throw new Error(`highlighting: the server did not serve the engine (${wasm.status}, ${packdump.status})`);
-    const { instance } = await WebAssembly.instantiate(await wasm.arrayBuffer(), {});
-    const engine = new Engine(instance.exports);
+  // Start the engine in module `wasm` (wasm.js) with the grammars the
+  // server serves.
+  static async load(wasm, onColours) {
+    const packdump = await fetch("/hl/syntaxes.packdump");
+    if (!packdump.ok) throw new Error(`highlighting: the server did not serve the grammars (${packdump.status})`);
+    const engine = new Engine(wasm);
     engine.init(new Uint8Array(await packdump.arrayBuffer()));
     const h = new Highlighting(engine, onColours);
     h.channel.port1.onmessage = () => { h.slice(); };

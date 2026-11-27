@@ -12,7 +12,7 @@
 /// situations where marker count is low (<100).
 use std::collections::HashMap;
 
-use crate::model::marker_tree::IntervalTree;
+use crate::marker_tree::IntervalTree;
 
 /// Unique identifier for a marker
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -174,6 +174,28 @@ impl MarkerList {
         id
     }
 
+    /// Create a marker covering `start..end` whose two ends each have their
+    /// own gravity (`true`: right, pushed forward by text inserted exactly
+    /// there). A range that keeps to the text it covers, as the web client's
+    /// decorations do, is start-right and end-left: text typed at either edge
+    /// stays out of it.
+    pub fn create_range(
+        &mut self,
+        start: usize,
+        end: usize,
+        start_right_gravity: bool,
+        end_right_gravity: bool,
+    ) -> MarkerId {
+        let id = MarkerId(self.tree.insert_with_gravity(
+            start as u64,
+            end.max(start) as u64,
+            start_right_gravity,
+            end_right_gravity,
+        ));
+        self._affinity_map.insert(id, !start_right_gravity);
+        id
+    }
+
     /// Create the three markers an overlay needs — a start point, an end
     /// point and a span covering both — for many ranges at once.
     ///
@@ -246,6 +268,12 @@ impl MarkerList {
         Some(start as usize)
     }
 
+    /// Get the current start and end of a marker. Cost: O(log n)
+    pub fn get_range(&self, id: MarkerId) -> Option<(usize, usize)> {
+        let (start, end) = self.tree.get_position(id.0)?;
+        Some((start as usize, end as usize))
+    }
+
     /// Query all markers that overlap with a byte range
     ///
     /// This is an efficient way to find all markers in a viewport/visible region.
@@ -308,9 +336,8 @@ impl MarkerList {
     /// Adjust all markers for a batch of non-overlapping edits at once.
     ///
     /// `edits` are `(position, deleted_len, inserted_len)` triples describing a
-    /// single bulk edit. Applying them one at a time costs O(markers) per
-    /// deletion, so a replace-all with one edit per match was quadratic; the
-    /// batched path (see [`IntervalTree::adjust_for_bulk_edits`]) is
+    /// single bulk edit. Applying them one at a time costs a descent per edit;
+    /// the batched path (see [`IntervalTree::adjust_for_bulk_edits`]) is
     /// O(markers + edits·log edits) and produces the same positions.
     ///
     /// Two cases stay on the per-edit path, which is exact either way:

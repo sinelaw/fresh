@@ -5,9 +5,9 @@
 //! Optional rainbow colors can be applied based on nesting depth.
 
 use crate::model::buffer::Buffer;
-use crate::model::marker::MarkerList;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, OverlayNamespace};
 use crate::view::theme::Theme;
+use fresh_markers::marker::MarkerList;
 use ratatui::style::{Color, Modifier, Style};
 use std::ops::Range;
 

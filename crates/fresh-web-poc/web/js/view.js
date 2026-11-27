@@ -517,10 +517,9 @@ export class Pane {
   computeRows(v, extra) {
     const L = v.buf.held;
     const g = this.geometry(v);
-    const d = v.buf.decor;
     const top = Math.max(0, L.indexOf(v.top));
     this.editor.wantColours(v.buf, top, Math.min(L.count, top + g.rows + extra));
-    const r = layout(L, { conceals: d.conceals, inlines: d.inlines, lines: d.lines }, top, g.rows + extra, this.layoutOpts(v, g.width));
+    const r = layout(L, v.buf.decor, top, g.rows + extra, this.layoutOpts(v, g.width));
     return { rows: r.rows, g };
   }
 
@@ -597,13 +596,18 @@ export class Pane {
     this.wantX = false;
     const left = (g.gutter + g.margin - v.left) * cw;
     this.textEl.style.left = this.caretsEl.style.left = this.rulersEl.style.left = `${left}px`;
-    // Gutter marks and the worst diagnostic, by line.
+    // Gutter marks and the worst diagnostic, by line, over the lines drawn.
     const marks = new Map();
-    for (const m of buf.decor.gutters) { const i = L.indexOf(m.start); if (i >= 0) marks.set(i, m); }
     const dline = new Map();
-    for (const d of buf.decor.diags) {
-      const i = L.indexOf(d.start), was = dline.get(i);
-      if (i >= 0 && (was === undefined || d.severity < was)) dline.set(i, d.severity);
+    const drawnLines = rows.flatMap((r) => (r.kind === "text" ? listOf(r.lineIdx) : []));
+    /** const drawnSpan: Range[] */
+    const drawnSpan = drawnLines.length === 0 ? [] : [{ start: L.starts[Math.min(...drawnLines)], end: L.lineEnd(Math.max(...drawnLines)) + 1 }];
+    for (const r of drawnSpan) {
+      for (const m of buf.decor.guttersIn(r.start, r.end)) { const i = L.indexOf(m.start); if (i >= 0) marks.set(i, m); }
+      for (const d of buf.decor.diagsIn(r.start, r.end)) {
+        const i = L.indexOf(d.start), was = dline.get(i);
+        if (i >= 0 && (was === undefined || d.severity < was)) dline.set(i, d.severity);
+      }
     }
     const curLines = new Set(v.cursors.map((c) => L.indexOf(c.pos)));
     const folded = new Set(v.folds.map((f) => f.start));
@@ -734,9 +738,11 @@ export class Pane {
       const at = lanes[lane].get(y);
       if (at === undefined || at.rank > rank) lanes[lane].set(y, { rank, color: col });
     };
-    for (const m of d.gutters) put(0, m.start, 1, color(m.color));
-    for (const o of d.overlays) { const bg = o.style.bg; if (o.mark && bg !== null) put(1, o.start, 1, color(bg)); }
-    for (const g of d.diags) put(2, g.start, g.severity, THEME[diagKey(g.severity)] ?? null);
+    // The whole text is held: its marks are those in [0, len].
+    const marks = d.marksIn(0, b.len + 1);
+    for (const m of marks.gutters) put(0, m.start, 1, color(m.color));
+    for (const o of marks.overlays) { const bg = o.style.bg; if (bg !== null) put(1, o.start, 1, color(bg)); }
+    for (const g of marks.diags) put(2, g.start, g.severity, THEME[diagKey(g.severity)] ?? null);
     const els = [];
     lanes.forEach((m, lane) => {
       m.forEach((mark, y) => {

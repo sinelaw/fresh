@@ -17,9 +17,9 @@
 //! exactly as it did when the plugin painted it by hand.
 
 use crate::model::buffer::Buffer;
-use crate::model::marker::MarkerList;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, OverlayNamespace};
 use fresh_core::api::OverlayOptions;
+use fresh_markers::marker::MarkerList;
 use std::ops::Range;
 
 /// Namespace owning the cursor-line overlay. Host-managed: a plugin never

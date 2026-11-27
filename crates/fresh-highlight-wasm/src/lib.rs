@@ -1,17 +1,25 @@
-//! The web client's syntax highlighter: [`fresh_highlight::Highlighter`] as a
-//! WebAssembly module with a raw C ABI (no bindings generator).
+//! The web client's WebAssembly module, with a raw C ABI (no bindings
+//! generator): its syntax highlighter ([`fresh_highlight::Highlighter`],
+//! the `hl_*` calls) and its buffers' marker lists ([`markers`], the `mk_*`
+//! calls).
 //!
-//! One highlighter per module instance. Text crosses as UTF-8 in memory the
-//! caller gets from [`hl_alloc`] and gives back with [`hl_free`] (calls only
-//! read it); every integer is a `u32`. Calls that can fail return a code,
-//! [`OK`] or [`ERROR`], and after an error [`hl_error`] describes it.
+//! One highlighter per module instance, and any number of marker lists.
+//! Text crosses as UTF-8 in memory the caller gets from [`hl_alloc`] and
+//! gives back with [`hl_free`] (calls only read it); every integer is a
+//! `u32`. Calls that can fail return a code, [`OK`] or [`ERROR`], or a
+//! result pointer that is null on failure; after a failure [`hl_error`]
+//! describes it.
 //!
-//! Results ([`hl_take`], [`hl_error`], [`hl_categories`]) live in the
-//! module's own buffers: valid until the next `hl_*` call.
+//! Results ([`hl_take`], [`hl_error`], [`hl_categories`] and the `mk_*`
+//! answers) live in the module's own buffers: valid until the next call.
+
+mod markers;
 
 use fresh_highlight::{Category, Highlighter, LineRuns};
+use markers::{Markers, Placed};
 use std::alloc::{alloc, dealloc, Layout};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ptr::{self, NonNull};
 use syntect::parsing::SyntaxSet;
 
@@ -27,6 +35,11 @@ pub const WORK_MORE: u32 = 1;
 /// [`hl_work`]: a document failed and was closed; [`hl_error`] says which.
 pub const WORK_ERROR: u32 = 2;
 
+/// A marker end's gravity: text inserted exactly there goes after it.
+pub const LEFT: u32 = 0;
+/// A marker end's gravity: text inserted exactly there goes before it.
+pub const RIGHT: u32 = 1;
+
 struct Module {
     highlighter: Option<Highlighter>,
     /// The last error: `[len u32][utf8]`.
@@ -35,6 +48,11 @@ struct Module {
     taken: Vec<u32>,
     /// The category theme keys: `[len u32][utf8 JSON]`.
     categories: Vec<u8>,
+    /// The marker lists, by handle, and the handle the next one gets.
+    lists: HashMap<u32, Markers>,
+    next_list: u32,
+    /// The last `mk_*` answer: `[n u32]` then `n` words.
+    answer: Vec<u32>,
 }
 
 impl Default for Module {
@@ -44,6 +62,9 @@ impl Default for Module {
             error: framed(&[]),
             taken: Vec::new(),
             categories: Vec::new(),
+            lists: HashMap::new(),
+            next_list: 0,
+            answer: Vec::new(),
         }
     }
 }
@@ -61,6 +82,29 @@ impl Module {
         self.highlighter
             .as_mut()
             .ok_or_else(|| "hl_init has not been called".to_string())
+    }
+
+    fn list(&mut self, list: u32) -> Result<&mut Markers, String> {
+        self.lists
+            .get_mut(&list)
+            .ok_or_else(|| format!("no marker list {list}"))
+    }
+
+    /// An answer's words as the answer buffer, or the failure: the buffer's
+    /// address, null on failure.
+    fn answer(&mut self, words: Result<Vec<u32>, String>) -> *const u32 {
+        match words {
+            Ok(words) => {
+                self.answer.clear();
+                self.answer.push(word(words.len()));
+                self.answer.extend(words);
+                self.answer.as_ptr()
+            }
+            Err(message) => {
+                self.fail(&message);
+                ptr::null()
+            }
+        }
     }
 
     fn fail(&mut self, message: &str) {
@@ -331,5 +375,127 @@ pub extern "C" fn hl_categories() -> *const u8 {
             m.categories = framed(format!("[{}]", keys.join(",")).as_bytes());
         }
         m.categories.as_ptr()
+    })
+}
+
+// ---------------------------------------------------------------- markers
+
+/// A gravity argument: [`LEFT`] or [`RIGHT`], as whether it is right.
+fn right(gravity: u32) -> Result<bool, String> {
+    match gravity {
+        LEFT => Ok(false),
+        RIGHT => Ok(true),
+        other => Err(format!("gravity {other} is neither LEFT (0) nor RIGHT (1)")),
+    }
+}
+
+fn placed_words(m: Placed) -> [u32; 3] {
+    [m.id, m.start, m.end]
+}
+
+/// A new, empty marker list: answers `[list]`.
+#[no_mangle]
+pub extern "C" fn mk_new() -> *const u32 {
+    with(|m| {
+        let made = (|| {
+            let list = m.next_list;
+            m.next_list = list
+                .checked_add(1)
+                .ok_or_else(|| "this module has made 2^32 marker lists".to_string())?;
+            m.lists.insert(list, Markers::default());
+            Ok(vec![list])
+        })();
+        m.answer(made)
+    })
+}
+
+/// Let marker list `list` go, with its markers.
+#[no_mangle]
+pub extern "C" fn mk_drop(list: u32) -> u32 {
+    with(|m| {
+        let dropped = m
+            .lists
+            .remove(&list)
+            .map(|_| ())
+            .ok_or_else(|| format!("no marker list {list}"));
+        m.code(dropped)
+    })
+}
+
+/// A point marker at `pos` with `gravity` ([`LEFT`] or [`RIGHT`]): answers
+/// `[id]`.
+#[no_mangle]
+pub extern "C" fn mk_point(list: u32, pos: u32, gravity: u32) -> *const u32 {
+    with(|m| {
+        let made = (|| Ok(vec![m.list(list)?.point(pos, right(gravity)?)?]))();
+        m.answer(made)
+    })
+}
+
+/// A span marker over `start..end`, each end with its gravity ([`LEFT`] or
+/// [`RIGHT`]): answers `[id]`.
+#[no_mangle]
+pub extern "C" fn mk_span(
+    list: u32,
+    start: u32,
+    end: u32,
+    start_gravity: u32,
+    end_gravity: u32,
+) -> *const u32 {
+    with(|m| {
+        let made = (|| {
+            let (start_right, end_right) = (right(start_gravity)?, right(end_gravity)?);
+            Ok(vec![m.list(list)?.span(
+                start,
+                end,
+                start_right,
+                end_right,
+            )?])
+        })();
+        m.answer(made)
+    })
+}
+
+/// Remove marker `id`.
+#[no_mangle]
+pub extern "C" fn mk_delete(list: u32, id: u32) -> u32 {
+    with(|m| {
+        let deleted = (|| m.list(list)?.delete(id))();
+        m.code(deleted)
+    })
+}
+
+/// Move every marker through an edit: `removed` bytes deleted at `at`, then
+/// `inserted` bytes inserted there.
+#[no_mangle]
+pub extern "C" fn mk_edit(list: u32, at: u32, removed: u32, inserted: u32) -> u32 {
+    with(|m| {
+        let edited = (|| {
+            m.list(list)?.edit(at, removed, inserted);
+            Ok(())
+        })();
+        m.code(edited)
+    })
+}
+
+/// Where marker `id` is: answers `[id, start, end]`.
+#[no_mangle]
+pub extern "C" fn mk_get(list: u32, id: u32) -> *const u32 {
+    with(|m| {
+        let got = (|| Ok(placed_words(m.list(list)?.get(id)?).to_vec()))();
+        m.answer(got)
+    })
+}
+
+/// The markers touching `start..end` (see [`Markers::query`]): answers
+/// `[id, start, end]` each, by start, then by creation.
+#[no_mangle]
+pub extern "C" fn mk_query(list: u32, start: u32, end: u32) -> *const u32 {
+    with(|m| {
+        let found = (|| {
+            let found = m.list(list)?.query(start, end)?;
+            Ok(found.into_iter().flat_map(placed_words).collect())
+        })();
+        m.answer(found)
     })
 }

@@ -1,0 +1,18 @@
+[package]
+name = "fresh-markers"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Positions that follow edits: the interval tree behind Fresh's markers"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+tracing.workspace = true
+
+[dev-dependencies]
+proptest = "1.9"
+
+[lints]
+workspace = true

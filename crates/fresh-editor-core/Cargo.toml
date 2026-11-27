@@ -58,6 +58,7 @@ wasm = [
 [dependencies]
 fresh-core.workspace = true
 fresh-i18n.workspace = true
+fresh-markers.workspace = true
 fresh-languages = { workspace = true, optional = true }
 fresh-highlight = { workspace = true, optional = true }
 

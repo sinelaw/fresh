@@ -1473,6 +1473,7 @@ dependencies = [
  "fresh-i18n",
  "fresh-input-parser",
  "fresh-languages",
+ "fresh-markers",
  "fresh-parser-js",
  "fresh-plugin-runtime",
  "fresh-ui",
@@ -1533,6 +1534,7 @@ dependencies = [
  "fresh-highlight",
  "fresh-i18n",
  "fresh-languages",
+ "fresh-markers",
  "jsonc-parser",
  "libc",
  "nix 0.31.3",
@@ -1590,6 +1592,8 @@ name = "fresh-highlight-wasm"
 version = "0.5.9"
 dependencies = [
  "fresh-highlight",
+ "fresh-markers",
+ "proptest",
  "syntect",
 ]
 
@@ -1645,6 +1649,14 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-templ",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "fresh-markers"
+version = "0.5.9"
+dependencies = [
+ "proptest",
+ "tracing",
 ]
 
 [[package]]

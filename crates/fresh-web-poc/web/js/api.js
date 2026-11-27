@@ -248,7 +248,9 @@ export const lspWorkspaceRequest = (_app, language, method, params) => rpc("lsp.
 // LSP (line, character) to a byte offset in a held buffer, and back.
 export const lspOffset = (app, buffer, line, character) => { const b = held(app, buffer); return b !== undefined ? lspOffsetIn(b, line, character) : null; };
 export const lspPosition = (app, buffer, pos) => { const b = held(app, buffer); return b !== undefined ? lspPositionIn(b, pos) : null; };
-export const diagnostics = (app, buffer) => (held(app, buffer)?.decor.diags ?? []).map((d) => ({ start: d.start, end: d.end, severity: d.severity, message: d.message, source: d.source }));
+// The diagnostics touching bytes [start, end) of `buffer` (an empty one
+// covers the byte at its position), by start.
+export const diagnostics = (app, buffer, start, end) => found(held(app, buffer)).flatMap((b) => b.decor.diagsIn(start, end)).map((d) => ({ start: d.start, end: d.end, severity: d.severity, message: d.message, source: d.source }));
 // The languages with a server on the host.
 export const lspLanguages = (app) => [...app.lspLanguages];
 // Which servers run: {language: running}.

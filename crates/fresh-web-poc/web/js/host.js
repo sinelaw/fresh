@@ -23,8 +23,8 @@ function decorationSet(buf, ns) {
     line: (pos, opts) => { buf.decor.addLine({ ns, pos, above: opts.above, text: opts.text, style: opts.style, when: opts.when, order: opts.order }); },
     node: (start, end, block, when) => { buf.decor.addNode({ ns, start, end, type: block.type, level: block.level, depth: block.depth, marker: block.marker, lang: block.lang, align: block.align, header: block.header, delimiter: block.delimiter, when }); },
     gutter: (pos, opts) => { buf.decor.addGutter({ ns, start: pos, end: pos, glyph: opts.glyph, color: opts.color, title: opts.title }); },
-    gutters: () => buf.decor.gutters.filter((g) => g.ns === ns).map((g) => ({ pos: g.start, glyph: g.glyph })),
-    overlays: () => buf.decor.overlays.filter((o) => o.ns === ns).map((o) => ({ start: o.start, end: o.end })),
+    gutters: () => buf.decor.guttersOf(ns).map((g) => ({ pos: g.start, glyph: g.glyph })),
+    overlays: () => buf.decor.overlaysOf(ns).map((o) => ({ start: o.start, end: o.end })),
   });
 }
 

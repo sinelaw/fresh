@@ -1,4 +1,4 @@
-use crate::model::marker::{MarkerId, MarkerList};
+use fresh_markers::marker::{MarkerId, MarkerList};
 use ratatui::style::{Color, Style};
 use std::collections::BTreeMap;
 

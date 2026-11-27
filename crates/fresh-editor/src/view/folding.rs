@@ -4,7 +4,7 @@
 //! Fold ranges are stored as byte markers so they auto-adjust on edits.
 
 use crate::model::buffer::Buffer;
-use crate::model::marker::{MarkerId, MarkerList};
+use fresh_markers::marker::{MarkerId, MarkerList};
 
 /// A collapsed fold range tracked by markers.
 #[derive(Debug, Clone)]

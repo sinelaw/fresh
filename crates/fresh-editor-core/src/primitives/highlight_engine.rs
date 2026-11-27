@@ -37,7 +37,6 @@
 //! cached range.
 
 use crate::model::buffer::Buffer;
-use crate::model::marker::{MarkerId, MarkerList};
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlighter::{
     highlight_bg, highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
@@ -45,6 +44,7 @@ use crate::primitives::highlighter::{
 use crate::theme::Theme;
 use fresh_core::hooks::{RegionLine, TableLine, TableRole};
 use fresh_highlight::{highlighted_prefix, scope_to_category, Category, MAX_LINE_BYTES};
+use fresh_markers::marker::{MarkerId, MarkerList};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;

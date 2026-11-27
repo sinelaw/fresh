@@ -422,9 +422,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::marker::MarkerList;
     use crate::view::overlay::Overlay;
     use crate::view::theme::{Theme, THEME_TERMINAL};
+    use fresh_markers::marker::MarkerList;
     use ratatui::style::Color;
 
     fn themed_overlay(

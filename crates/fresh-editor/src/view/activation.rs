@@ -29,8 +29,8 @@
 //! positions".) A point marker is always reached, because a marker at or after
 //! the edit is always to the right in that BST.
 
-use crate::model::marker::{MarkerId, MarkerList};
 use fresh_core::api::MarkerActivation;
+use fresh_markers::marker::{MarkerId, MarkerList};
 
 /// Cursor-scope rule stored on a conceal range or soft break.
 /// `None` on the owning entry means "always active".

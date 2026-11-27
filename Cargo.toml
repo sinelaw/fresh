@@ -20,11 +20,13 @@ members = [
     "crates/fresh-web-poc",
     "crates/fresh-highlight",
     "crates/fresh-highlight-wasm",
+    "crates/fresh-markers",
 ]
 default-members = [
     "crates/fresh-editor",
     "crates/fresh-editor-core",
     "crates/fresh-highlight",
+    "crates/fresh-markers",
     "crates/fresh-ui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
@@ -77,6 +79,7 @@ fresh-core = { version = "0.5.9", path = "crates/fresh-core" }
 fresh-editor-core = { version = "0.5.9", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.5.9", path = "crates/fresh-gui" }
 fresh-highlight = { version = "0.5.9", path = "crates/fresh-highlight" }
+fresh-markers = { version = "0.5.9", path = "crates/fresh-markers" }
 # `default-features = false` on these two so a member can build them without
 # oxc (their `oxc` feature); members that want it enable it explicitly.
 fresh-parser-js = { version = "0.5.9", path = "crates/fresh-parser-js", default-features = false }

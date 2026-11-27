@@ -1,9 +1,11 @@
-// The page's entry: asks the server which workspace this page views, makes
-// the application's parts (each holding a getter for the application, which
-// is made last, from them) and starts it with the built-in plugins.
+// The page's entry: loads the WebAssembly module (every buffer keeps its
+// decorations' positions in it, so nothing starts without it), asks the
+// server which workspace this page views, makes the application's parts
+// (each holding a getter for the application, which is made last, from
+// them) and starts it with the built-in plugins.
 
 import { filePath } from "./buffer.js";
-import { rpc, session } from "./rpc.js";
+import { rpc, session, failure } from "./rpc.js";
 import { App, loadSettings, loadUserKeys, scrollToFraction, lspPosition, lspOffset } from "./app.js";
 import { Editing, selectWord, selectLine, setBlock, toggleFoldAt, wordAt, bracketPair } from "./editing.js";
 import { Terminals } from "./terminal.js";
@@ -16,11 +18,23 @@ import { Session } from "./session.js";
 import { MenuBar } from "./menubar.js";
 import { Macros } from "./macros.js";
 import { PLUGINS } from "../plugins/index.js";
+import { loadWasm } from "./wasm.js";
 
 import { $ } from "./dom.js";
 import { found, listOf, some, none } from "./maybe.js";
 
+// The page cannot start: it says why, in place of the editor.
+function cannotStart(why) {
+  const p = document.createElement("p");
+  p.className = "cannot-start";
+  p.textContent = `Fresh cannot start: ${why}`;
+  $("#app").replaceChildren(p);
+}
+
 async function main() {
+  /** let wasm: Wasm */
+  let wasm;
+  try { wasm = await loadWasm(); } catch (e) { cannotStart(`its WebAssembly module did not load (${failure(e)}).`); return; }
   // The workspace this page views: `?ws=<id>`, or the server's first. None
   // when it was closed (or none is open): the page is then the
   // orchestrator's dock alone.
@@ -179,6 +193,7 @@ async function main() {
     menubar: new MenuBar(menuEditor),
     input: $("#input"),
     paneEditor,
+    wasm,
   });
   await app.start(PLUGINS);
 }

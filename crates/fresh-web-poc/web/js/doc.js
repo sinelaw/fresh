@@ -294,12 +294,16 @@ function context(v) {
   /** const folds: Range[] */
   const folds = v.folds;
   const o = v.pane.layoutOpts(v, 0);
-  const vlines = noLines();
-  for (const x of d.lines) {
-    if (!applies(x, v.mode)) continue;
-    const i = L.indexOf(x.pos);
-    if (i >= 0) vlines.set(i, [...(vlines.get(i) ?? []), x]);
-  }
+  const vlineCache = noLines();
+  // The virtual lines at line `li`.
+  /** const vlines: (Number) => VirtualLine[] */
+  const vlines = (li) => {
+    const hit = vlineCache.get(li);
+    if (hit !== undefined) return hit;
+    const x = d.linesIn(L.starts[li], L.lineEnd(li) + 1).filter((l) => applies(l, v.mode));
+    vlineCache.set(li, x);
+    return x;
+  };
   const lineCache = new Map();
   // A line's active conceals (sorted, the longest first at one start),
   // the revealed ones (drawn dim) and its inline texts by position.
@@ -531,11 +535,11 @@ export class DocView {
     const drawn = [];
     const blockEls = [];
     for (const blk of blocks) {
-      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (x.above) drawn.push(take(pool, vline(x)));
+      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines(k)) if (x.above) drawn.push(take(pool, vline(x)));
       const b = take(pool, blockHTML(ctx, blk));
       blockEls.push(b.el);
       drawn.push(b);
-      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines.get(k) ?? []) if (!x.above) drawn.push(take(pool, vline(x)));
+      for (let k = blk.first; k <= blk.last; k++) for (const x of ctx.vlines(k)) if (!x.above) drawn.push(take(pool, vline(x)));
     }
     if (!sameDrawn(drawn, this.drawn)) this.body.replaceChildren(...drawn.map((d) => d.el));
     this.drawn = drawn;

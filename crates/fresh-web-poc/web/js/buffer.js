@@ -311,8 +311,9 @@ function noFoldRanges() { return []; }
 function noFollowers() { return new Set(); }
 
 export class Buffer {
-  // `source`: where its text comes from (a Source).
-  constructor(source) {
+  // `source`: where its text comes from (a Source); `wasm`: the module its
+  // decorations' marker list lives in (wasm.js).
+  constructor(source, wasm) {
     this.source = source;
     this.id = nextBufferId++;
     this.name = "";
@@ -332,7 +333,7 @@ export class Buffer {
     this.textGen = 0; // bumped on every change to the held text
     this.len = 0;
     this.totalLines = none(); // none while a huge file has no line index
-    this.decor = new Decor();
+    this.decor = new Decor(wasm);
     this.followers = noFollowers(); // what moves through its edits (views' cursors and scroll)
     this.undo = [];
     this.redo = [];
@@ -678,9 +679,10 @@ export class Buffer {
 
 // ---------------------------------------------------------------- file
 
-// A buffer for a server document (`doc.open`'s answer).
-export function fileBuffer(info) {
-  const b = new Buffer(fileSource(replicaAt(info.doc, info.version)));
+// A buffer for a server document (`doc.open`'s answer), its markers in
+// module `wasm`.
+export function fileBuffer(info, wasm) {
+  const b = new Buffer(fileSource(replicaAt(info.doc, info.version)), wasm);
   b.setInfo(info);
   b.len = info.len;
   b.large = info.large;
@@ -772,8 +774,8 @@ function entryRange(start, end, props, style) { return { start, end, props, styl
 
 // The tab of terminal `term`, named `name`: it has no text, and its views
 // draw the terminal instead.
-export function terminalBuffer(term, name) {
-  const b = new Buffer(terminalSource(term));
+export function terminalBuffer(term, name, wasm) {
+  const b = new Buffer(terminalSource(term), wasm);
   b.name = name;
   b.readOnly = true;
   const L = new Lines({ start: 0, text: "", bof: true, eof: true, firstLine: 0 });
@@ -787,8 +789,8 @@ export function terminalBuffer(term, name) {
 // A buffer local to this client, of a plugin's `entries` (Entry[]), held
 // whole and nowhere else: `mode` is the plugin mode whose keys apply in it
 // (or null).
-export function virtualBuffer(name, entries, mode, readOnly) {
-  const b = new Buffer(virtualSource([]));
+export function virtualBuffer(name, entries, mode, readOnly, wasm) {
+  const b = new Buffer(virtualSource([]), wasm);
   b.name = name;
   b.mode = mode;
   b.readOnly = readOnly;

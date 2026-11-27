@@ -1,6 +1,6 @@
-//! Embed the web client (`web/`) into the binary, and build its syntax
-//! highlighter (`crates/fresh-highlight-wasm`) as WebAssembly to embed next
-//! to it.
+//! Embed the web client (`web/`) into the binary, and build its WebAssembly
+//! module (`crates/fresh-highlight-wasm`: the syntax highlighter and the
+//! marker lists) to embed next to it.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -107,6 +107,7 @@ fn main() {
     for input in [
         "crates/fresh-highlight",
         "crates/fresh-highlight-wasm",
+        "crates/fresh-markers",
         "Cargo.toml",
         "Cargo.lock",
     ] {

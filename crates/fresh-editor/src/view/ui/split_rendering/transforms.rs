@@ -242,7 +242,7 @@ const JOIN_ESTIMATE_PASSES: usize = 2;
 pub(crate) fn join_adjusted_visible_count(
     buffer: &crate::model::buffer::Buffer,
     conceals: &crate::view::conceal::ConcealManager,
-    marker_list: &crate::model::marker::MarkerList,
+    marker_list: &fresh_markers::marker::MarkerList,
     cursor_positions: &[usize],
     top_byte: usize,
     visible_count: usize,

@@ -265,7 +265,7 @@ export function activate(app) {
     if (!v) return;
     const sel = v.selection() ?? { start: v.cursor(), end: v.cursor() };
     const toPos = (p) => fresh.lspPosition(app, v.buffer, p);
-    const diags = fresh.diagnostics(app, v.buffer).filter((d) => d.start <= sel.end && d.end >= sel.start);
+    const diags = fresh.diagnostics(app, v.buffer, Math.max(0, sel.start - 1), sel.end + 1).filter((d) => d.start <= sel.end && d.end >= sel.start);
     /** const r: LspAction[] */
     const r = await ask(v, "textDocument/codeAction", {
       range: { start: toPos(sel.start), end: toPos(sel.end) },
@@ -341,7 +341,7 @@ export function activate(app) {
     return text === "" ? null : text;
   };
   fresh.hoverProvider(app, async (b, pos) => {
-    const diags = fresh.diagnostics(app, b).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
+    const diags = fresh.diagnostics(app, b, Math.max(0, pos - 1), pos + 1).filter((d) => pos >= d.start && pos <= Math.max(d.end, d.start + 1));
     const problems = diags.map((d) => `${SEV[d.severity] || "error"}: ${d.message}`);
     /** let about: String | Null */
     let about = null;
@@ -400,7 +400,7 @@ export function activate(app) {
     // Each file with problems: a header row, then a row per problem.
     /** const items: DiagRow[] */
     const items = fresh.buffers(app).flatMap((b) => {
-      const ds = fresh.diagnostics(app, b).sort((x, y) => x.start - y.start);
+      const ds = fresh.diagnostics(app, b, 0, b.length() + 1);
       return ds.length ? [diagFile(b), ...ds.map((d) => problemRow(b, d, lineLabel(b, d.start)))] : [];
     });
     diagPanel.render(ui.list({
@@ -570,7 +570,7 @@ export function activate(app) {
   const stepDiagnostic = async (dir) => {
     const v = fresh.activeView(app);
     if (!v) return;
-    const ds = fresh.diagnostics(app, v.buffer).sort((a, b) => a.start - b.start || a.severity - b.severity);
+    const ds = fresh.diagnostics(app, v.buffer, 0, v.buffer.length() + 1).sort((a, b) => a.start - b.start || a.severity - b.severity);
     if (!ds.length) { fresh.message(app, "No problems in this file"); return; }
     const at = v.cursor();
     const next = dir > 0 ? ds.find((x) => x.start > at) : [...ds].reverse().find((x) => x.start < at);

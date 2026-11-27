@@ -22,7 +22,7 @@
 use ratatui::style::{Color, Style};
 use std::collections::HashMap;
 
-use crate::model::marker::{MarkerId, MarkerList};
+use fresh_markers::marker::{MarkerId, MarkerList};
 
 /// Position relative to the character at the marker position
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
