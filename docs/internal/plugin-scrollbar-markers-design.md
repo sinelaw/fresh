@@ -84,7 +84,7 @@ and beyond a few thousand markers extra fidelity is invisible anyway.
 
 Anything keyed by line number silently desyncs on the first edit. Both
 existing decoration stores anchor to `MarkerId`s in an interval tree with
-O(log n) `adjust_for_edit` (`model/marker.rs`, `model/marker_tree.rs`), wired
+O(log n) `adjust_for_edit` (`fresh-markers/src/marker.rs`, `fresh-markers/src/marker_tree.rs`), wired
 into every edit path (`state.rs:584-585`, `:666-667`, `:1170-1184`, plus the
 reload/undo sites). `MarginManager` (`view/margin.rs:295`) is the direct
 precedent: a private `MarkerList` plus a map from marker → namespace →

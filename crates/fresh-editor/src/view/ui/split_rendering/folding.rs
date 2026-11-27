@@ -8,12 +8,12 @@
 
 use super::style::append_fold_placeholder;
 use crate::model::buffer::Buffer;
-use crate::model::marker::MarkerList;
 use crate::state::EditorState;
 use crate::view::folding::FoldManager;
 use crate::view::margin::LineIndicator;
 use crate::view::ui::view_pipeline::ViewLine;
 use fresh_core::api::ViewTokenStyle;
+use fresh_markers::marker::MarkerList;
 use ratatui::style::Color;
 use std::collections::{BTreeMap, HashSet};
 

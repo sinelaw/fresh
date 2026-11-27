@@ -1,0 +1,1300 @@
+// The orchestrator: every workspace the server holds, with its live state,
+// in a dock beside the editor, and moving between them — the editor's
+// Orchestrator (docs/features/orchestrator.md) for a page that views one
+// workspace at a time.
+//
+// A page views one workspace (`?ws=<id>`): switching loads the page for the
+// other one, so a workspace's tabs, splits, terminals and plugins never mix
+// with another's, and each comes back as this browser left it (session.js).
+// Two tabs can view two workspaces side by side.
+//
+//   The dock (Alt+O moves the keyboard to it and back; Orchestrator: Toggle
+//     Dock; the workspace's name in the top bar): every workspace, its
+//     state at its right edge — ● needs you, ✓ finished work not looked at,
+//     * working, · idle, ? no signal, ! could not be opened (Enter
+//     retries) — grouped in folders (or by the day last worked in), pinned
+//     ones on top; a click switches; right-click (or F2) for its menu:
+//     rename, move to a folder, pin, start an agent, close (and delete its
+//     worktree); `/` searches.
+//   Switch Workspace… (Ctrl+Alt+O): the same as a quick pick.
+//   New Workspace…: an agent (the registry in agents.js, a terminal, or a
+//     command) with its first prompt, where (host and folder), git (a new
+//     worktree on a new branch, or the folder as it is), trust, a name and
+//     a dock folder; Launch, or Launch in background (the dock shows it
+//     being made, and why it failed, with Retry).
+//   The status bar counts the other workspaces that need you; a click, or
+//     Jump to Attention, goes to one (Jump Back returns).
+//
+// State comes from the server (`workspace.status`, `src/terminal.rs`): a
+// workspace's terminals are working, waiting on a question, done (finished
+// work nobody has seen), idle; its attention says why it needs the user.
+// Viewing it clears that (`workspace.seen`).
+
+import { rpc, attempt, failure } from "./rpc.js";
+import * as ui from "./ui.js";
+import { baseName, parentOf } from "./paths.js";
+import { plural } from "./words.js";
+import { hostText, localHost, sshHost } from "./hosts.js";
+import { TERM_MARKS } from "./terminal.js";
+import { AGENT_CHOICES, agentById, agentCommand, agentResume } from "./agents.js";
+import { $ } from "./dom.js";
+import { listOf, found, some, none } from "./maybe.js";
+import { asCommand } from "./commands.js";
+import { action, actionOf, SEPARATOR } from "./menu.js";
+
+// What a dock row is: a group (pinned, a day), a folder, a workspace, or
+// one being made (by its key among those being made).
+/** type DockRow =
+ *   | {kind: "group"}
+ *   | {kind: "folder", path: String}
+ *   | {kind: "ws", w: WorkspaceEntry}
+ *   | {kind: "pending", key: Number}
+ */
+/** const GROUP_ROW: DockRow */
+const GROUP_ROW = { kind: "group" };
+/** function folderData(path: String) => DockRow */
+function folderData(path) { return { kind: "folder", path }; }
+/** function wsData(w: WorkspaceEntry) => DockRow */
+function wsData(w) { return { kind: "ws", w }; }
+/** function pendingData(key: Number) => DockRow */
+function pendingData(key) { return { kind: "pending", key }; }
+
+// The start of today and of this week (Monday), in ms.
+/** function dayStarts() => {day: Number, week: Number} */
+function dayStarts() {
+  const now = new Date();
+  const day = now.getTime() - (((now.getHours() * 60 + now.getMinutes()) * 60 + now.getSeconds()) * 1000 + now.getMilliseconds());
+  return { day, week: day - ((now.getDay() + 6) % 7) * 86400000 };
+}
+
+const STORE = "fresh-poc:orchestrator";
+const JUMPED = "fresh-poc:orchestrator:jumped-from";
+// The workspace jumped from last (`jump`), if this page remembers one.
+/** function jumpedFrom() => Number | Null */
+function jumpedFrom() {
+  try { const s = sessionStorage.getItem(JUMPED); return s === null ? null : Number(s); } catch { return null; }
+}
+// What a New Workspace folder is, as the machine's git says: being asked
+// about, not there, a folder outside git, in a git work tree (its top), or
+// not known (the machine could not be asked: why).
+/** type Where =
+ *   | {kind: "asking"}
+ *   | {kind: "missing"}
+ *   | {kind: "plain"}
+ *   | {kind: "repo", toplevel: String}
+ *   | {kind: "unknown", why: String}
+ */
+/** function unknownWhere(why: String) => Where */
+function unknownWhere(why) { return { kind: "unknown", why }; }
+/** const ASKING: Where */
+const ASKING = { kind: "asking" };
+/** function whereOf(r: {repo: Boolean, folder: Boolean, toplevel: String}) => Where */
+function whereOf(r) {
+  if (!r.folder) return { kind: "missing" };
+  return r.repo ? { kind: "repo", toplevel: r.toplevel } : { kind: "plain" };
+}
+
+
+// The dock's marks: a terminal's state's (terminal.js), and a workspace's
+// own, failed to open and on its way.
+const MARKS = new Map([["failed", "!"], ["pending", "…"], ...TERM_MARKS]);
+// A state's mark (a state this client does not know reads as unknown).
+/** function markOf(state: String) => String */
+export function markOf(state) { return MARKS.get(state) ?? "?"; }
+// The order a workspace's terminals decide its state in.
+const RANK = ["waiting", "done", "working", "idle", "unknown", "exited"];
+// A remote host's mark beside the state.
+const HOST_MARK = new Map([["ssh", "⇅"], ["container", "⬢"], ["agent", "⧉"]]);
+
+// A workspace's state: failed, else what its terminals say.
+/** function stateOf(w: WorkspaceEntry) => String */
+export function stateOf(w) {
+  if (w.error !== null) return "failed";
+  const terms = listOf(w.status).flatMap((s) => s.terminals).map((t) => t.state);
+  let best = terms.length > 0 ? "exited" : "idle";
+  for (const s of terms) if (RANK.indexOf(s) < RANK.indexOf(best)) best = s;
+  // A bell, or anything else that asked for the user, reads as waiting.
+  if (attentionOf(w) !== "" && best !== "done") return "waiting";
+  return best;
+}
+// What a workspace asked of the user ("" for nothing).
+/** function attentionOf(w: WorkspaceEntry) => String */
+function attentionOf(w) { return listOf(w.status).flatMap((s) => listOf(s.attention)).at(0) ?? ""; }
+// Its git branch ("" for none).
+/** function branchOf(w: WorkspaceEntry) => String */
+function branchOf(w) { return listOf(w.status).flatMap((s) => listOf(s.branch)).at(0) ?? ""; }
+
+// Its name: the user's, else its agent's terminal title, else its folder's.
+/** function displayName(w: WorkspaceEntry) => String */
+export function displayName(w) {
+  const agent = listOf(w.status).flatMap((s) => s.terminals).filter((t) => t.agent && t.title !== "").map((t) => t.title);
+  return listOf(w.label).filter((l) => l !== "").at(0) ?? agent.at(0) ?? w.name;
+}
+
+// The dock folder a dock folder is in ("": the top level).
+const folderParent = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+
+// Change a workspace's settings; a refusal is said in the status bar.
+async function changeWorkspace(say, change) {
+  try { await rpc("workspace.set", change); } catch (e) { say(`Not changed: ${String(e)}`); }
+}
+
+// The machine a workspace goes on: this one, a declared one (by name), or
+// one being declared (New Workspace's "Add…").
+/** type MachineChoice = {kind: "local"} | {kind: "declared", name: String} | {kind: "adding"} */
+/** const THIS_MACHINE: MachineChoice */
+const THIS_MACHINE = { kind: "local" };
+/** const ADDING: MachineChoice */
+const ADDING = { kind: "adding" };
+/** function declared(name: String) => MachineChoice */
+function declared(name) { return { kind: "declared", name }; }
+// The choice as people read it.
+/** function machineText(c: MachineChoice) => String */
+function machineText(c) { return c.kind === "declared" ? c.name : c.kind === "adding" ? "a new machine" : "this machine"; }
+// The machine remembered for the next form (`prefs.machine`): a declared
+// one's name, or none (this machine).
+/** function rememberedOf(c: MachineChoice) => String[] */
+function rememberedOf(c) { return c.kind === "declared" ? [c.name] : []; }
+// The agents New Workspace offers (a terminal of no agent among them),
+// `chosen` the one chosen.
+/** function agentSelect(chosen: String, onChange: (String) => Undefined) => UINode */
+function agentSelect(chosen, onChange) {
+  const options = AGENT_CHOICES.filter((c) => c.value !== "custom");
+  return ui.select({ key: "agent", options, selected: Math.max(0, options.findIndex((o) => o.value === chosen)), onChange });
+}
+// The machine remembered (a declared one's name, or none) while it is
+// still declared; else this machine.
+/** function chosenOf(machines: Machine[], remembered: String[]) => MachineChoice */
+function chosenOf(machines, remembered) {
+  for (const name of remembered) if (machines.some((m) => m.name === name)) return declared(name);
+  return THIS_MACHINE;
+}
+// The host a choice names (a list of at most one).
+/** function hostsIn(machines: Machine[], choice: MachineChoice) => HostSpec[] */
+function hostsIn(machines, choice) {
+  if (choice.kind === "local") return [localHost()];
+  if (choice.kind === "adding") return [];
+  const name = choice.name;
+  return machines.filter((x) => x.name === name).map((m) => m.host);
+}
+// The machine choices: this machine, the declared ones, the hosts in
+// ~/.ssh/config (they need no declaring) and (`withAdd`) "Add…", which
+// declares another; `chosen` the one chosen.
+/** function machineSelectOf(
+ *   machines: Machine[],
+ *   key: String,
+ *   chosen: MachineChoice,
+ *   withAdd: Boolean,
+ *   onChange: (MachineChoice) => Undefined,
+ * ) => UINode */
+function machineSelectOf(machines, key, chosen, withAdd, onChange) {
+  const options = [
+    machineOption(THIS_MACHINE, "This machine"),
+    ...machines.map((m) => machineOption(declared(m.name), m.ssh_config ? `${m.name} (~/.ssh/config)` : m.name === hostText(m.host) ? m.name : `${m.name} (${hostText(m.host)})`)),
+    ...(withAdd ? [machineOption(ADDING, "Add…")] : []),
+  ];
+  return ui.select({ key, options, selected: Math.max(0, options.findIndex((o) => sameMachine(o.value, chosen))), onChange });
+}
+// Whether two choices name the same machine.
+/** function sameMachine(a: MachineChoice, b: MachineChoice) => Boolean */
+function sameMachine(a, b) {
+  if (a.kind === "declared") return b.kind === "declared" && a.name === b.name;
+  if (a.kind === "local") return b.kind === "local";
+  return b.kind === "adding";
+}
+/** function noMachine() => String[] */
+function noMachine() { return []; }
+/** function machineOption(value: MachineChoice, label: String) => SelectOption<MachineChoice> */
+function machineOption(value, label) { return { value, label }; }
+
+// The New Workspace form's fields: the agent (or "terminal"), the prompt
+// (a terminal's command), the machine, the folder, how git is used, the
+// name, an imported session's resume command, and whether it is being
+// launched and why that failed.
+/** type NewWorkspaceForm = {
+ *   agent: String,
+ *   prompt: String,
+ *   machine: MachineChoice,
+ *   root: String,
+ *   git: String,
+ *   name: String,
+ *   resume: String,
+ *   busy: Boolean,
+ *   error: String,
+ * } */
+
+// The inbox's rows: a column's heading, or a workspace (`header`: what
+// the list draws as a heading and the arrow keys pass over).
+/** type BoardItem =
+ *   | {kind: "header", header: true, label: String}
+ *   | {kind: "ws", header: false, w: WorkspaceEntry}
+ */
+/** function headerItem(label: String) => BoardItem */
+function headerItem(label) { return { kind: "header", header: true, label }; }
+/** function wsItem(w: WorkspaceEntry) => BoardItem */
+function wsItem(w) { return { kind: "ws", header: false, w }; }
+
+// Workspace `id` of `list` (a list of at most one).
+/** function workspaceIn(list: WorkspaceEntry[], id: Number | Null) => WorkspaceEntry[] */
+function workspaceIn(list, id) { return list.filter((w) => w.id === id).slice(0, 1); }
+
+// A command the orchestrator adds, its action as the command table holds it.
+function orchestratorCommand(id, title, run) { return { id, title, run: asCommand(run) }; }
+
+// Where a menu opened from the keyboard on `list` goes: under its
+// selected row.
+function belowSelected(list) {
+  const r = (list.querySelector(".ui-list-row.sel") ?? list).getBoundingClientRect();
+  return { x: r.left + 12, y: r.bottom };
+}
+
+function pageLooked() { return document.visibilityState === "visible" && document.hasFocus(); }
+
+function pendingRow(p) {
+  const failed = p.error !== "";
+  const state = failed ? "failed" : "pending";
+  return ui.row({ ...ui.BOX, class: "orch-row" }, [
+    ui.text({ ...ui.TEXT, class: "orch-name keep", title: p.error }, p.name),
+    ui.text({ ...ui.TEXT, dim: !failed, class: failed ? "orch-why" : "", title: p.error }, failed ? p.error : "Creating…"),
+    ui.spacer(),
+    ui.text({ ...ui.TEXT, class: `orch-mark ${state}` }, markOf(state)),
+  ]);
+}
+
+// A folder's row: its name, and how many in it need you.
+function folderRow(label, items) {
+  const waiting = items.filter((w) => stateOf(w) === "waiting").length;
+  const done = items.filter((w) => stateOf(w) === "done").length;
+  return ui.row({ ...ui.BOX, class: "orch-row orch-folder" }, [
+    ui.text({ ...ui.TEXT, bold: true }, label),
+    ui.spacer(),
+    ...(waiting ? [ui.text({ ...ui.TEXT, class: "orch-mark waiting" }, `● ${waiting}`)] : []),
+    ...(done ? [ui.text({ ...ui.TEXT, class: "orch-mark done" }, `✓ ${done}`)] : []),
+  ]);
+}
+
+// The command line for an agent choice: the registry's agent with its
+// auto mode and first prompt, a custom command, or none (a terminal).
+function commandFor(choice, auto, prompt, custom) {
+  if (choice === "custom") return custom.trim() !== "" ? some(custom.trim()) : none();
+  return listOf(agentById(choice)).map((agent) => agentCommand(agent, auto, prompt)).at(0) ?? none();
+}
+
+// The command line that takes that agent up again after the server
+// restarts: the registry's agent continues its latest conversation (a
+// command of one's own has none).
+function resumeFor(choice, auto) { return listOf(agentById(choice)).map((agent) => agentResume(agent, auto)).at(0) ?? none(); }
+
+export class Orchestrator {
+  // `editor` (main.js): the workspace this page views (its id, root and
+  // trust, and that it was closed); saying, asking and confirming; the
+  // commands and keys it adds; its status bar item; the panels and menus
+  // it shows; and the terminals it reports on and runs agents in.
+  constructor(editor, workspaces, folders, machines) {
+    this.editor = editor;
+    this.list = workspaces;
+    this.folders = folders;
+    // The machines the user declared (this machine is always there).
+    this.machines = machines;
+    this.filter = "";
+    this.pending = []; // workspaces being made in the background: {key, spec, name, error}
+    this.nextPending = 0;
+    this.prefs = { dock: false, group: "folders", lens: "inbox", agent: "claude", auto: false, custom: "", recent: [], machine: noMachine(), git: "worktree" };
+    this.formGo = []; // the open New Workspace form's launch: a list of at most one
+    this.boards = []; // the open Workboard's redraw: a list of at most one
+  }
+
+  // The workspace this page views (null: none).
+  get current() { return this.editor.workspaceId(); }
+
+  // Commands, keys, and seeing attention when this page is looked at
+  // (once, after `new`).
+  listen() {
+    try { Object.assign(this.prefs, JSON.parse(localStorage.getItem(STORE) || "{}") || {}); } catch {}
+    this.editor.bindKey("M-o", "orchestrator.focus");
+    this.editor.bindKey("C-M-o", "orchestrator.switch");
+    // From an agent's terminal too.
+    this.editor.passKey("M-o");
+    this.editor.passKey("C-M-o");
+    $("#ws-name").addEventListener("click", () => this.toggleDock());
+    window.addEventListener("focus", (_e) => { this.seeIfLooked(); });
+    document.addEventListener("visibilitychange", (_e) => { this.seeIfLooked(); });
+    if (this.prefs.dock || !this.current) this.openDock();
+    this.renderBeacon();
+    this.seeIfLooked();
+  }
+
+  // Its commands, for the editor to register.
+  commands() {
+    return [
+      orchestratorCommand("orchestrator.dock", "Orchestrator: Toggle Dock", () => this.toggleDock()),
+      orchestratorCommand("orchestrator.focus", "Orchestrator: Focus Dock", () => this.focusDock()),
+      orchestratorCommand("orchestrator.switch", "Orchestrator: Switch Workspace…", () => this.quickSwitch()),
+      orchestratorCommand("orchestrator.new", "Orchestrator: New Workspace…", () => this.newWorkspace(this.lastForm())),
+      orchestratorCommand("orchestrator.agent", "Orchestrator: Run Agent…", () => this.startAgent()),
+      orchestratorCommand("orchestrator.close", "Orchestrator: Close Workspace", async () => { for (const w of workspaceIn(this.list, this.current)) await this.close(w, false); }),
+      orchestratorCommand("orchestrator.rename", "Orchestrator: Rename Workspace…", async () => { for (const w of workspaceIn(this.list, this.current)) await this.rename(w); }),
+      orchestratorCommand("orchestrator.move", "Orchestrator: Move to Folder…", () => { for (const w of workspaceIn(this.list, this.current)) this.move(w); }),
+      orchestratorCommand("orchestrator.pin", "Orchestrator: Pin / Unpin Workspace", () => { for (const w of workspaceIn(this.list, this.current)) this.pin(w); }),
+      orchestratorCommand("orchestrator.newFolder", "Orchestrator: New Folder…", () => this.newFolder("")),
+      orchestratorCommand("orchestrator.import", "Orchestrator: Import Sessions…", () => this.importSessions()),
+      orchestratorCommand("workboard.open", "Workboard: Open", () => this.workboard()),
+      orchestratorCommand("workboard.next", "Workboard: Next Waiting Agent", () => this.jump()),
+      orchestratorCommand("orchestrator.group", "Orchestrator: Group by Folders / by Date", () => this.setGroup(this.prefs.group === "folders" ? "date" : "folders")),
+      orchestratorCommand("orchestrator.jump", "Orchestrator: Jump to Attention", () => this.jump()),
+      orchestratorCommand("orchestrator.jumpBack", "Orchestrator: Jump Back", () => this.jumpBack()),
+    ];
+  }
+
+  // Whether workspace `id` is known.
+  has(id) { return this.list.some((w) => w.id === id); }
+
+  savePrefs() {
+    try { localStorage.setItem(STORE, JSON.stringify(this.prefs)); } catch {}
+  }
+
+  // ----------------------------------------------------------- events
+
+  // The server's news of the workspaces (app.js passes each on).
+  added(w) {
+    if (!this.has(w.id)) this.list.push(w);
+    this.redraw();
+  }
+  changed(w) {
+    this.list = this.has(w.id) ? this.list.map((x) => (x.id === w.id ? w : x)) : [...this.list, w];
+    if (w.id === this.current) this.renderTitle();
+    this.redraw();
+  }
+  removed(id) {
+    this.list = this.list.filter((w) => w.id !== id);
+    if (id === this.current) {
+      // Nothing more can be done here: say so, and offer the others.
+      this.editor.closed();
+      this.editor.say("This workspace was closed");
+      $("#ws-name").textContent = "Closed workspace";
+      this.openDock();
+    }
+    this.redraw();
+  }
+  statusOf(id, status) {
+    for (const w of workspaceIn(this.list, id)) {
+      w.status = status;
+      if (w.id === this.current) {
+        this.editor.terminals(status.terminals);
+        this.renderTitle();
+        this.seeIfLooked();
+      }
+    }
+    this.redraw();
+  }
+  foldersChanged(folders) {
+    this.folders = folders;
+    this.redraw();
+  }
+  redraw() {
+    this.renderDock();
+    this.renderBeacon();
+    for (const redraw of this.boards) redraw();
+  }
+
+  // What this workspace needed, once this page is looked at: said in the
+  // status bar, and cleared (finished work is seen, too).
+  seeIfLooked() {
+    if (!pageLooked()) return;
+    for (const s of workspaceIn(this.list, this.current).flatMap((w) => listOf(w.status))) {
+      const done = s.terminals.some((t) => t.state === "done");
+      if (!s.attention && !done) return;
+      if (s.attention) this.editor.say(s.attention);
+      rpc("workspace.seen", {}).catch((_e) => {});
+    }
+  }
+
+  renderTitle() {
+    for (const w of workspaceIn(this.list, this.current)) {
+      const trusted = listOf(w.status).some((s) => s.trusted);
+      document.title = `${displayName(w)} — Fresh`;
+      $("#ws-name").textContent = `${displayName(w)} · ${hostText(w.host)}${trusted ? "" : " · restricted"}`;
+    }
+  }
+
+  // ----------------------------------------------------------- moving
+
+  // View another workspace: this page loads it (its own tabs and splits
+  // come back with it).
+  switchTo(id) {
+    if (id === this.current) { this.editor.focus(); return; }
+    const url = new URL(location.href);
+    url.searchParams.set("ws", String(id));
+    url.searchParams.delete("open");
+    location.assign(url.href);
+  }
+
+  // The other workspaces that need you: those waiting first, then those
+  // with finished work; each the one opened first first.
+  needing() {
+    const others = this.list.filter((w) => w.id !== this.current && w.status !== null);
+    return [...others.filter((w) => stateOf(w) === "waiting"), ...others.filter((w) => stateOf(w) === "done")];
+  }
+
+  jump() {
+    for (const w of this.needing().slice(0, 1)) {
+      try { sessionStorage.setItem(JUMPED, String(this.current)); } catch {}
+      this.switchTo(w.id);
+      return;
+    }
+    this.editor.say("Nothing needs you");
+  }
+
+  jumpBack() {
+    const id = jumpedFrom();
+    if (id === null || !this.has(id) || id === this.current) { this.editor.say("No workspace to jump back to"); return; }
+    try { sessionStorage.setItem(JUMPED, String(this.current)); } catch {}
+    this.switchTo(id);
+  }
+
+  renderBeacon() {
+    const n = this.needing();
+    const waiting = n.filter((w) => stateOf(w) === "waiting").length, done = n.length - waiting;
+    const text = [waiting ? `● ${waiting} need${waiting === 1 ? "s" : ""} you` : "", done ? `✓ ${done} done` : ""].filter(Boolean).join("  ");
+    this.editor.status(text, {
+      title: n.map((w) => `${displayName(w)}: ${attentionOf(w) !== "" ? attentionOf(w) : "finished"}`).join("\n") + "\n(click: Jump to Attention)",
+      onClick: () => { this.jump(); },
+    });
+  }
+
+  quickSwitch() {
+    this.editor.pick({
+      title: "Switch workspace",
+      value: "",
+      items: this.list.filter((w) => w.status !== null).map((w) => ({
+        label: `${markOf(stateOf(w))} ${displayName(w)}${w.id === this.current ? " (this one)" : ""}`,
+        detail: [w.folder, hostText(w.host), branchOf(w), attentionOf(w)].filter((x) => x !== "").join(" · "),
+        value: w.id,
+      })),
+      onAccept: (it) => { this.switchTo(it.value); },
+      onChange: (_it) => {},
+      onCancel: () => {},
+    });
+  }
+
+  // ----------------------------------------------------------- the dock
+
+  // The dock's panel, opened.
+  openDock() {
+    const panel = this.editor.panel({ id: "orchestrator", title: "Orchestrator", place: "left", onClose: () => this.dockClosed() });
+    if (!this.prefs.dock) { this.prefs.dock = true; this.savePrefs(); }
+    this.renderDock();
+    return panel;
+  }
+
+  dockClosed() {
+    this.prefs.dock = false;
+    this.savePrefs();
+  }
+
+  // Whether the dock is on screen.
+  dockOpen() { const p = this.editor.shown("orchestrator"); return p !== undefined && p.open; }
+
+  toggleDock() {
+    const p = this.editor.shown("orchestrator");
+    if (p !== undefined && p.open) p.close();
+    else this.openDock().focus("dock");
+  }
+
+  // Alt+O: the keyboard to the dock (opening it), and back to the editor.
+  focusDock() {
+    const p = this.editor.shown("orchestrator");
+    const open = p !== undefined && p.open;
+    if (p !== undefined && open && p.el.contains(document.activeElement)) { this.editor.focus(); return; }
+    (p !== undefined && open ? p : this.openDock()).focus("dock");
+  }
+
+  setGroup(g) {
+    this.prefs.group = g;
+    this.savePrefs();
+    this.renderDock();
+  }
+
+  // Whether a workspace answers the search.
+  matches(w) {
+    const q = this.filter.trim().toLowerCase();
+    if (!q) return true;
+    return [displayName(w), w.root, branchOf(w), w.folder].some((x) => x.toLowerCase().includes(q));
+  }
+
+  // One workspace's row: its name, branch, host, and state at the edge.
+  row(w) {
+    const state = stateOf(w);
+    const here = w.id === this.current;
+    const kind = w.host.kind;
+    const st = listOf(w.status);
+    const title = [w.root, hostText(w.host), w.error ?? attentionOf(w), ...listOf(w.worktree).map((t) => `worktree of ${t.repo}`)].filter((x) => x !== "").join("\n");
+    return ui.row({ ...ui.BOX, class: "orch-row" + (here ? " current" : "") }, [
+      ui.text({ ...ui.TEXT, class: "orch-name", bold: here, title }, displayName(w)),
+      ...[branchOf(w)].filter((b) => b !== "").map((b) => ui.text({ ...ui.TEXT, dim: true, class: "orch-branch" }, b)),
+      ...st.filter((s) => s.modified > 0).map((s) => ui.text({ ...ui.TEXT, class: "orch-modified", title: "Unsaved files" }, `●${s.modified}`)),
+      ui.spacer(),
+      ...st.filter((s) => !s.trusted).map((_s) => ui.text({ ...ui.TEXT, class: "orch-restricted", title: "Restricted: no processes, terminals or language servers" }, "⊘")),
+      ...found(HOST_MARK.get(kind)).map((m) => ui.text({ ...ui.TEXT, dim: true, title: hostText(w.host) }, m)),
+      ui.text({ ...ui.TEXT, class: `orch-mark ${state}`, title: state }, markOf(state)),
+    ]);
+  }
+
+  wsNode(w) { return { id: `w${w.id}`, label: this.row(w), children: [], open: false, leaf: true, data: wsData(w) }; }
+
+  // The dock's tree: pinned workspaces, then folders (or days), then the
+  // rest; workspaces being made last.
+  nodes() {
+    const shown = this.list.filter((w) => this.matches(w));
+    const pinned = shown.filter((w) => w.pinned);
+    const rest = shown.filter((w) => !w.pinned);
+    const out = [];
+    if (pinned.length) out.push({ id: "g:pinned", label: folderRow("Pinned", pinned), children: pinned.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
+    if (this.prefs.group === "date") {
+      const { day, week } = dayStarts();
+      const when = (w) => listOf(w.status).map((s) => s.worked).filter((t) => t > 0).at(0) ?? w.created;
+      const groups = [
+        { label: "Today", items: rest.filter((w) => when(w) >= day) },
+        { label: "This week", items: rest.filter((w) => when(w) < day && when(w) >= week) },
+        { label: "Older", items: rest.filter((w) => when(w) < week) },
+      ];
+      for (const g of groups) {
+        if (!g.items.length) continue;
+        const items = [...g.items].sort((a, b) => when(b) - when(a));
+        out.push({ id: `g:${g.label}`, label: folderRow(g.label, items), children: items.map((w) => this.wsNode(w)), open: true, leaf: false, data: GROUP_ROW });
+      }
+    } else {
+      const searching = !!this.filter.trim();
+      // A folder's node (none while searching finds nothing in it).
+      const folder = (path) => {
+        const subs = this.folders.filter((f) => folderParent(f) === path).flatMap((f) => folder(f));
+        const own = rest.filter((w) => w.folder === path).map((w) => this.wsNode(w));
+        const all = rest.filter((w) => w.folder === path || w.folder.startsWith(`${path}/`));
+        return searching && !all.length ? [] : [{ id: `f:${path}`, label: folderRow(baseName(path), all), children: [...subs, ...own], open: true, leaf: false, data: folderData(path) }];
+      };
+      for (const f of this.folders.filter((x) => !x.includes("/"))) for (const n of folder(f)) out.push(n);
+      for (const w of rest.filter((x) => !x.folder)) out.push(this.wsNode(w));
+    }
+    for (const p of this.pending.filter((x) => !this.filter.trim() || x.name.toLowerCase().includes(this.filter.trim().toLowerCase()))) out.push({ id: `p${p.key}`, label: pendingRow(p), children: [], open: false, leaf: true, data: pendingData(p.key) });
+    return out;
+  }
+
+  renderDock() {
+    const panel = this.editor.shown("orchestrator");
+    if (panel === undefined || !panel.open) return;
+    const others = this.needing();
+    const waiting = others.filter((w) => stateOf(w) === "waiting").length, done = others.length - waiting;
+    const total = this.list.length, shown = this.list.filter((w) => this.matches(w)).length;
+    panel.render(ui.col({ ...ui.BOX, class: "orch-dock" }, [
+      ui.row({ ...ui.BOX, class: "orch-dock-head" }, [
+        ui.button({ ...ui.BUTTON, primary: true, title: "New Workspace…", onClick: () => { this.newWorkspace(this.lastForm()); } }, "+ New"),
+        ui.spacer(),
+        ui.button({ ...ui.BUTTON, title: "View, group, folders", onClick: (e) => this.dockMenu(e.currentTarget) }, "Menu ▾"),
+      ]),
+      ui.row(ui.BOX, [
+        ui.input({
+        ...ui.INPUT,
+        key: "q",
+        value: this.filter,
+        placeholder: "/ search workspaces",
+        list: ["dock"],
+        onInput: (v) => { this.filter = v; this.renderDock(); },
+        onKey: (e) => { if (e.key === "Escape" && this.filter !== "") { this.filter = ""; this.renderDock(); panel.focus("dock"); return true; } return false; },
+        onEnter: () => panel.focus("dock"),
+      }),
+]),
+      ...(waiting || done ? [ui.row({ ...ui.BOX, class: "orch-attention-line" }, [
+          ...(waiting ? [ui.text({ ...ui.TEXT, class: "orch-mark waiting" }, `● ${waiting} need${waiting === 1 ? "s" : ""} you`)] : []),
+          ...(done ? [ui.text({ ...ui.TEXT, class: "orch-mark done" }, `✓ ${done} done`)] : []),
+        ])] : []),
+      ...(this.filter.trim() ? [ui.text({ ...ui.TEXT, dim: true }, `${shown} of ${total}`)] : []),
+      ui.tree({
+        ...ui.treeProps("dock", this.nodes()),
+        onActivate: (d) => this.activate(d),
+        onContext: (d, _nd, at) => this.editor.menu(this.rowMenu(d), at),
+        onKey: (e, sel) => {
+          if (e.key === "/") { e.preventDefault(); panel.focus("q"); return; }
+          for (const d of sel) {
+            if (e.key === "F2" || e.key === "ContextMenu") { e.preventDefault(); this.editor.menu(this.rowMenu(d), belowSelected(e.currentTarget)); }
+            else if (d.kind === "ws" && e.key === "Delete") { e.preventDefault(); this.close(d.w, false); }
+          }
+        },
+      }),
+    ]));
+  }
+
+  activate(d) {
+    if (d.kind === "ws") { const w = d.w; if (w.error !== null) this.retry(w); else this.switchTo(w.id); return; }
+    if (d.kind !== "pending") return;
+    const key = d.key;
+    const p = this.pending.find((x) => x.key === key);
+    if (p !== undefined && p.error !== "") this.launch(p, true);
+  }
+
+  // A dock row's menu.
+  rowMenu(d) {
+    if (d.kind === "pending") {
+      const key = d.key;
+      const p = this.pending.find((x) => x.key === key);
+      if (p === undefined) return [];
+      return p.error !== ""
+        ? [action("Retry", null, () => this.launch(p, true)), action("Dismiss", null, () => this.dropPending(p))]
+        : [actionOf("Creating…", null, null, true, () => {})];
+    }
+    if (d.kind === "folder") {
+      const path = d.path;
+      return [
+        action("New Subfolder…", null, () => this.newFolder(path)),
+        action("Rename…", null, () => this.renameFolder(path)),
+        action("Delete Folder", null, () => this.deleteFolder(path)),
+      ];
+    }
+    if (d.kind !== "ws") return [action("New Folder…", null, () => this.newFolder(""))];
+    const w = d.w;
+    if (w.error !== null) {
+      return [action("Retry", null, () => this.retry(w)), action("Rename…", null, () => this.rename(w)), action("Move to Folder…", null, () => this.move(w)), SEPARATOR, action("Dismiss", null, () => this.dismiss(w))];
+    }
+    const here = w.id === this.current;
+    const st = w.status;
+    return [
+      actionOf(here ? "This workspace" : "Switch to It", null, null, here, () => this.switchTo(w.id)),
+      action("Rename…", null, () => this.rename(w)),
+      action("Move to Folder…", null, () => this.move(w)),
+      action(w.pinned ? "Unpin" : "Pin to Top", null, () => this.pin(w)),
+      ...(here ? [actionOf("Run Agent…", null, null, st === null || !st.trusted, () => this.startAgent())] : []),
+      SEPARATOR,
+      action("Close Workspace…", null, () => this.close(w, false)),
+      ...(w.worktree !== null ? [action("Close and Delete Worktree…", null, () => this.close(w, true))] : []),
+    ];
+  }
+
+  // The dock's menu, dropping from its button.
+  dockMenu(button) {
+    const g = this.prefs.group;
+    this.editor.dropdown([
+      actionOf("Group: Folders", null, g === "folders", false, () => this.setGroup("folders")),
+      actionOf("Group: By Date", null, g === "date", false, () => this.setGroup("date")),
+      SEPARATOR,
+      action("New Workspace…", null, () => this.newWorkspace(this.lastForm())),
+      action("New Folder…", null, () => this.newFolder("")),
+      action("Import Sessions…", null, () => this.importSessions()),
+      action("Workboard", null, () => this.workboard()),
+      SEPARATOR,
+      action("Jump to Attention", null, () => this.jump()),
+      action("Jump Back", null, () => this.jumpBack()),
+    ], button);
+  }
+
+  // ----------------------------------------------------------- acting
+
+  async rename(w) {
+    const name = await this.editor.ask({ title: "Workspace name", value: displayName(w), hint: "Empty: named after its agent's terminal, or its folder", select: true });
+    if (name !== null) await changeWorkspace((t) => { this.editor.say(t); }, { workspace: w.id, name });
+  }
+
+  move(w) {
+    // A folder, or a new one.
+    const to = (folder, create) => ({ folder, create });
+    const items = [
+      { label: "Top level", detail: "", value: to("", false) },
+      ...this.folders.map((f) => ({ label: f, detail: "", value: to(f, false) })),
+      { label: "New folder…", detail: "", value: to("", true) },
+    ];
+    this.editor.pick({
+      title: `Move ${displayName(w)} to`,
+      value: "",
+      items,
+      onAccept: (it) => {
+        const go = async () => {
+          const folder = it.value.create ? await this.newFolder("") : it.value.folder;
+          if (folder !== null) await changeWorkspace((t) => { this.editor.say(t); }, { workspace: w.id, folder });
+        };
+        go();
+      },
+      onChange: (_it) => {},
+      onCancel: () => {},
+    });
+  }
+
+  pin(w) { changeWorkspace((t) => { this.editor.say(t); }, { workspace: w.id, pinned: !w.pinned }); }
+
+  // A new folder under `parent`; resolves with its path (null: cancelled).
+  async newFolder(parent) {
+    const name = ((await this.editor.ask({ title: parent !== "" ? `New folder in ${parent}` : "New folder", value: "", hint: "", select: true })) ?? "").trim();
+    if (name === "") return none();
+    const path = parent !== "" ? `${parent}/${name}` : name;
+    const o = await attempt("folder.create", { path });
+    if (o.kind === "refused") { this.editor.say(`No folder: ${o.detail}`); return none(); }
+    return some(path);
+  }
+
+  async renameFolder(path) {
+    const name = await this.editor.ask({ title: `Rename folder ${path}`, value: baseName(path), hint: "", select: true });
+    if (!name || !name.trim()) return;
+    const to = folderParent(path) ? `${folderParent(path)}/${name.trim()}` : name.trim();
+    try { await rpc("folder.rename", { from: path, to }); } catch (e) { this.editor.say(`Not renamed: ${failure(e)}`); }
+  }
+
+  async deleteFolder(path) {
+    if (!(await this.editor.confirm(`Delete folder ${path}? What is in it moves up a level.`, "Delete Folder"))) return;
+    try { await rpc("folder.delete", { path }); } catch (e) { this.editor.say(`Not deleted: ${failure(e)}`); }
+  }
+
+  async retry(w) {
+    this.editor.say(`Opening ${displayName(w)}…`);
+    try { await rpc("workspace.retry", { workspace: w.id }); this.editor.say(`Opened ${displayName(w)}`); } catch (e) { this.editor.say(`Not opened: ${failure(e)}`); }
+  }
+
+  async dismiss(w) {
+    if (!(await this.editor.confirm(`Forget ${displayName(w)}? Its folder stays where it is.`, "Dismiss"))) return;
+    await rpc("workspace.close", { workspace: w.id }).catch((e) => this.editor.say(failure(e)));
+  }
+
+  // Close a workspace: its terminals and agents stop. Unsaved documents
+  // are asked about; with `worktree`, its git worktree goes too (its
+  // branch stays).
+  async close(w, worktree) {
+    if (w.error !== null) { await this.dismiss(w); return; }
+    const running = listOf(w.status).flatMap((s) => s.terminals).filter((t) => t.state !== "exited").length;
+    const what = running > 0 ? ` Its ${plural(running, "terminal")} stop${running === 1 ? "s" : ""}.` : "";
+    const branch = listOf(w.worktree).map((t) => ` the branch ${t.branch} stays.`).at(0) ?? "";
+    const wt = worktree ? ` Its worktree ${w.root} is deleted, with any uncommitted changes;${branch}` : "";
+    if (!(await this.editor.confirm(`Close ${displayName(w)}?${what}${wt}`, worktree ? "Close and Delete Worktree" : "Close"))) return;
+    const args = { workspace: w.id, remove_worktree: worktree };
+    const o = await attempt("workspace.close", args);
+    if (o.kind === "refused") {
+      if (o.code !== "unsaved") { this.editor.say(`Not closed: ${o.detail}`); return; }
+      if (!(await this.editor.confirm(`${o.detail}. Close it and discard them?`, "Discard and Close"))) return;
+      const again = await attempt("workspace.close", { ...args, discard: true });
+      if (again.kind === "refused") { this.editor.say(`Not closed: ${again.detail}`); return; }
+    }
+    this.editor.say(`Closed ${displayName(w)}`);
+  }
+
+  // Run Agent here: pick the agent, give it a task; a terminal running it.
+  startAgent() {
+    if (this.current === null) return;
+    if (!this.editor.trusted()) { this.editor.say("Trust the workspace to run an agent (Workspace: Trust)"); return; }
+    this.editor.pick({
+      title: "Run agent",
+      value: "",
+      items: AGENT_CHOICES.filter((c) => c.value !== "terminal").map((c) => ({ label: c.label, detail: "", value: c.value })),
+      onAccept: (it) => { this.runAgent(it.value); },
+      onChange: (_it) => {},
+      onCancel: () => {},
+    });
+  }
+
+  // Run the agent `choice` (an AGENT_CHOICES value) in a terminal, asking
+  // for its task (and a custom agent's command).
+  async runAgent(choice) {
+    const agent = listOf(agentById(choice));
+    const custom = choice === "custom" ? await this.editor.ask({ title: "Command", value: this.prefs.custom, hint: "Runs in a terminal in the workspace's root, in your login shell", select: true }) : "";
+    if (custom === null) return;
+    const prompt = agent.length > 0 ? await this.editor.ask({ title: `${agent[0].label}: the task (optional)`, value: "", hint: "", select: true }) : "";
+    if (prompt === null) return;
+    for (const command of listOf(commandFor(choice, this.prefs.auto, prompt, custom))) {
+      if (choice === "custom") this.prefs.custom = custom;
+      this.prefs.agent = choice;
+      this.savePrefs();
+      await this.editor.runInTerminal(command, resumeFor(choice, this.prefs.auto));
+    }
+  }
+
+  // ----------------------------------------------------------- workboard
+
+  // The Workboard (docs/features/workboard.md): every workspace on one
+  // board, by what it needs from you. Inbox: Needs you, Ready to review,
+  // Working, Parked. Board: Backlog, Needs me, Working, Review. Tab or 1–2
+  // switch the lens, Enter opens, n goes to the next one that needs you.
+  workboard() {
+    const panel = this.editor.panel({ id: "workboard", title: "Workboard", place: "dialog", onClose: null });
+    // Where each workspace goes, from its state; idle with unsaved files
+    // is work to review.
+    const column = (w) => {
+      const st = stateOf(w);
+      if (st === "waiting" || st === "failed") return "needs";
+      if (st === "done" || (st === "idle" && listOf(w.status).some((s) => s.modified > 0))) return "review";
+      if (st === "working") return "working";
+      return "parked";
+    };
+    const lenses = {
+      inbox: [["needs", "Needs you"], ["review", "Ready to review"], ["working", "Working"], ["parked", "Parked"]],
+      board: [["parked", "Backlog"], ["needs", "Needs me"], ["working", "Working"], ["review", "Review"]],
+    };
+    const SAYS = new Map([["waiting", "waiting for you"], ["done", "finished, not looked at"], ["working", "working"], ["idle", "idle"], ["unknown", "no signal"], ["exited", "ended"]]);
+    const why = (w) => w.error ?? (attentionOf(w) !== "" ? attentionOf(w) : SAYS.get(stateOf(w)) ?? "");
+    const lensKey = (e) => {
+      if (e.key === "Tab" || e.key === "1" || e.key === "2") {
+        e.preventDefault();
+        this.prefs.lens = e.key === "1" ? "inbox" : e.key === "2" ? "board" : this.prefs.lens === "board" ? "inbox" : "board";
+        this.savePrefs();
+        render();
+        if (this.prefs.lens === "board") panel.focusFirst(); else panel.focus("cards");
+        return true;
+      }
+      if (e.key === "n") { e.preventDefault(); panel.close(); this.jump(); return true; }
+      return false;
+    };
+    // A workspace on the board: its state, name, and what it needs.
+    const card = (w) => ui.row({ ...ui.BOX, class: "orch-row" }, [
+      ui.text({ ...ui.TEXT, class: `orch-mark ${stateOf(w)}` }, markOf(stateOf(w))),
+      ui.text({ ...ui.TEXT, class: "orch-name keep", bold: w.id === this.current, title: [w.root, w.folder, branchOf(w)].filter((x) => x !== "").join(" · ") }, displayName(w)),
+      ui.text({ ...ui.TEXT, class: "wb-why" }, why(w)),
+    ]);
+    const render = () => {
+      const lens = this.prefs.lens === "board" ? "board" : "inbox";
+      const ws = this.list;
+      const tabs = ui.row({ ...ui.BOX, class: "wb-lenses" }, [
+        ui.toggle({ ...ui.TOGGLE, key: "lens-inbox", on: lens === "inbox", onChange: () => { this.prefs.lens = "inbox"; this.savePrefs(); render(); } }, "1 Inbox"),
+        ui.toggle({ ...ui.TOGGLE, key: "lens-board", on: lens === "board", onChange: () => { this.prefs.lens = "board"; this.savePrefs(); render(); } }, "2 Board"),
+        ui.spacer(),
+        ui.text({ ...ui.TEXT, dim: true }, "Tab: lens · Enter: open · n: next that needs you · Esc: close"),
+        ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Close"),
+      ]);
+      if (lens === "inbox") {
+        const items = lenses.inbox.flatMap(([key, label]) => {
+          const group = ws.filter((w) => column(w) === key);
+          return group.length === 0 ? [] : [headerItem(`${label}  ${group.length}`), ...group.map(wsItem)];
+        });
+        panel.render(ui.col({ ...ui.BOX, class: "wb" }, [
+          tabs,
+          ui.list({
+          ...ui.listProps("cards", items, (it) => {
+            if (it.kind === "header") return ui.text({ ...ui.TEXT, bold: true }, it.label);
+            return ui.row({ ...ui.BOX, class: "orch-row" }, [
+              card(it.w),
+              ui.text({ ...ui.TEXT, dim: true }, [it.w.folder, branchOf(it.w)].filter((x) => x !== "").join(" · ")),
+            ]);
+          }),
+          class: "wb-list",
+          onActivate: (it) => { if (it.kind === "ws") this.switchTo(it.w.id); },
+        }),
+]));
+      } else {
+        panel.render(ui.col({ ...ui.BOX, class: "wb" }, [
+          tabs,
+          ui.row({ ...ui.BOX, class: "wb-board" },  lenses.board.map(([key, label]) => {
+          const group = ws.filter((w) => column(w) === key);
+          return ui.col({ ...ui.BOX, class: "wb-column" }, [
+            ui.text({ ...ui.TEXT, bold: true }, `${label}  ${group.length}`),
+            ui.list({ ...ui.listProps(`column-${key}`, group, card), onActivate: (w) => { if (w !== undefined) this.switchTo(w.id); } }),
+          ]);
+        })),
+]));
+      }
+    };
+    if (!WIRED.has(panel)) {
+      WIRED.add(panel);
+      panel.el.addEventListener("keydown", (e) => { if (e.target.tagName !== "INPUT") lensKey(e); });
+    }
+    this.boards = [() => { if (panel.open) render(); }];
+    render();
+    if (this.prefs.lens === "board") panel.focusFirst(); else panel.focus("cards");
+  }
+
+  // ----------------------------------------------------------- machines
+
+  // The remembered machine (a declared one's name, or none), while it is
+  // still declared; else this machine.
+  machineChoice(remembered) { return chosenOf(this.machines, remembered); }
+  // The host a choice names (a list of at most one: none while one is
+  // being added, or for a machine no longer declared).
+  hostsOf(choice) { return hostsIn(this.machines, choice); }
+  // The host a choice names; it throws when there is none.
+  hostOf(choice) {
+    for (const h of this.hostsOf(choice)) return h;
+    throw new Error(`${machineText(choice)} is not a declared machine (removed?)`);
+  }
+  // The machine choices offered (`withAdd`: "Add…" too), and which is
+  // chosen.
+  machineSelect(key, chosen, withAdd, onChange) { return machineSelectOf(this.machines, key, chosen, withAdd, onChange); }
+
+
+  // ----------------------------------------------------------- import
+
+  // Agent sessions run outside the editor (Claude Code and Codex
+  // transcripts on a host): pick one, and New Workspace opens filled in to
+  // resume it in its folder.
+  importSessions() {
+    const st = { machine: this.machineChoice(this.prefs.machine), sessions: null, error: "", busy: false };
+    const panel = this.editor.panel({ id: "orchestrator-import", title: "Import Sessions", place: "dialog", onClose: null });
+    const scan = async () => {
+      st.busy = true;
+      st.error = "";
+      render();
+      try { st.sessions = (await rpc("agents.scan", { host: this.hostOf(st.machine) })).sessions; } catch (e) { st.error = failure(e); }
+      st.busy = false;
+      render();
+      panel.focus("sessions");
+    };
+    const open = (x) => {
+      if (x === undefined) return;
+      panel.close();
+      this.newWorkspace({
+        ...this.lastForm(),
+        root: x.cwd, machine: st.machine, git: "folder", agent: "terminal", prompt: x.resume, resume: x.resume,
+        name: (x.title ?? "").slice(0, 40),
+      });
+    };
+    const row = (x) => {
+      const open = this.list.find((w) => w.root === x.cwd);
+      return ui.row({ ...ui.BOX, class: "orch-row" }, [
+        ui.text({ ...ui.TEXT, class: "orch-agent-name" }, x.agent),
+        ui.text({ ...ui.TEXT, class: "orch-name", title: x.title || "" }, x.title || x.id),
+        ui.spacer(),
+        ...(open ? [ui.text({ ...ui.TEXT, dim: true }, `open as ${displayName(open)}`)] : []),
+        ui.text({ ...ui.TEXT, dim: true, class: "orch-branch", title: x.cwd }, x.cwd),
+        ui.text({ ...ui.TEXT, dim: true }, ago(x.mtime)),
+      ]);
+    };
+    const render = () => {
+      const list = st.sessions || [];
+      panel.render(ui.col({ ...ui.BOX, class: "orch-import" }, [
+        ui.row(ui.BOX, [
+          ui.text({ ...ui.TEXT, class: "orch-label" }, "Machine"),
+          this.machineSelect("machine", st.machine, false, (v) => { st.machine = v; render(); }),
+          ui.button({ ...ui.BUTTON, primary: true, disabled: st.busy, onClick: () => { scan(); } }, st.busy ? "Scanning…" : "Scan"),
+          ui.spacer(),
+          ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
+        ]),
+        ...(st.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, st.error)] : []),
+        st.sessions
+          ? ui.text({ ...ui.TEXT, dim: true }, list.length ? `${plural(list.length, "session")} of Claude Code and Codex, newest first · Enter opens New Workspace to resume it` : "No Claude Code or Codex sessions on this machine")
+          : ui.text({ ...ui.TEXT, dim: true }, "Finds Claude Code (~/.claude/projects) and Codex (~/.codex/sessions) sessions on the machine."),
+        ui.list({ ...ui.listProps("sessions", list, row), class: "orch-import-list", onActivate: (x) => { open(x); } }),
+      ]));
+    };
+    render();
+    scan();
+  }
+
+  // ----------------------------------------------------------- new workspaces
+
+  dropPending(p) {
+    this.pending = this.pending.filter((x) => x !== p);
+    this.renderDock();
+  }
+
+  // A workspace to make from a New Workspace spec, as the dock shows it
+  // while it is made: named as asked, else after its folder.
+  newPending(spec) {
+    const folder = baseName(spec.root.replace(/\/+$/, ""));
+    const name = listOf(spec.name).at(0) ?? (folder !== "" ? folder : spec.root);
+    this.nextPending += 1;
+    return { key: this.nextPending, spec, name, error: "" };
+  }
+
+  // Open workspace `p` (newPending's): switched to, or made in the
+  // background — shown in the dock as it is made, and why it failed
+  // (Retry sends it again). Resolves with why it failed (none: it opened).
+  async launch(p, background) {
+    if (background) {
+      p.error = "";
+      if (!this.pending.includes(p)) this.pending.push(p);
+      this.renderDock();
+    }
+    const o = await attempt("workspace.open", p.spec);
+    if (o.kind === "refused") {
+      p.error = o.detail;
+      this.renderDock();
+      return some(o.detail);
+    }
+    const w = o.value.workspace;
+    if (!this.has(w.id)) this.list.push(w);
+    this.dropPending(p);
+    if (background) this.editor.say(`Opened ${displayName(w)} in the background`);
+    else this.switchTo(w.id);
+    return none();
+  }
+
+  // The New Workspace dialog: a prompt for the agent, and under it the
+  // agent, the machine and the folder (the ones used last; the folder at
+  // first the current workspace's) and how git is used (a new worktree, offered when git says
+  // the folder is in a work tree); Launch, or Launch in Background from
+  // its ▾. The workspace is trusted and the agent runs in its auto mode.
+  // `preset`: fields filled in (an imported session's folder and resume
+  // command, and its name).
+  // The New Workspace form as this browser last left it.
+  lastForm() {
+    return {
+      // A command of one's own is the terminal's (the prompt box is it).
+      agent: this.prefs.agent === "custom" ? "terminal" : this.prefs.agent, prompt: "",
+      machine: this.machineChoice(this.prefs.machine), root: this.prefs.recent.at(0) ?? this.editor.root(),
+      git: this.prefs.git, name: "",
+      resume: "", // an imported session's: taken up again after a restart
+      busy: false, error: "",
+    };
+  }
+
+  // The New Workspace form, filled in as `given` says.
+  newWorkspace(given) {
+    const f /*: NewWorkspaceForm */ = given;
+    // What the folder is (Where), and the question last asked about it.
+    /** let where: Where */
+    let where = ASKING;
+    let whereTimer = 0, asked = "";
+    // Declaring a machine (the choice "Add…"): its SSH details, and the
+    // choice to go back to on Cancel.
+    const add = { back: f.machine, name: "", target: "", port: "", identity: "", options: "", busy: false, error: "" };
+    // The folder browser: the folders under `base` on the chosen machine,
+    // loaded as they are opened; the text box filters them by name, or (a
+    // path, absolute or from ~) moves `base` there.
+    const browse = { shown: false, base: "", text: "", dirs: new Map(), open: new Set(), sel: "", error: "", timer: 0 };
+    const panel = this.editor.panel({ id: "orchestrator-new", title: "New Workspace", place: "dialog", onClose: null });
+    const worktree = () => f.git === "worktree" && where.kind === "repo";
+    const go = async (background) => {
+      if (f.busy || f.machine.kind === "adding" || !f.root.trim() || where.kind === "missing") return;
+      const hosts = this.hostsOf(f.machine);
+      if (hosts.length === 0) { f.error = `${machineText(f.machine)} is not a declared machine (removed?)`; render(); return; }
+      const host = hosts[0];
+      // The terminal runs the prompt box's command (none: a shell); an
+      // agent gets the prompt.
+      const command = f.prompt.trim();
+      const agent = f.agent === "terminal" ? (command !== "" ? some(command) : none()) : commandFor(f.agent, true, f.prompt, "");
+      const spec = {
+        root: f.root.trim(), host, trusted: true, agent,
+        agent_resume: f.agent === "terminal" ? (f.resume !== "" && command === f.resume ? some(f.resume) : none()) : resumeFor(f.agent, true),
+        worktree: worktree() ? { branch: null, base: null } : null,
+        name: f.name.trim() !== "" ? some(f.name.trim()) : none(), folder: "",
+      };
+      const root = f.root.trim();
+      Object.assign(this.prefs, {
+        agent: f.agent, machine: rememberedOf(f.machine), git: f.git,
+        recent: [root, ...this.prefs.recent.filter((x) => x !== root)].slice(0, 8),
+      });
+      this.savePrefs();
+      if (background) { panel.close(); this.launch(this.newPending(spec), true); return; }
+      f.busy = true;
+      f.error = "";
+      render();
+      for (const error of listOf(await this.launch(this.newPending(spec), false))) { f.busy = false; f.error = error; render(); }
+    };
+    // Ask git (on the chosen machine) whether the folder is in a work tree,
+    // a moment after the folder or the machine last changed.
+    const checkGit = () => {
+      clearTimeout(whereTimer);
+      whereTimer = setTimeout(async () => {
+        const path = f.root.trim();
+        const key = `${f.machine.kind}:${machineText(f.machine)}\n${path}`;
+        asked = key;
+        where = ASKING;
+        render();
+        /** let next: Where */
+        let next = { kind: "missing" };
+        if (path && f.machine.kind !== "adding") {
+          try { const r = await rpc("machine.git", { host: this.hostOf(f.machine), path }); next = whereOf({ repo: r.repo, folder: r.folder, toplevel: r.toplevel || "" }); }
+          catch (e) { next = unknownWhere(failure(e)); }
+        }
+        if (asked !== key) return;
+        where = next;
+        render();
+      }, 250);
+    };
+    const addMachine = async () => {
+      const target = add.target.trim();
+      if (target === "") { add.error = "A host is needed"; render(); return; }
+      const port = add.port.trim(), identity = add.identity.trim(), options = add.options.trim();
+      const reach = port !== "" ? `${target}:${port}` : target;
+      const host = sshHost(
+        reach,
+        identity !== "" ? some(identity) : none(),
+        options !== "" ? options.split(/\s+/) : []);
+      add.busy = true;
+      add.error = "";
+      render();
+      try {
+        // Unnamed, the machine is called by its host.
+        const name = add.name.trim() !== "" ? add.name.trim() : reach;
+        this.machines = (await rpc("machine.add", { name, host })).machines;
+        f.machine = declared(name);
+        Object.assign(add, { name: "", target: "", port: "", identity: "", options: "" });
+        checkGit();
+      } catch (e) { add.error = failure(e); }
+      add.busy = false;
+      render();
+    };
+    // Load the folders in `path` on the chosen machine; with `asBase`, the
+    // browser starts there.
+    const load = async (path, asBase) => {
+      try {
+        const r = await rpc("machine.browse", { host: this.hostOf(f.machine), path });
+        browse.dirs.set(r.path, r.dirs);
+        if (asBase) { browse.base = r.path; browse.sel = r.path; }
+        browse.error = "";
+      } catch (e) { browse.error = failure(e); }
+      render();
+    };
+    const openBrowser = () => {
+      Object.assign(browse, { shown: true, text: "", dirs: new Map(), open: new Set(), error: "" });
+      render();
+      panel.focus("browse-q");
+      load(f.root.trim() || "~", true);
+    };
+    // The folders used last, in a menu under the ▾ beside the folder box.
+    const recentMenu = (e) => {
+      const items = this.prefs.recent.length
+        ? this.prefs.recent.map((x) => action(x, null, () => { setRoot(x); panel.focus("root"); }))
+        : [actionOf("No recent folders", null, null, true, () => {})];
+      this.editor.dropdown(items, e.currentTarget);
+    };
+    // Launch in the background, from the ▾ beside Launch.
+    const launchMenu = (e) => {
+      this.editor.dropdown([action("Launch in Background", "Alt+Enter", () => { go(true); })], e.currentTarget);
+    };
+    // The browser's rows: `base`'s parent, then its folders as a tree.
+    const browseRows = () => {
+      const rows = [];
+      const walk = (path, depth) => {
+        for (const d of browse.dirs.get(path) ?? []) {
+          rows.push({ name: d.name, path: d.path, depth, open: browse.open.has(d.path), up: false });
+          if (browse.open.has(d.path)) walk(d.path, depth + 1);
+        }
+      };
+      walk(browse.base, 0);
+      const q = browse.text.trim().toLowerCase();
+      const isPath = q.startsWith("/") || q.startsWith("~");
+      return q && !isPath ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
+    };
+    const toggle = (row) => {
+      browse.sel = row.path;
+      if (browse.open.has(row.path)) browse.open.delete(row.path);
+      else { browse.open.add(row.path); if (!browse.dirs.has(row.path)) { load(row.path, false); return; } }
+      render();
+    };
+    const setRoot = (path) => { f.root = path; render(); checkGit(); };
+    const choose = () => { browse.shown = false; setRoot(browse.sel || browse.base); panel.focus("root"); };
+    // Ctrl+Enter / Alt+Enter anywhere in the dialog: an input leaves them to
+    // the dialog.
+    const launchKey = (e) => e.key === "Enter" && (e.ctrlKey || e.altKey);
+    this.formGo = [go];
+    if (!FORMS.has(panel)) {
+      FORMS.add(panel);
+      panel.el.addEventListener("keydown", (e) => { if (launchKey(e)) { e.preventDefault(); for (const g of this.formGo) g(e.altKey); } });
+    }
+    const labelled = (label, control) => ui.row({ ...ui.BOX, class: "orch-opt" }, [ui.text({ ...ui.TEXT, dim: true }, label), control]);
+    const field = (label, controls) => ui.row({ ...ui.BOX, class: "orch-field" }, [ui.text({ ...ui.TEXT, class: "orch-label" }, label), ...controls]);
+    const addInput = (key, placeholder, value, set) => ui.input({ ...ui.INPUT, key: `add-${key}`, value, placeholder, onInput: set, onEnter: () => { addMachine(); } });
+    /** const machineChanged: (MachineChoice) => Undefined */
+    const machineChanged = (v) => {
+      if (v.kind === "adding") add.back = f.machine;
+      f.machine = v;
+      browse.shown = false;
+      render();
+      if (v.kind === "adding") panel.focus("add-target");
+      else checkGit();
+    };
+    const addSection = () => ui.col({ ...ui.BOX, class: "orch-add-machine" }, [
+      field("SSH host", [
+        addInput("target", "[user@]host, or a Host of your ~/.ssh/config", add.target, (v) => { add.target = v; }),
+        addInput("port", "port (22)", add.port, (v) => { add.port = v; }),
+      ]),
+      field("Name", [addInput("name", "optional: the host", add.name, (v) => { add.name = v; })]),
+      field("Identity", [addInput("identity", "identity file (optional)", add.identity, (v) => { add.identity = v; })]),
+      field("Options", [addInput("options", "more ssh options, e.g. -J jump (optional)", add.options, (v) => { add.options = v; })]),
+      ...(add.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, add.error)] : []),
+      field("", [
+        ui.button({ ...ui.BUTTON, primary: true, disabled: add.busy, onClick: () => { addMachine(); } }, add.busy ? "Connecting…" : "Add"),
+        ui.button({ ...ui.BUTTON, disabled: add.busy, onClick: () => { f.machine = add.back; add.error = ""; render(); } }, "Cancel"),
+      ]),
+    ]);
+    const browser = () => ui.col({ ...ui.BOX, class: "orch-browse" }, [
+      ui.input({
+        ...ui.INPUT,
+        key: "browse-q",
+        value: browse.text,
+        placeholder: `filter, or a path (/… or ~/…) on ${this.hostsOf(f.machine).map(hostText).at(0) ?? "the machine"}`,
+        onInput: (v) => {
+          browse.text = v;
+          clearTimeout(browse.timer);
+          const t = v.trim();
+          if (t.startsWith("/") || t.startsWith("~")) browse.timer = setTimeout(() => { load(t, true); }, 300);
+          else render();
+        },
+        onEnter: () => { choose(); },
+      }),
+      ui.text({ ...ui.TEXT, dim: true }, browse.error || browse.base),
+      ui.list({
+        ...ui.listProps("browse-tree", [{ name: "..", path: parentOf(browse.base), depth: 0, open: false, up: true }, ...browseRows()], (r) => ui.text({ ...ui.TEXT, mono: true }, r.up ? "↑ .." : `${"  ".repeat(r.depth)}${r.open ? "▾" : "▸"} ${r.name}`)),
+        class: "orch-browse-list",
+        onSelect: (r) => { browse.sel = r.up ? browse.base : r.path; },
+        onActivate: (r, _i, how) => {
+          if (r.up) { load(r.path, true); return; }
+          if (how === "double") { browse.sel = r.path; choose(); return; }
+          toggle(r);
+        },
+        activateOnClick: true,
+      }),
+      ui.row(ui.BOX, [
+        ui.text({ ...ui.TEXT, dim: true }, `Selected: ${browse.sel || browse.base}`),
+        ui.spacer(),
+        ui.button({ ...ui.BUTTON, onClick: () => { browse.shown = false; render(); } }, "Cancel"),
+        ui.button({ ...ui.BUTTON, primary: true, onClick: () => { choose(); } }, "Choose"),
+      ]),
+    ]);
+    const render = () => {
+      const agent = agentById(f.agent);
+      const adding = f.machine.kind === "adding";
+      const w = where;
+      const missing = w.kind === "missing" && f.root.trim() !== "";
+      panel.render(ui.col({ ...ui.BOX, class: "orch-form orch-prompt-form" }, [
+        ui.textarea({
+          ...ui.TEXTAREA,
+          key: "prompt",
+          rows: 6,
+          value: f.prompt,
+          placeholder: agent ? `What should ${agent.label} do? (optional)` : "Command to run in the terminal… (none: a shell)",
+          onInput: (v) => { f.prompt = v; },
+        }),
+        ui.row({ ...ui.BOX, class: "orch-opts" }, [
+          labelled("Agent", agentSelect(f.agent, (v) => { f.agent = v; render(); })),
+          labelled("Machine", this.machineSelect("machine", f.machine, true, machineChanged)),
+          ...(adding ? [] : [ui.checkbox({
+            ...ui.CHECKBOX,
+            key: "worktree",
+            checked: worktree(),
+            disabled: w.kind !== "repo",
+            title: w.kind === "repo" ? `A new git worktree of ${w.toplevel}, on a new branch` : w.kind === "asking" ? "Asking git about the folder…" : w.kind === "missing" ? "No such folder" : w.kind === "unknown" ? w.why : "The folder is not in a git work tree",
+            onChange: (v) => { f.git = v ? "worktree" : "folder"; render(); },
+          }, "New worktree")]),
+        ]),
+        ...(adding ? [addSection()] : []),
+        ...(adding ? [] : [field("Folder", [
+          ui.row({ ...ui.BOX, class: "orch-combo ui-joined" }, [
+            ui.input({ ...ui.INPUT, key: "root", value: f.root, placeholder: "/path/to/project (~ for home)", onInput: (v) => { f.root = v; checkGit(); }, onEnter: () => { go(false); }, onKey: launchKey }),
+            ui.button({ ...ui.BUTTON, field: true, title: "Recent folders", onClick: recentMenu }, "▾"),
+          ]),
+          ui.button({ ...ui.BUTTON, onClick: () => { if (browse.shown) { browse.shown = false; render(); } else openBrowser(); } }, "Browse…"),
+        ])]),
+        ...(missing ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `No folder ${f.root.trim()} on ${machineText(f.machine)}`)])] : []),
+        ...(w.kind === "unknown" && f.root.trim() !== "" ? [field("", [ui.text({ ...ui.TEXT, class: "orch-error" }, `Could not ask about ${f.root.trim()}: ${w.why}`)])] : []),
+        ...(!adding && browse.shown ? [browser()] : []),
+        ...(f.error ? [ui.text({ ...ui.TEXT, class: "orch-error" }, f.error)] : []),
+        ui.row(ui.BOX, [
+          ui.text({ ...ui.TEXT, dim: true }, f.busy ? "Opening…" : "Ctrl+Enter launches · Alt+Enter in the background"),
+          ui.spacer(),
+          ui.button({ ...ui.BUTTON, onClick: () => panel.close() }, "Cancel"),
+          ui.row({ ...ui.BOX, class: "orch-split-button ui-joined" }, [
+            ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, onClick: () => { go(false); } }, "Launch"),
+            ui.button({ ...ui.BUTTON, primary: true, disabled: f.busy || adding || missing, title: "More ways to launch", onClick: launchMenu }, "▾"),
+          ]),
+        ]),
+      ]));
+    };
+    render();
+    checkGit();
+    panel.focus(f.machine.kind === "adding" ? "add-target" : "prompt");
+  }
+}
+
+const ago = (ms) => {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 60) return `${m}m ago`;
+  if (m < 48 * 60) return `${Math.round(m / 60)}h ago`;
+  return `${Math.round(m / 1440)}d ago`;
+};
+
+// The New Workspace panels whose keys are wired.
+const FORMS = new WeakSet();
+// The Workboard panels whose keys are wired.
+const WIRED = new WeakSet();

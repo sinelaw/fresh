@@ -199,6 +199,8 @@ fresh-core.workspace = true
 fresh-editor-core = { workspace = true, default-features = false }
 # The retained UI tree; see docs/internal/retained-mode-ui.md.
 fresh-ui.workspace = true
+# Positions that follow edits (overlays, virtual text, folds, margins...).
+fresh-markers.workspace = true
 fresh-update.workspace = true
 # Provides the shared `Language` / `HighlightCategory` types (small, always
 # needed by the syntect grammar catalog). The heavy tree-sitter grammar

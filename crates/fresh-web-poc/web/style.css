@@ -1,0 +1,364 @@
+/* Every colour of the page is one of these variables; nothing below names a
+   colour. These are the dark theme's; a theme (plugins/themes.js) sets every
+   one of them from an editor theme. Theme keys plugins use ("syntax.keyword",
+   "editor.selection_bg", ...) resolve to them (THEME in js/highlight.js). */
+:root {
+  /* The page */
+  --bg: #1e1e1e; --fg: #d4d4d4; --muted: #8b8b8b; --faint: #646464; --border: #3f3f3f; --panel: #252525;
+  --accent: #4682b4; --on-accent: #ffffff; --emphasis: #11a8cd; --link: #2472c8;
+  --status-bg: #1e1e1e; --status-fg: #e5e5e5; --control-bg: #3c3c41; --control-fg: #dcdcdc; --hover-bg: #373737;
+  --sel-bg: #3a4f78; --sel-fg: #ffffff; --sel-inactive-bg: #2c374b;
+  --popup-bg: #1e1e1e; --popup-fg: #e5e5e5; --popup-border: #808080; --shadow: rgba(0,0,0,.5);
+  --terminal-bg: #1e1e1e; --terminal-fg: #d4d4d4;
+  /* The text */
+  --bracket-match: #d4d4d4;
+  --bracket-rainbow-1: #569cd6; --bracket-rainbow-2: #ce9178; --bracket-rainbow-3: #dcdcaa;
+  --bracket-rainbow-4: #4ec9b0; --bracket-rainbow-5: #9cdcfe; --bracket-rainbow-6: #4fc1ff;
+  --caret: #ffffff; --selection: #32323c; --current-line: #282828; --occurrence: #4b4b4b; --whitespace: #464646; --ruler: #323232;
+  --match-bg: #646414; --match-fg: #ffffff; --match-current-bg: #40aae6; --match-current-fg: #000000; --search-scope-bg: #28282d;
+  --code-bg: #3c3c3c; --tour-step-bg: #3c3c50; --diff-add-bg: #1e3c1e; --diff-remove-bg: #461e1e;
+  --git-added: #81b88b; --git-modified: #e5e510; --git-deleted: #cd3131;
+  /* Syntax */
+  --syntax-keyword: #569cd6; --syntax-string: #ce9178; --syntax-comment: #6a9955; --syntax-function: #dcdcaa; --syntax-type: #4ec9b0;
+  --syntax-variable: #9cdcfe; --syntax-constant: #4fc1ff; --syntax-number: #4fc1ff; --syntax-operator: #d4d4d4; --syntax-punctuation: #d4d4d4;
+  --syntax-punctuation-bracket: #d4d4d4; --syntax-punctuation-delimiter: #d4d4d4; --syntax-property: #9cdcfe;
+  --syntax-attribute: #4ec9b0; --syntax-variable-builtin: #569cd6; --diff-modify-bg: #3c3c1e;
+  /* Diagnostics */
+  --error: #cd3131; --warning: #e5e510; --info: #2472c8; --hint: #808080;
+
+  --mono: "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  --lh: 18px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+/* Type: the chrome's face and sizes, and the editor's size, all from the
+   skin's density (`--ui-scale`). Declared on body, so a skin's body rule
+   that sets `--ui-font-size` or `--editor-font-size` scales what is derived
+   from them too. */
+body {
+  --ui-font: system-ui, sans-serif;
+  --ui-font-size: calc(13px * var(--ui-scale, 1)); --ui-font-sm: calc(var(--ui-font-size) * 12 / 13); --ui-font-xs: calc(var(--ui-font-size) * 11 / 13);
+  --editor-font-size: calc(13px * var(--ui-scale, 1) * var(--editor-zoom, 1));
+  font: var(--ui-font-size) var(--ui-font);
+}
+#app { display: flex; flex-direction: column; height: 100vh; }
+.cannot-start { margin: 2em; font-family: var(--mono); color: var(--fg); }
+#topbar { display: flex; gap: 12px; align-items: center; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+#topbar .brand { font-weight: 600; color: var(--emphasis); }
+#ws-name { margin-left: 6px; }
+#topbar .hint { margin-left: auto; color: var(--muted); }
+#main { flex: 1; display: flex; min-height: 0; }
+#sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
+#sidebar.hidden { display: none; }
+#left-dock { width: 280px; background: var(--panel); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
+#left-dock.hidden { display: none; }
+.panel-left { flex: 1 1 0; }
+#side-panels { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#work { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#center { flex: 1; display: flex; min-height: 0; }
+#editor-area { flex: 1; display: flex; min-height: 0; min-width: 0; }
+#right-dock { width: 320px; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+#right-dock.hidden, #bar.hidden, #dock.hidden { display: none; }
+#bar { border-bottom: 1px solid var(--border); background: var(--panel); }
+#dock { height: 32%; min-height: 120px; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel); }
+.dock-tabs { display: flex; }
+.dock-body { flex: 1; min-height: 0; display: flex; }
+.dock-body > .panel { flex: 1; }
+.rulers { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.ruler { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ruler); }
+.guide { position: absolute; width: 1px; background: color-mix(in srgb, var(--fg) 13%, transparent); }
+.row.current { background: var(--current-line); }
+.gutter .mark { display: inline-block; width: 1ch; }
+.gutter .row { padding-right: 0; }
+.split { display: flex; min-width: 0; min-height: 0; }
+.split.h { flex-direction: row; }
+.split.v { flex-direction: column; }
+/* A split's sash is its dividing line (js/sash.js). */
+/* A maximized split: the others (and their sashes) are hidden. */
+#editor-area.maximized :is(.pane:not(.max), .split:not(:has(.pane.max)), .sash) { display: none; }
+.split.h > .sash { border-left: 1px solid var(--border); }
+.split.v > .sash { border-top: 1px solid var(--border); }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1 1 0; }
+.pane .tabs { display: flex; background: var(--panel); overflow-x: auto; flex-shrink: 0; min-height: 28px; }
+.tab { padding: 5px 10px; border-right: 1px solid var(--border); white-space: nowrap; cursor: pointer; color: var(--muted); user-select: none; }
+.tab.active { background: var(--bg); color: var(--fg); }
+.pane.active .tab.active { border-top: 1px solid var(--accent); }
+.tab .x { margin-left: 8px; opacity: .5; }
+.tab.preview { font-style: italic; }
+/* A dragged tab's landing place (app.tabPress). */
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+.pane.drop-into > .surface { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab-dragging, .tab-dragging * { cursor: grabbing; }
+.pane .tabs { scrollbar-width: none; }
+.tab .x:hover { opacity: 1; }
+.surface { position: relative; flex: 1; overflow: hidden; background: var(--bg); font-family: var(--mono); font-size: var(--editor-font-size); line-height: var(--lh); cursor: text; }
+/* The gutter stays over the text scrolled sideways under it. */
+.gutter { position: absolute; left: 0; top: 0; z-index: 1; background: var(--bg); color: var(--faint); white-space: pre; user-select: none; text-align: right; }
+.text { position: absolute; top: 0; right: 12px; white-space: pre; user-select: none; }
+.carets { position: absolute; top: 0; right: 12px; pointer-events: none; }
+.row { height: var(--lh); white-space: pre; overflow: hidden; }
+/* A cluster other than one printable ASCII character, in a box exactly its
+   columns wide (--cw: a cell's width, set by the pane), so a fallback font
+   drawing it wider cannot move the columns after it. */
+.row .cl { display: inline-block; vertical-align: top; height: var(--lh); }
+.row .cl.w0 { width: 0; overflow: hidden; }
+.row .cl.w1 { width: var(--cw); }
+.row .cl.w2 { width: calc(2 * var(--cw)); }
+.row.virtual { color: var(--muted); }
+.caret { position: absolute; width: 2px; background: var(--caret); animation: blink 1.1s steps(1) infinite; }
+#editor-area:not(.keyboard) .caret { display: none; }
+@keyframes blink { 50% { opacity: 0; } }
+.scrollbar { position: absolute; right: 0; top: 0; bottom: 0; width: 12px; background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.thumb { position: absolute; left: 2px; right: 2px; background: color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 3px; }
+/* Marks on the scrollbar (view.js renderMarks): git, search, diagnostics
+   lanes and the cursor's line. */
+.scrollbar .marks { position: absolute; inset: 0; pointer-events: none; }
+.scrollbar .mark { position: absolute; height: 2px; }
+.scrollbar .mark.lane0 { left: 0; width: 4px; }
+.scrollbar .mark.lane1 { left: 4px; width: 4px; }
+.scrollbar .mark.lane2 { right: 0; width: 4px; height: 3px; }
+.scrollbar .mark.cursor { left: 0; right: 0; background: var(--fg); opacity: .6; }
+/* A terminal's tab: its screen fills the split. */
+.pane .term-box { display: none; flex: 1 1 0; min-height: 0; padding: 2px 4px; background: var(--terminal-bg); }
+.pane.terminal .term-box { display: block; }
+.pane.terminal .surface { display: none; }
+.xterm-host { height: 100%; }
+#status { display: flex; justify-content: space-between; padding: 2px 10px; background: var(--status-bg); color: var(--status-fg); border-top: 1px solid var(--border); font-size: var(--ui-font-sm); white-space: nowrap; overflow: hidden; }
+#prompt { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(700px, 90vw); background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); z-index: 25; }
+#prompt.hidden, #popup.hidden { display: none; }
+#prompt .hint { padding: 3px 10px; color: var(--muted); font-size: var(--ui-font-xs); border-top: 1px solid var(--border); }
+#prompt .hint:empty { display: none; }
+#prompt .bar { display: flex; align-items: center; gap: 8px; padding: 6px; }
+#prompt .label { color: var(--muted); white-space: nowrap; }
+#prompt input { flex: 1; background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--accent); padding: 4px 6px; font: var(--ui-font-size) var(--mono); outline: none; }
+#prompt .list { max-height: 50vh; overflow: auto; }
+#prompt .item { display: flex; justify-content: space-between; gap: 12px; padding: 3px 10px; cursor: pointer; font-family: var(--mono); font-size: var(--ui-font-sm); }
+#prompt .item .d { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#prompt .item.sel { background: var(--sel-bg); color: var(--sel-fg); }
+#prompt .item.more { color: var(--muted); cursor: default; }
+#prompt .item.sel .d { color: inherit; opacity: .75; }
+#popup { position: fixed; max-width: 600px; max-height: 300px; overflow: auto; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 6px 8px; white-space: pre-wrap; font: var(--ui-font-sm) var(--mono); z-index: 9; }
+#input { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
+.measure { position: absolute; visibility: hidden; white-space: pre; font-family: var(--mono); font-size: var(--editor-font-size); line-height: normal; }
+
+/* Panels (the plugin UI kit) */
+.panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); outline: none; }
+.panel-sidebar { flex: 1 1 0; border-bottom: 1px solid var(--border); }
+.panel-right { flex: 1 1 0; }
+.panel-head { display: flex; justify-content: space-between; padding: 5px 10px; text-transform: uppercase; font-size: var(--ui-font-xs); color: var(--muted); }
+.panel-head .x { cursor: pointer; }
+.panel-head .t { flex: 1; }
+.panel-actions { display: flex; gap: 2px; margin-right: 6px; }
+.panel-action { background: none; border: 0; padding: 0 4px; color: inherit; font: inherit; font-size: var(--ui-font-sm); line-height: 1; cursor: pointer; border-radius: 3px; text-transform: none; }
+.panel-action:hover { background: var(--hover-bg); color: var(--fg); }
+.panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 6px; gap: 4px; overflow: hidden; }
+.panel-bar .panel-body { flex-direction: row; padding: 4px 8px; }
+.panel-dialog { position: fixed; top: 12vh; left: 50%; transform: translateX(-50%); width: min(820px, 92vw); max-height: 70vh; border: 1px solid var(--popup-border); box-shadow: 0 8px 24px var(--shadow); }
+.backdrop { position: fixed; inset: 0; background: var(--shadow); z-index: 20; }
+.ui-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.ui-col { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
+.ui-box { min-height: 0; }
+.ui-text.dim { color: var(--muted); }
+.ui-text.mono { font-family: var(--mono); font-size: var(--ui-font-sm); }
+.ui-text.bold { font-weight: 600; }
+.ui-input { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 6px; font: var(--ui-font-sm) var(--mono); outline: none; min-width: 0; flex: 1; }
+.ui-input:focus { border-color: var(--accent); }
+.ui-textarea { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 6px 8px; font: var(--ui-font-size) var(--ui-font); outline: none; resize: vertical; min-width: 0; }
+.ui-textarea:focus { border-color: var(--accent); }
+.ui-button { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--border); padding: 3px 10px; cursor: pointer; font: var(--ui-font-sm) var(--ui-font); }
+.ui-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.ui-button:disabled { opacity: .5; cursor: default; }
+.ui-toggle { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 1px 5px; cursor: pointer; font: var(--ui-font-sm) var(--mono); }
+.ui-toggle.on { color: var(--fg); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.ui-check { display: flex; gap: 4px; align-items: center; }
+.ui-check.disabled { color: var(--muted); }
+.ui-select { background: var(--control-bg); color: var(--control-fg); border: 0; padding: 2px 4px; }
+.ui-badge { display: inline-block; padding: 0 6px; border-radius: 8px; background: var(--control-bg); color: var(--control-fg); font-size: var(--ui-font-xs); }
+.ui-spacer { flex: 1; }
+.ui-list { position: relative; flex: 1; min-height: 60px; overflow: auto; outline: none; }
+.ui-list-inner { position: relative; }
+.ui-list-row { position: absolute; left: 0; right: 0; height: 22px; line-height: 22px; padding: 0 6px; white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: var(--mono); font-size: var(--ui-font-sm); display: flex; gap: 8px; }
+.ui-list-row:hover { background: var(--hover-bg); }
+.ui-list-row.sel { background: var(--sel-inactive-bg); }
+.ui-list:focus .ui-list-row.sel { background: var(--sel-bg); color: var(--sel-fg); }
+.ui-list-row.marked { background: var(--sel-inactive-bg); }
+.ui-list:focus .ui-list-row.marked { background: var(--sel-bg); color: var(--sel-fg); }
+/* The cursor row of a multiple selection. */
+.ui-list:focus .ui-list-row.sel.marked { box-shadow: inset 2px 0 0 var(--accent); }
+.ui-list-row.header { color: var(--fg); font-weight: 600; }
+/* Dragging a row: where it would land. */
+.ui-list.dragging, .ui-list.dragging * { cursor: grabbing; }
+.ui-list-row.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.ui-list.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* A tree's pinned ancestor rows: opaque over the rows they cover. */
+.ui-list-row.sticky { z-index: 1; background-color: var(--panel); }
+.ui-list-row.sticky:hover { background: linear-gradient(var(--hover-bg), var(--hover-bg)) var(--panel); }
+.ui-list-row.sticky.sel { background: linear-gradient(var(--sel-inactive-bg), var(--sel-inactive-bg)) var(--panel); }
+.ui-list:focus .ui-list-row.sticky.sel { background: linear-gradient(var(--sel-bg), var(--sel-bg)) var(--panel); }
+.ui-list-row.sticky.last { box-shadow: 0 1px 0 var(--border), 0 3px 4px -2px var(--shadow); }
+.ui-tree-row { gap: 0; }
+.ui-table { border-collapse: collapse; width: 100%; font: var(--ui-font-sm) var(--mono); }
+.ui-table th { text-align: left; color: var(--muted); font-weight: normal; padding: 3px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+.ui-table td { padding: 2px 6px; border-bottom: 1px solid var(--border); }
+.ui-table tr:hover td { background: var(--hover-bg); }
+.ui-scroll { overflow: auto; flex: 1; min-height: 0; }
+.ui-markdown { overflow: auto; flex: 1; line-height: 1.5; overflow-wrap: break-word; }
+.ui-markdown > * { margin: 0 0 .6em; }
+.ui-markdown h1, .ui-markdown h2, .ui-markdown h3, .ui-markdown h4, .ui-markdown h5, .ui-markdown h6 { font-size: 1.05em; font-weight: 600; }
+.ui-markdown h1 { font-size: 1.3em; }
+.ui-markdown h2 { font-size: 1.15em; }
+.ui-markdown ul, .ui-markdown ol { padding-left: 1.4em; }
+.ui-markdown code { font: var(--ui-font-sm) var(--mono); background: var(--code-bg); border-radius: 3px; padding: 0 3px; }
+.ui-markdown pre { background: var(--code-bg); border-radius: 4px; padding: 6px 8px; overflow: auto; }
+.ui-markdown pre code { background: none; padding: 0; }
+.ui-markdown blockquote { border-left: 3px solid var(--border); padding-left: 8px; color: var(--muted); }
+.ui-markdown hr { border: 0; border-top: 1px solid var(--border); }
+.ui-markdown a { color: var(--link); }
+/* Sashes (js/sash.js): no size in the layout; the grip reaches 4px either
+   side of the line it sits on, and lights up while pointed at or dragged. */
+.sash { flex: 0 0 auto; position: relative; z-index: 6; }
+.sash::before { content: ""; position: absolute; transition: background-color .1s .15s; }
+.sash.x { cursor: col-resize; } .sash.x::before { top: 0; bottom: 0; left: -4px; right: -4px; }
+.sash.y { cursor: row-resize; } .sash.y::before { left: 0; right: 0; top: -4px; bottom: -4px; }
+.sash:hover::before, .sash.dragging::before { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+/* A panel's sash goes with it: each names the panel it resizes. */
+#left-dock.hidden + .sash[data-sash="left"], #sidebar.hidden + .sash[data-sash="sidebar"],
+.sash[data-sash="right"]:has(+ #right-dock.hidden), .sash[data-sash="dock"]:has(+ #dock.hidden),
+.sash-dragging body { user-select: none; }
+#status .click { cursor: pointer; }
+#status .click:hover { background: color-mix(in srgb, var(--status-fg) 16%, transparent); }
+#status-right { display: flex; gap: 6px; }
+#status-right > span { padding: 0 4px; border-radius: 3px; }
+#status-left { overflow: hidden; text-overflow: ellipsis; }
+/* Menus (js/menu.js): the menu bar's and every context menu. A row has a
+   check column only in a menu with checks, and a key column. */
+#menubar { display: flex; align-items: center; gap: 1px; margin: -4px 0; user-select: none; }
+.mtop { background: none; border: 0; color: inherit; font: inherit; padding: 3px 8px; border-radius: 3px; cursor: default; }
+.mtop:hover, .mtop.open { background: var(--hover-bg); }
+.ctxmenu { position: fixed; z-index: 30; background: var(--popup-bg); color: var(--popup-fg); border: 1px solid var(--popup-border); box-shadow: 0 4px 12px var(--shadow); padding: 4px 0; min-width: 180px; font-size: var(--ui-font-sm); outline: none; user-select: none; }
+.ctxmenu .menu-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 3px 14px; cursor: default; white-space: nowrap; }
+.ctxmenu.checks .menu-item { grid-template-columns: 14px 1fr auto; padding-left: 8px; }
+.ctxmenu:not(.checks) .menu-item .check { display: none; }
+.ctxmenu .menu-item .keys { color: var(--muted); font-size: var(--ui-font-xs); padding-left: 16px; }
+.ctxmenu .menu-item.hi { background: var(--sel-bg); color: var(--sel-fg); }
+.ctxmenu .menu-item.hi .keys { color: inherit; opacity: .8; }
+.ctxmenu .menu-item.disabled { opacity: .45; }
+.ctxmenu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+/* Containment: a row's change does not relayout the page around it. */
+.surface { contain: strict; }
+.text, .gutter, .carets, .rulers { contain: layout style; }
+.caret { will-change: left, top; }
+.text .row, .gutter .row { contain: layout style paint; }
+
+/* A view in compose mode: a document (js/doc.js). Its size follows the
+   editor's (declared on body, beside it). */
+body {
+  --doc-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --doc-size: calc(var(--editor-font-size) * 15 / 13);
+}
+.doc { display: none; }
+.surface.compose .doc { display: block; position: absolute; top: 0; bottom: 0; left: 0; right: 12px; overflow: hidden; contain: strict; }
+.surface.compose .gutter, .surface.compose .text, .surface.compose .carets, .surface.compose .rulers { display: none; }
+.doc-content { position: relative; margin: 0 auto; padding: 10px 0 40px; font: var(--doc-size)/1.6 var(--doc-font); color: var(--fg); white-space: pre-wrap; overflow-wrap: break-word; user-select: none; will-change: transform; }
+.doc-carets { position: absolute; inset: 0; pointer-events: none; }
+.doc-body > * { margin: 0; }
+.doc-body h1, .doc-body h2, .doc-body h3, .doc-body h4, .doc-body h5, .doc-body h6 { margin: .55em 0 .25em; line-height: 1.3; font-weight: 600; }
+.doc-body h1 { font-size: 2em; padding-bottom: .15em; border-bottom: 1px solid var(--border); }
+.doc-body h2 { font-size: 1.5em; padding-bottom: .15em; border-bottom: 1px solid var(--border); }
+.doc-body h3 { font-size: 1.25em; }
+.doc-body h4 { font-size: 1.1em; }
+.doc-body h5 { font-size: 1em; }
+.doc-body h6 { font-size: .9em; color: var(--muted); }
+.doc-li { padding-left: calc((var(--depth) + 1) * 1.6em); }
+.doc-li > .l { position: relative; }
+.doc-li .mk { position: absolute; right: calc(100% + .45em); color: var(--syntax-keyword); white-space: pre; }
+.doc-li .mk.num { font-variant-numeric: tabular-nums; }
+.doc-body blockquote { padding-left: calc(var(--depth) * 1em + .2em); color: var(--muted); background: repeating-linear-gradient(to right, var(--syntax-keyword) 0 3px, transparent 3px 1em) left top / calc(var(--depth) * 1em) 100% no-repeat; }
+.doc-code { position: relative; margin: .35em 0 !important; padding: 8px 14px; border-radius: 6px; background: var(--code-bg); font: var(--editor-font-size)/var(--lh) var(--mono); }
+.doc-code[data-lang]::after { content: attr(data-lang); position: absolute; top: 3px; right: 8px; font: var(--ui-font-xs) var(--doc-font); color: var(--muted); }
+.doc-code .ln { min-height: var(--lh); }
+.doc-table { border-collapse: collapse; margin: .4em 0 !important; }
+.doc-table th, .doc-table td { border: 1px solid var(--border); padding: 3px 12px; vertical-align: top; }
+.doc-table th { background: var(--panel); font-weight: 600; text-align: left; }
+.doc-table tr:nth-child(odd) td { background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.doc-table tr.raw td { color: var(--faint); font: var(--ui-font-sm) var(--mono); }
+.doc-hr { position: relative; color: var(--faint); }
+.doc-hr::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--border); pointer-events: none; }
+.doc-body .vt, .doc-body .vline { color: var(--muted); }
+.doc-body .vt.edge { margin-left: 2em; }
+/* Fold toggles sit in the margin, left of their block's first line. */
+.doc-body > * { position: relative; }
+.doc-fold { position: absolute; left: -1.3em; width: 1em; text-align: center; color: var(--muted); cursor: pointer; opacity: 0; }
+.doc-li .doc-fold { left: -2.9em; }
+.doc-body > :hover .doc-fold, .doc-fold.folded { opacity: 1; }
+.doc-more { margin-left: .4em; padding: 0 .4em; border-radius: 4px; background: var(--doc-code-bg); color: var(--muted); cursor: pointer; }
+
+/* The orchestrator (js/orchestrator.js): the dock and the New Workspace form */
+#topbar #ws-name { cursor: pointer; }
+.orch-dock { gap: 4px; }
+#left-dock .ui-tree-row { flex: 1; min-width: 0; }
+.orch-why { color: var(--error); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-dock-head { gap: 4px; }
+.orch-row { flex: 1; min-width: 0; }
+.orch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-name.keep { flex-shrink: 0; }
+.orch-row.current .orch-name { color: var(--emphasis); }
+.orch-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.orch-modified { color: var(--warning); flex-shrink: 0; }
+.orch-restricted { color: var(--warning); flex-shrink: 0; }
+.orch-mark { flex-shrink: 0; min-width: 1ch; text-align: center; color: var(--muted); }
+.orch-mark.waiting, .orch-mark.failed { color: var(--error); }
+.orch-mark.working { color: var(--warning); }
+.orch-mark.done { color: var(--git-added); }
+.orch-attention-line { gap: 12px; padding: 0 4px; }
+.orch-error { color: var(--error); white-space: pre-wrap; }
+.orch-form { gap: 6px; padding: 4px 2px; overflow: auto; }
+/* Its rows keep their height: a long form scrolls instead. */
+.orch-form > *, .orch-add-machine > *, .orch-browse > * { flex-shrink: 0; }
+.orch-section { color: var(--muted); font-size: var(--ui-font-xs); letter-spacing: .08em; margin-top: 4px; }
+.orch-field { align-items: center; }
+/* New Workspace: the prompt, the options under it, Launch with its ▾. */
+.orch-prompt-form > .ui-textarea { min-height: 7em; }
+.orch-opts { flex-wrap: wrap; gap: 14px; align-items: center; }
+.orch-opt { gap: 6px; align-items: center; }
+.orch-split-button > .ui-button + .ui-button { padding: 0 8px; border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+/* A joined group (a box and its ▾, a button and its ▾): one shape, its
+   corners rounded (as the skin rounds them) only on the outside; with its
+   dropdown open, it and the menu under it are one shape too. */
+.ui-row.ui-joined { gap: 0; align-items: stretch; }
+body .ui-row.ui-joined > :not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+body .ui-row.ui-joined > :not(:first-child) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+body .ui-row.ui-joined.open > * { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+/* A button with its menu open is the menu's tab: one outline, no line
+   between them (the menu's top edge opens under the button). */
+body .ui-button.open { border-color: var(--popup-border); border-bottom-color: var(--popup-bg); background: var(--popup-bg); color: var(--popup-fg); border-bottom-left-radius: 0; border-bottom-right-radius: 0; position: relative; z-index: 31; }
+body .ctxmenu.attached:not(.of-field)::before { content: ""; position: absolute; top: -1px; left: calc(var(--joint-left) - 1px); width: var(--joint-width); height: 1px; background: var(--popup-bg); }
+body .ctxmenu.attached { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -1px; }
+body .ctxmenu.attached.of-field { background: var(--control-bg); color: var(--control-fg); border-top: 0; margin-top: 0; }
+body .ui-joined.open > :is(.ui-input, .ui-field-button) { border-bottom-color: color-mix(in srgb, var(--border) 45%, transparent); }
+body .ctxmenu.of-field .menu-item { padding-left: var(--field-text, 14px); text-transform: inherit; letter-spacing: inherit; }
+body .ctxmenu.attached.overhang-left { border-top-left-radius: var(--attached-radius, 0); }
+body .ctxmenu.attached.overhang-right { border-top-right-radius: var(--attached-radius, 0); }
+/* An editable box with a ▾ for its recent values, joined to it. */
+.orch-combo { flex: 1; gap: 0; min-width: 0; align-items: stretch; }
+body .orch-combo > .ui-input { border-right: 0; }
+.ui-field-button { padding: 0 8px; border: 1px solid var(--border); background: var(--control-bg); color: var(--control-fg); cursor: pointer; font: var(--ui-font-sm) var(--ui-font); }
+body .ui-joined > .ui-field-button { border-left: 0; }
+.ui-joined:focus-within > .ui-field-button { border-color: var(--accent); }
+.orch-label { width: 90px; flex-shrink: 0; color: var(--muted); }
+.orch-note { font-size: var(--ui-font-xs); padding-left: 96px; }
+.orch-import .orch-import-list { min-height: 260px; }
+/* New Workspace: a machine being declared, and the folder browser. */
+.orch-add-machine { gap: 6px; padding: 6px 0 6px 10px; border-left: 2px solid var(--accent); }
+.orch-browse { gap: 4px; padding: 6px 0 6px 10px; border-left: 2px solid var(--accent); }
+.orch-browse .orch-browse-list { height: 240px; flex: none; }
+.wb { gap: 6px; }
+.wb .wb-list { min-height: 320px; }
+.wb-why { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-board { align-items: stretch; gap: 8px; min-height: 320px; }
+.wb-column { flex: 1 1 0; gap: 4px; min-width: 0; padding: 4px; border: 1px solid var(--border); }
+.wb-column .ui-list { min-height: 280px; }
+.orch-agent-name { color: var(--accent); flex-shrink: 0; width: 6ch; }
+/* On the focused selection, the selection's own colours. */
+.ui-list:focus .ui-list-row.sel .orch-row :is(.ui-text, .ui-badge) { color: inherit; }

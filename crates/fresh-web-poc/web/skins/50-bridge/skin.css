@@ -1,0 +1,254 @@
+/* ==FreshSkin==
+@id           bridge
+@name         Bridge
+@description  A starship console: elbows, pill buttons and live readouts
+@author       Fresh
+@frame        bezel
+@furniture    furniture.html
+@editor-theme theme.json
+==/FreshSkin== */
+
+/* The console's tall condensed lettering: Antonio, a variable font (every
+   weight in one file), bundled as its Latin and Latin Extended subsets so the
+   skin needs no network. Its copyright and licence (SIL Open Font License
+   1.1) are in fonts/OFL.txt. */
+@font-face { font-family: "Antonio"; font-style: normal; font-weight: 100 700; font-display: block;
+  src: url(fonts/antonio-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Antonio"; font-style: normal; font-weight: 100 700; font-display: block;
+  src: url(fonts/antonio-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+
+/* Bridge — a starship computer console. Black glass framed by thick
+   coloured "elbows": a bar across the top that sweeps down into a column of
+   readouts, and a column that sweeps out into the bar along the bottom.
+   It moves the client's own controls into the frame instead of drawing
+   pictures of them: the top bar's workspace name is the big lettering at the
+   end of the top bar and its skin button the pill after it; the status bar
+   is the bar along the bottom, its facts the bar's segments. Everything else
+   is pills on black: tabs, buttons, highlighted rows. */
+
+/* ---- geometry ---------------------------------------------------------- */
+:root.skin-bridge {
+  --shell-pad: 12px;
+  --br-col: 128px;      /* the column of readouts                          */
+  --br-bar: 24px;       /* the top bar                                     */
+  --br-foot: 26px;      /* the bottom bar (the status bar)                 */
+  --br-arm: 52px;       /* how far an elbow reaches along its bar          */
+  --br-top-h: 92px;     /* how far the top elbow reaches down the column   */
+  --br-bot-h: 76px;     /* how far the bottom elbow reaches up it          */
+  --br-pill: 118px;     /* the skin button, at the top bar's end           */
+  --bezel-top: calc(var(--br-bar) + 10px);
+  --bezel-bot: calc(var(--br-foot) + 10px);
+  --bezel-side: 8px;
+}
+
+/* ---- palette ------------------------------------------------------------ */
+.skin-bridge body {
+  --br-orange: #ff9c1a; --br-open: #fff4e2; --br-gold: #ffcc66; --br-tan: #ffcc99; --br-peach: #ff9966;
+  --br-lilac: #cc99cc; --br-lav: #9999ee; --br-blue: #99ccff; --br-red: #dd6666;
+  --br-text: #ffe2c4; --br-dim: #a99bd8; --br-line: #2a2240;
+  --ui-font: "Antonio", "Oswald", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --ui-font-size: calc(16px * var(--ui-scale));
+  background: #000; accent-color: var(--br-orange);
+}
+.skin-bridge :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+  --fg: var(--br-text); --muted: var(--br-dim); --faint: #6d6390; --border: var(--br-line); --panel: #000;
+  --accent: var(--br-orange); --on-accent: #000; --emphasis: var(--br-orange); --link: var(--br-blue);
+  --control-bg: #000; --control-fg: var(--br-text); --hover-bg: rgba(255, 156, 26, .16);
+  --sel-bg: var(--br-lav); --sel-fg: #000; --sel-inactive-bg: #2a2240;
+  --popup-bg: #000; --popup-fg: var(--br-text); --popup-border: var(--br-orange); --shadow: rgba(0, 0, 0, .8);
+}
+
+/* ---- the frame (furniture.html) ------------------------------------------ */
+.skin-bridge.frame-bezel #app { left: calc(var(--shell-pad) + var(--br-col) + 14px); }
+.skin-bridge #device { background: #000; border-radius: 0; box-shadow: none; color: #000;
+  font-family: var(--ui-font); letter-spacing: .04em; }
+
+/* An elbow: a block of colour with a wide outer curve, and a small inner
+   curve cut out of it where the bar meets the column. */
+.skin-bridge #device .br-elbow { position: absolute; left: 0; width: calc(var(--br-col) + var(--br-arm));
+  background: var(--br-orange); display: flex; flex-direction: column; justify-content: flex-end;
+  align-items: flex-end; padding: 0 calc(var(--br-arm) + 8px) 6px 0; line-height: 1; }
+.skin-bridge #device .br-elbow::after { content: ""; position: absolute; left: var(--br-col); right: 0; background: #000; }
+.skin-bridge #device .br-elbow-top { top: 0; height: var(--br-top-h); border-top-left-radius: 70px 56px; }
+.skin-bridge #device .br-elbow-top::after { top: var(--br-bar); bottom: 0; border-top-left-radius: 26px; }
+.skin-bridge #device .br-elbow-bot { bottom: 0; height: var(--br-bot-h); border-bottom-left-radius: 70px 56px;
+  background: var(--br-lilac); justify-content: flex-start; padding-top: 8px; }
+.skin-bridge #device .br-elbow-bot::after { bottom: var(--br-foot); top: 0; border-bottom-left-radius: 26px; }
+.skin-bridge #device .br-elbow b { position: relative; z-index: 1; font-size: 26px; font-weight: 600; }
+.skin-bridge #device .br-elbow small { position: relative; z-index: 1; font-size: 12px; font-weight: 600; letter-spacing: .12em; }
+
+/* The top bar: segments from the elbow to the title. */
+.skin-bridge #device .br-bar-top { position: absolute; top: 0; height: var(--br-bar); display: flex; gap: 4px;
+  left: calc(var(--br-col) + var(--br-arm) + 4px); right: calc(var(--br-pill) + 4px); }
+.skin-bridge #device .br-bar i { flex: 0 0 64px; }
+.skin-bridge #device .br-bar i.br-wide { flex: 1 1 auto; }
+.skin-bridge #device .br-orange { background: var(--br-orange); }
+.skin-bridge #device .br-gold { background: var(--br-gold); }
+.skin-bridge #device .br-tan { background: var(--br-tan); }
+.skin-bridge #device .br-peach { background: var(--br-peach); }
+.skin-bridge #device .br-lilac { background: var(--br-lilac); }
+.skin-bridge #device .br-lav { background: var(--br-lav); }
+.skin-bridge #device .br-red { background: var(--br-red); }
+@keyframes br-blink { 0%, 64% { opacity: 1; } 70%, 92% { opacity: .35; } 100% { opacity: 1; } }
+.skin-bridge #device .br-blink { animation: br-blink 3.2s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { .skin-bridge #device .br-blink { animation: none; } }
+
+/* The column's readouts: from under the top elbow down to the bottom one,
+   each a block with its label and its live value. */
+.skin-bridge #device .br-col { position: absolute; left: 0; width: var(--br-col);
+  top: calc(var(--br-top-h) + 4px); bottom: calc(var(--br-bot-h) + 4px);
+  display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.skin-bridge #device .br-read { margin: 0; flex: 0 0 38px; position: relative; display: flex; align-items: flex-end;
+  justify-content: space-between; padding: 0 8px 4px; line-height: 1; overflow: hidden; white-space: nowrap; }
+.skin-bridge #device .br-read small { align-self: flex-start; padding-top: 4px; font-size: 10px; font-weight: 600; letter-spacing: .14em; }
+.skin-bridge #device .br-read b { font-size: 17px; font-weight: 600; }
+.skin-bridge #device .br-read.br-fill { flex: 1 1 auto; min-height: 38px; }
+.skin-bridge #device .br-gauge b::after { content: "%"; font-size: 12px; margin-left: 1px; }
+/* A percentage fills its block from the left, in a darker shade. */
+.skin-bridge #device .br-gauge::before { content: ""; position: absolute; left: 0; bottom: 0; height: 5px;
+  width: calc(var(--v, 0) * 1%); background: rgba(0, 0, 0, .55); transition: width .6s; }
+
+/* ---- the top bar: the title and the pill at the bar's end --------------- */
+.skin-bridge #topbar { background: #000; border: 0; }
+.skin-bridge.frame-bezel #topbar { position: fixed; z-index: 2; top: calc(var(--shell-pad) - 4px); right: var(--shell-pad);
+  height: calc(var(--br-bar) + 8px); padding: 0; gap: 4px; background: none; pointer-events: none; }
+.skin-bridge.frame-bezel #topbar :is(.brand, .hint) { display: none; }
+.skin-bridge #ws-name { background: #000; padding: 0 12px; height: 100%; display: flex; align-items: center;
+  font: 600 30px/1.1 var(--ui-font); letter-spacing: .03em; text-transform: uppercase; color: var(--br-orange);
+  white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+.skin-bridge #skin-btn { pointer-events: auto; height: var(--br-bar); min-width: var(--br-pill); display: flex; align-items: center;
+  justify-content: flex-end; padding: 0 14px 0 10px; border: 0; border-radius: 0 999px 999px 0; background: var(--br-blue); color: #000;
+  font: 600 14px/1 var(--ui-font); letter-spacing: .08em; text-transform: uppercase; }
+.skin-bridge #skin-btn:hover { background: #cfe6ff; }
+/* The menu bar: a run of coloured segments in the top bar, before the
+   title; the open one lights up white. */
+.skin-bridge #menubar { gap: 4px; margin: 0; }
+/* The top bar sits 4px above the frame's (room for the title's tall
+   type); the titles sit on the frame's bar, level with its segments. */
+.skin-bridge.frame-bezel #menubar { pointer-events: auto; align-self: flex-start; height: var(--br-bar); background: #000; padding: 0 4px;
+  margin-top: 4px; }
+.skin-bridge .mtop { height: var(--br-bar); display: flex; align-items: flex-end; padding: 0 10px 3px 18px; border-radius: 0;
+  background: var(--br-lilac); color: #000; font: 600 13px/1 var(--ui-font); letter-spacing: .08em; text-transform: uppercase; }
+.skin-bridge .mtop:nth-child(4n+2) { background: var(--br-peach); }
+.skin-bridge .mtop:nth-child(4n+3) { background: var(--br-tan); }
+.skin-bridge .mtop:nth-child(4n) { background: var(--br-lav); }
+.skin-bridge .mtop:hover { background: var(--br-blue); }
+.skin-bridge .mtop.open { background: var(--br-open); }
+/* An open title and its menu are one elbow: the menu's bar runs on down
+   from the title, in its colour, curving into the menu's top edge; no
+   outline crosses the title. */
+.skin-bridge .ctxmenu.of-bar { border-left-color: var(--br-open); border-radius: 0 0 0 18px; box-shadow: 0 18px 50px rgba(0, 0, 0, .8); }
+.skin-bridge .ctxmenu.of-bar::before { content: ""; position: absolute; left: 0; top: 0; width: 14px; height: 14px; pointer-events: none;
+  background: radial-gradient(circle at 100% 100%, transparent 13.5px, var(--br-open) 14px); }
+
+/* ---- the status bar is the bottom bar ----------------------------------- */
+.skin-bridge #status { font: 600 14px/1 var(--ui-font); text-transform: uppercase; letter-spacing: .06em; padding: 0;
+  background: var(--br-lav); color: #000; }
+.skin-bridge.frame-bezel #status { position: fixed; z-index: 2; bottom: var(--shell-pad); height: var(--br-foot);
+  left: calc(var(--shell-pad) + var(--br-col) + var(--br-arm) + 4px); right: var(--shell-pad); border-radius: 0 999px 999px 0; }
+.skin-bridge.frame-bezel #main { margin-bottom: 0; }
+.skin-bridge #status-left { display: flex; align-items: center; padding: 0 12px; background: #000; color: var(--br-tan); font-weight: 400; }
+.skin-bridge #status-left:empty { display: none; }
+.skin-bridge #status-right { gap: 0; height: 100%; }
+.skin-bridge #status-right > span { height: 100%; display: inline-flex; align-items: center; padding: 0 12px;
+  border-left: 4px solid #000; text-decoration: none; }
+.skin-bridge #status-right > span:nth-child(4n+1) { background: var(--br-lilac); }
+.skin-bridge #status-right > span:nth-child(4n+2) { background: var(--br-peach); }
+.skin-bridge #status-right > span:nth-child(4n+3) { background: var(--br-tan); }
+.skin-bridge #status-right > span:nth-child(4n) { background: var(--br-blue); }
+.skin-bridge #status-right > span:last-child { background: var(--br-orange); padding-right: 16px; }
+.skin-bridge #status-right > span.click:hover { filter: brightness(1.15); }
+
+/* ---- tabs: pills on black ------------------------------------------------ */
+.skin-bridge :is(.tabs, .dock-tabs) { background: #000; gap: 4px; padding: 0 0 6px; border: 0; }
+.skin-bridge .tab { border: 0; border-radius: 999px; padding: 3px 12px 3px 16px; background: var(--br-lav); color: #000;
+  font-weight: 600; letter-spacing: .03em; }
+.skin-bridge .tab:not(.active):hover { background: var(--br-blue); }
+.skin-bridge .tab.active { background: var(--br-tan); color: #000; }
+.skin-bridge .pane.active .tab.active { background: var(--br-orange); color: #000; border: 0; }
+.skin-bridge .tab .x { opacity: .7; }
+.skin-bridge .split.h > .sash { border-left: 4px solid #000; }
+.skin-bridge .split.v > .sash { border-top: 4px solid #000; }
+
+/* ---- the explorer and the panels ----------------------------------------- */
+.skin-bridge :is(#left-dock, #sidebar, #dock, #right-dock, #bar) { background: #000; color: var(--br-text); border-color: #000; }
+.skin-bridge :is(#left-dock, #sidebar) { border-right: 4px solid #000; }
+.skin-bridge .panel-sidebar { border-bottom: 6px solid #000; }
+.skin-bridge .panel-head { background: var(--br-lilac); color: #000; font-weight: 600; letter-spacing: .1em; font-size: .8em;
+  border-radius: 999px 0 0 999px; margin: 0 0 6px; padding: 3px 10px 3px 16px; }
+.skin-bridge .panel-head .x { order: -1; }
+.skin-bridge :is(.ui-list-row, .ui-list-row .ui-text) { font-family: var(--ui-font); font-size: var(--ui-font-size); letter-spacing: .02em; }
+.skin-bridge .ui-list-row:hover { background: rgba(153, 153, 238, .14); }
+.skin-bridge .ui-list-row.sel, .skin-bridge .ui-list:focus .ui-list-row.sel, .skin-bridge .ui-list-row.marked { background: var(--br-lav); color: #000; border-radius: 0 999px 999px 0; }
+.skin-bridge :is(.ui-list-row.sel, .ui-list-row.marked) * { color: #000; }
+.skin-bridge .ui-list-row.header { color: var(--br-orange); }
+.skin-bridge #dock { border-left: 14px solid var(--br-peach); border-top: 22px solid var(--br-peach);
+  border-top-left-radius: 40px 30px; padding: 6px 8px 6px 10px; }
+
+/* ---- floating panels: black, framed by an elbow -------------------------- */
+.skin-bridge #popup, .skin-bridge .ctxmenu { background: #000; color: var(--br-text); border: 0; border-left: 10px solid var(--br-orange);
+  border-radius: 18px 0 0 18px; box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, .8); }
+.skin-bridge .ctxmenu .menu-item { border-radius: 0 999px 999px 0; padding: 4px 14px 4px 10px; text-transform: uppercase; letter-spacing: .05em; }
+.skin-bridge .ctxmenu .menu-item.hi { background: var(--br-orange); color: #000; }
+.skin-bridge .ctxmenu .menu-item.hi * { color: #000; }
+.skin-bridge .ctxmenu .menu-item .keys { color: var(--br-dim); }
+.skin-bridge .ctxmenu hr { border-top-color: var(--br-line); }
+/* The palette and dialogs: the full elbow — a bar along the top sweeping
+   down the left. */
+.skin-bridge :is(#prompt, .panel-dialog) { background: #000; color: var(--br-text); border: 0; border-radius: 0;
+  border-top: 18px solid var(--br-orange); border-left: 18px solid var(--br-orange); border-top-left-radius: 46px 36px;
+  border-bottom: 8px solid var(--br-lilac); border-bottom-left-radius: 26px 18px; box-shadow: 0 0 0 1px #000, 0 24px 70px rgba(0, 0, 0, .85); }
+.skin-bridge .panel-dialog .panel-head { background: none; color: var(--br-orange); font-size: 1.15em; padding: 6px 10px; margin: 0; }
+.skin-bridge #prompt .bar { padding: 8px 10px 6px 6px; }
+.skin-bridge #prompt .label { color: var(--br-orange); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.skin-bridge #prompt input { background: #000; color: var(--br-text); border: 2px solid var(--br-lav); border-left-width: 10px;
+  border-radius: 0 999px 999px 0; padding: 5px 12px; }
+.skin-bridge #prompt .item { font-family: var(--ui-font); font-size: 1.05em; border-radius: 0 999px 999px 0; margin-right: 6px; padding: 4px 12px; }
+.skin-bridge #prompt .item .d { color: var(--br-dim); font-size: .85em; }
+.skin-bridge #prompt .item.sel { background: var(--br-lav); color: #000; }
+.skin-bridge #prompt .item.sel .d { color: #000; }
+.skin-bridge #prompt .hint { color: var(--br-dim); border-top: 0; text-transform: uppercase; letter-spacing: .06em; }
+
+/* Buttons: pills with black lettering. */
+.skin-bridge .ui-button { border: 0; border-radius: 999px; background: var(--br-lilac); color: #000;
+  font: 600 .9em var(--ui-font); text-transform: uppercase; letter-spacing: .06em; padding: 4px 16px; }
+.skin-bridge .ui-button:hover { filter: brightness(1.12); }
+.skin-bridge .ui-button.primary { background: var(--br-orange); color: #000; }
+.skin-bridge :is(.ui-input, .ui-select) { background: #000; color: var(--br-text); border: 2px solid var(--br-lav); border-left-width: 6px;
+  border-radius: 0 10px 10px 0; }
+/* A box's ▾ continues its frame; a dropdown under a box or a button is
+   framed as it is, the frame going round both. */
+.skin-bridge .ui-field-button { background: #000; color: var(--br-lav); border: 2px solid var(--br-lav); border-left: 0; padding: 0 10px; }
+/* Open, a box's bottom edge is a faint 1px line over its list (the
+   pixel it gives up goes to its padding: nothing moves). */
+.skin-bridge .ui-joined.open > :is(.ui-field-button, .ui-input) { border-bottom: 1px solid color-mix(in srgb, var(--br-lav) 30%, transparent); }
+.skin-bridge .ui-joined.open > .ui-input { padding-bottom: 4px; }
+.skin-bridge .ui-joined.open > .ui-field-button { padding-bottom: 1px; }
+.skin-bridge :is(#popup, .ctxmenu).attached { border: 2px solid var(--br-lav); border-left-width: 6px; border-top: 0;
+  border-radius: 0 0 10px 10px; padding: 2px 0 6px; }
+.skin-bridge .ctxmenu.attached { --attached-radius: 10px; }
+.skin-bridge :is(#popup, .ctxmenu).attached:is(.overhang-left, .overhang-right) { border-top: 2px solid var(--br-lav); }
+/* A button with its menu open stays a pill on top, its bottom square: the
+   menu's frame runs on down from it. */
+.skin-bridge .ui-button.open { background: var(--br-lilac); color: #000; border: 0; border-radius: 999px 999px 0 0; }
+.skin-bridge .ctxmenu.attached:not(.of-field)::before { top: -2px; left: calc(var(--joint-left) - 6px); height: 2px; background: var(--br-lilac); }
+.skin-bridge .ui-toggle.on { color: #000; background: var(--br-orange); border-color: var(--br-orange); border-radius: 999px; }
+.skin-bridge .ui-badge { background: var(--br-lav); color: #000; }
+
+/* ---- scrollbars: a tan pill on a thin rail ------------------------------- */
+.skin-bridge .scrollbar { width: 12px; background: linear-gradient(90deg, transparent 5px, #1c1730 5px 7px, transparent 7px); }
+.skin-bridge .thumb { left: 2px; right: 2px; border-radius: 999px; background: var(--br-tan); }
+.skin-bridge .thumb:hover { background: var(--br-orange); }
+.skin-bridge *::-webkit-scrollbar { width: 12px; height: 12px; background: #000; }
+.skin-bridge *::-webkit-scrollbar-thumb { background: var(--br-lav); border-radius: 999px; border: 3px solid #000; }
+.skin-bridge *::-webkit-scrollbar-corner { background: #000; }
+
+/* ---- a composed document: the console's lettering for its headings ------ */
+.skin-bridge .doc-body :is(h1, h2, h3) { font-family: var(--ui-font); font-weight: 600; letter-spacing: .03em;
+  text-transform: uppercase; color: var(--br-orange); border-bottom: 0; }
+.skin-bridge .doc-body h1 { color: var(--br-orange); }
+.skin-bridge .doc-body h2 { color: var(--br-gold); }
+.skin-bridge .doc-body h3 { color: var(--br-tan); }
+.skin-bridge .doc-code { border-left: 8px solid var(--br-lilac); border-radius: 0 12px 12px 0; }

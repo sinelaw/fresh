@@ -5,7 +5,6 @@ use crate::model::event::{
     PopupData, PopupPositionData,
 };
 use crate::model::filesystem::FileSystem;
-use crate::model::marker::{MarkerId, MarkerList};
 use crate::primitives::detected_language::DetectedLanguage;
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlight_engine::HighlightEngine;
@@ -26,6 +25,7 @@ use crate::view::reference_highlight_overlay::ReferenceHighlightOverlay;
 use crate::view::soft_break::SoftBreakManager;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
+use fresh_markers::marker::{MarkerId, MarkerList};
 use ratatui::style::{Color, Style};
 use std::cell::RefCell;
 use std::ops::Range;

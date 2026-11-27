@@ -37,251 +37,42 @@
 //! cached range.
 
 use crate::model::buffer::Buffer;
-use crate::model::marker::{MarkerId, MarkerList};
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlighter::{
     highlight_bg, highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
 };
 use crate::theme::Theme;
 use fresh_core::hooks::{RegionLine, TableLine, TableRole};
+use fresh_highlight::{highlighted_prefix, scope_to_category, Category, MAX_LINE_BYTES};
+use fresh_markers::marker::{MarkerId, MarkerList};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use syntect::parsing::SyntaxSet;
 
-/// Map TextMate scope to highlight category
-fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
-    let scope_lower = scope.to_lowercase();
-
-    // Comments - highest priority
-    if scope_lower.starts_with("comment") {
-        return Some(HighlightCategory::Comment);
+/// The engine's category for a [`Category`] from the shared scope table.
+/// A function rather than a `From` impl: both types are foreign here.
+fn highlight_category(category: Category) -> HighlightCategory {
+    match category {
+        Category::Attribute => HighlightCategory::Attribute,
+        Category::Comment => HighlightCategory::Comment,
+        Category::Constant => HighlightCategory::Constant,
+        Category::Function => HighlightCategory::Function,
+        Category::Keyword => HighlightCategory::Keyword,
+        Category::Number => HighlightCategory::Number,
+        Category::Operator => HighlightCategory::Operator,
+        Category::PunctuationBracket => HighlightCategory::PunctuationBracket,
+        Category::PunctuationDelimiter => HighlightCategory::PunctuationDelimiter,
+        Category::Property => HighlightCategory::Property,
+        Category::String => HighlightCategory::String,
+        Category::Type => HighlightCategory::Type,
+        Category::Variable => HighlightCategory::Variable,
+        Category::VariableBuiltin => HighlightCategory::VariableBuiltin,
+        Category::Inserted => HighlightCategory::Inserted,
+        Category::Deleted => HighlightCategory::Deleted,
+        Category::Changed => HighlightCategory::Changed,
     }
-
-    // Strings
-    if scope_lower.starts_with("string") {
-        return Some(HighlightCategory::String);
-    }
-
-    // Markdown/markup scopes - handle before generic keyword/punctuation checks
-    // See: https://macromates.com/manual/en/language_grammars (TextMate scope naming)
-    // Headings: markup.heading and entity.name.section (used by syntect's markdown grammar)
-    if scope_lower.starts_with("markup.heading") || scope_lower.starts_with("entity.name.section") {
-        return Some(HighlightCategory::Keyword); // Headers styled like keywords (bold, prominent)
-    }
-    // Bold: markup.bold
-    if scope_lower.starts_with("markup.bold") {
-        return Some(HighlightCategory::Constant); // Bold styled like constants (bright)
-    }
-    // Italic: markup.italic
-    if scope_lower.starts_with("markup.italic") {
-        return Some(HighlightCategory::Variable); // Italic styled like variables
-    }
-    // Inline code and code blocks: markup.raw, markup.inline.raw
-    if scope_lower.starts_with("markup.raw") || scope_lower.starts_with("markup.inline.raw") {
-        return Some(HighlightCategory::String); // Code styled like strings
-    }
-    // Links: markup.underline.link
-    if scope_lower.starts_with("markup.underline.link") {
-        return Some(HighlightCategory::Function); // Links styled like functions (distinct color)
-    }
-    // Generic underline (often links)
-    if scope_lower.starts_with("markup.underline") {
-        return Some(HighlightCategory::Function);
-    }
-    // Block quotes: markup.quote
-    if scope_lower.starts_with("markup.quote") {
-        return Some(HighlightCategory::Comment); // Quotes styled like comments (subdued)
-    }
-    // Lists: markup.list
-    if scope_lower.starts_with("markup.list") {
-        return Some(HighlightCategory::Operator); // List markers styled like operators
-    }
-    // Strikethrough: markup.strikethrough
-    if scope_lower.starts_with("markup.strikethrough") {
-        return Some(HighlightCategory::Comment); // Strikethrough styled subdued
-    }
-
-    // Diff scopes (syntect's bundled `Diff` grammar). These scope the
-    // entire row, not just the leading +/-/@@ marker, so the renderer
-    // can paint a whole-line background by reading the span's bg.
-    //
-    //   markup.inserted.diff      — `+` line
-    //   markup.deleted.diff       — `-` line
-    //   meta.diff.range.unified   — `@@ ... @@` hunk header
-    //   markup.changed.*          — generic "changed" marker (rare)
-    //   meta.diff.header.*        — `diff --git`, `index ...`, file
-    //                               headers; render like Type so they
-    //                               stand out without a bg wash.
-    if scope_lower.starts_with("markup.inserted") {
-        return Some(HighlightCategory::Inserted);
-    }
-    if scope_lower.starts_with("markup.deleted") {
-        return Some(HighlightCategory::Deleted);
-    }
-    if scope_lower.starts_with("markup.changed") || scope_lower.starts_with("meta.diff.range") {
-        return Some(HighlightCategory::Changed);
-    }
-    if scope_lower.starts_with("meta.diff.header") {
-        return Some(HighlightCategory::Type);
-    }
-
-    // Word operators (`new`, `typeof`, `instanceof`, `in`, `of`) read as keywords.
-    //
-    // `keyword.operator.word` is the scope Sublime grammars give operators that
-    // are spelled as words rather than symbols, so it belongs here too: C/C++
-    // `sizeof`, `alignof`, `typeid`, `static_assert`, `and`/`or`/`not`, Java
-    // `instanceof`, Fortran `.and.`, VHDL `mod`/`rem`, Typst `and`/`or`/`not`.
-    // Without it they fell through to Operator, whose colour equals plain text
-    // in most themes, so they read as unhighlighted identifiers (issue #3644)
-    // — and Java's `instanceof` was coloured differently from JavaScript's,
-    // which already lands on `keyword.operator.expression` just above.
-    if scope_lower.starts_with("keyword.operator.new")
-        || scope_lower.starts_with("keyword.operator.expression")
-        || scope_lower.starts_with("keyword.operator.word")
-    {
-        return Some(HighlightCategory::Keyword);
-    }
-
-    // Keywords
-    if scope_lower.starts_with("keyword.control")
-        || scope_lower.starts_with("keyword.other")
-        || scope_lower.starts_with("keyword.declaration")
-        || scope_lower.starts_with("keyword")
-    {
-        // keyword.operator should map to Operator, not Keyword
-        if !scope_lower.starts_with("keyword.operator") {
-            return Some(HighlightCategory::Keyword);
-        }
-    }
-
-    // Punctuation that belongs to a parent construct (comment/string delimiters)
-    // These must be checked before the generic punctuation rule below.
-    // TextMate grammars assign e.g. `punctuation.definition.comment` to # // /* etc.
-    if scope_lower.starts_with("punctuation.definition.comment") {
-        return Some(HighlightCategory::Comment);
-    }
-    if scope_lower.starts_with("punctuation.definition.string") {
-        return Some(HighlightCategory::String);
-    }
-
-    // Operators (keyword.operator only)
-    if scope_lower.starts_with("keyword.operator") {
-        return Some(HighlightCategory::Operator);
-    }
-
-    // Punctuation brackets ({, }, (, ), [, ], <, >)
-    // Covers punctuation.section.*, punctuation.bracket.*,
-    // and punctuation.definition.{array,block,brackets,group,inline-table,section,table,tag}
-    if scope_lower.starts_with("punctuation.section")
-        || scope_lower.starts_with("punctuation.bracket")
-        || scope_lower.starts_with("punctuation.definition.array")
-        || scope_lower.starts_with("punctuation.definition.block")
-        || scope_lower.starts_with("punctuation.definition.brackets")
-        || scope_lower.starts_with("punctuation.definition.group")
-        || scope_lower.starts_with("punctuation.definition.inline-table")
-        || scope_lower.starts_with("punctuation.definition.section")
-        || scope_lower.starts_with("punctuation.definition.table")
-        || scope_lower.starts_with("punctuation.definition.tag")
-        || scope_lower.starts_with("punctuation.definition.typeparameters")
-        || scope_lower.starts_with("punctuation.definition.parameters")
-        || scope_lower.starts_with("meta.brace")
-    {
-        return Some(HighlightCategory::PunctuationBracket);
-    }
-
-    // Punctuation delimiters (;, ,, .)
-    if scope_lower.starts_with("punctuation.separator")
-        || scope_lower.starts_with("punctuation.terminator")
-        || scope_lower.starts_with("punctuation.accessor")
-    {
-        return Some(HighlightCategory::PunctuationDelimiter);
-    }
-
-    // Functions
-    if scope_lower.starts_with("entity.name.function")
-        || scope_lower.starts_with("support.function")
-        || scope_lower.starts_with("meta.function-call")
-        || scope_lower.starts_with("variable.function")
-    {
-        return Some(HighlightCategory::Function);
-    }
-
-    // Types
-    if scope_lower.starts_with("entity.name.type")
-        || scope_lower.starts_with("entity.name.class")
-        || scope_lower.starts_with("entity.name.struct")
-        || scope_lower.starts_with("entity.name.enum")
-        || scope_lower.starts_with("entity.name.interface")
-        || scope_lower.starts_with("entity.name.trait")
-        || scope_lower.starts_with("support.type")
-        || scope_lower.starts_with("support.class")
-    {
-        return Some(HighlightCategory::Type);
-    }
-
-    // Storage keywords (class, def, function, var, let, const, etc.) and modifiers
-    if scope_lower.starts_with("storage.type") || scope_lower.starts_with("storage.modifier") {
-        return Some(HighlightCategory::Keyword);
-    }
-
-    // Constants and numbers
-    if scope_lower.starts_with("constant.numeric")
-        || scope_lower.starts_with("constant.language.boolean")
-    {
-        return Some(HighlightCategory::Number);
-    }
-    if scope_lower.starts_with("constant") {
-        return Some(HighlightCategory::Constant);
-    }
-
-    // Member access (`obj.prop`, `.length`); checked before `variable.other`.
-    if scope_lower.starts_with("variable.other.property")
-        || scope_lower.starts_with("variable.other.object.property")
-        || scope_lower.starts_with("support.variable.property")
-    {
-        return Some(HighlightCategory::Property);
-    }
-
-    // Host globals (`document`, `window`) and library constants (`Math.PI`).
-    if scope_lower.starts_with("support.variable") {
-        return Some(HighlightCategory::VariableBuiltin);
-    }
-    if scope_lower.starts_with("support.constant") {
-        return Some(HighlightCategory::Constant);
-    }
-
-    // Variables
-    if scope_lower.starts_with("variable.language") {
-        return Some(HighlightCategory::VariableBuiltin);
-    }
-    if scope_lower.starts_with("variable.parameter") || scope_lower.starts_with("variable.other") {
-        return Some(HighlightCategory::Variable);
-    }
-
-    // Properties / object keys
-    if scope_lower.starts_with("entity.name.tag")
-        || scope_lower.starts_with("support.other.property")
-        || scope_lower.starts_with("meta.object-literal.key")
-    {
-        return Some(HighlightCategory::Property);
-    }
-
-    // Attributes (decorators, annotations)
-    if scope_lower.starts_with("entity.other.attribute")
-        || scope_lower.starts_with("meta.attribute")
-        || scope_lower.starts_with("entity.name.decorator")
-    {
-        return Some(HighlightCategory::Attribute);
-    }
-
-    // Generic variable fallback
-    if scope_lower.starts_with("variable") {
-        return Some(HighlightCategory::Variable);
-    }
-
-    None
 }
 
 /// Unified highlighting engine supporting multiple backends
@@ -861,37 +652,6 @@ fn color_span(span: CachedSpan, theme: &Theme) -> HighlightSpan {
         bg,
         category: Some(span.category),
     }
-}
-
-/// How much of a line is highlighted: the rest of a longer one is plain text.
-///
-/// Syntect parses a line in one shot, and an edit re-parses the line it lands
-/// in, so without a bound an edit in a long line costs the whole line up to
-/// the viewport. On a file that is one long line (minified JSON or JS,
-/// routinely hundreds of KB to tens of MB) that was every keystroke: ~270 ms
-/// near the end of the first megabyte of a 50 MB array (issue #3631).
-///
-/// Only the line's first this-many bytes reach syntect. The parse after the
-/// line carries on from the state those bytes leave, as if the line ended
-/// there. Because the cut is at a fixed distance into the line, it falls in
-/// the same place however much of the line a pass has in hand — the colours
-/// do not depend on where the viewport is, there is nothing about a long line
-/// for the cache to track, and no scan for the line's end is needed. VS Code
-/// makes the same call at the same size (`editor.maxTokenizationLineLength`),
-/// leaving such lines untokenized altogether.
-const MAX_HIGHLIGHT_LINE_BYTES: usize = 20_000;
-
-/// The part of a line's content that is highlighted: all of it, or its first
-/// [`MAX_HIGHLIGHT_LINE_BYTES`] cut back to a character boundary.
-fn highlighted_prefix(line: &str) -> &str {
-    if line.len() <= MAX_HIGHLIGHT_LINE_BYTES {
-        return line;
-    }
-    let mut cut = MAX_HIGHLIGHT_LINE_BYTES;
-    while !line.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    &line[..cut]
 }
 
 /// Slice the line starting at `pos` from `content_bytes` and prepare
@@ -2495,7 +2255,7 @@ impl TextMateEngine {
         let starts_line = is_line_start(buffer, actual_start);
         let mut past_cut = !starts_line
             && !buffer
-                .slice_bytes(actual_start.saturating_sub(MAX_HIGHLIGHT_LINE_BYTES)..actual_start)
+                .slice_bytes(actual_start.saturating_sub(MAX_LINE_BYTES)..actual_start)
                 .contains(&b'\n');
 
         let mut spans = Vec::new();
@@ -2710,7 +2470,7 @@ impl TextMateEngine {
             let cat = match self.scope_category_cache.get(scope) {
                 Some(c) => *c,
                 None => {
-                    let computed = scope_to_category(&scope.build_string());
+                    let computed = scope_to_category(&scope.build_string()).map(highlight_category);
                     self.scope_category_cache.insert(*scope, computed);
                     computed
                 }
@@ -3471,7 +3231,7 @@ fn scope_stack_to_category(scopes: &syntect::parsing::ScopeStack) -> Option<High
     for scope in scopes.as_slice().iter().rev() {
         let scope_str = scope.build_string();
         if let Some(cat) = scope_to_category(&scope_str) {
-            return Some(cat);
+            return Some(highlight_category(cat));
         }
     }
     None
@@ -5766,143 +5526,6 @@ diff --git a/tools/check.py b/tools/check.py
         assert!(engine.has_highlighting());
     }
 
-    #[test]
-    fn test_comment_delimiter_uses_comment_color() {
-        // Comment delimiters (#, //, /*) should use comment color, not operator
-        assert_eq!(
-            scope_to_category("punctuation.definition.comment"),
-            Some(HighlightCategory::Comment)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.comment.python"),
-            Some(HighlightCategory::Comment)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.comment.begin"),
-            Some(HighlightCategory::Comment)
-        );
-    }
-
-    #[test]
-    fn test_word_operators_use_keyword_color() {
-        // Operators spelled as words are scoped `keyword.operator.word` by
-        // Sublime grammars. They must read as keywords, not operators: the
-        // operator colour equals plain text in most themes, so C++
-        // `static_assert` looked unhighlighted (issue #3644).
-        assert_eq!(
-            scope_to_category("keyword.operator.word.c++"),
-            Some(HighlightCategory::Keyword)
-        );
-        assert_eq!(
-            scope_to_category("keyword.operator.word.instanceof.java"),
-            Some(HighlightCategory::Keyword)
-        );
-        // Symbolic operators keep the operator colour.
-        assert_eq!(
-            scope_to_category("keyword.operator.arithmetic.c"),
-            Some(HighlightCategory::Operator)
-        );
-        assert_eq!(
-            scope_to_category("keyword.operator.assignment.python"),
-            Some(HighlightCategory::Operator)
-        );
-    }
-
-    #[test]
-    fn test_variable_builtin_category() {
-        assert_eq!(
-            scope_to_category("variable.language.this"),
-            Some(HighlightCategory::VariableBuiltin)
-        );
-        assert_eq!(
-            scope_to_category("variable.language.super"),
-            Some(HighlightCategory::VariableBuiltin)
-        );
-    }
-
-    #[test]
-    fn test_string_delimiter_uses_string_color() {
-        // String delimiters (", ', `) should use string color, not operator
-        assert_eq!(
-            scope_to_category("punctuation.definition.string.begin"),
-            Some(HighlightCategory::String)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.string.end"),
-            Some(HighlightCategory::String)
-        );
-    }
-
-    #[test]
-    fn test_punctuation_bracket() {
-        // punctuation.section (TextMate standard for block delimiters)
-        assert_eq!(
-            scope_to_category("punctuation.section"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.section.block.begin.c"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.bracket"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        // punctuation.definition.* bracket-like scopes from sublime-syntax grammars
-        assert_eq!(
-            scope_to_category("punctuation.definition.array.begin.toml"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.block.code.typst"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.group.typst"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.inline-table.begin.toml"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.definition.tag.end.svelte"),
-            Some(HighlightCategory::PunctuationBracket)
-        );
-    }
-
-    #[test]
-    fn test_punctuation_delimiter() {
-        assert_eq!(
-            scope_to_category("punctuation.separator"),
-            Some(HighlightCategory::PunctuationDelimiter)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.terminator.statement.c"),
-            Some(HighlightCategory::PunctuationDelimiter)
-        );
-        assert_eq!(
-            scope_to_category("punctuation.accessor"),
-            Some(HighlightCategory::PunctuationDelimiter)
-        );
-    }
-
-    #[test]
-    fn test_storage_type_keyword() {
-        assert_eq!(
-            scope_to_category("storage.type"),
-            Some(HighlightCategory::Keyword)
-        );
-        assert_eq!(
-            scope_to_category("storage.type.class"),
-            Some(HighlightCategory::Keyword)
-        );
-        assert_ne!(
-            scope_to_category("storage.type"),
-            Some(HighlightCategory::Type)
-        );
-    }
-
     /// First parse of a small file populates a whole-file cache; subsequent
     /// scrolls anywhere in the file are exact cache hits with no extra parse
     /// work.
@@ -6865,7 +6488,7 @@ diff --git a/has space.py b/has space.py
                     tm.highlight_viewport(&buffer, viewport.start, viewport.end, &theme, 10_000);
                 let tokenized = tm.stats().bytes_tokenized - before;
                 assert!(
-                    tokenized <= MAX_HIGHLIGHT_LINE_BYTES + 1,
+                    tokenized <= MAX_LINE_BYTES + 1,
                     "a keystroke {at} bytes into a {len}-byte line tokenized {tokenized} bytes"
                 );
             }
@@ -6880,10 +6503,10 @@ diff --git a/has space.py b/has space.py
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
-        let long = one_line_number_array(10 * MAX_HIGHLIGHT_LINE_BYTES);
+        let long = one_line_number_array(10 * MAX_LINE_BYTES);
         let content = format!("[\n{},\n2\n]\n", &long[1..long.len() - 1]);
         let line_start = 2;
-        let cut = line_start + MAX_HIGHLIGHT_LINE_BYTES;
+        let cut = line_start + MAX_LINE_BYTES;
         let number_at = |spans: &[HighlightSpan], pos: usize| {
             spans.iter().any(|s| {
                 s.range.start <= pos
@@ -6895,7 +6518,7 @@ diff --git a/has space.py b/has space.py
             |pos: usize| pos + content[pos..].find(|c: char| c.is_ascii_digit()).unwrap();
         let before_cut = digit_near(cut - 100);
         let after_cut = digit_near(cut + 100);
-        let deep = digit_near(line_start + 9 * MAX_HIGHLIGHT_LINE_BYTES);
+        let deep = digit_near(line_start + 9 * MAX_LINE_BYTES);
         let last = content.rfind('2').unwrap();
 
         // Read three ways: a viewport at the cut, with only part of the line
@@ -6976,13 +6599,13 @@ diff --git a/has space.py b/has space.py
                 .count()
         };
 
-        for top in (0..MAX_HIGHLIGHT_LINE_BYTES - rows).step_by(rows) {
+        for top in (0..MAX_LINE_BYTES - rows).step_by(rows) {
             assert!(
                 view(tm, &buffer, top) > 0,
                 "{top}: inside the prefix, plain"
             );
         }
-        for top in [MAX_HIGHLIGHT_LINE_BYTES + 900, 600_000, 2 * MAX_PARSE_BYTES] {
+        for top in [MAX_LINE_BYTES + 900, 600_000, 2 * MAX_PARSE_BYTES] {
             assert_eq!(
                 view(tm, &buffer, top),
                 0,

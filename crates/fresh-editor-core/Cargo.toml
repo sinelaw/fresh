@@ -34,6 +34,7 @@ runtime = [
     "dep:nix",
     "dep:pulldown-cmark",
     "dep:syntect",
+    "dep:fresh-highlight",
     "syntect/regex-onig",
     "syntect/parsing",
     "syntect/dump-load",
@@ -57,7 +58,9 @@ wasm = [
 [dependencies]
 fresh-core.workspace = true
 fresh-i18n.workspace = true
+fresh-markers.workspace = true
 fresh-languages = { workspace = true, optional = true }
+fresh-highlight = { workspace = true, optional = true }
 
 serde.workspace = true
 serde_json.workspace = true

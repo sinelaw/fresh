@@ -19,10 +19,10 @@
 //! - Concealment happens transparently at the editor level
 //! - Wrapping operates on the concealed (shorter) lines
 
-use crate::model::marker::{MarkerId, MarkerList};
 use crate::view::activation::ScopedActivation;
 use fresh_core::api::{MarkerActivation, VirtualLineTextOverlay};
 use fresh_core::overlay::OverlayNamespace;
+use fresh_markers::marker::{MarkerId, MarkerList};
 use std::collections::HashMap;
 use std::ops::Range;
 

@@ -11,7 +11,7 @@
 use fresh::model::cursor::Cursors;
 use fresh::model::event::{CursorId, Event, EventLog};
 use fresh::model::filesystem::StdFileSystem;
-use fresh::model::marker::MarkerId;
+use fresh_markers::marker::MarkerId;
 use fresh::state::EditorState;
 use fresh::view::margin::LineIndicator;
 use fresh::view::virtual_text::VirtualTextPosition;

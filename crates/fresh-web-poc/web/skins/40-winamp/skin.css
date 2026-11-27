@@ -1,0 +1,230 @@
+/* ==FreshSkin==
+@id           winamp
+@name         Winamp Classic
+@description  Brushed metal, bevels and LCD green
+@author       Fresh
+@frame        bezel
+@furniture    furniture.html
+==/FreshSkin== */
+
+/* Winamp Classic — warm metal, hard bevels, LCD green. The bezel is the
+   CODE STUDIO player window (furniture.html); inside it the client's frame
+   is metal hardware — the top bar, tab strips, buttons — and its content —
+   the file list, the palette's list, input lines, the status readout — is
+   the LCD. The buffers keep the editor theme's colours. */
+
+:root.skin-winamp { --shell-pad: 44px; --bezel-side: 17px; --bezel-top: 42px; --bezel-bot: 32px; }
+
+.skin-winamp body {
+  /* Window metal: a muted warm taupe-brown with a light sheen along the top
+     and a darker foot, so it reads as a machined slab. */
+  --wa-face: linear-gradient(180deg, #503d2f 0%, #3f2e25 46%, #2c2019 100%);
+  --wa-face-flat: #3c2c23;
+  --wa-plate: linear-gradient(180deg, #54402f 0%, #403026 54%, #342820 100%);
+  --wa-sunken: #070606;
+  /* Brushed-metal grain: fractal noise stretched into fine vertical streaks. */
+  --wa-brush: url(img/brush.svg);
+  --wa-metal: var(--wa-brush), var(--wa-face);
+  --wa-plate-brush: var(--wa-brush), var(--wa-plate);
+  --wa-lt: rgba(255, 232, 198, .55);
+  --wa-dk: rgba(0, 0, 0, .82);
+  --wa-out: inset 1px 1px 0 var(--wa-lt), inset -1px -1px 0 var(--wa-dk);
+  --wa-in: inset 1px 1px 0 var(--wa-dk), inset -1px -1px 0 var(--wa-lt);
+  --wa-frame: inset 1px 1px 0 rgba(255, 236, 204, .7), inset 2px 2px 0 rgba(255, 226, 184, .22),
+    inset 0 3px 4px -2px rgba(255, 232, 196, .28), inset -1px -1px 0 rgba(0, 0, 0, .82), inset -2px -2px 0 rgba(0, 0, 0, .45);
+  --wa-seam: 0 0 0 1px rgba(0, 0, 0, .6);
+  --wa-amber: #f7c978;
+  --wa-green: #4ef07f;
+  --wa-green-dim: #1a8f43;
+  --wa-lit: inset 0 1px 0 rgba(120, 240, 150, .28);
+  --wa-drop: 6px 8px 0 rgba(0, 0, 0, .42), 0 30px 74px rgba(0, 0, 0, .72);
+  --wa-gloss: linear-gradient(180deg, rgba(255, 248, 232, .1) 0%, rgba(255, 248, 232, .02) 46%, rgba(0, 0, 0, .07) 100%);
+  --wa-ring: 0 0 0 1px rgba(0, 0, 0, .62);
+  --wa-vbevel: inset 0 1px 0 var(--wa-lt), inset 0 -1px 0 var(--wa-dk);
+  --wa-ctl: var(--wa-ring), var(--wa-vbevel), 0 2px 4px rgba(0, 0, 0, .45);
+  --wa-ctl-press: var(--wa-ring), inset 0 1px 0 var(--wa-dk), inset 0 -1px 0 var(--wa-lt), 0 1px 2px rgba(0, 0, 0, .4);
+  --wa-light: radial-gradient(64% 46% at 50% -5%, rgba(255, 234, 188, .34), transparent 60%),
+    linear-gradient(180deg, transparent 30%, rgba(0, 0, 0, .10) 78%, rgba(0, 0, 0, .18) 100%),
+    radial-gradient(120% 60% at 50% 118%, rgba(78, 240, 127, .055), transparent 58%);
+  --wa-light-top: radial-gradient(60% 42% at 50% -6%, rgba(255, 236, 197, .36), transparent 62%);
+  --wa-light-bot: linear-gradient(180deg, transparent 44%, rgba(0, 0, 0, .32) 100%);
+  /* The LCD: black with faint scanlines and a phosphor glow. */
+  --wa-scan: repeating-linear-gradient(180deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 3px);
+  --wa-lcd: var(--wa-scan), var(--wa-sunken);
+  --wa-lcd-fg: #7fe8a0; --wa-lcd-dim: #2fa55a;
+  --wa-glow: 0 0 6px rgba(78, 240, 127, .45);
+  --wa-lcd-sel: linear-gradient(90deg, rgba(78, 240, 127, .30), rgba(78, 240, 127, .12));
+  --wa-olive: radial-gradient(90% 130% at 50% -22%, rgba(255, 255, 214, .35), transparent 62%),
+    linear-gradient(180deg, #96a04c 0%, #7f8a3e 46%, #565c29 100%);
+  /* The chrome reads in the player's monospace lettering. */
+  --ui-font: var(--mono); --ui-font-size: calc(14px * var(--ui-scale));
+  accent-color: #4ef07f;
+  /* The desk: near-black with a warm bloom under the window. */
+  background:
+    radial-gradient(70rem 45rem at 20% -12%, rgba(255, 150, 60, .10), transparent 62%),
+    radial-gradient(55rem 42rem at 110% 110%, rgba(78, 240, 127, .07), transparent 60%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, .016) 0 2px, transparent 2px 5px),
+    linear-gradient(180deg, #1a1512, #0b0a09) #0b0a09;
+}
+
+/* The chrome's own colours, where the chrome is: the buffers keep the
+   editor theme's. */
+.skin-winamp :is(#topbar, #left-dock, #sidebar, #right-dock, #bar, #dock, #status, .tabs, #prompt, #popup, .ctxmenu, .panel-dialog) {
+  --fg: #e9d9c2; --muted: #bda88c; --faint: #8a7660; --border: #1b1109; --panel: #3c2c23;
+  --accent: #4ef07f; --on-accent: #04140a; --emphasis: #f7c978; --link: #7fe8a0;
+  --control-bg: #070606; --control-fg: #4ef07f; --hover-bg: rgba(255, 208, 150, .10);
+  --sel-bg: rgba(78, 240, 127, .26); --sel-fg: #eafff0; --sel-inactive-bg: rgba(78, 240, 127, .12);
+  --popup-bg: #3c2c23; --popup-fg: #e9d9c2; --popup-border: #1b1109; --shadow: rgba(0, 0, 0, .5);
+}
+
+/* ==================== CODE STUDIO — the player window ================== */
+.skin-winamp #device { border-radius: 8px; background: var(--wa-light), var(--wa-metal);
+  box-shadow: var(--wa-drop), var(--wa-seam), var(--wa-frame); }
+/* The light falls on the furniture too: screen above, multiply below. */
+.skin-winamp #device::before, .skin-winamp #device::after { content: ""; position: absolute; inset: 0;
+  pointer-events: none; border-radius: inherit; z-index: 4; }
+.skin-winamp #device::after { background: var(--wa-light-top); mix-blend-mode: screen; }
+.skin-winamp #device::before { background: var(--wa-light-bot); mix-blend-mode: multiply; }
+/* The code well: a black screen recessed into the metal, a lit rim on the
+   metal side, a dark groove, then a faint phosphor bloom. */
+.skin-winamp #device .dv-screen { border-radius: 4px; background: var(--wa-sunken);
+  top: calc(var(--bezel-top) - 6px); bottom: calc(var(--bezel-bot) - 6px);
+  left: calc(var(--bezel-side) - 6px); right: calc(var(--bezel-side) - 6px);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 0 0 2px rgba(255, 230, 190, .34), 0 0 0 4px rgba(0, 0, 0, .42),
+    0 0 0 5px rgba(255, 228, 186, .22), inset 2px 2px 0 rgba(255, 236, 198, .34), inset -2px -2px 0 rgba(0, 0, 0, .5),
+    inset 6px 6px 11px rgba(0, 0, 0, .85), inset 0 0 90px rgba(78, 240, 127, .05); }
+
+/* The title bar: pinstripe rails either side of the caption. */
+.skin-winamp #device .wa-title { position: absolute; left: 6px; right: 6px; top: 5px; height: calc(var(--bezel-top) - 13px);
+  display: flex; align-items: center; gap: 9px; padding: 0 7px; border-radius: 3px;
+  background: var(--wa-brush), linear-gradient(180deg, #4c3928 0%, #3a2a1e 55%, #2a1e15 100%);
+  box-shadow: var(--wa-out), var(--wa-lit); }
+.skin-winamp #device .wa-rail { flex: 1; height: 11px; border-radius: 1px;
+  background: repeating-linear-gradient(180deg, rgba(247, 205, 135, .6) 0 1px, rgba(0, 0, 0, .55) 1px 2px);
+  box-shadow: var(--wa-in); }
+.skin-winamp #device .wa-title-text { flex: 0 0 auto; font: 700 11px var(--mono); letter-spacing: .26em; color: var(--wa-amber);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .9), 0 0 9px rgba(247, 201, 120, .3); }
+/* Window buttons: three bevelled plates with drawn icons. */
+.skin-winamp #device .wa-wbtns { display: flex; gap: 3px; flex: 0 0 auto; align-items: center; padding-left: 3px; }
+.skin-winamp #device .wa-wbtns i { position: relative; width: 11px; height: 11px;
+  background: var(--wa-gloss), var(--wa-plate); box-shadow: var(--wa-ring), var(--wa-vbevel); }
+.skin-winamp #device .wa-wbtns i::before, .skin-winamp #device .wa-wbtns i::after { content: ""; position: absolute; background: #efe0c8; }
+.skin-winamp #device .wa-min::before { left: 3px; right: 3px; bottom: 3px; height: 1px; }
+.skin-winamp #device .wa-shade::before { left: 3px; right: 3px; top: 3px; height: 1px; }
+.skin-winamp #device .wa-min::after, .skin-winamp #device .wa-shade::after { display: none; }
+.skin-winamp #device .wa-close::before, .skin-winamp #device .wa-close::after { left: 2px; right: 2px; top: 5px; height: 1px; background: #f6ddd2; }
+.skin-winamp #device .wa-close::before { transform: rotate(45deg); }
+.skin-winamp #device .wa-close::after { transform: rotate(-45deg); }
+/* The foot: a plain rail across the bottom bar. */
+.skin-winamp #device .wa-foot { position: absolute; left: 6px; right: 6px; bottom: 6px; height: calc(var(--bezel-bot) - 14px);
+  display: flex; align-items: center; padding: 0 10px; border-radius: 3px; background: var(--wa-metal); box-shadow: var(--wa-out); }
+
+/* ==================== the client, inside the code well ================== */
+/* The top bar: a metal rail; the brand in the caption's amber. */
+.skin-winamp #topbar { background: var(--wa-metal); box-shadow: var(--wa-out); border-bottom: 0; padding: 5px 12px; }
+.skin-winamp #topbar .brand { color: var(--wa-amber); letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 1px 0 rgba(0, 0, 0, .7); }
+.skin-winamp #topbar, .skin-winamp #topbar .hint { text-shadow: 0 1px 0 rgba(0, 0, 0, .7); }
+.skin-winamp #ws-name { color: #e7d6bd; }
+
+/* Tab strips: metal plates; the active tab is the lit display — pressed
+   in, black, a phosphor label. */
+.skin-winamp :is(.tabs, .dock-tabs) { background: var(--wa-face-flat); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .85); }
+.skin-winamp .tab { color: #c2ab90; background: var(--wa-plate); box-shadow: var(--wa-out); border-right: 1px solid #241509; border-top: 0; }
+.skin-winamp .tab:not(.active):hover { background: linear-gradient(180deg, #8d5c36, #65401f); }
+.skin-winamp .tab.active, .skin-winamp .pane.active .tab.active { background: var(--wa-sunken); color: var(--wa-green);
+  text-shadow: 0 0 7px rgba(78, 240, 127, .6); box-shadow: var(--wa-in); border-top: 0; }
+
+/* The status bar: the kbps/kHz readout — black LCD with scanlines. */
+.skin-winamp #status { background: var(--wa-lcd); color: var(--wa-green); text-shadow: var(--wa-glow); box-shadow: var(--wa-in);
+  font-size: 1em; padding: 3px 12px; }
+
+/* The explorer, the dock and side panels: sunken playlist panes. */
+.skin-winamp :is(#left-dock, #sidebar, #dock, #right-dock, #bar) { background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); }
+.skin-winamp :is(#left-dock, #sidebar, #dock, #right-dock, #bar) .panel { background: transparent; }
+.skin-winamp :is(#left-dock, #sidebar) { border-right: 3px solid #2c2019; box-shadow: inset -1px 0 0 rgba(255, 214, 158, .12); }
+.skin-winamp .panel-head { color: var(--wa-amber); text-shadow: none; }
+.skin-winamp .panel-sidebar { border-bottom-color: #2c2019; }
+.skin-winamp .ui-list-row:hover { background: rgba(78, 240, 127, .06); }
+.skin-winamp .ui-list-row.sel, .skin-winamp .ui-list:focus .ui-list-row.sel, .skin-winamp .ui-list-row.marked { background: var(--wa-lcd-sel); color: #eafff0; }
+.skin-winamp .ui-list-row.header { color: var(--wa-amber); }
+/* Pinned tree rows: the LCD's black under them. */
+.skin-winamp .ui-list-row.sticky { background-color: var(--wa-sunken); }
+.skin-winamp .ui-list-row.sticky.sel { background: var(--wa-lcd-sel), var(--wa-sunken); }
+.skin-winamp #dock { border-top: 3px solid #2c2019; }
+.skin-winamp .split.h > .sash { border-left: 3px solid #2c2019; }
+.skin-winamp .split.v > .sash { border-top: 3px solid #2c2019; }
+
+/* Floating windows: skin windows, metal around an inset LCD. */
+.skin-winamp :is(#prompt, #popup, .panel-dialog), .skin-winamp .ctxmenu { background: var(--wa-metal); color: #e9d9c2; border: 0; border-radius: 3px;
+  box-shadow: var(--wa-seam), var(--wa-out), 6px 8px 0 rgba(0, 0, 0, .5); }
+.skin-winamp #prompt { padding: 6px; }
+.skin-winamp #prompt .bar { padding: 2px 2px 6px; }
+.skin-winamp #prompt .label { color: var(--wa-amber); text-transform: uppercase; letter-spacing: .12em; }
+.skin-winamp #prompt input { background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #000; border-radius: 0;
+  box-shadow: var(--wa-in); text-shadow: var(--wa-glow); caret-color: var(--wa-green); }
+.skin-winamp #prompt .list { background: var(--wa-lcd); color: var(--wa-lcd-fg); text-shadow: var(--wa-glow); box-shadow: var(--wa-in); }
+.skin-winamp #prompt .item { font-size: 1em; }
+.skin-winamp #prompt .item .d { color: var(--wa-lcd-dim); }
+.skin-winamp #prompt .item:hover:not(.sel) { background: rgba(78, 240, 127, .05); }
+.skin-winamp #prompt .item.sel { background: var(--wa-lcd-sel); color: #eafff0; }
+.skin-winamp #prompt .hint { color: var(--wa-amber); border-top: 0; padding-top: 6px; }
+.skin-winamp #popup { color: var(--wa-lcd-fg); }
+.skin-winamp .panel-dialog .panel-head { color: var(--wa-amber); letter-spacing: .12em; }
+.skin-winamp .panel-dialog .panel-body { margin: 0 6px 6px; background: var(--wa-lcd); color: var(--wa-lcd-fg); box-shadow: var(--wa-in); }
+/* Menus: each row its own plate, parted by an engraved groove; the one
+   under the pointer is the lit olive plate. */
+.skin-winamp .ctxmenu { padding: 3px; }
+.skin-winamp .ctxmenu .menu-item + .menu-item { box-shadow: inset 0 1px 0 rgba(0, 0, 0, .5), inset 0 2px 0 rgba(255, 214, 158, .09); }
+.skin-winamp .ctxmenu .menu-item.hi { background: var(--wa-olive); color: #f6f2df; box-shadow: var(--wa-vbevel); }
+.skin-winamp .ctxmenu .menu-item .keys { color: var(--wa-amber); }
+.skin-winamp .ctxmenu .menu-item.hi .keys { color: inherit; }
+.skin-winamp .ctxmenu hr { border-top: 1px solid rgba(0, 0, 0, .6); border-bottom: 1px solid rgba(255, 214, 158, .1); margin: 3px 0; }
+/* The menu bar: engraved lettering on the top rail; the open title is the
+   lit olive plate. */
+.skin-winamp .mtop { color: #e7d6bd; text-shadow: 0 1px 0 rgba(0, 0, 0, .7); border-radius: 0; padding: 2px 9px; }
+.skin-winamp .mtop:hover { background: rgba(255, 208, 150, .12); }
+.skin-winamp .mtop.open { background: var(--wa-olive); color: #f6f2df; box-shadow: var(--wa-vbevel); }
+
+/* Buttons: bevelled hardware switches that press in; the primary one is
+   the lit olive plate. */
+.skin-winamp :is(.ui-button, #skin-btn) { background: var(--wa-gloss), var(--wa-plate); color: #f0dcc2; border: 0; border-radius: 3px;
+  box-shadow: var(--wa-ctl); text-shadow: 0 1px 0 rgba(0, 0, 0, .5); }
+.skin-winamp :is(.ui-button, #skin-btn):hover { background: var(--wa-gloss), linear-gradient(180deg, #67503b, #4d392a); color: var(--wa-amber); }
+.skin-winamp :is(.ui-button, #skin-btn):active { box-shadow: var(--wa-ctl-press); }
+.skin-winamp .ui-button.primary { background: var(--wa-olive); color: #f4f6df;
+  box-shadow: var(--wa-ring), var(--wa-vbevel), inset 0 1px 0 rgba(255, 255, 255, .32), 0 2px 4px rgba(0, 0, 0, .45); }
+/* On the dark LCD a field's sunken edges would vanish: a bronze rim
+   shows all four, the bevel inside it. */
+.skin-winamp :is(.ui-input, .ui-select, .ui-field-button) { background: var(--wa-lcd); color: var(--wa-green); border: 1px solid #6b5440; border-radius: 0; box-shadow: var(--wa-in); }
+/* A box and its ▾ are one sunken well: no light edge between them. */
+.skin-winamp .ui-joined > .ui-input:not(:last-child) { box-shadow: inset 1px 1px 0 var(--wa-dk), inset 0 -1px 0 var(--wa-lt); }
+.skin-winamp .ui-joined > .ui-field-button { box-shadow: inset 0 1px 0 var(--wa-dk), inset -1px -1px 0 var(--wa-lt); }
+.skin-winamp .ui-field-button:hover { text-shadow: var(--wa-glow); }
+.skin-winamp .ui-toggle.on { color: var(--wa-green); border-color: var(--wa-green-dim); background: rgba(78, 240, 127, .12); }
+.skin-winamp .ui-badge { background: var(--wa-sunken); color: var(--wa-green); box-shadow: var(--wa-in); }
+
+/* The editor's scrollbar: a groove cut into the metal, a ridged slider. */
+.skin-winamp .scrollbar { width: 12px; background: repeating-linear-gradient(90deg, #241610 0 1px, #140c07 1px 2px);
+  box-shadow: inset 1px 0 0 rgba(0, 0, 0, .8), inset -1px 0 0 rgba(255, 214, 158, .08); }
+.skin-winamp .thumb { left: 1px; right: 1px; border-radius: 0; box-shadow: var(--wa-out);
+  background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(0, 0, 0, .35) 3px 4px, rgba(255, 232, 198, .18) 4px 5px) center / 100% 11px no-repeat,
+    var(--wa-plate-brush); }
+.skin-winamp *::-webkit-scrollbar { width: 12px; height: 12px; background: repeating-linear-gradient(90deg, #241610 0 1px, #140c07 1px 2px); }
+.skin-winamp *::-webkit-scrollbar-thumb { background: var(--wa-plate-brush); border-radius: 0; box-shadow: var(--wa-out); }
+.skin-winamp *::-webkit-scrollbar-corner { background: #140c07; }
+.skin-winamp .ctxmenu.attached { --attached-radius: 3px; }
+/* A button with its menu open stays pressed in, square where it meets it. */
+.skin-winamp .ui-button.open { box-shadow: var(--wa-ctl-press); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.skin-winamp .ctxmenu.attached::before { display: none; }
+/* A box's list of values: the box's LCD, continued below it past a
+   faint line, in a raised brushed-metal frame (as the skin's windows)
+   on its other three sides. */
+.skin-winamp .ctxmenu.attached.of-field { color: var(--wa-green); border: 0; border-radius: 0; margin-top: 0; padding: 0 4px 4px;
+  background: var(--wa-scan), linear-gradient(var(--wa-sunken), var(--wa-sunken)), var(--wa-brush), var(--wa-face);
+  background-clip: content-box, content-box, border-box, border-box;
+  box-shadow: -1px 0 0 rgba(0, 0, 0, .6), 1px 1px 0 rgba(0, 0, 0, .6), inset 1px 0 0 var(--wa-lt), inset -1px -1px 0 var(--wa-dk), 6px 8px 0 rgba(0, 0, 0, .5); }
+.skin-winamp .ui-joined.open > :is(.ui-input, .ui-field-button) { border-bottom-color: rgba(78, 240, 127, .14); box-shadow: inset 0 1px 0 var(--wa-dk); }
+.skin-winamp .ui-joined.open > .ui-input { box-shadow: inset 1px 1px 0 var(--wa-dk); }
+.skin-winamp .ctxmenu.of-field .menu-item + .menu-item { box-shadow: none; }
+.skin-winamp .ctxmenu.of-field .menu-item.hi { background: var(--wa-green); color: #000; box-shadow: none; text-shadow: none; }
+.skin-winamp .ctxmenu.of-field .menu-item .keys { color: inherit; opacity: .7; }

@@ -39,7 +39,14 @@ pub struct Marker {
     /// insertions strictly before always shift it, insertions strictly after
     /// never do. Used to keep search-match highlights from growing when text
     /// is typed immediately after a match (issue #2053).
+    ///
+    /// This is the gravity of the start; see `end_right_gravity` for the end.
     pub right_gravity: bool,
+    /// The same, for the end. Equal to `right_gravity` unless the marker was
+    /// created with [`IntervalTree::insert_with_gravity`]: a range that keeps
+    /// to the text it covers takes text typed at its start out of it (start
+    /// right) and text typed at its end too (end left).
+    pub end_right_gravity: bool,
     /// Where the marker sits among markers at the same position: they are
     /// kept by `(start, order, id)`. 0 unless created with
     /// [`IntervalTree::insert_ordered`]; the virtual lines anchored at one byte
@@ -59,7 +66,9 @@ struct Node {
 
     /// AVL: Height of this node's subtree
     pub height: i32,
-    /// Augmentation: The max 'end' value in this node's subtree
+    /// Augmentation: The max 'end' value in this node's subtree, before this
+    /// node's own `lazy_delta` (like its interval): the subtree's true
+    /// maximum is `max_end + lazy_delta` (see [`Node::true_max_end`]).
     pub max_end: u64,
     /// Augmentation: how many markers this subtree holds, so the rank of a
     /// position (`count_before`) and the marker at a rank (`nth`) are found by
@@ -152,9 +161,17 @@ impl Node {
         node.lazy_delta = 0;
 
         // The max_end needs to be updated after the push
-        let max_l = node.left.as_ref().map_or(0, |l| l.borrow().max_end);
-        let max_r = node.right.as_ref().map_or(0, |r| r.borrow().max_end);
+        let max_l = Self::true_max_end(&node.left);
+        let max_r = Self::true_max_end(&node.right);
         node.max_end = max(node.marker.interval.end, max(max_l, max_r));
+    }
+
+    /// The greatest end in a subtree (0 for None), its pending delta applied.
+    fn true_max_end(node: &NodePtr) -> u64 {
+        node.as_ref().map_or(0, |n| {
+            let n = n.borrow();
+            (n.max_end as i64 + n.lazy_delta) as u64
+        })
     }
 
     /// Updates a node's height and max_end based on its children.
@@ -166,8 +183,8 @@ impl Node {
         n.height = 1 + max(height_l, height_r);
         n.size = 1 + Self::size(&n.left) + Self::size(&n.right);
 
-        let max_l = n.left.as_ref().map_or(0, |l| l.borrow().max_end);
-        let max_r = n.right.as_ref().map_or(0, |r| r.borrow().max_end);
+        let max_l = Self::true_max_end(&n.left);
+        let max_r = Self::true_max_end(&n.right);
         n.max_end = max(n.marker.interval.end, max(max_l, max_r));
     }
 }
@@ -197,20 +214,33 @@ impl IntervalTree {
     /// marker's position leaves it in place rather than pushing it forward.
     /// Performance: O(log n)
     pub fn insert_left_gravity(&mut self, start: u64, end: u64) -> MarkerId {
-        self.insert_full(start, end, MarkerType::Position, false, 0)
+        self.insert_full(start, end, MarkerType::Position, false, false, 0)
     }
 
-    /// Insert a marker with a specific ID and type (for set_position).
-    /// The caller must ensure the ID is not already in use.
-    fn insert_with_id(
+    /// Inserts a marker whose start and end each have their own gravity
+    /// (`true`: right, pushed forward by text inserted exactly there).
+    /// Performance: O(log n)
+    pub fn insert_with_gravity(
         &mut self,
-        id: MarkerId,
         start: u64,
         end: u64,
-        marker_type: MarkerType,
-        right_gravity: bool,
-        order: i64,
-    ) {
+        start_right_gravity: bool,
+        end_right_gravity: bool,
+    ) -> MarkerId {
+        self.insert_full(
+            start,
+            end,
+            MarkerType::Position,
+            start_right_gravity,
+            end_right_gravity,
+            0,
+        )
+    }
+
+    /// Insert `marker` under its own ID (for set_position).
+    /// The caller must ensure the ID is not already in use.
+    fn insert_with_id(&mut self, marker: Marker) {
+        let id = marker.id;
         debug_assert!(
             id < self.next_id,
             "insert_with_id: id {} must be < next_id {}",
@@ -222,22 +252,15 @@ impl IntervalTree {
             "insert_with_id: id {} already in use",
             id
         );
-        let marker = Marker {
-            id,
-            interval: Interval { start, end },
-            marker_type,
-            right_gravity,
-            order,
-        };
 
-        let new_node = Node::new(marker.clone(), Weak::new());
+        let new_node = Node::new(marker, Weak::new());
         self.root = Self::insert_recursive(self.root.take(), new_node.clone());
         self.marker_map.insert(id, new_node);
     }
 
     /// Insert a marker with a specific type (right gravity).
     pub fn insert_with_type(&mut self, start: u64, end: u64, marker_type: MarkerType) -> MarkerId {
-        self.insert_full(start, end, marker_type, true, 0)
+        self.insert_full(start, end, marker_type, true, true, 0)
     }
 
     /// Inserts a marker placed among the markers at its position by `order`
@@ -251,7 +274,14 @@ impl IntervalTree {
         order: i64,
         right_gravity: bool,
     ) -> MarkerId {
-        self.insert_full(start, end, MarkerType::Position, right_gravity, order)
+        self.insert_full(
+            start,
+            end,
+            MarkerType::Position,
+            right_gravity,
+            right_gravity,
+            order,
+        )
     }
 
     /// Insert a marker with a specific type and gravity.
@@ -261,6 +291,7 @@ impl IntervalTree {
         end: u64,
         marker_type: MarkerType,
         right_gravity: bool,
+        end_right_gravity: bool,
         order: i64,
     ) -> MarkerId {
         let id = self.next_id;
@@ -270,6 +301,7 @@ impl IntervalTree {
             interval: Interval { start, end },
             marker_type,
             right_gravity,
+            end_right_gravity,
             order,
         };
 
@@ -332,6 +364,7 @@ impl IntervalTree {
                     interval: Interval { start, end },
                     marker_type: MarkerType::Position,
                     right_gravity: true,
+                    end_right_gravity: true,
                     order: 0,
                 },
                 Weak::new(),
@@ -501,9 +534,8 @@ impl IntervalTree {
     /// Performance: O(log n)
     pub fn set_position(&mut self, id: MarkerId, new_start: u64, new_end: u64) -> bool {
         // Get the marker's type and gravity before deleting
-        let (marker_type, right_gravity, order) = match self.get_marker(id) {
-            Some(m) => (m.marker_type, m.right_gravity, m.order),
-            None => return false,
+        let Some(m) = self.get_marker(id) else {
+            return false;
         };
 
         // Delete from tree
@@ -512,7 +544,13 @@ impl IntervalTree {
         }
 
         // Reinsert with same ID
-        self.insert_with_id(id, new_start, new_end, marker_type, right_gravity, order);
+        self.insert_with_id(Marker {
+            interval: Interval {
+                start: new_start,
+                end: new_end,
+            },
+            ..m
+        });
         true
     }
 
@@ -531,7 +569,7 @@ impl IntervalTree {
     /// The result is fully key-ordered if every marker *not* moved already
     /// was, which holds after a deletion for all but the ones it clamped.
     pub fn set_positions(&mut self, moves: &[(MarkerId, u64)]) {
-        let moving: Vec<(MarkerId, u64, MarkerType, bool, i64)> = moves
+        let moving: Vec<Marker> = moves
             .iter()
             .filter_map(|&(id, position)| {
                 let m = self.get_marker(id)?;
@@ -539,12 +577,17 @@ impl IntervalTree {
                     m.interval.start, m.interval.end,
                     "set_positions moves point markers only"
                 );
-                self.delete(id)
-                    .then_some((id, position, m.marker_type, m.right_gravity, m.order))
+                self.delete(id).then_some(Marker {
+                    interval: Interval {
+                        start: position,
+                        end: position,
+                    },
+                    ..m
+                })
             })
             .collect();
-        for (id, position, marker_type, right_gravity, order) in moving {
-            self.insert_with_id(id, position, position, marker_type, right_gravity, order);
+        for m in moving {
+            self.insert_with_id(m);
         }
     }
 
@@ -556,10 +599,10 @@ impl IntervalTree {
     /// down — the order a bulk edit uses — but costs O(n + m log m) for `n`
     /// markers and `m` edits instead of O(n·m).
     ///
-    /// The per-edit path cannot do better: a deletion has to visit every marker
-    /// at or after its position so each one can clamp into the deleted range,
-    /// which made a replace-all (one edit per match, one marker per match)
-    /// quadratic and effectively non-terminating (issue #2893).
+    /// The per-edit path descends once per edit and visits the markers that
+    /// edit treats one by one (see `adjust_recursive`); for a batch of many
+    /// edits over many markers, such as a replace-all with one edit and one
+    /// marker per match (issue #2893), one pass over the markers is cheaper.
     ///
     /// Edits must not overlap — deleted ranges are disjoint, which is what
     /// `apply_bulk_edits` requires of them anyway — and no two may share a
@@ -599,27 +642,28 @@ impl IntervalTree {
         for node_rc in &nodes {
             let mut node = node_rc.borrow_mut();
             let left_gravity = !node.marker.right_gravity;
+            let end_left_gravity = !node.marker.end_right_gravity;
             let (old_start, old_end) = (
                 node.marker.interval.start,
                 node.marker.interval.end.max(node.marker.interval.start),
             );
 
             // Edits at or before the start govern both coordinates; edits
-            // strictly inside the interval move only the end, and each one
-            // shrinks it against the (unmoved) start, so they are folded
+            // strictly inside the interval move only the end, and a deletion
+            // there clamps it to the deletion's position, so they are folded
             // individually. For a point marker that window is empty.
             let governing = ordered.partition_point(|(pos, _)| *pos <= old_start);
             let inside_end = ordered.partition_point(|(pos, _)| *pos <= old_end);
 
             let mut end = old_end as i64;
             for &(pos, delta) in ordered[governing..inside_end].iter().rev() {
-                let shifts = if left_gravity && delta > 0 {
+                let shifts = if end_left_gravity && delta > 0 {
                     end > pos as i64
                 } else {
                     end >= pos as i64
                 };
                 if shifts {
-                    end = (end + delta).max(old_start as i64);
+                    end = (end + delta).max(pos as i64);
                 }
             }
 
@@ -628,7 +672,7 @@ impl IntervalTree {
             let start = Self::map_coord(old_start, left_gravity, head, head_prefix);
             // Mirrors the per-edit path: an end never precedes its own start.
             let end =
-                Self::map_coord(end.max(0) as u64, left_gravity, head, head_prefix).max(start);
+                Self::map_coord(end.max(0) as u64, end_left_gravity, head, head_prefix).max(start);
             node.marker.interval.start = start;
             node.marker.interval.end = end;
             node.lazy_delta = 0;
@@ -726,38 +770,33 @@ impl IntervalTree {
         // otherwise the in-place adjust already keeps stayers correctly placed.
         if delta > 0 {
             // Collect every marker whose start is exactly `pos` by descending
-            // the BST on `start` alone (no reliance on the `max_end`
-            // augmentation, which can be transiently stale under lazy-delta
-            // propagation). The tree is position-ordered here, so this is a
-            // reliable O(log n + k) lookup.
-            let mut at_pos: Vec<StartsAt> = Vec::new();
+            // the BST on `start` alone. The tree is position-ordered here, so
+            // this is a reliable O(log n + k) lookup.
+            let mut at_pos: Vec<Marker> = Vec::new();
             Self::collect_starts_at(&self.root, 0, pos, &mut at_pos);
 
             let has_mover = at_pos.iter().any(|m| m.right_gravity);
-            let stayers: Vec<StartsAt> = at_pos.into_iter().filter(|m| !m.right_gravity).collect();
+            let stayers: Vec<Marker> = at_pos.into_iter().filter(|m| !m.right_gravity).collect();
 
             if has_mover && !stayers.is_empty() {
                 for m in &stayers {
                     self.delete(m.id);
                 }
                 Self::adjust_recursive(&mut self.root, pos, delta);
-                for StartsAt {
-                    id,
-                    end,
-                    marker_type: mtype,
-                    order,
-                    ..
-                } in stayers
-                {
-                    // Left-gravity: the start stays at `pos`; the end shifts only
-                    // if it is strictly after `pos`, mirroring the gravity logic
-                    // in adjust_recursive.
-                    let new_end = if end > pos {
+                for m in stayers {
+                    // Left-gravity: the start stays at `pos`; the end shifts if
+                    // it is after `pos`, or at it with right gravity, mirroring
+                    // the gravity logic in adjust_recursive.
+                    let end = m.interval.end;
+                    let end = if end > pos || (end == pos && m.end_right_gravity) {
                         (end as i64 + delta) as u64
                     } else {
                         end
                     };
-                    self.insert_with_id(id, pos, new_end, mtype, false, order);
+                    self.insert_with_id(Marker {
+                        interval: Interval { start: pos, end },
+                        ..m
+                    });
                 }
                 return;
             }
@@ -768,8 +807,8 @@ impl IntervalTree {
 
     /// Collects every marker whose true start equals `pos`. Read-only descent
     /// that accumulates lazy deltas manually and routes purely on `start`;
-    /// relies only on the BST's position ordering, not on `max_end`.
-    fn collect_starts_at(node: &NodePtr, acc_delta: i64, pos: u64, out: &mut Vec<StartsAt>) {
+    /// relies only on the BST's position ordering.
+    fn collect_starts_at(node: &NodePtr, acc_delta: i64, pos: u64, out: &mut Vec<Marker>) {
         let Some(n) = node else { return };
         let nb = n.borrow();
         let d = acc_delta + nb.lazy_delta;
@@ -778,14 +817,7 @@ impl IntervalTree {
             Ordering::Less => Self::collect_starts_at(&nb.left, d, pos, out),
             Ordering::Greater => Self::collect_starts_at(&nb.right, d, pos, out),
             Ordering::Equal => {
-                let end = (nb.marker.interval.end as i64 + d) as u64;
-                out.push(StartsAt {
-                    id: nb.marker.id,
-                    end,
-                    right_gravity: nb.marker.right_gravity,
-                    marker_type: nb.marker.marker_type.clone(),
-                    order: nb.marker.order,
-                });
+                out.push(Self::resolved(&nb.marker, d));
                 // Equal-start markers can sit in either subtree (BST tie-break
                 // by order and id), so search both.
                 Self::collect_starts_at(&nb.left, d, pos, out);
@@ -794,11 +826,12 @@ impl IntervalTree {
         }
     }
 
-    /// Finds all markers that overlap a given query range.
+    /// Finds all markers that overlap a given query range (both ends
+    /// inclusive), in key order: by position, then `order`, then id.
     /// Performance: O(log n + k)
     pub fn query(&self, query_start: u64, query_end: u64) -> Vec<Marker> {
         let mut results = Vec::new();
-        Self::query_recursive(&self.root, query_start, query_end, &mut results);
+        Self::query_recursive(&self.root, 0, query_start, query_end, &mut results);
         results
     }
 
@@ -899,15 +932,6 @@ impl IntervalTree {
     }
 }
 
-/// A marker [`IntervalTree::collect_starts_at`] found at a position.
-struct StartsAt {
-    id: MarkerId,
-    end: u64,
-    right_gravity: bool,
-    marker_type: MarkerType,
-    order: i64,
-}
-
 // ---
 // 4. Recursive Implementation Details (Insert, Delete, Adjust)
 // ---
@@ -957,7 +981,9 @@ impl IntervalTree {
         }
     }
 
-    /// CORRECTED Recursive helper for `adjust_for_edit` (O(log n) lazy update)
+    /// Recursive helper for `adjust_for_edit`: O(log n) plus the markers the
+    /// edit treats one by one (those a deletion clamps, those an insertion
+    /// lands exactly on, and the intervals it falls inside).
     fn adjust_recursive(node_opt: &mut NodePtr, pos: u64, delta: i64) {
         let node_rc = match node_opt {
             Some(n) => n,
@@ -991,74 +1017,89 @@ impl IntervalTree {
                 }
             }
 
-            // 2. Handle the right subtree.
-            // For insertions strictly before this node's start, every node to
-            // the right has start > pos and shifts uniformly, so lazy
-            // propagation is safe and efficient. When the insertion lands
-            // exactly on this node's start (pos == start), the right subtree may
-            // contain other markers also sitting at `pos` whose gravity must be
-            // respected individually, so recurse instead of shifting them all.
-            // Deletions always recurse so nodes can clamp to `pos`.
-            if delta < 0 || pos == start {
+            // 2. Handle the right subtree, whose markers all start at or after
+            // this one. They shift uniformly, so lazily, unless the edit can
+            // treat them one by one: an insertion exactly at this start (other
+            // markers sitting at `pos` move by their own gravity) or a deletion
+            // reaching past it (markers it swallows clamp to `pos`).
+            let uniform = if delta < 0 {
+                start as i64 + delta >= pos as i64
+            } else {
+                pos < start
+            };
+            if uniform {
+                if let Some(ref right) = node.right {
+                    right.borrow_mut().lazy_delta += delta;
+                }
+            } else {
                 Self::adjust_recursive(&mut node.right, pos, delta);
-            } else if let Some(ref right) = node.right {
-                right.borrow_mut().lazy_delta += delta;
             }
 
             // 3. Recurse left, as it may contain markers spanning the edit pos.
             Self::adjust_recursive(&mut node.left, pos, delta);
         } else {
             // pos > start
-            // CASE 2: This node's start is BEFORE the edit.
-            // Its start is unaffected. We only need to check the right subtree
-            // for nodes that might be affected.
-            Self::adjust_recursive(&mut node.right, pos, delta);
+            // CASE 2: This node's start is BEFORE the edit, and so is every
+            // start to its left. Its start is unaffected; a subtree needs a
+            // visit only where an end reaches the edit (to the left, intervals
+            // spanning it; to the right, also the starts after it).
+            if Node::true_max_end(&node.left) >= pos {
+                Self::adjust_recursive(&mut node.left, pos, delta);
+            }
+            if Node::true_max_end(&node.right) >= pos {
+                Self::adjust_recursive(&mut node.right, pos, delta);
+            }
         }
 
-        // Handle the interval span case (where the edit falls inside [start, end]).
-        // A left-gravity marker's end stays put for an insertion landing exactly
-        // on it, matching its start behaviour above.
+        // Handle the interval span case (where the edit falls inside [start, end]),
+        // with the end's own gravity: a left-gravity end stays put for an
+        // insertion landing exactly on it. A deletion swallowing the end
+        // clamps it to `pos`, and an end never precedes its start.
         let end = node.marker.interval.end;
-        let shift_end = if left_gravity && delta > 0 {
+        let end_left_gravity = !node.marker.end_right_gravity;
+        let shift_end = if end_left_gravity && delta > 0 {
             end > pos
         } else {
             end >= pos
         };
-        if shift_end {
-            node.marker.interval.end =
-                (end as i64 + delta).max(node.marker.interval.start as i64) as u64;
-        }
+        let end = if shift_end {
+            (end as i64 + delta).max(pos as i64) as u64
+        } else {
+            end
+        };
+        node.marker.interval.end = end.max(node.marker.interval.start);
 
         drop(node);
         Node::update_stats(node_rc);
     }
 
     /// Recursive helper for query
+    ///
+    /// Read-only: `acc_delta` is the ancestors' pending lazy deltas. Visits
+    /// in order, so the results come in key order.
     fn query_recursive(
         node_opt: &NodePtr,
+        acc_delta: i64,
         query_start: u64,
         query_end: u64,
         results: &mut Vec<Marker>,
     ) {
-        let node_rc = match node_opt {
-            Some(n) => n,
-            None => return,
-        };
-
-        Node::push_delta(node_rc);
+        let Some(node_rc) = node_opt else { return };
         let node = node_rc.borrow();
+        let delta = acc_delta + node.lazy_delta;
 
-        let i = &node.marker.interval;
-        if i.start <= query_end && i.end >= query_start {
-            results.push(node.marker.clone());
+        if (Node::true_max_end(&node.left) as i64 + delta) as u64 >= query_start {
+            Self::query_recursive(&node.left, delta, query_start, query_end, results);
         }
 
-        if node.left.is_some() && node.left.as_ref().unwrap().borrow().max_end >= query_start {
-            Self::query_recursive(&node.left, query_start, query_end, results);
+        let start = (node.marker.interval.start as i64 + delta) as u64;
+        let end = (node.marker.interval.end as i64 + delta) as u64;
+        if start <= query_end && end >= query_start {
+            results.push(Self::resolved(&node.marker, delta));
         }
 
-        if node.right.is_some() && node.marker.interval.start <= query_end {
-            Self::query_recursive(&node.right, query_start, query_end, results);
+        if start <= query_end {
+            Self::query_recursive(&node.right, delta, query_start, query_end, results);
         }
     }
 
@@ -1791,7 +1832,8 @@ mod tests {
         /// Fold one interval through the edits the way the per-edit path
         /// does: highest position first, shifting a coordinate at or after
         /// the edit (strictly after, for a left-gravity marker meeting an
-        /// insertion) and never letting the end precede the start.
+        /// insertion), clamping a coordinate inside a deletion to the
+        /// deletion point, and never letting the end precede the start.
         fn shadow_adjust(
             mut start: i64,
             mut end: i64,
@@ -1814,7 +1856,12 @@ mod tests {
                     end >= pos
                 };
                 if shift_end {
-                    end = (end + delta).max(start);
+                    end = if delta < 0 {
+                        (end + delta).max(pos)
+                    } else {
+                        end + delta
+                    }
+                    .max(start);
                 }
             }
             (start.max(0) as u64, end.max(0) as u64)

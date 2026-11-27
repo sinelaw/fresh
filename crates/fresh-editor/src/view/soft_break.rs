@@ -18,11 +18,11 @@
 //! - Concealment operates on the already-broken lines
 //! - The wrapping transform sees pre-broken content
 
-use crate::model::marker::{MarkerId, MarkerList};
 use crate::view::activation::ScopedActivation;
 use crate::view::theme::Theme;
 use fresh_core::api::MarkerActivation;
 use fresh_core::overlay::OverlayNamespace;
+use fresh_markers::marker::{MarkerId, MarkerList};
 use ratatui::style::Style;
 use std::collections::HashMap;
 

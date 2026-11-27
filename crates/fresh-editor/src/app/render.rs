@@ -302,11 +302,345 @@ impl Editor {
     /// skipped has to be guaranteed a retry. (The pre-layout drain at the top
     /// of `render` does take the lock; it runs before any drawing, which is the
     /// point of doing it there.)
-    fn request_plugin_render(&mut self) {
+    pub(crate) fn request_plugin_render(&mut self) {
         #[cfg(feature = "plugins")]
         {
             self.plugin_render_requested = true;
         }
+    }
+
+    /// Offer the plugins, through `lines_changed`, the lines `split_id` shows
+    /// of `buffer_id` in `split_area` that they have not been offered yet;
+    /// returns how many were offered.
+    ///
+    /// Reads the split's viewport as it stands, so a caller that swapped in
+    /// another view's scroll — a web client's pane, which is scrolled and
+    /// sized independently of the editor's own (`client_pane.rs`) — offers the
+    /// lines *that* view is about to draw. Without that, a web view scrolled
+    /// past the editor's own screenful draws lines no plugin ever decorated.
+    pub(crate) fn offer_visible_lines(
+        &mut self,
+        split_id: LeafId,
+        buffer_id: BufferId,
+        split_area: ratatui::layout::Rect,
+    ) -> usize {
+        // Get viewport from SplitViewState (the authoritative source)
+        let viewport_top_byte = self
+            .active_window()
+            .split_view_states()
+            .get(&split_id)
+            .map(|vs| vs.buffer_tab_state().viewport.top_byte())
+            .unwrap_or(0);
+
+        // Whether this buffer is being composed in any split, read from
+        // the live view states rather than from the plugin snapshot.
+        // Travels with the batch (see `HookArgs::LinesChanged`) because
+        // the lines below are marked seen as soon as they are handed
+        // over: a consumer that had to re-derive this from
+        // `getBufferInfo()` would be reading a mirror that is refreshed
+        // on the editor thread's own schedule, and would silently drop
+        // its only decoration pass whenever it read too early (#2968).
+        let composing_in_any_split = self.active_window().split_view_states().values().any(|vs| {
+            vs.buffer_state(buffer_id)
+                .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
+                .unwrap_or(false)
+        });
+
+        let __active_id = self.active_window;
+        let __win = self
+            .windows
+            .get_mut(&__active_id)
+            .expect("active window must exist");
+        // Take a disjoint mut borrow on `seen_byte_ranges` (a sibling
+        // field on Window, not part of WindowBuffers) so the closure
+        // below can update it alongside the buffer + view-state
+        // mutations.
+        let seen_ranges_for_win = &mut __win.seen_byte_ranges;
+        let plugin_manager = &self.plugin_manager;
+        let estimated_line_length = self.config.editor.estimated_line_length;
+        let mut hooks_deferred = false;
+        let added = __win
+            .buffers
+            .with_buffer_and_view_states(buffer_id, |state, _vs_map| {
+                // Both hooks go through `try_read`: the draw computes
+                // the payload and hands it off, but never waits on the
+                // plugin lock. On contention nothing is marked seen, so
+                // the same lines are offered again next frame — the
+                // payload is deferred, not lost.
+                let Ok(pm_guard) = plugin_manager.try_read() else {
+                    hooks_deferred = true;
+                    return 0;
+                };
+                // `render_start` has a tiny payload (just the
+                // buffer id) — fire unconditionally so third-party
+                // plugins listening for it still work.
+                pm_guard.run_hook(
+                    "render_start",
+                    crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id },
+                );
+
+                let visible_count = split_area.height as usize;
+                // What the pane can show, in bytes at four per column:
+                // the offer covers the visible rows, and a row holds a
+                // pane's width. Bounding the offer by the screen rather
+                // than by a flat constant is what keeps it screen-sized
+                // on a file whose lines are megabytes long.
+                let offer_budget = (split_area.width as usize)
+                    .saturating_mul(visible_count.max(1))
+                    .saturating_mul(4)
+                    .saturating_add(1024)
+                    .min(PLUGIN_LINE_OFFER_BYTES);
+
+                let top_byte = viewport_top_byte;
+                let seen_byte_ranges = seen_ranges_for_win.entry(buffer_id).or_default();
+
+                // Where the walk starts. Normally the viewport's top
+                // line; for a composing buffer, backed up to the start
+                // of the blank-line-delimited run that line belongs to
+                // — see `flow_run_start` for why a reflowing renderer
+                // needs that and nothing else does.
+                let walk_start = if composing_in_any_split {
+                    flow_run_start(&state.buffer, top_byte)
+                } else {
+                    top_byte
+                };
+
+                // Every line the walk saw, in order, paired with
+                // whether it had been offered before. Two passes over
+                // it below: one to decide what to send, one to build
+                // the payload. Only a composing buffer keeps more than
+                // the viewport here.
+                struct WalkedLine {
+                    line_number: usize,
+                    byte_start: usize,
+                    byte_end: usize,
+                    content: String,
+                    seen: bool,
+                }
+                // Source lines to cover the viewport with. One per row,
+                // except that a conceal spanning a line break renders
+                // two source lines as one row — which is how compose
+                // mode reflows a paragraph. The renderer sizes its own
+                // token build the same way, from the same helper, so
+                // the lines this offers the plugin are exactly the ones
+                // the frame will draw; without it the bottom block of a
+                // reflowed viewport is never offered and so never
+                // flows. Self-correcting rather than predictive: the
+                // joins it measures are the ones already on screen, so
+                // a document opens at one line per row and settles over
+                // the next frames as its blocks join.
+                let rows =
+                    crate::view::ui::split_rendering::transforms::join_adjusted_visible_count(
+                        &state.buffer,
+                        &state.conceals,
+                        &state.marker_list,
+                        &[],
+                        top_byte,
+                        visible_count,
+                        composing_in_any_split,
+                    );
+                // A split with no rows draws nothing, so it has nothing
+                // to offer — and the walk below has no stopping rule.
+                if rows == 0 {
+                    return 0;
+                }
+
+                let mut walked: Vec<WalkedLine> = Vec::new();
+                let mut line_number = state.buffer.get_line_number(walk_start);
+                // Capped per read *and* in total: the walk offers the
+                // plugins the lines under the viewport, and on a file
+                // that is one enormous line "a line" is the file. The
+                // reader's own 100 KB piece cap still made this a
+                // multi-megabyte read every frame — for text no plugin
+                // can decorate, since only the first screenful of it is
+                // ever drawn.
+                let buffer_len = state.buffer.len();
+                let mut iter = state
+                    .buffer
+                    .line_iterator(walk_start, estimated_line_length)
+                    .with_max_line_bytes(offer_budget);
+                let mut walked_bytes = 0usize;
+                // End of the last line walked, so the embedded-region
+                // probe below covers exactly the lines we iterated.
+                let mut walked_end = walk_start;
+                // Lines walked ahead of the viewport's own top line:
+                // the run's lead-in, which must not eat the viewport's
+                // line budget.
+                let mut lead_in = 0usize;
+                while let Some((line_start, line_content)) = iter.next_line() {
+                    let byte_end = line_start + line_content.len();
+                    walked_end = byte_end;
+                    walked_bytes += line_content.len();
+                    let blank = line_is_blank(&line_content);
+                    if line_start < top_byte {
+                        lead_in += 1;
+                    }
+                    // A piece that stopped short of its line's own
+                    // terminator is the front of a line, not a line:
+                    // the read cap above cut it. Counting it as one
+                    // would number every line below it wrongly, and
+                    // there is nothing below it to offer anyway —
+                    // only the part that fits on screen is ever drawn.
+                    let complete = line_content.ends_with('\n') || byte_end >= buffer_len;
+                    walked.push(WalkedLine {
+                        line_number,
+                        byte_start: line_start,
+                        byte_end,
+                        seen: seen_byte_ranges.contains(&(line_start, byte_end)),
+                        content: line_content,
+                    });
+                    if !complete {
+                        break;
+                    }
+                    line_number += 1;
+
+                    if walked_bytes >= offer_budget {
+                        break;
+                    }
+                    if walked.len() < lead_in + rows {
+                        continue;
+                    }
+                    // The viewport is covered. A composing buffer walks
+                    // on to the end of the run it stopped inside, so a
+                    // batch never carries half a paragraph — bounded,
+                    // because a file whose lines never blank out must
+                    // not turn one frame into a walk over the buffer.
+                    if !composing_in_any_split
+                        || blank
+                        || walked.len() >= lead_in + rows + FLOW_RUN_MAX_LINES
+                    {
+                        break;
+                    }
+                }
+
+                // What to send. A line the plugin has not been offered
+                // before, always; and for a composing buffer, every
+                // other line of that line's run as well, so a per-line
+                // pass that flows a paragraph sees all of it at once
+                // (`markdown_compose`'s joins and block wrap). Runs are
+                // delimited by blank lines, which is markdown's own
+                // paragraph rule and the only one that does not need a
+                // grammar.
+                let mut send: Vec<bool> = walked.iter().map(|l| !l.seen).collect();
+                if composing_in_any_split {
+                    let mut i = 0;
+                    while i < walked.len() {
+                        if line_is_blank(&walked[i].content) {
+                            i += 1;
+                            continue;
+                        }
+                        let start = i;
+                        while i < walked.len() && !line_is_blank(&walked[i].content) {
+                            i += 1;
+                        }
+                        // A run longer than the cap is not closed here,
+                        // so it is left to the plain unseen-lines rule:
+                        // the consumer sees a line whose predecessor is
+                        // missing and treats it as a block head, which
+                        // is wrong-but-stable rather than unbounded work
+                        // on every scroll step.
+                        if i - start <= FLOW_RUN_MAX_LINES && send[start..i].iter().any(|s| *s) {
+                            send[start..i].iter_mut().for_each(|s| *s = true);
+                        }
+                    }
+                }
+
+                let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> = Vec::new();
+                let mut fresh_ranges: Vec<(usize, usize)> = Vec::new();
+                for (line, send) in walked.into_iter().zip(send) {
+                    if !send {
+                        continue;
+                    }
+                    fresh_ranges.push((line.byte_start, line.byte_end));
+                    new_lines.push(crate::services::plugins::hooks::LineInfo {
+                        line_number: line.line_number,
+                        byte_start: line.byte_start,
+                        byte_end: line.byte_end,
+                        content: line.content,
+                        region: None,
+                        table: None,
+                    });
+                }
+
+                let count = new_lines.len();
+                if !new_lines.is_empty() {
+                    // What the grammar says about each reported line's
+                    // place in the document's structure: whether it sits
+                    // inside an embedded-language region (a Markdown
+                    // fence, a Vue `<script>`), and where it sits in a
+                    // table. These are the properties a decoration
+                    // plugin cannot work out for itself — region
+                    // membership is not derivable from a line's own text
+                    // at all, and a table's first/last row needs the
+                    // neighbouring lines, which an edit-sized batch does
+                    // not contain. Attached here, alongside the live
+                    // coordinates, so a consumer never has to store
+                    // structure of its own.
+                    //
+                    // One lookup answers both, read off the highlight
+                    // cache this frame's highlight pass then hits. It
+                    // costs nothing for syntaxes with neither (the
+                    // overwhelming majority), and each list is skipped
+                    // when it has nothing to report.
+                    let structure = state
+                        .highlighter
+                        .structure_lines_in(&state.buffer, walk_start..walked_end);
+                    if !structure.regions.is_empty() {
+                        let mut next = 0usize;
+                        for line in new_lines.iter_mut() {
+                            // Both sides ascend by line start, so one
+                            // forward walk pairs them.
+                            while next < structure.regions.len()
+                                && structure.regions[next].0 < line.byte_start
+                            {
+                                next += 1;
+                            }
+                            if structure
+                                .regions
+                                .get(next)
+                                .is_some_and(|r| r.0 == line.byte_start)
+                            {
+                                line.region = Some(structure.regions[next].1);
+                            }
+                        }
+                    }
+                    if !structure.tables.is_empty() {
+                        let mut next = 0usize;
+                        for line in new_lines.iter_mut() {
+                            while next < structure.tables.len()
+                                && structure.tables[next].0 < line.byte_start
+                            {
+                                next += 1;
+                            }
+                            if structure
+                                .tables
+                                .get(next)
+                                .is_some_and(|t| t.0 == line.byte_start)
+                            {
+                                line.table = Some(structure.tables[next].1);
+                            }
+                        }
+                    }
+                    pm_guard.run_hook(
+                        "lines_changed",
+                        crate::services::plugins::hooks::HookArgs::LinesChanged {
+                            buffer_id,
+                            lines: new_lines,
+                            epoch: state.buffer.version(),
+                            is_composing_in_any_split: composing_in_any_split,
+                        },
+                    );
+                    for range in fresh_ranges {
+                        seen_byte_ranges.insert(range);
+                    }
+                }
+                count
+            })
+            .unwrap_or(0);
+        if hooks_deferred {
+            self.request_plugin_render();
+        }
+        added
     }
 
     /// Render the editor to the terminal
@@ -577,327 +911,7 @@ impl Editor {
 
             let mut total_new_lines = 0usize;
             for (split_id, buffer_id, split_area) in visible_buffers {
-                // Get viewport from SplitViewState (the authoritative source)
-                let viewport_top_byte = self
-                    .active_window()
-                    .split_view_states()
-                    .get(&split_id)
-                    .map(|vs| vs.buffer_tab_state().viewport.top_byte())
-                    .unwrap_or(0);
-
-                // Whether this buffer is being composed in any split, read from
-                // the live view states rather than from the plugin snapshot.
-                // Travels with the batch (see `HookArgs::LinesChanged`) because
-                // the lines below are marked seen as soon as they are handed
-                // over: a consumer that had to re-derive this from
-                // `getBufferInfo()` would be reading a mirror that is refreshed
-                // on the editor thread's own schedule, and would silently drop
-                // its only decoration pass whenever it read too early (#2968).
-                let composing_in_any_split =
-                    self.active_window().split_view_states().values().any(|vs| {
-                        vs.buffer_state(buffer_id)
-                            .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
-                            .unwrap_or(false)
-                    });
-
-                let __active_id = self.active_window;
-                let __win = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .expect("active window must exist");
-                // Take a disjoint mut borrow on `seen_byte_ranges` (a sibling
-                // field on Window, not part of WindowBuffers) so the closure
-                // below can update it alongside the buffer + view-state
-                // mutations.
-                let seen_ranges_for_win = &mut __win.seen_byte_ranges;
-                let plugin_manager = &self.plugin_manager;
-                let estimated_line_length = self.config.editor.estimated_line_length;
-                let mut hooks_deferred = false;
-                let added = __win
-                    .buffers
-                    .with_buffer_and_view_states(buffer_id, |state, _vs_map| {
-                        // Both hooks go through `try_read`: the draw computes
-                        // the payload and hands it off, but never waits on the
-                        // plugin lock. On contention nothing is marked seen, so
-                        // the same lines are offered again next frame — the
-                        // payload is deferred, not lost.
-                        let Ok(pm_guard) = plugin_manager.try_read() else {
-                            hooks_deferred = true;
-                            return 0;
-                        };
-                        // `render_start` has a tiny payload (just the
-                        // buffer id) — fire unconditionally so third-party
-                        // plugins listening for it still work.
-                        pm_guard.run_hook(
-                            "render_start",
-                            crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id },
-                        );
-
-                        let visible_count = split_area.height as usize;
-                        // What the pane can show, in bytes at four per column:
-                        // the offer covers the visible rows, and a row holds a
-                        // pane's width. Bounding the offer by the screen rather
-                        // than by a flat constant is what keeps it screen-sized
-                        // on a file whose lines are megabytes long.
-                        let offer_budget = (split_area.width as usize)
-                            .saturating_mul(visible_count.max(1))
-                            .saturating_mul(4)
-                            .saturating_add(1024)
-                            .min(PLUGIN_LINE_OFFER_BYTES);
-
-                        let top_byte = viewport_top_byte;
-                        let seen_byte_ranges = seen_ranges_for_win.entry(buffer_id).or_default();
-
-                        // Where the walk starts. Normally the viewport's top
-                        // line; for a composing buffer, backed up to the start
-                        // of the blank-line-delimited run that line belongs to
-                        // — see `flow_run_start` for why a reflowing renderer
-                        // needs that and nothing else does.
-                        let walk_start = if composing_in_any_split {
-                            flow_run_start(&state.buffer, top_byte)
-                        } else {
-                            top_byte
-                        };
-
-                        // Every line the walk saw, in order, paired with
-                        // whether it had been offered before. Two passes over
-                        // it below: one to decide what to send, one to build
-                        // the payload. Only a composing buffer keeps more than
-                        // the viewport here.
-                        struct WalkedLine {
-                            line_number: usize,
-                            byte_start: usize,
-                            byte_end: usize,
-                            content: String,
-                            seen: bool,
-                        }
-                        // Source lines to cover the viewport with. One per row,
-                        // except that a conceal spanning a line break renders
-                        // two source lines as one row — which is how compose
-                        // mode reflows a paragraph. The renderer sizes its own
-                        // token build the same way, from the same helper, so
-                        // the lines this offers the plugin are exactly the ones
-                        // the frame will draw; without it the bottom block of a
-                        // reflowed viewport is never offered and so never
-                        // flows. Self-correcting rather than predictive: the
-                        // joins it measures are the ones already on screen, so
-                        // a document opens at one line per row and settles over
-                        // the next frames as its blocks join.
-                        let rows = crate::view::ui::split_rendering::transforms::join_adjusted_visible_count(
-                            &state.buffer,
-                            &state.conceals,
-                            &state.marker_list,
-                            &[],
-                            top_byte,
-                            visible_count,
-                            composing_in_any_split,
-                        );
-                        // A split with no rows draws nothing, so it has nothing
-                        // to offer — and the walk below has no stopping rule.
-                        if rows == 0 {
-                            return 0;
-                        }
-
-                        let mut walked: Vec<WalkedLine> = Vec::new();
-                        let mut line_number = state.buffer.get_line_number(walk_start);
-                        // Capped per read *and* in total: the walk offers the
-                        // plugins the lines under the viewport, and on a file
-                        // that is one enormous line "a line" is the file. The
-                        // reader's own 100 KB piece cap still made this a
-                        // multi-megabyte read every frame — for text no plugin
-                        // can decorate, since only the first screenful of it is
-                        // ever drawn.
-                        let buffer_len = state.buffer.len();
-                        let mut iter = state
-                            .buffer
-                            .line_iterator(walk_start, estimated_line_length)
-                            .with_max_line_bytes(offer_budget);
-                        let mut walked_bytes = 0usize;
-                        // End of the last line walked, so the embedded-region
-                        // probe below covers exactly the lines we iterated.
-                        let mut walked_end = walk_start;
-                        // Lines walked ahead of the viewport's own top line:
-                        // the run's lead-in, which must not eat the viewport's
-                        // line budget.
-                        let mut lead_in = 0usize;
-                        while let Some((line_start, line_content)) = iter.next_line() {
-                            let byte_end = line_start + line_content.len();
-                            walked_end = byte_end;
-                            walked_bytes += line_content.len();
-                            let blank = line_is_blank(&line_content);
-                            if line_start < top_byte {
-                                lead_in += 1;
-                            }
-                            // A piece that stopped short of its line's own
-                            // terminator is the front of a line, not a line:
-                            // the read cap above cut it. Counting it as one
-                            // would number every line below it wrongly, and
-                            // there is nothing below it to offer anyway —
-                            // only the part that fits on screen is ever drawn.
-                            let complete =
-                                line_content.ends_with('\n') || byte_end >= buffer_len;
-                            walked.push(WalkedLine {
-                                line_number,
-                                byte_start: line_start,
-                                byte_end,
-                                seen: seen_byte_ranges.contains(&(line_start, byte_end)),
-                                content: line_content,
-                            });
-                            if !complete {
-                                break;
-                            }
-                            line_number += 1;
-
-                            if walked_bytes >= offer_budget {
-                                break;
-                            }
-                            if walked.len() < lead_in + rows {
-                                continue;
-                            }
-                            // The viewport is covered. A composing buffer walks
-                            // on to the end of the run it stopped inside, so a
-                            // batch never carries half a paragraph — bounded,
-                            // because a file whose lines never blank out must
-                            // not turn one frame into a walk over the buffer.
-                            if !composing_in_any_split
-                                || blank
-                                || walked.len() >= lead_in + rows + FLOW_RUN_MAX_LINES
-                            {
-                                break;
-                            }
-                        }
-
-                        // What to send. A line the plugin has not been offered
-                        // before, always; and for a composing buffer, every
-                        // other line of that line's run as well, so a per-line
-                        // pass that flows a paragraph sees all of it at once
-                        // (`markdown_compose`'s joins and block wrap). Runs are
-                        // delimited by blank lines, which is markdown's own
-                        // paragraph rule and the only one that does not need a
-                        // grammar.
-                        let mut send: Vec<bool> = walked.iter().map(|l| !l.seen).collect();
-                        if composing_in_any_split {
-                            let mut i = 0;
-                            while i < walked.len() {
-                                if line_is_blank(&walked[i].content) {
-                                    i += 1;
-                                    continue;
-                                }
-                                let start = i;
-                                while i < walked.len() && !line_is_blank(&walked[i].content) {
-                                    i += 1;
-                                }
-                                // A run longer than the cap is not closed here,
-                                // so it is left to the plain unseen-lines rule:
-                                // the consumer sees a line whose predecessor is
-                                // missing and treats it as a block head, which
-                                // is wrong-but-stable rather than unbounded work
-                                // on every scroll step.
-                                if i - start <= FLOW_RUN_MAX_LINES
-                                    && send[start..i].iter().any(|s| *s)
-                                {
-                                    send[start..i].iter_mut().for_each(|s| *s = true);
-                                }
-                            }
-                        }
-
-                        let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> =
-                            Vec::new();
-                        let mut fresh_ranges: Vec<(usize, usize)> = Vec::new();
-                        for (line, send) in walked.into_iter().zip(send) {
-                            if !send {
-                                continue;
-                            }
-                            fresh_ranges.push((line.byte_start, line.byte_end));
-                            new_lines.push(crate::services::plugins::hooks::LineInfo {
-                                line_number: line.line_number,
-                                byte_start: line.byte_start,
-                                byte_end: line.byte_end,
-                                content: line.content,
-                                region: None,
-                                table: None,
-                            });
-                        }
-
-                        let count = new_lines.len();
-                        if !new_lines.is_empty() {
-                            // What the grammar says about each reported line's
-                            // place in the document's structure: whether it sits
-                            // inside an embedded-language region (a Markdown
-                            // fence, a Vue `<script>`), and where it sits in a
-                            // table. These are the properties a decoration
-                            // plugin cannot work out for itself — region
-                            // membership is not derivable from a line's own text
-                            // at all, and a table's first/last row needs the
-                            // neighbouring lines, which an edit-sized batch does
-                            // not contain. Attached here, alongside the live
-                            // coordinates, so a consumer never has to store
-                            // structure of its own.
-                            //
-                            // One lookup answers both, read off the highlight
-                            // cache this frame's highlight pass then hits. It
-                            // costs nothing for syntaxes with neither (the
-                            // overwhelming majority), and each list is skipped
-                            // when it has nothing to report.
-                            let structure = state
-                                .highlighter
-                                .structure_lines_in(&state.buffer, walk_start..walked_end);
-                            if !structure.regions.is_empty() {
-                                let mut next = 0usize;
-                                for line in new_lines.iter_mut() {
-                                    // Both sides ascend by line start, so one
-                                    // forward walk pairs them.
-                                    while next < structure.regions.len()
-                                        && structure.regions[next].0 < line.byte_start
-                                    {
-                                        next += 1;
-                                    }
-                                    if structure
-                                        .regions
-                                        .get(next)
-                                        .is_some_and(|r| r.0 == line.byte_start)
-                                    {
-                                        line.region = Some(structure.regions[next].1);
-                                    }
-                                }
-                            }
-                            if !structure.tables.is_empty() {
-                                let mut next = 0usize;
-                                for line in new_lines.iter_mut() {
-                                    while next < structure.tables.len()
-                                        && structure.tables[next].0 < line.byte_start
-                                    {
-                                        next += 1;
-                                    }
-                                    if structure
-                                        .tables
-                                        .get(next)
-                                        .is_some_and(|t| t.0 == line.byte_start)
-                                    {
-                                        line.table = Some(structure.tables[next].1);
-                                    }
-                                }
-                            }
-                            pm_guard.run_hook(
-                                "lines_changed",
-                                crate::services::plugins::hooks::HookArgs::LinesChanged {
-                                    buffer_id,
-                                    lines: new_lines,
-                                    epoch: state.buffer.version(),
-                                    is_composing_in_any_split: composing_in_any_split,
-                                },
-                            );
-                            for range in fresh_ranges {
-                                seen_byte_ranges.insert(range);
-                            }
-                        }
-                        count
-                    })
-                    .unwrap_or(0);
-                if hooks_deferred {
-                    self.request_plugin_render();
-                }
-                total_new_lines += added;
+                total_new_lines += self.offer_visible_lines(split_id, buffer_id, split_area);
             }
             let hooks_elapsed = hooks_start.elapsed();
             tracing::trace!(

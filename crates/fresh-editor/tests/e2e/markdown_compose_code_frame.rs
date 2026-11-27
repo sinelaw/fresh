@@ -942,3 +942,78 @@ fn wrapped_rows_of_an_indented_line_keep_the_frame_columns() {
         .wait_until(|h| h.screen_to_string().contains("ENDMARK") && rows_keep_the_frame_columns(h))
         .unwrap();
 }
+
+/// The web UI (`fresh --web`) draws each browser view at the browser's own
+/// size and scroll, separately from the editor's own frame. Compose mode's
+/// decorations are emitted for the lines plugins are offered, so a browser
+/// view scrolled past the editor's own screenful must be offered its lines
+/// too: otherwise the frame stops partway down a code block that runs past
+/// that screenful, its remaining lines drawn with no rails and its closing
+/// fence left as literal backticks.
+#[test]
+fn web_view_scrolled_past_the_editor_screen_frames_the_whole_block() {
+    use fresh::app::client_pane::ClientPane;
+
+    // A block that starts on the editor's own screen and ends well past it,
+    // with blank lines in it, as a shell example has between its commands:
+    // the editor's own offer runs on to the end of a blank-line-delimited
+    // run, so a block with none would be offered whole regardless.
+    let mut md = String::from("# Doc\n\nIntro.\n\n```bash\n");
+    for i in 0..60 {
+        md.push_str(&format!("echo line{i:02}\n\n"));
+    }
+    md.push_str("```\n\nTail.\n");
+    let (mut harness, _tmp) = compose_harness(&md);
+    harness
+        .wait_until(|h| h.screen_to_string().contains('┌'))
+        .expect("compose mode should frame the fenced block");
+    park_cursor_at_top(&mut harness);
+
+    let editor = harness.editor_mut();
+    let window = editor.active_window_id();
+    let leaf = editor.active_window().split_manager().active_split();
+    let mut pane = ClientPane::new(window, leaf, 100, 30);
+    // The browser scrolls; the editor's own pane stays at the top.
+    editor.scroll_client_pane(&mut pane, 100);
+
+    let rows_of = |r: &fresh::app::client_pane::PaneRender| -> Vec<String> {
+        let area = r.cells.area;
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| r.cells[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    };
+    let unframed = |rows: &[String]| -> Vec<String> {
+        rows.iter()
+            .filter(|l| l.contains("echo line") && !l.contains('│'))
+            .cloned()
+            .collect()
+    };
+
+    let mut last = Vec::new();
+    let framed = (0..100).any(|_| {
+        let r = harness
+            .editor_mut()
+            .render_client_pane(&mut pane)
+            .expect("the web view renders");
+        last = rows_of(&r);
+        if last.iter().any(|l| l.contains("echo line59"))
+            && unframed(&last).is_empty()
+            && last.iter().any(|l| l.contains('└'))
+        {
+            return true;
+        }
+        // Let the plugin answer, as the web server's tick does.
+        harness.wait_for_async_quiescence(2).unwrap();
+        false
+    });
+    assert!(
+        framed,
+        "every code line in the scrolled web view should carry the frame's \
+         rails, and the block should close with a bottom border.\nView:\n{}",
+        last.join("\n")
+    );
+}

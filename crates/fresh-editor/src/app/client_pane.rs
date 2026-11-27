@@ -233,6 +233,21 @@ impl Editor {
     /// The editor half of [`Self::render_client_pane`], with the client's
     /// view already swapped in.
     fn render_leaf_at(&mut self, leaf: LeafId, area: Rect) -> Option<PaneRender> {
+        let buffer = self.active_window().pane_buffer(leaf)?;
+        // Offer the plugins the lines this view is about to draw. The
+        // editor's own frame offers the lines *its* panes show, and this
+        // view is scrolled and sized on its own: without this, a view
+        // scrolled past the editor's screenful draws lines no plugin ever
+        // decorated (compose mode's frame stopping partway down a code block).
+        // Decorations land on a later frame, as they do in the terminal.
+        let plugins_active = self.plugin_manager.try_read().map(|pm| pm.is_active()).ok();
+        match plugins_active {
+            Some(true) => {
+                self.offer_visible_lines(leaf, buffer, area);
+            }
+            Some(false) => {}
+            None => self.request_plugin_render(),
+        }
         let theme = self.theme.read().unwrap().clone();
         let hardware_cursor = self.session_mode || !self.software_cursor_only;
         let highlight_current_column = self.config.editor.highlight_current_column;

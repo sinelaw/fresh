@@ -4562,7 +4562,7 @@ mod tests {
         // after subtracting the 201-byte deleted range. Observed bug:
         // it ends up at byte 1005 (the deletion start) — exactly as
         // though the delta were applied twice.
-        use crate::model::marker::MarkerList;
+        use fresh_markers::marker::MarkerList;
 
         let mut markers = MarkerList::new();
         let m0 = markers.create(200);

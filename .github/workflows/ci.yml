@@ -170,6 +170,9 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: "1.98"
+          # fresh-web-poc's build script compiles the web client's highlighter
+          # for this target (rust-toolchain.toml lists it for the default).
+          targets: wasm32-unknown-unknown
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Check

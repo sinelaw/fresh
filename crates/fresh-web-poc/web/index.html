@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fresh</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="frame.css">
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+</head>
+<body>
+<div id="device" aria-hidden="true"></div>
+<div id="app">
+  <header id="topbar"><span class="brand">Fresh</span><nav id="menubar" role="menubar"></nav><span id="ws-name"></span><span class="hint">Ctrl+P commands · Ctrl+O files · Ctrl+` terminal</span><button id="skin-btn" title="Select Skin… (Ctrl+Alt+T: next skin)"></button></header>
+  <div id="main">
+    <aside id="left-dock" class="hidden"></aside><div class="sash" data-sash="left"></div>
+    <aside id="sidebar"><div id="side-panels"></div></aside><div class="sash" data-sash="sidebar"></div>
+    <section id="work">
+      <div id="bar" class="hidden"></div>
+      <div id="center"><div id="editor-area"></div><div class="sash" data-sash="right"></div><aside id="right-dock" class="hidden"></aside></div>
+      <div class="sash" data-sash="dock"></div><div id="dock" class="hidden"><div class="dock-tabs"></div><div class="dock-body"></div></div>
+    </section>
+  </div>
+  <footer id="status"><span id="status-left"></span><span id="status-right"></span></footer>
+</div>
+<div id="prompt" class="hidden"><div class="bar"><span class="label"></span><input spellcheck="false" autocomplete="off"></div><div class="list"></div><div class="hint"></div></div>
+<div id="popup" class="hidden"></div>
+<textarea id="input" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

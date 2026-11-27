@@ -9,8 +9,8 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::model::marker::MarkerId;
 use fresh::view::margin::LineIndicator;
+use fresh_markers::marker::MarkerId;
 use proptest::prelude::*;
 use ratatui::style::Color;
 
