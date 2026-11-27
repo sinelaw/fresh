@@ -1,15 +1,11 @@
-// Colours and a small line-local syntax highlighter.
+// Colours.
 //
 // Every colour is a CSS variable (`style.css` holds the dark defaults; a
 // theme sets them all, `plugins/themes.js`). THEME maps the theme keys
 // plugins pass as `fg`/`bg` strings ("syntax.keyword", "editor.fg", ...) to
 // those variables, so whatever is drawn with a key follows a theme change
-// without being drawn again. The highlighter is a stand-in for the editor's
-// grammars: a regex lexer per language that colours keywords, strings,
-// comments, numbers and markdown markup, line by line (a block comment's
-// continuation lines are not tracked).
-
-import { found } from "./maybe.js";
+// without being drawn again. Syntax colours come from the grammar engine
+// (hl.js) as these keys.
 
 const v = (name) => `var(--${name})`;
 /** const THEME_KEYS: Dict<String> */
@@ -30,6 +26,7 @@ const THEME_KEYS = {
   "editor.whitespace_indicator_fg": v("whitespace"),
   "editor.diff_add_bg": v("diff-add-bg"),
   "editor.diff_remove_bg": v("diff-remove-bg"),
+  "editor.diff_modify_bg": v("diff-modify-bg"),
   "ui.split_separator_fg": v("border"),
   "ui.status_bar_bg": v("status-bg"),
   "ui.status_bar_fg": v("status-fg"),
@@ -47,6 +44,11 @@ const THEME_KEYS = {
   "syntax.variable": v("syntax-variable"),
   "syntax.operator": v("syntax-operator"),
   "syntax.punctuation": v("syntax-punctuation"),
+  "syntax.punctuation_bracket": v("syntax-punctuation-bracket"),
+  "syntax.punctuation_delimiter": v("syntax-punctuation-delimiter"),
+  "syntax.property": v("syntax-property"),
+  "syntax.attribute": v("syntax-attribute"),
+  "syntax.variable_builtin": v("syntax-variable-builtin"),
   "syntax.link": v("link"),
   "diagnostic.error": v("error"),
   "diagnostic.warning": v("warning"),
@@ -99,120 +101,5 @@ export function color(spec) {
   if (spec.startsWith("Indexed:")) return ansi(Number(spec.slice(8)));
   const n = NAMED[spec.toLowerCase()];
   if (n) return n;
-  // An unknown theme key in a known family falls back to the family's colour.
-  if (spec.startsWith("syntax.")) return THEME["syntax.keyword"] ?? null;
   return null;
-}
-
-const JS_KW = "async await break case catch class const continue default delete do else export extends false finally for from function if import in instanceof let new null of return static super switch this throw true try typeof undefined var void while yield";
-const C_KW = "auto break case char const continue default do double else enum extern float for goto if inline int long register return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false nullptr class public private protected namespace template typename using virtual";
-/** const KW: Dict<String> */
-const KW = {
-  rust: "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while",
-  javascript: JS_KW,
-  typescript: JS_KW + " interface type enum implements declare readonly as keyof any number string boolean never unknown",
-  python: "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield",
-  go: "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var nil true false",
-  c: C_KW,
-  cpp: C_KW,
-  shell: "if then else elif fi for while do done case esac in function return local export echo",
-  toml: "true false",
-  json: "true false null",
-};
-/** const kwSets: Dict<Set<String>> */
-const kwSets = {};
-for (const [lang, words] of Object.entries(KW)) kwSets[lang] = new Set(words.split(" "));
-
-// Each language's comment: the text that opens one and the text that
-// closes it (none: it runs to the line's end).
-/** type Comment = {open: String, close: String | Null} */
-/** function lineComment(open: String) => Comment */
-function lineComment(open) { return { open, close: null }; }
-/** function blockComment(open: String, close: String) => Comment */
-function blockComment(open, close) { return { open, close }; }
-/** const COMMENTS: Map<String, Comment> */
-export const COMMENTS = new Map([
-  ["rust", lineComment("//")], ["javascript", lineComment("//")], ["typescript", lineComment("//")], ["go", lineComment("//")],
-  ["c", lineComment("//")], ["cpp", lineComment("//")], ["java", lineComment("//")],
-  ["python", lineComment("#")], ["shell", lineComment("#")], ["toml", lineComment("#")], ["yaml", lineComment("#")], ["ruby", lineComment("#")],
-  ["css", blockComment("/*", "*/")],
-  ["markdown", blockComment("<!--", "-->")],
-  ["html", blockComment("<!--", "-->")],
-]);
-
-/** function span(s: Number, e: Number, k: String) => Highlight */
-const span = (s, e, k) => ({ s, e, k, bold: false, italic: false });
-
-// Spans [{s, e, k, bold, italic}] in UTF-16 indices; k is a theme key.
-/** function highlightLine(lang: String | Null, text: String) => Highlight[] */
-export function highlightLine(lang, text) {
-  /** const out: Highlight[] */
-  const out = [];
-  if (!lang) return out;
-  if (lang === "markdown") return markdown(text);
-  if (lang === "diff") {
-    const k = /^(\+\+\+|---)/.test(text) ? "syntax.keyword" : text[0] === "+" ? "git.added" : text[0] === "-" ? "git.deleted" : text.startsWith("@@") ? "syntax.type" : /^(commit|diff --git|index )/.test(text) ? "syntax.constant" : null;
-    return k ? [span(0, text.length, k)] : [];
-  }
-  const kws = kwSets[lang];
-  const lineComments = found(COMMENTS.get(lang)).filter((x) => x.close === null);
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (lineComments.some((x) => text.startsWith(x.open, i))) { out.push(span(i, text.length, "syntax.comment")); break; }
-    if ((lang !== "python" && lang !== "shell") && text.startsWith("/*", i)) {
-      const j = text.indexOf("*/", i + 2);
-      const e = j < 0 ? text.length : j + 2;
-      out.push(span(i, e, "syntax.comment"));
-      i = e;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      if (lang === "rust" && c === "'" && /^'[a-z_]+\b[^']/.test(text.slice(i, i + 20))) { i++; continue; }
-      let j = i + 1;
-      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
-      out.push(span(i, Math.min(text.length, j + 1), "syntax.string"));
-      i = j + 1;
-      continue;
-    }
-    const num = /[0-9]/.test(c) && (i === 0 || !/[\w]/.test(text[i - 1])) ? /^[0-9][0-9a-fA-FxX_.]*/.exec(text.slice(i)) : null;
-    if (num) {
-      out.push(span(i, i + num[0].length, "syntax.number"));
-      i += num[0].length;
-      continue;
-    }
-    const word = /[A-Za-z_]/.test(c) ? /^[A-Za-z_][\w]*/.exec(text.slice(i)) : null;
-    if (word) {
-      const w = word[0];
-      const next = text[i + w.length];
-      if (kws && kws.has(w)) out.push(span(i, i + w.length, "syntax.keyword"));
-      else if (next === "(" || (next === "!" && lang === "rust")) out.push(span(i, i + w.length, "syntax.function"));
-      else if (/^[A-Z]/.test(w) && lang !== "json") out.push(span(i, i + w.length, "syntax.type"));
-      i += w.length;
-      continue;
-    }
-    i++;
-  }
-  return out;
-}
-
-/** function markdown(text: String) => Highlight[] */
-function markdown(text) {
-  if (/^\s*#{1,6}\s/.test(text)) return [{ s: 0, e: text.length, k: "syntax.keyword", bold: true, italic: false }];
-  if (/^\s*(```|~~~)/.test(text)) return [span(0, text.length, "syntax.comment")];
-  /** const out: Highlight[] */
-  const out = [];
-  const item = /^(\s*)([-*+]|\d+[.)])\s/.exec(text);
-  if (item) out.push(span(item[1].length, item[0].length - 1, "syntax.constant"));
-  const quote = /^(\s*>)/.exec(text);
-  if (quote) out.push(span(0, quote[1].length, "syntax.comment"));
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]*\]\([^)]*\))|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
-  let m = re.exec(text);
-  while (m) {
-    const k = m[1] ? "syntax.string" : m[2] ? "syntax.type" : m[3] ? "syntax.link" : "syntax.variable";
-    const e = re.lastIndex;
-    out.push({ s: e - m[0].length, e, k, bold: !!m[2], italic: !!m[4] });
-    m = re.exec(text);
-  }
-  return out;
 }

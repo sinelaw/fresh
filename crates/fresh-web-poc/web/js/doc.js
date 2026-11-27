@@ -25,7 +25,7 @@
 
 import { byteLen, byteToIdx } from "./utf8.js";
 import { applies, cursorIn } from "./layout.js";
-import { EMPTY, spansFor, synAt, fenceLanguage, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
+import { EMPTY, synAt, cssFor, styleKey, drawnOf, asMarkup, cssOf } from "./paint.js";
 import { within, escapeHtml } from "./dom.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
 import { some, listOf, found } from "./maybe.js";
@@ -410,8 +410,8 @@ function blockHTML(ctx, blk) {
   if (type === "quote") return `<blockquote class="l" style="--depth:${n.depth || 1}">${joined()}</blockquote>`;
   if (type === "rule") return `<div class="doc-hr l">${joined()}</div>`;
   if (type === "code") {
-      const lang = fenceLanguage(n.lang);
-      const syn = lang ? (li) => spansFor(lang, L.lines[li]) : NO_SYNTAX;
+      // The grammar colours a fenced block in its own language.
+      const syn = ctx.o.syntax;
       let html = `<div class="doc-code"${n.lang ? ` data-lang="${escapeHtml(n.lang)}"` : ""}>${tog}`;
       for (let k = blk.first; k <= blk.last; k++) {
         if (ctx.hidden(k).length > 0) continue;

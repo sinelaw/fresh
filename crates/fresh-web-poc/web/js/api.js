@@ -213,6 +213,27 @@ export const searchDocument = async (app, buffer, query, from, backward) => (awa
 export const themes = async (_app) => (await rpc("theme.list", {})).themes;
 export const theme = (_app, key) => rpc("theme.get", { key });
 
+// ---------------------------------------------------------------- syntax
+
+// The syntax colours of bytes [start, end) of a held buffer once they are
+// exact: {version, runs: [{start, end, key}]}, `key` a theme key
+// ("syntax.string"). Rejects when the buffer has no colours or that range
+// is not loaded.
+export const highlights = (app, buffer, start, end) => {
+  const b = held(app, buffer);
+  return b === undefined ? Promise.reject(new Error("not a loaded buffer")) : app.highlightsOf(b, start, end);
+};
+// The last known category at byte `pos`, carried forward through edits the
+// engine has not answered yet (for a decision on a keystroke): a category
+// and whether it is exact, plain text, or unknown.
+export const categoryAt = (app, buffer, pos) => {
+  const b = held(app, buffer);
+  return b === undefined ? { kind: "unknown" } : app.syntaxOf(b).categoryAt(pos);
+};
+// Told when a buffer's syntax colours changed, after the frame that draws
+// them.
+export const onColours = (app, f) => app.host.onBuffer("buffer.colours", (b, _change) => { f(b); });
+
 // ---------------------------------------------------------------- language servers
 
 export const lspAvailable = (app, buffer) => { const b = held(app, buffer); return b !== undefined && app.lspAvailable(b); };

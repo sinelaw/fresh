@@ -51,3 +51,12 @@ const innerHeight;
 const Terminal;
 /** const FitAddon: {FitAddon: new () => XtermFit} */
 const FitAddon;
+
+// A message channel (hl.js runs its slices as separate tasks through one).
+/** type MessagePort = {
+ *   onmessage: ({data: Null}) => Undefined,
+ *   postMessage: (Null) => Undefined,
+ * } */
+/** type MessageChannel = {port1: MessagePort, port2: MessagePort} */
+/** const MessageChannel: new () => MessageChannel */
+const MessageChannel;

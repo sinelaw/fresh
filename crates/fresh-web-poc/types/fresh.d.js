@@ -551,6 +551,8 @@
  *   large: Boolean,
  *   modified: Boolean,
  *   language: String | Null,
+ *   syntax: String | Null,
+ *   comment: String | Null,
  *   encoding: String,
  *   line_ending: String,
  *   readonly: Boolean,
@@ -757,8 +759,11 @@
 /** type Worktree = {repo: String, branch: String} */
 // The document formats the server knows (`doc.formats`): languages,
 // encodings (a name and what it is) and line endings.
+// A language the server's grammar catalog knows: its id (the language
+// server's key), the grammar that colours it, and its name.
+/** type Language = {language: String, syntax: String | Null, name: String} */
 /** type DocFormats = {
- *   languages: String[],
+ *   languages: Language[],
  *   encodings: {name: String, description: String}[],
  *   line_endings: String[],
  * } */

@@ -22,6 +22,7 @@ import { listOf, found, some, none } from "./maybe.js";
 import { bufferHandle, viewHandle } from "./host.js";
 import { action, actionOf, SEPARATOR } from "./menu.js";
 import { rowOf, SEP } from "./menubar.js";
+import { Highlighting, LineSyntax } from "./hl.js";
 
 // The clipboard's keys are the browser's own (not in the keymap); menus
 // show them.
@@ -327,6 +328,10 @@ export class App {
     this.formats = noFormats(); // the server's languages, encodings and line endings, once asked (at most one)
     this.maximized = []; // the split filling the editor area: a list of at most one
     this.restoring = true; // putting the remembered layout back: nothing is remembered meanwhile
+    /** this.hl: Highlighting[] */
+    this.hl = []; // the syntax engine, once loaded (a list of at most one)
+    /** this.colourNews: Set<Buffer> */
+    this.colourNews = new Set(); // buffers whose new colours plugins are yet to hear of
     this.composing = false; // an input method is composing text
     this.log = [];
     const settings /*: Settings */ = c.settings;
@@ -386,6 +391,11 @@ export class App {
     this.relayout();
     new ResizeObserver(() => { this.renderAll(); }).observe($("#editor-area"));
     setInterval(() => { this.autoSave(); }, 1000);
+    Highlighting.load((b) => { this.coloursChanged(b); }).then((hl) => {
+      this.hl = [hl];
+      for (const b of this.buffers.values()) if (terminalOf(b.source).length === 0) hl.attach(b);
+      this.renderAll();
+    }, (e) => { this.report(`syntax highlighting: ${failure(e)}`); });
     if (!ws) return;
     // The plugins ([{name, activate}], see plugins/index.js), in order; one
     // that throws is reported and the rest still load.
@@ -604,6 +614,22 @@ export class App {
     }
   }
   renderAll() { for (const p of panesOf(this.layoutTree)) { p.renderTabs(); p.scheduleRender(); } }
+  // Buffer `b`'s syntax colours changed: draw them, then tell the plugins
+  // (once a frame, after it is drawn).
+  coloursChanged(b) {
+    this.renderBuffer(b.id);
+    if (this.colourNews.has(b)) return;
+    this.colourNews.add(b);
+    requestAnimationFrame(() => { requestAnimationFrame(() => { this.colourNews.delete(b); this.bufferEvent("buffer.colours", b, [], false); }); });
+  }
+  // The exact syntax colours of bytes [start, end) of `b` (see
+  // Highlighting.exactly).
+  highlightsOf(b, start, end) {
+    for (const hl of this.hl) return hl.exactly(b, start, end);
+    return Promise.reject(new Error("syntax highlighting is not loaded"));
+  }
+  // What the editor's features read of buffer `b`'s syntax (its held text).
+  syntaxOf(b) { return new LineSyntax(this.hl.flatMap((hl) => hl.colours(b)), b.held); }
   renderBuffer(id) { for (const p of panesOf(this.layoutTree)) if (p.shown.some((v) => v.buf.id === id)) p.scheduleRender(); }
   // The active view (none: the active split shows nothing).
   view() { return this.activePane.shown.length > 0 ? some(this.activePane.view) : none(); }
@@ -764,6 +790,7 @@ export class App {
     if (panesOf(this.layoutTree).some((x) => x.views.some((y) => y.buf === b))) return;
     if (b.keep) return;
     this.buffers.delete(b.id);
+    for (const hl of this.hl) hl.detach(b);
     for (const doc of listOf(b.doc)) {
       this.docs.delete(doc);
       const discard = b.discard;
@@ -983,10 +1010,12 @@ export class App {
   // ------------------------------------------------------------- buffers
 
   watchBuffer(b) {
+    for (const hl of this.hl) hl.attach(b);
     b.listeners.add((told) => {
       const news /*: BufferNews */ = told;
       if (news.kind === "edit") this.afterEdit(b, news.op, news.local);
       else if (news.kind === "text") { this.bufferEvent("buffer.changed", b, [], false); this.renderBuffer(b.id); }
+      else if (news.kind === "syntax") for (const hl of this.hl) hl.resyntax(b);
       else if (news.kind === "error") this.setStatus(news.message);
       else if (news.kind === "refused") { this.setStatus(news.message); this.reloadedDoc(b, news.info); }
     });
@@ -1058,6 +1087,10 @@ export class App {
   createVirtual(o) {
     const b = virtualBuffer(o.name, o.entries, o.mode, o.readOnly);
     b.language = o.language || null;
+    // Its colours: the grammar the catalog has for its language.
+    for (const lang of listOf(b.language)) {
+      this.docFormats().then((f) => { b.setSyntax(f.languages.find((l) => l.language === lang)?.syntax ?? null); }, (e) => { this.report(`${b.name}: ${failure(e)}`); });
+    }
     b.keep = o.keep;
     this.buffers.set(b.id, b);
     this.watchBuffer(b);
@@ -1899,7 +1932,7 @@ export class App {
     const b = this.activeFile().at(0);
     if (b === undefined) { this.setStatus("Not a file"); return; }
     const f = await this.docFormats();
-    const choices = [{ label: "plain text", detail: "", value: "" }, ...f.languages.map((l) => ({ label: l, detail: "", value: l }))];
+    const choices = [{ label: "plain text", detail: "", value: "" }, ...f.languages.map((l) => ({ label: l.name, detail: l.language, value: l.language }))];
     for (const lang of await this.pickFor("Language", choices, b.language ?? "")) {
       const o = await attempt("doc.set", { doc: b.doc, language: lang === "" ? null : lang });
       if (o.kind === "refused") this.setStatus(o.detail);

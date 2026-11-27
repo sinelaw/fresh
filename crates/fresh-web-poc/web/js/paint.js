@@ -1,31 +1,11 @@
 // Styles as HTML: what the source rows (view.js) and the compose document
-// (doc.js) share — syntax spans, a style's key and its inline CSS.
+// (doc.js) share: a syntax span's style at an index, a style's key and its
+// inline CSS.
 
-import { color, highlightLine, THEME } from "./highlight.js";
+import { color } from "./highlight.js";
 
 /** const EMPTY: Drawn */
 export const EMPTY = Object.freeze({ fg: "", bg: "", bold: false, italic: false, underline: false, strike: false, mono: false, markup: false, wavy: "" });
-/** const NO_SPANS: Span[] */
-export const NO_SPANS = [];
-
-// Syntax spans by language and line text: a line's colours depend only on
-// its text (the highlighter is line-local), so scrolling and editing reuse
-// them. Each span carries its finished style.
-/** function noSpans() => Map<String, Span[]> */
-function noSpans() { return new Map(); }
-const spanCache = noSpans();
-const cssCache = new Map();
-/** function spansFor(lang: String | Null, text: String) => Span[] */
-export function spansFor(lang, text) {
-  if (lang === null || lang === "") return NO_SPANS;
-  const key = lang + "\u0000" + text;
-  const had = spanCache.get(key);
-  if (had !== undefined) return had;
-  const v = highlightLine(lang, text).map((x) => ({ s: x.s, e: x.e, style: Object.freeze({ fg: THEME[x.k] ?? "", bg: "", bold: x.bold, italic: x.italic, underline: false, strike: false, mono: false, markup: false, wavy: "" }) }));
-  if (spanCache.size > 50000) spanCache.clear();
-  spanCache.set(key, v);
-  return v;
-}
 // The style of UTF-16 index `idx` among a line's syntax spans.
 /** function synAt(spans: Span[], idx: Number) => Drawn */
 export function synAt(spans, idx) {
@@ -33,10 +13,6 @@ export function synAt(spans, idx) {
   return EMPTY;
 }
 
-// A fenced code block's info string to the highlighter's language.
-/** const FENCE: Dict<String> */
-const FENCE = { bash: "shell", sh: "shell", shell: "shell", console: "shell", rust: "rust", rs: "rust", js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", python: "python", py: "python", json: "json", toml: "toml", go: "go", c: "c", cpp: "cpp" };
-export const fenceLanguage = (info) => FENCE[(info || "").toLowerCase()] || null;
 
 // Theme keys and names resolve through the theme; CSS colours pass.
 /** const css: (Color | Null) => String | Null */
@@ -79,6 +55,8 @@ export function styleKey(s) {
 
 // The inline CSS for a style, cached by its key. `mono` is inline code in a
 // document; `markup` is revealed Markdown source, drawn dim.
+/** const cssCache: Map<String, String> */
+const cssCache = new Map();
 // The inline CSS for a style.
 export function cssOf(st) { return cssFor(st, styleKey(st)); }
 export function cssFor(st, key) {

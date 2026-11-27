@@ -199,16 +199,19 @@ function plainOp(o) { return o.t === "ins" ? insOp(o.pos, o.text) : delOp(o.pos,
 // document as the server has it, to start again from).
 /** type BufferNews =
  *   | {kind: "text"}
+ *   | {kind: "syntax"}
  *   | {kind: "edit", op: Op, gone: String | Null, local: Boolean}
  *   | {kind: "error", message: String}
  *   | {kind: "refused", message: String, info: DocInfo}
  */
 /** const TEXT_NEWS: BufferNews */
 const TEXT_NEWS = { kind: "text" };
+/** const SYNTAX_NEWS: BufferNews */
+const SYNTAX_NEWS = { kind: "syntax" };
 /** function editNews(op: Op, gone: String | Null, local: Boolean) => BufferNews */
 function editNews(op, gone, local) { return { kind: "edit", op, gone, local }; }
 /** function errorNews(message: String) => BufferNews */
-function errorNews(message) { return { kind: "error", message }; }
+export function errorNews(message) { return { kind: "error", message }; }
 /** function refusedNews(message: String, info: DocInfo) => BufferNews */
 function refusedNews(message, info) { return { kind: "refused", message, info }; }
 
@@ -216,11 +219,13 @@ function refusedNews(message, info) { return { kind: "refused", message, info };
 // (before it; `deleted`: a deletion's newlines, for one before the
 // window): what it deleted there (none: not held), or the window lost (the
 // op straddles its edge).
-/** type Spliced = {kind: "held", gone: String | Null} | {kind: "lost"} */
+/** type Spliced = {kind: "outside"} | {kind: "inside", gone: String | Null} | {kind: "lost"} */
 /** const LOST: Spliced */
 const LOST = { kind: "lost" };
-/** function heldGone(gone: String | Null) => Spliced */
-function heldGone(gone) { return { kind: "held", gone }; }
+/** const OUTSIDE: Spliced */
+const OUTSIDE = { kind: "outside" };
+/** function inside(gone: String | Null) => Spliced */
+function inside(gone) { return { kind: "inside", gone }; }
 function spliceHeld(L, op, deleted, len) {
   const r = reachOf(op, deleted);
   const ws = L.start, we = L.eof ? len : L.heldEnd();
@@ -228,13 +233,13 @@ function spliceHeld(L, op, deleted, len) {
     // Wholly before the window.
     L.move(r.bytes);
     L.firstLine = movedBy(L.firstLine, r.lines);
-    return heldGone(NO_TEXT);
+    return OUTSIDE;
   }
-  if (r.pos > we || (r.pos === we && !L.eof)) return heldGone(NO_TEXT); // wholly after it
+  if (r.pos > we || (r.pos === we && !L.eof)) return OUTSIDE; // wholly after it
   if (r.pos >= ws && (r.end < we || (r.end <= we && L.eof))) {
     const gone = r.ins ? NO_TEXT : L.text(r.pos, r.end);
     L.splice(op);
-    return heldGone(gone);
+    return inside(gone);
   }
   return LOST;
 }
@@ -259,6 +264,14 @@ function replayOnto(L, len, since) {
 // A count, if known, moved by `d`.
 /** function movedBy(n: Number | Null, d: Number) => Number | Null */
 function movedBy(n, d) { return n === null ? null : n + d; }
+
+// A change to a buffer's held text, as its change stream reports it: an
+// edit inside it (byte offsets from the held text's start), or the held
+// text replaced (none: no longer held). `version` is the buffer's
+// `textGen` after it.
+/** type TextChange =
+ *   | {kind: "edit", version: Number, at: Number, removed: Number, text: String}
+ *   | {kind: "held", version: Number, held: Lines | Null} */
 
 // The held text as a list of at most one.
 /** function heldList<A>(L: A | Null) => A[] */
@@ -307,6 +320,8 @@ export class Buffer {
     // What the server says of a file (`setInfo`); a virtual buffer's
     // language is its creator's.
     this.language = none();
+    this.syntax = none(); // the grammar its colours come from (hl.js)
+    this.comment = none(); // what starts a line comment in its language
     this.encoding = none();
     this.lineEnding = none();
     this.large = false; // read from disk as it is viewed, a window at a time (fetchWindow)
@@ -325,6 +340,9 @@ export class Buffer {
     this.lastUndoAt = 0;
     this.lastEdit = 0;
     this.listeners = new Set();
+    // Told every change to the held text, in order (see TextChange).
+    /** this.textFollowers: Set<(c: TextChange) => Undefined> */
+    this.textFollowers = new Set();
     // Kept by the app and plugins.
     this.keep = false; // stays open while no view shows it
     this.discard = false; // closing gives up its unsaved changes
@@ -332,6 +350,21 @@ export class Buffer {
     this.foldRanges = noFoldRanges(); // a language server's, as line ranges (none known: empty)
   }
   emit(news) { for (const f of this.listeners) f(news); }
+  // Follow every change to its held text, in order: `fn(change)`. Returns
+  // the unfollow.
+  followText(fn) {
+    this.textFollowers.add(fn);
+    return () => { this.textFollowers.delete(fn); };
+  }
+  // The held text replaced by `L` (none: not held). With `applyText`, the
+  // only two ways the held text changes.
+  setHeld(L) {
+    this.text = L;
+    this.textGen++;
+    /** const c: TextChange */
+    const c = { kind: "held", version: this.textGen, held: L };
+    for (const f of this.textFollowers) f(c);
+  }
   // Not a document: a plugin's text, or a terminal.
   get isVirtual() { return fileOf(this.source).length === 0; }
   // Its server document's replica (a list of at most one: a file's).
@@ -348,9 +381,18 @@ export class Buffer {
     this.origin = originOf(info);
     this.name = nameOf(this.origin);
     this.language = info.language;
+    this.comment = info.comment;
+    this.setSyntax(info.syntax);
     this.modified = info.modified;
     this.encoding = some(info.encoding);
     this.lineEnding = some(info.line_ending);
+  }
+
+  // The grammar its colours come from (none: plain text).
+  setSyntax(syntax) {
+    if (syntax === this.syntax) return;
+    this.syntax = syntax;
+    this.emit(SYNTAX_NEWS);
   }
 
   // Move everything anchored in this buffer through `op`: text, decorations,
@@ -364,13 +406,19 @@ export class Buffer {
   // for a deletion outside the window). Returns the deleted text when the
   // window held it.
   applyText(op, deleted) {
-    this.textGen++;
     const r = reachOf(op, deleted);
     let gone = NO_TEXT;
     for (const L of heldList(this.text)) {
+      const at = r.pos - L.start;
       const s = spliceHeld(L, op, deleted, this.len);
-      if (s.kind === "lost") this.text = none(); // straddles the edge: fetch again
-      else gone = s.gone;
+      if (s.kind === "lost") this.setHeld(none()); // straddles the edge: fetch again
+      else if (s.kind === "inside") {
+        gone = s.gone;
+        this.textGen++;
+        /** const c: TextChange */
+        const c = { kind: "edit", version: this.textGen, at, removed: op.t === "del" ? op.len : 0, text: op.t === "ins" ? op.text : "" };
+        for (const f of this.textFollowers) f(c);
+      } else this.textGen++;
     }
     this.len += r.bytes;
     this.totalLines = movedBy(this.totalLines, r.ins ? r.lines : -linesGone(gone, deleted));
@@ -387,7 +435,7 @@ export class Buffer {
   // fetched again, with its line numbers, at `top`.
   indexed(lines, top) {
     this.totalLines = some(lines);
-    this.text = none();
+    this.setHeld(none());
     return this.ensure(top, ENSURE_AFTER);
   }
   // Follow its edits: `shift(op)` for each primitive applied (a view's
@@ -487,8 +535,7 @@ export class Buffer {
     this.source = virtualSource(ranges);
     this.len = byteLen(text);
     const L = new Lines({ start: 0, text, bof: true, eof: true, firstLine: 0 });
-    this.text = some(L);
-    this.textGen++;
+    this.setHeld(some(L));
     this.totalLines = some(L.count);
     this.decor.clearNamespace("entry-style");
     for (const r of ranges) {
@@ -525,8 +572,7 @@ export class Buffer {
         // it was read (none known that far back, or one crossing its edge:
         // ask again).
         if (!replayOnto(L2, w.len, logSince(f, w.version))) continue;
-        this.text = some(L2);
-        this.textGen++;
+        this.setHeld(some(L2));
         break;
       }
       f.fetching = [];
@@ -626,7 +672,7 @@ export class Buffer {
     this.totalLines = info.lines;
     this.undo = [];
     this.redo = [];
-    this.text = none();
+    this.setHeld(none());
   }
 }
 
@@ -731,7 +777,7 @@ export function terminalBuffer(term, name) {
   b.name = name;
   b.readOnly = true;
   const L = new Lines({ start: 0, text: "", bof: true, eof: true, firstLine: 0 });
-  b.text = some(L);
+  b.setHeld(some(L));
   b.totalLines = some(L.count);
   return b;
 }

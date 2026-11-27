@@ -9,9 +9,8 @@ import { byteLen, byteToIdx } from "./utf8.js";
 import { shiftPos } from "./ot.js";
 import { ENSURE_AFTER, terminalOf, filePath } from "./buffer.js";
 import { color, THEME } from "./highlight.js";
-import { classify } from "./mdstruct.js";
-import { OPEN, bracketsOf, balanceOf } from "./brackets.js";
-import { EMPTY, spansFor, synAt, fenceLanguage, cssFor, styleKey, restyler, withWavy } from "./paint.js";
+import { OPEN, balanceOf } from "./brackets.js";
+import { EMPTY, synAt, cssFor, styleKey, restyler, withWavy } from "./paint.js";
 import { DocView, hiding } from "./doc.js";
 import { poolOf, take, sameDrawn } from "./pool.js";
 
@@ -25,27 +24,17 @@ const RAINBOW = [1, 2, 3, 4, 5, 6].map((n) => restyler({ fg: `editor.bracket_rai
 const OCCURRENCE = restyler({ fg: null, bg: "editor.occurrence_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
 const BRACKET = restyler({ fg: "editor.bracket_match_fg", bg: null, bold: true, italic: false, underline: true, strike: false, mono: false, extendToLineEnd: false });
 const SELECTED = restyler({ fg: null, bg: "editor.selection_bg", bold: false, italic: false, underline: false, strike: false, mono: false, extendToLineEnd: false });
-// Each buffer's bracket depth at every line start, for its text (each
-// line in its language, `langAt`).
+// Each buffer's bracket depth at every line start, for what its syntax
+// says (`syn`: its text and colours as of `syn.gen`).
 const depthCache = new WeakMap();
-function rainbowDepths(buf, langAt) {
+function rainbowDepths(buf, syn) {
   const hit = depthCache.get(buf);
-  if (hit !== undefined && hit.gen === buf.textGen && hit.lang === buf.language) return hit.depths;
+  if (hit !== undefined && hit.text === buf.textGen && hit.colours === syn.gen) return hit.depths;
   const L = buf.held;
   const depths = new Int32Array(L.count + 1);
-  for (let i = 0; i < L.count; i++) depths[i + 1] = depths[i] + balanceOf(langAt(i), L.lines[i]);
-  depthCache.set(buf, { gen: buf.textGen, lang: buf.language, depths });
+  for (let i = 0; i < L.count; i++) depths[i + 1] = depths[i] + balanceOf(syn.brackets(i));
+  depthCache.set(buf, { text: buf.textGen, colours: syn.gen, depths });
   return depths;
-}
-
-// A buffer's Markdown structure, for the text it was found in.
-const structureCache = new WeakMap();
-function markdownStructure(buf) {
-  const hit = structureCache.get(buf);
-  if (hit !== undefined && hit.gen === buf.textGen) return hit.struct;
-  const struct = classify(buf.held.lines);
-  structureCache.set(buf, { gen: buf.textGen, struct });
-  return struct;
 }
 
 // `make()` for `key`, remembered while `key` is the last one asked.
@@ -432,25 +421,12 @@ export class Pane {
   layoutOpts(v, width) {
     const buf = v.buf;
     const L = buf.held;
-    const lang = buf.language;
     const sels = v.selections();
     const s = this.editor.settings();
-    // Fenced blocks in markdown are highlighted in the fence's language.
-    const struct = lang === "markdown" && buf.full ? markdownStructure(buf) : null;
-    // The language of the fenced block holding line `li` (its opening
-    // line's word).
-    const fenceLang = (regions, li) => {
-      let k = li;
-      while (k > 0 && regions[k] !== "open") k--;
-      const m = /^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/.exec(L.lines[k]);
-      return fenceLanguage(m ? m[1] : "");
-    };
-    // Line `li`'s language (a fenced block's own in Markdown), and spans.
-    const langAt = (li) => {
-      const regions = struct ? struct.region : [];
-      return li < regions.length && regions[li] === "body" ? fenceLang(regions, li) : lang;
-    };
-    const synFor = (li) => spansFor(langAt(li), L.lines[li]);
+    // The syntax colours (fenced blocks in Markdown come in their own
+    // language: the grammar embeds it).
+    const syn = this.editor.syntaxOf(buf);
+    const synFor = (li) => syn.spans(li);
     // Each line's decorations, gathered when the layout first reaches the
     // line (the interval index makes that cost what the line has), in order
     // of precedence: overlays, occurrences, diagnostics, selection, then
@@ -467,7 +443,7 @@ export class Pane {
     // Rainbow brackets: each bracket in the colour of its nesting depth,
     // counted from the start of the file (a buffer held whole), strings
     // and comments left out.
-    const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, langAt) : null;
+    const depths = s.flags.rainbow_brackets === true && buf.full ? rainbowDepths(buf, syn) : null;
     const lineCache = new Map();
     const lineDecos = (li) => {
       const hit = lineCache.get(li);
@@ -479,7 +455,7 @@ export class Pane {
       for (const ds of listOf(depths)) {
         const line = L.lines[li];
         let depth = ds[li];
-        for (const x of bracketsOf(langAt(li), line)) {
+        for (const x of syn.brackets(li)) {
           const opens = OPEN.has(x.c);
           if (!opens) depth--;
           const f = RAINBOW[Math.max(0, depth) % RAINBOW.length];
@@ -510,6 +486,8 @@ export class Pane {
       return st;
     };
     return {
+      // Line `li`'s syntax spans.
+      syntax: synFor,
       mode: v.mode,
       wrap: v.opts.wrap,
       width,
@@ -517,10 +495,13 @@ export class Pane {
       cursors: v.cursors.map((c) => c.pos),
       folds: v.folds,
       whitespace: s.flags.show_whitespace === true,
-      // The background an overlay at `b` carries to the row's end, if any.
+      // The background an overlay at `b` carries to the row's end, else
+      // the syntax's row fill there (a diff's added or removed line).
       extendAt: (b) => {
         const o = buf.decor.overlaysIn(b, b + 1).find((x) => x.style.extendToLineEnd && x.style.bg !== null);
-        return o === undefined ? null : color(o.style.bg);
+        if (o !== undefined) return color(o.style.bg);
+        const li = L.indexOf(b);
+        return li < 0 ? null : synFor(li).map((x) => x.style.bg).find((bg) => bg !== "") ?? null;
       },
       decoStyle,
       // The style at byte `b`, the `idx`th UTF-16 unit of line `li`.
@@ -537,7 +518,9 @@ export class Pane {
     const L = v.buf.held;
     const g = this.geometry(v);
     const d = v.buf.decor;
-    const r = layout(L, { conceals: d.conceals, inlines: d.inlines, lines: d.lines }, Math.max(0, L.indexOf(v.top)), g.rows + extra, this.layoutOpts(v, g.width));
+    const top = Math.max(0, L.indexOf(v.top));
+    this.editor.wantColours(v.buf, top, Math.min(L.count, top + g.rows + extra));
+    const r = layout(L, { conceals: d.conceals, inlines: d.inlines, lines: d.lines }, top, g.rows + extra, this.layoutOpts(v, g.width));
     return { rows: r.rows, g };
   }
 

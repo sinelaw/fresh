@@ -21,6 +21,8 @@
   /* Syntax */
   --syntax-keyword: #569cd6; --syntax-string: #ce9178; --syntax-comment: #6a9955; --syntax-function: #dcdcaa; --syntax-type: #4ec9b0;
   --syntax-variable: #9cdcfe; --syntax-constant: #4fc1ff; --syntax-number: #4fc1ff; --syntax-operator: #d4d4d4; --syntax-punctuation: #d4d4d4;
+  --syntax-punctuation-bracket: #d4d4d4; --syntax-punctuation-delimiter: #d4d4d4; --syntax-property: #9cdcfe;
+  --syntax-attribute: #4ec9b0; --syntax-variable-builtin: #569cd6; --diff-modify-bg: #3c3c1e;
   /* Diagnostics */
   --error: #cd3131; --warning: #e5e510; --info: #2472c8; --hint: #808080;
 

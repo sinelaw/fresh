@@ -12,7 +12,6 @@ import { rpc } from "./rpc.js";
 import { charWidth } from "./layout.js";
 import { foldRange as docFoldRange } from "./doc.js";
 import { CLOSE, partnerOf, openerBefore } from "./brackets.js";
-import { highlightLine, COMMENTS } from "./highlight.js";
 
 const PAIRS = new Map([["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["`", "`"]]);
 const INDENT = "    ";
@@ -205,12 +204,12 @@ function isWord(c) { return listOf(c).some((x) => /[\p{L}\p{N}_]/u.test(x)); }
 function lenOf(c) { return listOf(c).map(byteLen).at(0) ?? 0; }
 
 // The unmatched opening bracket before `p` (in the held lines), or null.
-/** function openerAt(b: Buffer, p: Number) => Number | Null */
-function openerAt(b, p) {
+/** function openerAt(syn: LineSyntax, b: Buffer, p: Number) => Number | Null */
+function openerAt(syn, b, p) {
   const L = b.held;
   const li = L.indexOf(p);
   if (li < 0) return null;
-  return openerBefore(b.language, L, li, byteToIdx(L.lines[li], p - L.starts[li]));
+  return openerBefore((k) => syn.brackets(k), L, li, byteToIdx(L.lines[li], p - L.starts[li]));
 }
 
 export function shrinkSelection(pane) {
@@ -354,13 +353,17 @@ export function foldAll(pane) {
 // The bracket at `p` (else the one just before it) and its partner:
 // {at, match} byte offsets, or null (neither has one in the held lines).
 // Brackets in strings and comments do not count.
-/** function bracketPair(b: Buffer, p: Number) => {at: Number, match: Number} | Null */
-export function bracketPair(b, p) {
+/** function bracketPair(
+ *   syn: LineSyntax,
+ *   b: Buffer,
+ *   p: Number,
+ * ) => {at: Number, match: Number} | Null */
+export function bracketPair(syn, b, p) {
   for (const L of listOf(b.text)) {
     for (const at of [p, p - 1]) {
       const li = L.indexOf(at);
       if (li < 0) continue;
-      const match = partnerOf(b.language, L, li, byteToIdx(L.lines[li], at - L.starts[li]));
+      const match = partnerOf((k) => syn.brackets(k), L, li, byteToIdx(L.lines[li], at - L.starts[li]));
       if (match !== null) return { at, match };
     }
   }
@@ -382,7 +385,7 @@ export function selectLine(pane) {
 // text's structure: the word, a string's inside and the string, each
 // bracket pair's inside and the pair outwards, the line's text and the
 // line, each indentation block outwards (its lines), the document.
-function structureAround(b, s) {
+function structureAround(syn, b, s) {
   const L = b.held;
   const out = [];
   const add = (start, end) => { if (start <= s.start && end >= s.end && end > start) out.push({ start, end }); };
@@ -391,17 +394,17 @@ function structureAround(b, s) {
   const li = L.indexOf(s.start);
   if (li < 0) return out;
   const line = L.lines[li], ls = L.starts[li];
-  // The closed strings on the line (as the highlighter finds them): the
+  // The closed strings on the line (as the grammar coloured them): the
   // inside and the string.
-  const closed = (x) => x.k === "syntax.string" && x.e - x.s >= 2 && line[x.e - 1] === line[x.s];
-  for (const x of highlightLine(b.language, line).filter(closed)) {
+  const closed = (x) => x.e - x.s >= 2 && line[x.e - 1] === line[x.s];
+  for (const x of syn.ranges(li, ["syntax.string"]).filter(closed)) {
     const a = ls + byteLen(line.slice(0, x.s)), z = ls + byteLen(line.slice(0, x.e));
     add(a + 1, z - 1);
     add(a, z);
   }
   // Bracket pairs around it, outwards.
-  for (let open = openerAt(b, s.start); open !== null; open = openerAt(b, open)) {
-    for (const pair of listOf(bracketPair(b, open))) {
+  for (let open = openerAt(syn, b, s.start); open !== null; open = openerAt(syn, b, open)) {
+    for (const pair of listOf(bracketPair(syn, b, open))) {
       if (pair.match >= s.end) {
         add(open + 1, pair.match);
         add(open, pair.match + 1);
@@ -587,7 +590,7 @@ export class Editing {
     v.cursors.forEach((c, i) => {
       const s = sel(c) ?? { start: c.pos, end: c.pos };
       const mine = listOf(lsp).map((l) => l.at(i) ?? []).at(0) ?? [];
-      const ranges = (mine.length > 0 ? mine.concat(b.full ? [{ start: 0, end: b.len }] : []) : structureAround(b, s))
+      const ranges = (mine.length > 0 ? mine.concat(b.full ? [{ start: 0, end: b.len }] : []) : structureAround(this.editor.syntaxOf(b), b, s))
         .filter((r) => r.start <= s.start && r.end >= s.end && r.end - r.start > s.end - s.start);
       for (const r of ranges.sort((x, y) => (x.end - x.start) - (y.end - y.start)).slice(0, 1)) {
         c.anchor = some(r.start);
@@ -699,7 +702,8 @@ export class Editing {
 
   matchingBracket(pane) {
     const b = pane.view.buf;
-    this.move(pane, (c) => listOf(bracketPair(b, c.pos)).map((x) => x.match).at(0) ?? c.pos, false);
+    const syn = this.editor.syntaxOf(b);
+    this.move(pane, (c) => listOf(bracketPair(syn, b, c.pos)).map((x) => x.match).at(0) ?? c.pos, false);
   }
 
   // ---------------------------------------------------------------- typing
@@ -727,13 +731,17 @@ export class Editing {
       if (closer && pairsOn) {
         const held = this.held(b, v.cursors, sel);
         if (held.length === 0) return done();
+        // A quote typed inside a string or a comment (as the colours known
+        // now say) is just a character.
+        const syn = this.editor.syntaxOf(b);
+        const literal = (p) => { const at = syn.categoryAt(p); return at.kind === "category" && (at.key === "syntax.string" || at.key === "syntax.comment"); };
         this.replaceTyped(pane, (c) => {
           // Surround the selection.
           for (const s of held.flatMap((h) => found(h.get(c)))) return putWith(s.start, s.end, text + s.text + closer, 1 + byteLen(s.text), 1);
           const next = charAtPos(b, c.pos);
           const prev = charBefore(b, c.pos);
           const quote = text === closer;
-          const ok = (next == null || /\s/.test(next) || CLOSE.has(next) || next === ",") && !(quote && isWord(prev));
+          const ok = (next == null || /\s/.test(next) || CLOSE.has(next) || next === ",") && !(quote && (isWord(prev) || (c.pos > 0 && literal(c.pos - 1))));
           return ok ? putWith(c.pos, c.pos, text + closer, 1, null) : put(c.pos, c.pos, text);
         }, typing);
         return done();
@@ -924,16 +932,14 @@ export class Editing {
     pane.scheduleRender();
   }
 
+  // Comment the lines the cursors are on with the language's line comment,
+  // or uncomment them when they all are.
   toggleComment(pane) {
-    const b = pane.view.buf;
-    const comment = listOf(b.language).flatMap((l) => found(COMMENTS.get(l)));
-    if (comment.length === 0) { this.editor.say(`No comments in ${b.language ?? "plain text"}`); return; }
-    this.toggleCommentWith(pane, comment[0].open, listOf(comment[0].close).map((x) => ` ${x}`).at(0) ?? "");
+    const b0 = pane.view.buf;
+    for (const prefix of listOf(b0.comment)) { this.toggleLineComment(pane, prefix); return; }
+    this.editor.say(`No comments in ${b0.language ?? "plain text"}`);
   }
-  // Comment the lines the cursors are on with `prefix` (and `close` at
-  // their end: "" for a comment that runs to the line's end), or
-  // uncomment them when they all are.
-  toggleCommentWith(pane, prefix, close) {
+  toggleLineComment(pane, prefix) {
     const v = pane.view;
     const b = v.buf;
     const L = b.held;
@@ -947,18 +953,10 @@ export class Editing {
     for (const i of idx.sort((a, z) => z - a)) {
       const t = L.lines[i];
       if (commented) {
-        if (close !== "" && t.trimEnd().endsWith(close.trim())) {
-          const e = byteLen(t.trimEnd()) - byteLen(close.trim());
-          const sp = t.charAt(byteToIdx(t, e) - 1) === " " ? 1 : 0;
-          ops.push(delOp(L.starts[i] + e - sp, byteLen(close.trim()) + sp));
-        }
         const at = t.indexOf(prefix);
-        const n = prefix.length + (t.charAt(at + prefix.length) === " " ? 1 : 0);
+        const n = byteLen(prefix) + (t.charAt(at + prefix.length) === " " ? 1 : 0);
         ops.push(delOp(L.starts[i] + byteLen(t.slice(0, at)), n));
-      } else {
-        if (close !== "") ops.push(insOp(L.lineEnd(i), close));
-        ops.push(insOp(L.starts[i] + byteLen(t.slice(0, minIndent)), prefix + " "));
-      }
+      } else ops.push(insOp(L.starts[i] + byteLen(t.slice(0, minIndent)), prefix + " "));
     }
     // Ops above are per line, last line first, so each stays valid.
     this.editor.edit(b, ops, "none");

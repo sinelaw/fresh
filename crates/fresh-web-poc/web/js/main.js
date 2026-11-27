@@ -122,7 +122,9 @@ async function main() {
     toggleFold: (pane, line) => { toggleFoldAt(pane, line); },
     mountTerminal: (id, box) => { app.terminals.mount(id, box); },
     wordAt: (buf, pos) => wordAt(buf, pos),
-    bracketPair: (buf, pos) => bracketPair(buf, pos),
+    bracketPair: (buf, pos) => bracketPair(app.syntaxOf(buf), buf, pos),
+    syntaxOf: (buf) => app.syntaxOf(buf),
+    wantColours: (buf, from, to) => { for (const hl of app.hl) hl.want(buf, from, to); },
   };
   // Editing: say something, apply an edit (as typed, or not), hear that a
   // cursor moved, the auto-close setting, and language server positions.
@@ -132,6 +134,7 @@ async function main() {
     moved: (v, old) => { app.cursorMoved(v, old); },
     autoClose: () => app.settings.flags.auto_close === true,
     lspAvailable: (b) => app.lspAvailable(b),
+    syntaxOf: (b) => app.syntaxOf(b),
     lspPosition: (b, pos) => lspPosition(b, pos),
     lspOffset: (b, line, character) => lspOffset(b, line, character),
   };
