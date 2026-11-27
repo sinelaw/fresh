@@ -24,6 +24,7 @@
   "cli.arg.simple": "Chỉ mở những gì được chỉ định, hoặc một bộ đệm trống, trong terminal này: không khôi phục hay lưu phiên, không thanh dock, không tiến trình nền (như `fresh FILE`, không cần tệp)",
   "cli.arg.diff": "So sánh hai tệp cạnh nhau, cả hai đều sửa được, các khác biệt được căn hàng và tô sáng (công cụ cho `git difftool`)",
   "cli.arg.no_upgrade_check": "Tắt kiểm tra cập nhật và đo lường ẩn danh",
+  "cli.arg.inherit_env": "Tạo terminal và language server với môi trường mà chính fresh đang chạy, cộng thêm các thay đổi của venv/direnv/mise đã kích hoạt. Nếu không có tùy chọn này, môi trường mà tiến trình nhận được sẽ được dựng lại từ login shell, làm mất môi trường đã thiết lập trong shell khởi chạy (ví dụ: toolchain của dự án).",
   "cli.arg.locale": "Ghi đè ngôn ngữ (ví dụ 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Khởi chạy ở chế độ GUI (cửa sổ gốc với kết xuất bằng GPU)",
   "cli.section.commands": "Lệnh (dùng --cmd):",

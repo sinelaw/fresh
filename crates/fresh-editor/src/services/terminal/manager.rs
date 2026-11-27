@@ -1112,6 +1112,29 @@ pub fn detect_shell() -> String {
 mod tests {
     use super::*;
 
+    /// The terminal's shell sees the activated env (venv on PATH, the
+    /// recipe's unset respected, no capture-shell leftovers).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminal_shell_env() {
+        let fixture = crate::services::env_provider::test_support::ActivatedVenv::new();
+        let (builder, _shell) = build_shell_command(
+            crate::services::authority::TerminalWrapper {
+                command: "sh".into(),
+                args: vec![],
+                manages_cwd: false,
+            },
+            None,
+            &fixture.provider.current_local_delta_blocking(),
+            &HashMap::new(),
+        );
+        let env: HashMap<String, String> = builder
+            .iter_full_env_as_str()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        fixture.assert_env("terminal", &env);
+    }
+
     /// A PTY stand-in whose bytes arrive when the test sends them; EOF once
     /// the sender is dropped.
     struct GatedPty(mpsc::Receiver<Vec<u8>>);

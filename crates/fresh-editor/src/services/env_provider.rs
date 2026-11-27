@@ -24,7 +24,11 @@ use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 /// Files whose contents define a project's environment. Used to key the
 /// capture cache: if none changed, the captured env can't have changed (for
@@ -38,6 +42,34 @@ const ENV_INPUT_FILES: &[&str] = &[
     ".venv/pyvenv.cfg",
 ];
 
+/// Process-wide: `--inherit-env` was given at boot. When set, the local
+/// delta capture's shell inherits fresh's own environment; when clear, the
+/// shell runs as a login shell and rebuilds the environment from rc files.
+/// Set once in `main.rs` (both the standalone and daemon boot paths) before
+/// any capture can run, read on every capture.
+static INHERIT_ENV: AtomicBool = AtomicBool::new(false);
+
+/// Record the `--inherit-env` boot flag. Called once from process setup.
+pub fn set_inherit_env(on: bool) {
+    INHERIT_ENV.store(on, Ordering::Relaxed);
+}
+
+/// Whether `--inherit-env` is in effect.
+pub fn inherit_env_is_set() -> bool {
+    INHERIT_ENV.load(Ordering::Relaxed)
+}
+
+/// The flags the local delta capture's shell is invoked with, per the
+/// `--inherit-env` boot flag: inherit fresh's environment (`-c`) or rebuild
+/// one from rc files (`-lc`). A named function so tests can pin the mapping.
+fn capture_shell_flags() -> &'static str {
+    if INHERIT_ENV.load(Ordering::Relaxed) {
+        "-c"
+    } else {
+        "-lc"
+    }
+}
+
 struct State {
     /// The activation snippet. Empty/whitespace ⇒ inactive (no env applied).
     snippet: String,
@@ -46,8 +78,9 @@ struct State {
     /// Last full-snapshot capture, keyed by the env-inputs hash it was produced
     /// under. Used by [`EnvProvider::current`] (LSP / one-shot spawns).
     cache: Option<Cached>,
-    /// Last *delta* capture (activation changes over a clean login shell),
-    /// keyed by the same hash. Used by the integrated terminal.
+    /// Last *delta* capture (the activation's changes over the capture
+    /// shell's starting environment), keyed by the same hash. Used by the
+    /// integrated terminal.
     delta_cache: Option<CachedDelta>,
 }
 
@@ -235,25 +268,26 @@ impl EnvProvider {
     }
 
     /// Capture the activation **delta** for a *local* backend by running the
-    /// recipe through `$SHELL -lc` on this host, **blocking** the caller.
+    /// snippet in a shell on this host, **blocking** the caller.
     ///
     /// The integrated-terminal spawn is a synchronous, non-tokio path
-    /// (portable-pty + OS threads) and so cannot `await` the async capture; this
-    /// is how the terminal applies the same activation everything else gets. The
-    /// returned [`EnvDelta`] carries only what the recipe changed over a clean
-    /// login shell, so applying it to the child's env is shell-agnostic and free
-    /// of volatile shell bookkeeping. Shares a hash-keyed cache, so repeated
-    /// terminal opens with unchanged env inputs run no subprocess. Empty when
-    /// inactive or on failure — the caller degrades to the inherited env.
+    /// (portable-pty + OS threads) and so cannot `await` the async capture;
+    /// this is how the terminal applies the same activation everything else
+    /// gets. Which environment the capture shell starts from is the
+    /// `--inherit-env` boot flag: set, and the shell inherits fresh's own
+    /// environment — the one children inherit — so the delta carries only
+    /// what the snippet changed on top of it; clear, and the shell runs as a
+    /// login shell, rebuilding the environment from rc files (the released
+    /// behavior, which drops anything the launching shell set up that rc
+    /// files do not). Shares a hash-keyed cache, so repeated terminal opens
+    /// with unchanged env inputs run no subprocess. Empty when inactive or
+    /// on capture failure — the caller degrades to the inherited env.
     pub fn current_local_delta_blocking(&self) -> EnvDelta {
         self.capture_delta_blocking(|script| {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            let output = std::process::Command::new(&shell)
-                .arg("-lc")
-                .arg(&script)
-                .hide_window()
-                .output()
-                .ok()?;
+            let mut cmd = std::process::Command::new(&shell);
+            cmd.arg(capture_shell_flags());
+            let output = cmd.arg(&script).hide_window().output().ok()?;
             Some(String::from_utf8_lossy(&output.stdout).into_owned())
         })
     }
@@ -298,7 +332,7 @@ impl EnvProvider {
 }
 
 /// Build the shell script the capture runs: `cd <dir>; <snippet>; <env dump>`.
-/// The caller's `run` closure wraps this in the host's shell (`$SHELL -lc …`
+/// The caller's `run` closure wraps this in the host's shell (`$SHELL -c …`
 /// locally, `ssh … sh -lc …` remotely, etc.). The dump is [`ENV_DUMP`]:
 /// NUL-separated `KEY=VALUE` records, so a value may hold newlines.
 fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
@@ -349,10 +383,11 @@ pub(crate) const ENV_DUMP: &str = concat!(
 /// can split on the identical marker when it captures the delta on the remote.
 pub(crate) const DELTA_SENTINEL: &str = "__FRESH_ENV_DELTA_SENTINEL_b3f1c2__";
 
-/// Build the script for a *delta* capture: dump the env once (baseline — login
-/// shell in the project dir, recipe not yet run), print the sentinel, run the
-/// recipe, then dump the env again (activated). Diffing the two halves yields
-/// exactly what the recipe changed — see [`parse_delta`]. The `cd` precedes the
+/// Build the script for a *delta* capture: dump the env once (baseline — the
+/// capture shell's inherited env in the project dir, snippet not yet run),
+/// print the sentinel, run the snippet, then dump the env again (activated).
+/// Diffing the two halves yields exactly what the snippet changed — see
+/// [`parse_delta`]. The `cd` precedes the
 /// baseline dump so direnv (which keys off cwd) is still inactive in the
 /// baseline and only activates in the second half.
 fn build_delta_capture_script(snippet: &str, dir: Option<&Path>) -> String {
@@ -801,6 +836,16 @@ mod tests {
     #[test]
     fn parse_delta_missing_sentinel_is_empty() {
         assert!(parse_delta("HOME=/h\nPATH=/usr/bin").is_empty());
+    }
+
+    #[test]
+    fn capture_shell_flags_follow_the_inherit_env_flag() {
+        let before = inherit_env_is_set();
+        set_inherit_env(false);
+        assert_eq!(capture_shell_flags(), "-lc");
+        set_inherit_env(true);
+        assert_eq!(capture_shell_flags(), "-c");
+        set_inherit_env(before);
     }
 
     #[test]

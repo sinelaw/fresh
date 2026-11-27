@@ -18,6 +18,7 @@
   "cli.arg.simple": "Open just what is named, or an empty buffer, in this terminal: no session restored or saved, no dock, no daemon (what `fresh FILE` does, without needing a file)",
   "cli.arg.diff": "Compare two files side by side, both editable, the differences aligned and highlighted (a diff tool for `git difftool`)",
   "cli.arg.no_upgrade_check": "Disable upgrade checking and anonymous telemetry",
+  "cli.arg.inherit_env": "Spawn terminals and language servers with the environment fresh itself runs in, plus any activated venv/direnv/mise changes. Without it, the environment they get is rebuilt from a login shell, which drops the environment set up in the launching shell (e.g. a project toolchain).",
   "cli.arg.locale": "Override the locale (e.g. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Launch in GUI mode (native window with GPU rendering)",
   "cli.section.commands": "Commands (use --cmd):",

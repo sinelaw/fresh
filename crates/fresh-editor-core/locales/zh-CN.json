@@ -24,6 +24,7 @@
   "cli.arg.simple": "在此终端中只打开指定的内容（或一个空缓冲区）：不恢复或保存会话，没有停靠栏，没有守护进程（相当于不带文件的 `fresh FILE`）",
   "cli.arg.diff": "并排比较两个文件，两侧均可编辑，差异对齐并高亮显示（可用作 `git difftool` 的比较工具）",
   "cli.arg.no_upgrade_check": "禁用升级检查与匿名遥测",
+  "cli.arg.inherit_env": "使用 fresh 自身运行所在的环境创建终端和语言服务器，并加上已激活的 venv/direnv/mise 的变更。不指定此标志时，进程获得的环境将从登录 shell 重建，从而丢弃启动 shell 中设置的环境（例如项目工具链）。",
   "cli.arg.locale": "覆盖语言（例如 'en'、'ja'、'zh-CN'）",
   "cli.arg.gui": "以 GUI 模式启动（使用 GPU 渲染的原生窗口）",
   "cli.section.commands": "命令（使用 --cmd）：",
