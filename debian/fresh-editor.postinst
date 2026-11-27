@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure|abort-upgrade)
+        update-alternatives --install /usr/bin/editor editor /usr/bin/fresh 20 \
+            --slave /usr/share/man/man1/editor.1.gz editor.1.gz /usr/share/man/man1/fresh.1.gz
+    ;;
+esac
+
+#DEBHELPER#
