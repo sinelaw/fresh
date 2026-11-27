@@ -2032,19 +2032,7 @@ fn a_saved_machine_is_offered_with_what_it_resolves_to() {
 fn typing_a_repository_path_arms_the_worktree_toggle() {
     let (_temp, workspace) = set_up_workspace();
     let repo = workspace.join("alpha_dir");
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "t@example.com"],
-        vec!["config", "user.name", "t"],
-        vec!["commit", "-q", "--allow-empty", "-m", "seed"],
-    ] {
-        let out = std::process::Command::new("git")
-            .args(&args)
-            .current_dir(&repo)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed: {:?}", args, out);
-    }
+    git_init_repo(&repo);
 
     let mut harness = open_form_on(&workspace);
     harness
@@ -2071,6 +2059,237 @@ fn typing_a_repository_path_arms_the_worktree_toggle() {
         });
 }
 
+/// Initialise `dir` as a repository with one commit.
+fn git_init_repo(dir: &Path) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "t@example.com"],
+        vec!["config", "user.name", "t"],
+        vec!["commit", "-q", "--allow-empty", "-m", "seed"],
+    ] {
+        let out = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?} failed: {:?}", args, out);
+    }
+}
+
+/// The screen with the dialog frame, empty-line tilde gutter, and every
+/// space removed.
+///
+/// The `worktree at …` note is drawn with `wrap: true`, so a path too long
+/// for the dialog is split across rows mid-component — and how long is too
+/// long depends on the runner: a macOS or Windows temp directory is deeper
+/// than Linux's `/tmp/.tmpXXXXXX`, so a row that fits on one line here wraps
+/// there. Flattening the screen makes the assertion independent of where the
+/// break landed; a path holds no spaces, so nothing that matters is lost.
+///
+/// Only the leading `~` gutter marker on each terminal row is stripped: a
+/// path may legitimately contain `~` (for example Windows 8.3 short paths
+/// such as `RUNNER~1`), which must survive flattening.
+fn screen_without_frame(screen: &str) -> String {
+    screen
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            trimmed.strip_prefix('~').unwrap_or(trimmed)
+        })
+        .flat_map(str::chars)
+        .filter(|c| !c.is_whitespace() && *c != '│')
+        .collect()
+}
+
+#[test]
+fn screen_without_frame_preserves_tilde_in_windows_short_paths() {
+    let screen = "\
+~ ┌──────────────────────────────────────┐
+~ │ worktree at C:/Users/RUNNER~1/AppDat │
+~ │ a/Local/Temp/.tmp123/data/orchestrat │
+~ │ or/repo/fix-colon                    │
+~ └──────────────────────────────────────┘
+~";
+    let flat = screen_without_frame(screen);
+    assert!(
+        flat.contains(
+            "C:/Users/RUNNER~1/AppData/Local/Temp/.tmp123/data/orchestrator/repo/fix-colon"
+        ),
+        "expected RUNNER~1 path to remain intact after flattening, got: {flat}"
+    );
+}
+
+/// The directory every project's state hangs under, as the plugin renders it:
+/// `pathJoin` always uses forward slashes, whatever the host separator is.
+fn previewed_state_root(data_home: &tempfile::TempDir) -> String {
+    format!(
+        "{}/orchestrator/",
+        data_home
+            .path()
+            .join("data")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    )
+}
+
+/// The worktree path the form previews for `name` under `repo`'s own key.
+///
+/// Only sound where the path reaches the form as it is on disk, which it does
+/// not on Windows: `set_up_workspace` canonicalises, and there that yields the
+/// extended-length `\\?\C:\…` spelling — the same form `getCwd()` hands
+/// plugins, and the one `oneProjectSpelling` strips before keying. A key
+/// computed from the un-normalised path names a different directory.
+#[cfg(unix)]
+fn expected_worktree_path(
+    data_home: &tempfile::TempDir,
+    repo: &std::path::Path,
+    name: &str,
+) -> String {
+    format!(
+        "{}/orchestrator/{}/{name}",
+        data_home
+            .path()
+            .join("data")
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+        fresh_core::path_encode::storage_key_for_path(repo),
+    )
+}
+
+/// **A new workspace's worktree goes one level under the project's own state
+/// directory, and the slug that names it is a single path component.**
+///
+/// `<data dir>/orchestrator/<slug of the project>/<name>` is built with
+/// `editor.pathJoin`, which reads a component whose second character is `:`
+/// as drive-absolute and throws away everything joined before it. A slug
+/// that kept the drive colon therefore took the data dir with it, which is
+/// #3811: `git worktree add` resolved the leftover against the current
+/// directory, inside the project, and the absolute-path check on the other
+/// side refused the session.
+///
+/// A Windows root cannot be driven through this form on a POSIX host — the
+/// folder probe answers "non-git" for `C:\code\myrepo` and the GIT section
+/// never renders — but a colon is legal in a POSIX directory name, and the
+/// rule the slug has to keep is the same one. So the project here is
+/// `my:repo`, and the row it draws says whether the slug still carries a
+/// character `pathJoin` would read as a prefix.
+///
+/// The key's own matrix — the charset, the bounds, that one path gives one
+/// key and two give two — is pinned by `path_encode`'s Rust tests. What this
+/// adds is that the *plugin* names the directory with that key, so it asserts
+/// the row equals the key exactly rather than re-proving its properties.
+// A directory with a colon in its name cannot exist on Windows — which is the
+// very reason the old slug was never usable there — so the POSIX spelling of
+// this case can only be driven on a POSIX host.
+#[cfg(unix)]
+#[test]
+fn the_previewed_worktree_path_stays_under_the_projects_state_dir() {
+    let (_temp, workspace) = set_up_workspace();
+    let repo = workspace.join("my:repo");
+    fs::create_dir(&repo).unwrap();
+    git_init_repo(&repo);
+
+    // A data dir of this test's own: the row names an absolute path under it,
+    // and the assertions below read it back.
+    let data_home = tempfile::tempdir().unwrap();
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("plain folder"))
+        .expect("the form opens on a non-git workspace, so the plan starts as a plain folder");
+
+    // The form opens focused on the Folder field.
+    harness.type_text(repo.to_str().unwrap()).unwrap();
+    // Leave the field: the path-completion popup it opened covers the rows
+    // under it, and Tab closes it without accepting a suggestion.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("new worktree"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "`my:repo` is a repository, so the plan must be a new worktree. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // The worktree path is previewed in the GIT section, which the Details
+    // fold reveals — and name the workspace, so the row's last component is
+    // this test's own rather than an auto-generated counter.
+    set_details(&mut harness, true);
+    focus_stop(&mut harness, "Workspace:");
+    harness.type_text("wtname").unwrap();
+    harness
+        .wait_until(|h| screen_without_frame(&h.screen_to_string()).contains("/wtname"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the worktree preview follows the workspace name. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    let expected = expected_worktree_path(&data_home, &repo, "wtname");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen_without_frame(&screen).contains(&expected),
+        "the worktree goes under the project's own state directory, named by \
+         the key the editor names its own per-path directories with. A slug \
+         that kept the drive colon took the data dir off the front of this \
+         row (#3811).\n  expected: {expected}\nScreen:\n{screen}",
+    );
+}
+
+/// **A typed workspace name is reduced to what a directory and a branch can
+/// hold, where the form previews it.** The name is both: `runLocalCreate`
+/// joins it under the project's state directory and `git worktree add -b`
+/// cuts a branch called it. So `fix: colon` cannot be either — `:` is
+/// invalid in a Windows path component and in a git ref — and the row has to
+/// say so before the launch, not fail afterwards.
+#[test]
+fn a_typed_workspace_name_is_previewed_as_the_directory_it_will_be() {
+    let (_temp, workspace) = set_up_workspace();
+    let repo = workspace.join("myrepo");
+    fs::create_dir(&repo).unwrap();
+    git_init_repo(&repo);
+
+    let data_home = tempfile::tempdir().unwrap();
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("plain folder"))
+        .expect("the form opens on a non-git workspace, so the plan starts as a plain folder");
+
+    harness.type_text(repo.to_str().unwrap()).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("new worktree"))
+        .expect("a typed repository path turns the plan into a new worktree");
+
+    set_details(&mut harness, true);
+    focus_stop(&mut harness, "Workspace:");
+    harness.type_text("fix: colon").unwrap();
+
+    // The *name* is what this pins, so it asserts the leaf and that the row is
+    // still a path under the project-state level — not the project's key. That
+    // is covered by `the_previewed_worktree_path_stays_under_the_projects_state_dir`
+    // and by `path_encode`'s own tests, and it is not derivable here on every
+    // host (see `expected_worktree_path`). The preview is the only row naming
+    // that directory, so finding both in the flattened screen is finding them
+    // in it.
+    let state_root = previewed_state_root(&data_home);
+    harness
+        .wait_until(|h| {
+            let flat = screen_without_frame(&h.screen_to_string());
+            flat.contains(&state_root) && flat.contains("/fix-colon")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "the previewed worktree directory is the typed name reduced to what a \
+                 directory and a branch can hold, under {state_root}.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
 /// **And the same for a `~` path**, which is the shape the disabled toggle
 /// was actually reported on: `git -C ~/repo` with a literal tilde fails, the
 /// form reads that as "not a git path", and a repository that plainly is one
@@ -2087,19 +2306,7 @@ fn a_tilde_repository_path_arms_the_worktree_toggle() {
     let data_home = tempfile::tempdir().unwrap();
     let repo = data_home.path().join("home").join("tildedir");
     fs::create_dir_all(&repo).unwrap();
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "t@example.com"],
-        vec!["config", "user.name", "t"],
-        vec!["commit", "-q", "--allow-empty", "-m", "seed"],
-    ] {
-        let out = std::process::Command::new("git")
-            .args(&args)
-            .current_dir(&repo)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed: {:?}", args, out);
-    }
+    git_init_repo(&repo);
 
     let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
     harness

@@ -40,7 +40,10 @@ pub mod language_detect;
 pub mod markdown;
 #[cfg(feature = "runtime")]
 pub mod packages;
-pub mod path_encode;
+// Moved down to `fresh-core` so the plugin runtime can name a project's
+// storage directory with the same key the editor does; re-exported here so
+// `fresh_editor_core::path_encode::…` still resolves for every caller.
+pub use fresh_core::path_encode;
 #[cfg(feature = "runtime")]
 #[cfg(feature = "runtime")]
 pub mod process_hidden;

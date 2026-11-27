@@ -48,6 +48,11 @@ import {
 import { WindowMachines } from "./lib/window_machines.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
 import {
+  legacyProjectStateDir,
+  projectStateDir,
+  safeNameComponent,
+} from "./lib/path_slug.ts";
+import {
   AGENT_REGISTRY,
   agentEntryForBase,
   namedSession,
@@ -8178,19 +8183,28 @@ interface ArchiveManifest {
   sessions: ArchivedSession[];
 }
 
+/// Where this project's manifest lives: under the storage key, or under the
+/// name a release before it used when that is where the file already is.
+///
+/// Nothing is migrated to the new name, because nothing has to be. A worktree
+/// is found through git, which records it in the repository by absolute path,
+/// and every path inside an entry is absolute as well, so the manifest is the
+/// only thing that has to be found again — and both reading and writing
+/// resolve here, so a project still under the old name is read *and* written
+/// in place rather than left with two files.
 function archiveManifestPath(repoRoot: string): string {
-  return editor.pathJoin(
-    editor.getDataDir(),
-    "orchestrator",
-    slugify(repoRoot),
-    "archived.json",
-  );
+  const path = editor.pathJoin(projectStateDir(editor, repoRoot), "archived.json");
+  if (editor.fileExists(editor.localPath(path))) return path;
+  const legacy = editor.pathJoin(legacyProjectStateDir(editor, repoRoot), "archived.json");
+  return editor.fileExists(editor.localPath(legacy)) ? legacy : path;
 }
 
-function loadArchiveManifest(repoRoot: string): ArchiveManifest {
-  const path = archiveManifestPath(repoRoot);
+/// The manifest stored at `path`, or null when there is no readable one
+/// there. A corrupt file reads as absent: bad data hides its own repo's
+/// archive rather than bricking the dialog or the whole listing.
+function readArchiveManifestAt(path: string): ArchiveManifest | null {
   const raw = editor.readFile(editor.localPath(path));
-  if (!raw) return { version: 1, sessions: [] };
+  if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
     if (
@@ -8200,17 +8214,26 @@ function loadArchiveManifest(repoRoot: string): ArchiveManifest {
       return parsed as ArchiveManifest;
     }
   } catch (_) {
-    // Fall through to fresh manifest — bad data shouldn't
-    // brick the dialog.
+    // Fall through — treated as "no manifest here".
   }
-  return { version: 1, sessions: [] };
+  return null;
 }
 
-function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
-  const path = archiveManifestPath(repoRoot);
+function loadArchiveManifest(repoRoot: string): ArchiveManifest {
+  return readArchiveManifestAt(archiveManifestPath(repoRoot)) ?? { version: 1, sessions: [] };
+}
+
+/// Write a manifest to `path` — the counterpart of `readArchiveManifestAt`,
+/// for the one caller that has to write back to a file it was handed rather
+/// than one resolved from a repo root (`unarchiveOne`).
+function writeArchiveManifestAt(path: string, m: ArchiveManifest): boolean {
   const dir = editor.pathDirname(path);
   if (!editor.createDir(editor.localPath(dir))) return false;
   return editor.replaceFile(editor.localPath(path), JSON.stringify(m, null, 2));
+}
+
+function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
+  return writeArchiveManifestAt(archiveManifestPath(repoRoot), m);
 }
 
 /// Every archive manifest on this machine, paired with the entries it holds.
@@ -8220,9 +8243,9 @@ function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
 /// entries carry `repo_root`; for older ones the repo is recovered from the
 /// archived worktree itself (`archivedRepoRoot`) at the point it is needed,
 /// which is the one place that needs it.
-function scanArchiveManifests(): { slug: string; manifest: ArchiveManifest }[] {
+function scanArchiveManifests(): { path: string; manifest: ArchiveManifest }[] {
   const base = editor.pathJoin(editor.getDataDir(), "orchestrator");
-  const out: { slug: string; manifest: ArchiveManifest }[] = [];
+  const out: { path: string; manifest: ArchiveManifest }[] = [];
   let entries: DirEntry[];
   try {
     entries = editor.readDir(editor.localPath(base));
@@ -8238,17 +8261,11 @@ function scanArchiveManifests(): { slug: string; manifest: ArchiveManifest }[] {
     // graveyard), not a per-repo state directory.
     if (!e.is_dir || e.name.startsWith(".")) continue;
     const path = editor.pathJoin(base, e.name, "archived.json");
-    const raw = editor.readFile(editor.localPath(path));
-    if (!raw) continue;
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && Array.isArray(parsed.sessions)) {
-        out.push({ slug: e.name, manifest: parsed as ArchiveManifest });
-      }
-    } catch (_) {
-      // A corrupt manifest hides its own repo's archive rather than
-      // failing the whole listing — same tolerance as `loadArchiveManifest`.
-    }
+    const manifest = readArchiveManifestAt(path);
+    // The path travels with the entries: whoever acts on one has to write
+    // the change back to the file it came out of, which for a project still
+    // under a legacy name is not the one its repo root now points at.
+    if (manifest) out.push({ path, manifest });
   }
   return out;
 }
@@ -8271,7 +8288,7 @@ async function archivedRepoRoot(e: ArchivedSession): Promise<string | null> {
 ///
 /// Does NOT trigger sync — the caller batches that, matching the other
 /// lifecycle cores.
-async function unarchiveOne(e: ArchivedSession): Promise<LifecycleResult> {
+async function unarchiveOne(e: ArchivedSession, foundAt: string): Promise<LifecycleResult> {
   const repoRoot = await archivedRepoRoot(e);
   if (!repoRoot) return { ok: false, err: editor.t("err.not_git_repo") };
 
@@ -8308,9 +8325,12 @@ async function unarchiveOne(e: ArchivedSession): Promise<LifecycleResult> {
     }
   }
 
-  const manifest = loadArchiveManifest(repoRoot);
+  // `foundAt`, not a path rebuilt from `repoRoot`: the entry has to leave
+  // the file the caller read it out of, which is the only file that will
+  // stop listing it.
+  const manifest = readArchiveManifestAt(foundAt) ?? { version: 1, sessions: [] };
   manifest.sessions = manifest.sessions.filter((x) => x.root !== e.root);
-  saveArchiveManifest(repoRoot, manifest);
+  writeArchiveManifestAt(foundAt, manifest);
   // Nothing re-adds the row to the model here: the worktree is back on disk,
   // so the discovered-worktree scan picks it up as an unopened row the next
   // time it runs (and `focusWorkspace` / Enter opens it). Forcing a window
@@ -8466,12 +8486,7 @@ interface LifecycleResult {
 // is already there — `git worktree move` refuses that — so an occupied name
 // takes the next free `-2`, `-3`, … instead of failing the archive.
 function archivedPathFor(repoRoot: string, s: AgentSession): string {
-  const graveyard = editor.pathJoin(
-    editor.getDataDir(),
-    "orchestrator",
-    slugify(repoRoot),
-    ".archived",
-  );
+  const graveyard = editor.pathJoin(projectStateDir(editor, repoRoot), ".archived");
   // `s.hostLabel` is NOT a fallback here: it is a display string too (the
   // reconcile sites write it from the window's own label, and the rename path
   // overwrites it), so falling back to it would put the very characters this
@@ -9020,12 +9035,6 @@ registerHandler("orchestrator_toggle_trivial", toggleHideTrivial);
 // =============================================================================
 // New-session floating form
 // =============================================================================
-
-function slugify(p: string): string {
-  // Drop any leading separator so the slug isn't anchored to the
-  // filesystem root; replace remaining separators with underscores.
-  return p.replace(/^[\\\/]+/, "").replace(/[\\\/]+/g, "_");
-}
 
 // =============================================================================
 // Input history (Up / Down) for the new-session form
@@ -9651,9 +9660,8 @@ async function listLinkedWorktrees(
 /// collapse anything outside `[A-Za-z0-9._-]` to a dash; the name
 /// doubles as the worktree branch.
 function sessionNameBaseFor(repoRoot: string): string {
-  const raw = editor.pathBasename(repoRoot) || "";
-  const slug = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "session";
+  const name = safeNameComponent(editor.pathBasename(repoRoot) || "");
+  return name.length > 0 ? name : "session";
 }
 
 // Advance the persisted counter past `name` when it is one of this project's
@@ -13960,8 +13968,11 @@ function localBodyFields(): WidgetSpec[] {
 
 // What the workspace will be called: the typed name, or the auto-generated
 // default the Workspace Name field is showing as its placeholder.
+/// The name the launch will use, which is also the worktree's directory and
+/// the branch cut for it — so a typed name is reduced to what both can hold
+/// *here*, where the form previews it, rather than quietly somewhere later.
 function plannedWorkspaceName(f: NewSessionForm): string {
-  return f.name.value.trim() || formDefaultSessionName(f);
+  return safeNameComponent(f.name.value.trim()) || formDefaultSessionName(f);
 }
 
 // The auto-name an empty Workspace field launches with. The folder probe names
@@ -14107,7 +14118,7 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
 // the project path the user can see in the field above.
 function localWorktreePath(f: NewSessionForm, name: string): string {
   const project = expandHome(f.projectPath.value.trim() || f.defaultProjectPath);
-  return editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(project), name);
+  return editor.pathJoin(projectStateDir(editor, project), name);
 }
 
 // Ask the remote whether the path it was given is a repository, and what it
@@ -15519,10 +15530,15 @@ interface LocalSpecInputs extends AgentOptionInputs {
 }
 
 function buildLocalSpec(o: LocalSpecInputs): CreateSpec {
+  // `name` becomes a directory under the data dir and the branch cut for it,
+  // so it is reduced to what both can hold. `displayLabel` is not: what the
+  // dock calls a workspace is the caller's string, and the rename path is
+  // free to make it anything.
+  const name = safeNameComponent(o.name);
   return {
     backend: "local",
     projectPath: o.projectPath,
-    name: o.name,
+    name,
     cmd: o.cmd,
     ...gateAgentOptions(o.cmd, o),
     branch: o.branch,
@@ -16117,7 +16133,7 @@ async function discardCreatedWorktree(repoRoot: string, root: string): Promise<v
 async function freeWorktreeName(projectPath: string, name: string): Promise<string> {
   const repoRoot = (await resolveCanonicalRepoRoot(projectPath)) ?? projectPath;
   const taken = async (n: string): Promise<boolean> => {
-    const root = editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(repoRoot), n);
+    const root = editor.pathJoin(projectStateDir(editor, repoRoot), n);
     if (editor.fileExists(editor.localPath(root))) return true;
     const ref = await spawnCollect(
       "git",
@@ -16177,7 +16193,7 @@ async function runLocalCreate(id: number): Promise<void> {
   relabelPending(id, sessionName);
 
   const root = createWorktree
-    ? editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(repoRoot), sessionName)
+    ? editor.pathJoin(projectStateDir(editor, repoRoot), sessionName)
     : projectPath;
 
   // Recovery idempotency: a worktree left on disk by an interrupted run is
@@ -17915,21 +17931,23 @@ async function apiUnarchiveWorkspace(target: string): Promise<boolean> {
   // Match on the archived path first (unique), then the display name, which
   // is what a human reads off the listing. A name shared by two archived
   // workspaces resolves to the newest, matching the listing's own order.
-  let match: ArchivedSession | null = null;
-  for (const { manifest } of scanArchiveManifests()) {
+  // The manifest's own path travels with the match: the entry has to be
+  // cleared from the file it was read out of (see `loadArchiveManifest`).
+  let match: { entry: ArchivedSession; at: string } | null = null;
+  for (const { path, manifest } of scanArchiveManifests()) {
     for (const e of manifest.sessions) {
       if (e.root === want) {
-        match = e;
+        match = { entry: e, at: path };
         break;
       }
-      if (e.label === want && (!match || e.archived_at > match.archived_at)) {
-        match = e;
+      if (e.label === want && (!match || e.archived_at > match.entry.archived_at)) {
+        match = { entry: e, at: path };
       }
     }
-    if (match && match.root === want) break;
+    if (match && match.entry.root === want) break;
   }
   if (!match) return false;
-  const res = await unarchiveOne(match);
+  const res = await unarchiveOne(match.entry, match.at);
   if (!res.ok) throw new Error(res.err || "unarchive failed");
   // The manifest changed, so push it the same way the archive path does.
   refreshOpenDialog();

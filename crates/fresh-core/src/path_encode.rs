@@ -1,8 +1,12 @@
 //! Encoding a workspace path into a filesystem-safe filename.
 //!
-//! Used by `config_io` to name per-workspace config files and by
-//! `fresh-editor`'s workspace store to name session files, so it lives here
-//! rather than in either caller.
+//! Used by `config_io` to name per-workspace config files, by
+//! `fresh-editor`'s workspace store to name session files, and — through
+//! `editor.pathStorageKey()` — by the plugins that keep their own per-project
+//! state under the data dir. So it lives at the bottom, below every caller,
+//! rather than in one of them. The plugin side could have spelled
+//! [`storage_key_for_path`] out again in TypeScript; one implementation that
+//! every caller reaches cannot drift from itself.
 
 use std::path::Path;
 

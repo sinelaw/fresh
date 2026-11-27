@@ -6447,6 +6447,35 @@ interface EditorAPI {
 	*/
 	pathIsAbsolute(path: string): boolean;
 	/**
+	* A directory name for data kept *about* a path, such as a plugin's own
+	* per-project state: the path's last component, reduced to letters,
+	* digits, `.`, `_` and `-`, then a `-` and 16 hex digits of a hash of
+	* the whole path.
+	* 
+	* Use this rather than building a name out of a path yourself. The
+	* result is a single path component of at most 65 characters, holding
+	* nothing a file cannot be called on any platform and no separator or
+	* drive letter for `pathJoin` to read as a prefix — which is what keeps
+	* `pathJoin(getDataDir(), "myplugin", pathStorageKey(project), name)`
+	* under the data dir even when the project is `C:\code\myrepo`.
+	* 
+	* The hash is what tells two projects apart, so the readable part is
+	* free to be lossy: a name written in another script keeps none of it
+	* and reads `dir`, and a filesystem root reads `root`. Two spellings of
+	* one path give one key, so `/a/b`, `/a//b`, `/a/b/` and `/a/./b` agree.
+	* 
+	* The answer is the same in every release, so a key can name a
+	* directory that outlives the editor. Nothing turns one back into a
+	* path, so keep the path itself if you will need it later.
+	* 
+	* @param path - the path to name a directory after
+	* 
+	* ```ts
+	* editor.pathStorageKey("/home/user/project"); // "project-4cbcabc04ebf2296"
+	* ```
+	*/
+	pathStorageKey(path: string): string;
+	/**
 	* Convert a file:// URI to a local file path.
 	* Handles percent-decoding and Windows drive letters.
 	* Returns an empty string if the URI is not a valid file URI.
