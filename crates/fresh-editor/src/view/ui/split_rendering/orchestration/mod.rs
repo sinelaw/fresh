@@ -578,6 +578,7 @@ fn text_pane_content(
         indentation_guide_glyph,
         rainbow_indentation,
         bracket_highlight,
+        active_buf_is_terminal,
         Some((cell_theme_map, screen_width)),
     );
     let caret_by_terminal = layout.primary_cursor_by_terminal;

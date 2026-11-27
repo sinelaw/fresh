@@ -45,6 +45,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use fresh_editor_core::model::host_path::AsHostPath;
+use ratatui::style::Color;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -886,8 +887,7 @@ impl TerminalState {
 
     /// Get a line of content for rendering
     ///
-    /// Returns cells as (char, foreground_color, background_color, flags) tuples.
-    /// Colors are ANSI color indices (0-255) or None for default.
+    /// Colors are palette indices (0-255), RGB, or None for the pane default.
     /// Accounts for scroll offset (display_offset) when accessing lines.
     pub fn get_line(&self, row: u16) -> Vec<TerminalCell> {
         use alacritty_terminal::index::{Column, Line};
@@ -912,9 +912,8 @@ impl TerminalState {
             let cell = &row_data[Column(col)];
             let c = cell.c;
 
-            // Convert colors
-            let fg = color_to_rgb(&cell.fg);
-            let bg = color_to_rgb(&cell.bg);
+            let fg = to_editor_color(&cell.fg);
+            let bg = to_editor_color(&cell.bg);
 
             // Check flags
             let flags = cell.flags;
@@ -1354,8 +1353,9 @@ impl TerminalState {
 
     /// Append all cells of one grid row to `out`, threading the SGR state so a
     /// joined logical line carries continuous colors across wrapped rows and
-    /// only resets once at the end. Color codes are emitted as truecolor; the
-    /// buffer renderer interprets these (see `src/primitives/ansi.rs`).
+    /// only resets once at the end. Palette colors are written as palette
+    /// numbers and RGB as truecolor, so the buffer renderer (see
+    /// `src/primitives/ansi.rs`) reads back the colors the live screen drew.
     fn append_row_cells(&self, line: Line, sgr: &mut SgrState, out: &mut String) {
         use alacritty_terminal::term::cell::Flags;
 
@@ -1375,8 +1375,8 @@ impl TerminalState {
             {
                 continue;
             }
-            let fg = color_to_rgb(&cell.fg);
-            let bg = color_to_rgb(&cell.bg);
+            let fg = to_editor_color(&cell.fg);
+            let bg = to_editor_color(&cell.bg);
             let flags = cell.flags;
             let bold = flags.contains(Flags::BOLD);
             let dim = flags.contains(Flags::DIM);
@@ -1418,11 +1418,11 @@ impl TerminalState {
                     if underline {
                         codes.push("4".to_string());
                     }
-                    if let Some((r, g, b)) = fg {
-                        codes.push(format!("38;2;{};{};{}", r, g, b));
+                    if let Some(code) = fg.and_then(|c| sgr_color(38, c)) {
+                        codes.push(code);
                     }
-                    if let Some((r, g, b)) = bg {
-                        codes.push(format!("48;2;{};{};{}", r, g, b));
+                    if let Some(code) = bg.and_then(|c| sgr_color(48, c)) {
+                        codes.push(code);
                     }
                 } else {
                     if bold_changed && bold {
@@ -1438,18 +1438,16 @@ impl TerminalState {
                         codes.push("4".to_string());
                     }
                     if fg_changed {
-                        if let Some((r, g, b)) = fg {
-                            codes.push(format!("38;2;{};{};{}", r, g, b));
-                        } else {
-                            codes.push("39".to_string());
-                        }
+                        codes.push(
+                            fg.and_then(|c| sgr_color(38, c))
+                                .unwrap_or_else(|| "39".to_string()),
+                        );
                     }
                     if bg_changed {
-                        if let Some((r, g, b)) = bg {
-                            codes.push(format!("48;2;{};{};{}", r, g, b));
-                        } else {
-                            codes.push("49".to_string());
-                        }
+                        codes.push(
+                            bg.and_then(|c| sgr_color(48, c))
+                                .unwrap_or_else(|| "49".to_string()),
+                        );
                     }
                 }
 
@@ -1558,10 +1556,10 @@ impl TerminalState {
 pub struct TerminalCell {
     /// The character
     pub c: char,
-    /// Foreground color as RGB
-    pub fg: Option<(u8, u8, u8)>,
-    /// Background color as RGB
-    pub bg: Option<(u8, u8, u8)>,
+    /// Foreground color; None is the pane's default
+    pub fg: Option<Color>,
+    /// Background color; None is the pane's default
+    pub bg: Option<Color>,
     /// Bold flag
     pub bold: bool,
     /// Dim (faint) flag — SGR 2
@@ -1593,8 +1591,8 @@ impl Default for TerminalCell {
 /// joined line carries continuous styling across wrapped rows and resets once.
 #[derive(Default)]
 struct SgrState {
-    fg: Option<(u8, u8, u8)>,
-    bg: Option<(u8, u8, u8)>,
+    fg: Option<Color>,
+    bg: Option<Color>,
     bold: bool,
     dim: bool,
     italic: bool,
@@ -1612,77 +1610,33 @@ impl SgrState {
     }
 }
 
-/// Convert alacritty color to RGB
-fn color_to_rgb(color: &alacritty_terminal::vte::ansi::Color) -> Option<(u8, u8, u8)> {
-    use alacritty_terminal::vte::ansi::Color;
+/// The editor color for an emulator color. Palette colors (named 0-15 and
+/// indexed 0-255) stay palette numbers, so the host terminal draws them with
+/// its own palette, as tmux does; the GUI and web front ends resolve them
+/// with their own tables. Only truecolor is RGB. The emulator's default
+/// colors are None, the pane's default.
+fn to_editor_color(color: &alacritty_terminal::vte::ansi::Color) -> Option<Color> {
+    use alacritty_terminal::vte::ansi::Color as Ansi;
 
+    match *color {
+        Ansi::Spec(rgb) => Some(Color::Rgb(rgb.r, rgb.g, rgb.b)),
+        Ansi::Indexed(idx) => Some(Color::Indexed(idx)),
+        // Black..=BrightWhite are 0-15; the rest (Foreground, Background,
+        // Cursor, the dim variants) are not palette entries.
+        Ansi::Named(named) => {
+            let idx = named as usize;
+            (idx < 16).then_some(Color::Indexed(idx as u8))
+        }
+    }
+}
+
+/// The SGR parameters selecting `color` as foreground (`base` 38) or
+/// background (48); None for a color the terminal never produces.
+fn sgr_color(base: u8, color: Color) -> Option<String> {
     match color {
-        Color::Spec(rgb) => Some((rgb.r, rgb.g, rgb.b)),
-        Color::Named(named) => {
-            // Convert named colors to RGB
-            // Using standard ANSI color palette
-            let rgb = match named {
-                alacritty_terminal::vte::ansi::NamedColor::Black => (0, 0, 0),
-                alacritty_terminal::vte::ansi::NamedColor::Red => (205, 49, 49),
-                alacritty_terminal::vte::ansi::NamedColor::Green => (13, 188, 121),
-                alacritty_terminal::vte::ansi::NamedColor::Yellow => (229, 229, 16),
-                alacritty_terminal::vte::ansi::NamedColor::Blue => (36, 114, 200),
-                alacritty_terminal::vte::ansi::NamedColor::Magenta => (188, 63, 188),
-                alacritty_terminal::vte::ansi::NamedColor::Cyan => (17, 168, 205),
-                alacritty_terminal::vte::ansi::NamedColor::White => (229, 229, 229),
-                alacritty_terminal::vte::ansi::NamedColor::BrightBlack => (102, 102, 102),
-                alacritty_terminal::vte::ansi::NamedColor::BrightRed => (241, 76, 76),
-                alacritty_terminal::vte::ansi::NamedColor::BrightGreen => (35, 209, 139),
-                alacritty_terminal::vte::ansi::NamedColor::BrightYellow => (245, 245, 67),
-                alacritty_terminal::vte::ansi::NamedColor::BrightBlue => (59, 142, 234),
-                alacritty_terminal::vte::ansi::NamedColor::BrightMagenta => (214, 112, 214),
-                alacritty_terminal::vte::ansi::NamedColor::BrightCyan => (41, 184, 219),
-                alacritty_terminal::vte::ansi::NamedColor::BrightWhite => (255, 255, 255),
-                alacritty_terminal::vte::ansi::NamedColor::Foreground => return None,
-                alacritty_terminal::vte::ansi::NamedColor::Background => return None,
-                alacritty_terminal::vte::ansi::NamedColor::Cursor => return None,
-                _ => return None,
-            };
-            Some(rgb)
-        }
-        Color::Indexed(idx) => {
-            // Convert 256-color index to RGB
-            // Standard 256-color palette
-            let idx = *idx as usize;
-            if idx < 16 {
-                // Standard colors (same as named)
-                let colors = [
-                    (0, 0, 0),       // Black
-                    (205, 49, 49),   // Red
-                    (13, 188, 121),  // Green
-                    (229, 229, 16),  // Yellow
-                    (36, 114, 200),  // Blue
-                    (188, 63, 188),  // Magenta
-                    (17, 168, 205),  // Cyan
-                    (229, 229, 229), // White
-                    (102, 102, 102), // Bright Black
-                    (241, 76, 76),   // Bright Red
-                    (35, 209, 139),  // Bright Green
-                    (245, 245, 67),  // Bright Yellow
-                    (59, 142, 234),  // Bright Blue
-                    (214, 112, 214), // Bright Magenta
-                    (41, 184, 219),  // Bright Cyan
-                    (255, 255, 255), // Bright White
-                ];
-                Some(colors[idx])
-            } else if idx < 232 {
-                // 216 color cube (6x6x6)
-                let idx = idx - 16;
-                let r = (idx / 36) * 51;
-                let g = ((idx / 6) % 6) * 51;
-                let b = (idx % 6) * 51;
-                Some((r as u8, g as u8, b as u8))
-            } else {
-                // 24 grayscale colors
-                let gray = (idx - 232) * 10 + 8;
-                Some((gray as u8, gray as u8, gray as u8))
-            }
-        }
+        Color::Indexed(n) => Some(format!("{base};5;{n}")),
+        Color::Rgb(r, g, b) => Some(format!("{base};2;{r};{g};{b}")),
+        _ => None,
     }
 }
 

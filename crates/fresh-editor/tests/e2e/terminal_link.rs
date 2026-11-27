@@ -25,24 +25,32 @@ use fresh::model::event::BufferId;
 use fresh::services::terminal::TerminalId;
 use portable_pty::{native_pty_system, PtySize};
 
-fn harness_or_skip(
+pub(super) fn harness_or_skip(
     width: u16,
     height: u16,
     working_dir: std::path::PathBuf,
 ) -> Option<EditorTestHarness> {
-    if native_pty_system()
+    if !pty_available() {
+        return None;
+    }
+    EditorTestHarness::with_working_dir(width, height, working_dir).ok()
+}
+
+/// Whether a PTY can be opened here; says so on stderr when it cannot, as
+/// the terminal tests are then skipped.
+pub(super) fn pty_available() -> bool {
+    let available = native_pty_system()
         .openpty(PtySize {
             rows: 1,
             cols: 1,
             pixel_width: 0,
             pixel_height: 0,
         })
-        .is_err()
-    {
-        eprintln!("Skipping terminal-link test: PTY not available in this environment");
-        return None;
+        .is_ok();
+    if !available {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
     }
-    EditorTestHarness::with_working_dir(width, height, working_dir).ok()
+    available
 }
 
 /// Feed program output directly into the terminal grid, exactly as the PTY
@@ -93,7 +101,7 @@ fn feed_output_until_visible(
 /// terminal mode, and feed `output` into its grid as if a program had printed
 /// it, waiting until `visible_marker` shows on screen. Returns the terminal
 /// and its buffer id.
-fn open_terminal_with_output(
+pub(super) fn open_terminal_with_output(
     harness: &mut EditorTestHarness,
     output: &[u8],
     visible_marker: &str,
@@ -126,7 +134,7 @@ fn open_terminal_with_output(
 /// output survived a render, and a snapshot taken then is blank. So go back
 /// to live mode, feed again, and take another until one holds the output;
 /// once taken, the snapshot is in the file and later repaints leave it be.
-fn enter_scrollback_showing(
+pub(super) fn enter_scrollback_showing(
     harness: &mut EditorTestHarness,
     terminal_id: TerminalId,
     output: &[u8],

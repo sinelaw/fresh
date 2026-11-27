@@ -136,6 +136,22 @@
         "tour_step_bg": null,
         "terminal_bg": null,
         "terminal_fg": null,
+        "terminal_ansi_0": null,
+        "terminal_ansi_1": null,
+        "terminal_ansi_2": null,
+        "terminal_ansi_3": null,
+        "terminal_ansi_4": null,
+        "terminal_ansi_5": null,
+        "terminal_ansi_6": null,
+        "terminal_ansi_7": null,
+        "terminal_ansi_8": null,
+        "terminal_ansi_9": null,
+        "terminal_ansi_10": null,
+        "terminal_ansi_11": null,
+        "terminal_ansi_12": null,
+        "terminal_ansi_13": null,
+        "terminal_ansi_14": null,
+        "terminal_ansi_15": null,
         "status_warning_indicator_bg": null,
         "status_warning_indicator_fg": null,
         "status_error_indicator_bg": null,
@@ -1670,6 +1686,198 @@
           ],
           "default": null,
           "x-fallback": "editor.fg"
+        },
+        "terminal_ansi_0": {
+          "description": "Embedded terminal palette color 0 (black). When omitted, the host\nterminal's own color 0 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_1": {
+          "description": "Embedded terminal palette color 1 (red). When omitted, the host\nterminal's own color 1 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_2": {
+          "description": "Embedded terminal palette color 2 (green). When omitted, the host\nterminal's own color 2 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_3": {
+          "description": "Embedded terminal palette color 3 (yellow). When omitted, the host\nterminal's own color 3 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_4": {
+          "description": "Embedded terminal palette color 4 (blue). When omitted, the host\nterminal's own color 4 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_5": {
+          "description": "Embedded terminal palette color 5 (magenta). When omitted, the host\nterminal's own color 5 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_6": {
+          "description": "Embedded terminal palette color 6 (cyan). When omitted, the host\nterminal's own color 6 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_7": {
+          "description": "Embedded terminal palette color 7 (white). When omitted, the host\nterminal's own color 7 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_8": {
+          "description": "Embedded terminal palette color 8 (bright black). When omitted, the host\nterminal's own color 8 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_9": {
+          "description": "Embedded terminal palette color 9 (bright red). When omitted, the host\nterminal's own color 9 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_10": {
+          "description": "Embedded terminal palette color 10 (bright green). When omitted, the host\nterminal's own color 10 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_11": {
+          "description": "Embedded terminal palette color 11 (bright yellow). When omitted, the host\nterminal's own color 11 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_12": {
+          "description": "Embedded terminal palette color 12 (bright blue). When omitted, the host\nterminal's own color 12 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_13": {
+          "description": "Embedded terminal palette color 13 (bright magenta). When omitted, the host\nterminal's own color 13 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_14": {
+          "description": "Embedded terminal palette color 14 (bright cyan). When omitted, the host\nterminal's own color 14 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_ansi_15": {
+          "description": "Embedded terminal palette color 15 (bright white). When omitted, the host\nterminal's own color 15 is used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_warning_indicator_bg": {
           "description": "Warning indicator background in status bar",

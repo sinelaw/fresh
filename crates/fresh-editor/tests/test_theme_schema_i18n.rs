@@ -54,12 +54,19 @@ fn parse_schema_i18n_keys(
             .and_then(|p| p.as_object())
         {
             for (field_name, _field_schema) in section_props {
-                // Numbered indent-rainbow fields use one localized template
-                // with a `%{level}` parameter in the theme editor.
+                // Numbered indent-rainbow and terminal-color fields use one
+                // localized template each, with a `%{level}` / `%{index}`
+                // parameter in the theme editor.
                 let i18n_field = field_name
                     .strip_prefix("indent_rainbow_")
                     .filter(|level| matches!(*level, "1" | "2" | "3" | "4" | "5" | "6"))
                     .map(|_| "indent_rainbow")
+                    .or_else(|| {
+                        field_name
+                            .strip_prefix("terminal_ansi_")
+                            .filter(|n| n.parse::<u8>().is_ok_and(|n| n < 16))
+                            .map(|_| "terminal_ansi")
+                    })
                     .unwrap_or(field_name);
                 let field_i18n_name = format!("field.{}", i18n_field);
                 let field_i18n_desc = format!("field.{}_desc", i18n_field);

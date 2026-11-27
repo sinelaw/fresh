@@ -204,6 +204,37 @@ The explorer panel has its own colors too: `ui.file_explorer_bg` and
   the default look.
 - `editor.gutter_separator_fg` colors the `│` between the numbers and the text.
 
+### Terminal colors
+
+The built-in terminal draws programs' colors with your terminal's own
+palette. A theme can choose any of the 16 basic colors instead with
+`ui.terminal_ansi_0` to `ui.terminal_ansi_15`:
+
+| Key | Color | Key | Color |
+|-----|-------|-----|-------|
+| `ui.terminal_ansi_0` | black | `ui.terminal_ansi_8` | bright black |
+| `ui.terminal_ansi_1` | red | `ui.terminal_ansi_9` | bright red |
+| `ui.terminal_ansi_2` | green | `ui.terminal_ansi_10` | bright green |
+| `ui.terminal_ansi_3` | yellow | `ui.terminal_ansi_11` | bright yellow |
+| `ui.terminal_ansi_4` | blue | `ui.terminal_ansi_12` | bright blue |
+| `ui.terminal_ansi_5` | magenta | `ui.terminal_ansi_13` | bright magenta |
+| `ui.terminal_ansi_6` | cyan | `ui.terminal_ansi_14` | bright cyan |
+| `ui.terminal_ansi_7` | white | `ui.terminal_ansi_15` | bright white |
+
+Each key is optional: a color the theme leaves out follows the host terminal.
+The keys apply to the live terminal and its scrollback, and switching themes
+recolors output already on screen. Colors 16–255 and RGB colors a program
+prints are always drawn as printed. `ui.terminal_bg` and `ui.terminal_fg` set
+the pane's default background and text color.
+
+```json
+{
+  "name": "my-terminal-colors",
+  "extends": "builtin://dark",
+  "ui": { "terminal_ansi_1": "#e06c75", "terminal_ansi_9": "#ff7a85" }
+}
+```
+
 ### Removing borders and separators (`chrome`)
 
 Colors cannot give a cell back: a border drawn in its background's color still

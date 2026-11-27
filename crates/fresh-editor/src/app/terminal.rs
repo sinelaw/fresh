@@ -2852,6 +2852,7 @@ impl Window {
             buf,
             Style::default().theme_fg(&theme, "ui.terminal_fg"),
             Style::default().theme_bg(&theme, "ui.terminal_bg"),
+            |color| theme.terminal_color(color),
             link_highlight,
         );
         let inside = cursor_pos.0 < content_rect.width && cursor_pos.1 < content_rect.height;
@@ -2939,6 +2940,7 @@ pub mod render {
         buf: &mut Buffer,
         default_fg: Style,
         default_bg: Style,
+        recolor: impl Fn(Color) -> Color,
         link_highlight: Option<(u16, std::ops::Range<usize>)>,
     ) {
         // Fill the rendered area with the theme's terminal bg first so any
@@ -2975,11 +2977,11 @@ pub mod render {
                 // its own takes the theme's default — with that key's text
                 // attributes, which belong to the default, not to the cell.
                 let mut style = match cell.fg {
-                    Some((r, g, b)) => Style::default().fg(Color::Rgb(r, g, b)),
+                    Some(color) => Style::default().fg(recolor(color)),
                     None => default_fg,
                 };
                 style = match cell.bg {
-                    Some((r, g, b)) => style.bg(Color::Rgb(r, g, b)),
+                    Some(color) => style.bg(recolor(color)),
                     None => style.patch(default_bg),
                 };
 
@@ -3048,6 +3050,7 @@ pub mod render {
                 &mut buf,
                 Style::default().fg(default_fg),
                 Style::default().bg(default_bg),
+                |color| color,
                 None,
             );
 
@@ -3086,6 +3089,7 @@ pub mod render {
                 &mut buf,
                 Style::default().fg(Color::White),
                 Style::default().bg(Color::Black),
+                |color| color,
                 Some((0, 2..5)), // underline columns 2,3,4
             );
 

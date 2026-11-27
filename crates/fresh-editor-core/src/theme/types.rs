@@ -1344,6 +1344,70 @@ pub struct UiColors {
     /// Embedded terminal default text color
     #[serde(default)]
     pub terminal_fg: Option<StyledColorDef>,
+    /// Embedded terminal palette color 0 (black). When omitted, the host
+    /// terminal's own color 0 is used.
+    #[serde(default)]
+    pub terminal_ansi_0: Option<StyledColorDef>,
+    /// Embedded terminal palette color 1 (red). When omitted, the host
+    /// terminal's own color 1 is used.
+    #[serde(default)]
+    pub terminal_ansi_1: Option<StyledColorDef>,
+    /// Embedded terminal palette color 2 (green). When omitted, the host
+    /// terminal's own color 2 is used.
+    #[serde(default)]
+    pub terminal_ansi_2: Option<StyledColorDef>,
+    /// Embedded terminal palette color 3 (yellow). When omitted, the host
+    /// terminal's own color 3 is used.
+    #[serde(default)]
+    pub terminal_ansi_3: Option<StyledColorDef>,
+    /// Embedded terminal palette color 4 (blue). When omitted, the host
+    /// terminal's own color 4 is used.
+    #[serde(default)]
+    pub terminal_ansi_4: Option<StyledColorDef>,
+    /// Embedded terminal palette color 5 (magenta). When omitted, the host
+    /// terminal's own color 5 is used.
+    #[serde(default)]
+    pub terminal_ansi_5: Option<StyledColorDef>,
+    /// Embedded terminal palette color 6 (cyan). When omitted, the host
+    /// terminal's own color 6 is used.
+    #[serde(default)]
+    pub terminal_ansi_6: Option<StyledColorDef>,
+    /// Embedded terminal palette color 7 (white). When omitted, the host
+    /// terminal's own color 7 is used.
+    #[serde(default)]
+    pub terminal_ansi_7: Option<StyledColorDef>,
+    /// Embedded terminal palette color 8 (bright black). When omitted, the host
+    /// terminal's own color 8 is used.
+    #[serde(default)]
+    pub terminal_ansi_8: Option<StyledColorDef>,
+    /// Embedded terminal palette color 9 (bright red). When omitted, the host
+    /// terminal's own color 9 is used.
+    #[serde(default)]
+    pub terminal_ansi_9: Option<StyledColorDef>,
+    /// Embedded terminal palette color 10 (bright green). When omitted, the host
+    /// terminal's own color 10 is used.
+    #[serde(default)]
+    pub terminal_ansi_10: Option<StyledColorDef>,
+    /// Embedded terminal palette color 11 (bright yellow). When omitted, the host
+    /// terminal's own color 11 is used.
+    #[serde(default)]
+    pub terminal_ansi_11: Option<StyledColorDef>,
+    /// Embedded terminal palette color 12 (bright blue). When omitted, the host
+    /// terminal's own color 12 is used.
+    #[serde(default)]
+    pub terminal_ansi_12: Option<StyledColorDef>,
+    /// Embedded terminal palette color 13 (bright magenta). When omitted, the host
+    /// terminal's own color 13 is used.
+    #[serde(default)]
+    pub terminal_ansi_13: Option<StyledColorDef>,
+    /// Embedded terminal palette color 14 (bright cyan). When omitted, the host
+    /// terminal's own color 14 is used.
+    #[serde(default)]
+    pub terminal_ansi_14: Option<StyledColorDef>,
+    /// Embedded terminal palette color 15 (bright white). When omitted, the host
+    /// terminal's own color 15 is used.
+    #[serde(default)]
+    pub terminal_ansi_15: Option<StyledColorDef>,
     /// Warning indicator background in status bar
     #[serde(default)]
     pub status_warning_indicator_bg: Option<StyledColorDef>,
@@ -1749,6 +1813,10 @@ pub struct Theme {
     // Terminal colors (for embedded terminal buffers)
     pub terminal_bg: Color,
     pub terminal_fg: Color,
+    /// The theme's replacements for the embedded terminal's 16 basic palette
+    /// colors (`ui.terminal_ansi_N`), by palette number. `None` keeps the
+    /// palette color, so the host terminal draws it with its own palette.
+    pub terminal_ansi: [Option<Color>; 16],
 
     // Status bar warning/error indicator colors
     pub status_warning_indicator_bg: Color,
@@ -1870,6 +1938,12 @@ fn placeholder(def: Option<ColorDef>) -> Color {
 /// [`placeholder`]).
 fn styled_color(def: &Option<StyledColorDef>) -> Color {
     placeholder(def.as_ref().map(|d| d.color().clone()))
+}
+
+/// The color part of an `opt` key, which has no fallback: `None` while the
+/// theme file leaves it out.
+fn styled_opt(def: &Option<StyledColorDef>) -> Option<Color> {
+    def.as_ref().map(|d| d.color().clone().into())
 }
 
 /// A resolved key in its serialized form: the color, bundled with the key's
@@ -2021,6 +2095,26 @@ impl From<ThemeFile> for Theme {
             tour_step_bg: styled_color(&file.ui.tour_step_bg),
             terminal_bg: styled_color(&file.ui.terminal_bg),
             terminal_fg: styled_color(&file.ui.terminal_fg),
+            // One array rather than 16 fields: the terminal looks its
+            // overrides up by palette number.
+            terminal_ansi: [
+                styled_opt(&file.ui.terminal_ansi_0),
+                styled_opt(&file.ui.terminal_ansi_1),
+                styled_opt(&file.ui.terminal_ansi_2),
+                styled_opt(&file.ui.terminal_ansi_3),
+                styled_opt(&file.ui.terminal_ansi_4),
+                styled_opt(&file.ui.terminal_ansi_5),
+                styled_opt(&file.ui.terminal_ansi_6),
+                styled_opt(&file.ui.terminal_ansi_7),
+                styled_opt(&file.ui.terminal_ansi_8),
+                styled_opt(&file.ui.terminal_ansi_9),
+                styled_opt(&file.ui.terminal_ansi_10),
+                styled_opt(&file.ui.terminal_ansi_11),
+                styled_opt(&file.ui.terminal_ansi_12),
+                styled_opt(&file.ui.terminal_ansi_13),
+                styled_opt(&file.ui.terminal_ansi_14),
+                styled_opt(&file.ui.terminal_ansi_15),
+            ],
             status_warning_indicator_bg: styled_color(&file.ui.status_warning_indicator_bg),
             status_warning_indicator_fg: styled_color(&file.ui.status_warning_indicator_fg),
             status_error_indicator_bg: styled_color(&file.ui.status_error_indicator_bg),
@@ -2230,6 +2324,22 @@ impl From<Theme> for ThemeFile {
                 tour_step_bg: styled(&theme, "ui.tour_step_bg"),
                 terminal_bg: styled(&theme, "ui.terminal_bg"),
                 terminal_fg: styled(&theme, "ui.terminal_fg"),
+                terminal_ansi_0: styled(&theme, "ui.terminal_ansi_0"),
+                terminal_ansi_1: styled(&theme, "ui.terminal_ansi_1"),
+                terminal_ansi_2: styled(&theme, "ui.terminal_ansi_2"),
+                terminal_ansi_3: styled(&theme, "ui.terminal_ansi_3"),
+                terminal_ansi_4: styled(&theme, "ui.terminal_ansi_4"),
+                terminal_ansi_5: styled(&theme, "ui.terminal_ansi_5"),
+                terminal_ansi_6: styled(&theme, "ui.terminal_ansi_6"),
+                terminal_ansi_7: styled(&theme, "ui.terminal_ansi_7"),
+                terminal_ansi_8: styled(&theme, "ui.terminal_ansi_8"),
+                terminal_ansi_9: styled(&theme, "ui.terminal_ansi_9"),
+                terminal_ansi_10: styled(&theme, "ui.terminal_ansi_10"),
+                terminal_ansi_11: styled(&theme, "ui.terminal_ansi_11"),
+                terminal_ansi_12: styled(&theme, "ui.terminal_ansi_12"),
+                terminal_ansi_13: styled(&theme, "ui.terminal_ansi_13"),
+                terminal_ansi_14: styled(&theme, "ui.terminal_ansi_14"),
+                terminal_ansi_15: styled(&theme, "ui.terminal_ansi_15"),
                 status_warning_indicator_bg: styled(&theme, "ui.status_warning_indicator_bg"),
                 status_warning_indicator_fg: styled(&theme, "ui.status_warning_indicator_fg"),
                 status_error_indicator_bg: styled(&theme, "ui.status_error_indicator_bg"),
@@ -2928,7 +3038,7 @@ macro_rules! theme_color_keys {
     (
         $(
             $section:literal => {
-                $( $field_key:literal => $kind:tt $field:ident $(modifier $mod:ident)? $(fallback $fb:literal)? ),* $(,)?
+                $( $field_key:literal => $kind:tt $field:ident $([$idx:literal])? $(modifier $mod:ident)? $(fallback $fb:literal)? ),* $(,)?
             }
         ),* $(,)?
     ) => {
@@ -2942,7 +3052,7 @@ macro_rules! theme_color_keys {
                 match section {
                     $(
                         $section => match field {
-                            $( $field_key => theme_color_keys!(@get self, $kind $field), )*
+                            $( $field_key => theme_color_keys!(@get self, $kind $field $([$idx])?), )*
                             _ => None,
                         },
                     )*
@@ -2979,7 +3089,7 @@ macro_rules! theme_color_keys {
                 match section {
                     $(
                         $section => match field {
-                            $( $field_key => theme_color_keys!(@get_mut self, $kind $field), )*
+                            $( $field_key => theme_color_keys!(@get_mut self, $kind $field $([$idx])?), )*
                             _ => None,
                         },
                     )*
@@ -2997,7 +3107,7 @@ macro_rules! theme_color_keys {
                 match section {
                     $(
                         $section => match field {
-                            $( $field_key => { theme_color_keys!(@set self, $kind $field, color); true } )*
+                            $( $field_key => { theme_color_keys!(@set self, $kind $field $([$idx])?, color); true } )*
                             _ => false,
                         },
                     )*
@@ -3092,6 +3202,10 @@ macro_rules! theme_color_keys {
     (@get_mut $self:ident, opt $field:ident) => { $self.$field.as_mut() };
     (@set $self:ident, color $field:ident, $c:ident) => { $self.$field = $c };
     (@set $self:ident, opt $field:ident, $c:ident) => { $self.$field = Some($c) };
+    // `opt` rows indexing into a table of `Option<Color>`s.
+    (@get $self:ident, opt $field:ident [$i:literal]) => { $self.$field[$i] };
+    (@get_mut $self:ident, opt $field:ident [$i:literal]) => { $self.$field[$i].as_mut() };
+    (@set $self:ident, opt $field:ident [$i:literal], $c:ident) => { $self.$field[$i] = Some($c) };
 
     // Modifier accessors. A row with `modifier <field>` resolves to that
     // `Modifier` field; any other row looks its key up in `key_modifiers`.
@@ -3246,6 +3360,22 @@ theme_color_keys! {
         "tab_inactive_fg" => color tab_inactive_fg,
         "tab_separator_bg" => color tab_separator_bg,
         "tab_separator_fg" => color tab_separator_fg fallback "ui.tab_inactive_fg",
+        "terminal_ansi_0" => opt terminal_ansi[0],
+        "terminal_ansi_1" => opt terminal_ansi[1],
+        "terminal_ansi_2" => opt terminal_ansi[2],
+        "terminal_ansi_3" => opt terminal_ansi[3],
+        "terminal_ansi_4" => opt terminal_ansi[4],
+        "terminal_ansi_5" => opt terminal_ansi[5],
+        "terminal_ansi_6" => opt terminal_ansi[6],
+        "terminal_ansi_7" => opt terminal_ansi[7],
+        "terminal_ansi_8" => opt terminal_ansi[8],
+        "terminal_ansi_9" => opt terminal_ansi[9],
+        "terminal_ansi_10" => opt terminal_ansi[10],
+        "terminal_ansi_11" => opt terminal_ansi[11],
+        "terminal_ansi_12" => opt terminal_ansi[12],
+        "terminal_ansi_13" => opt terminal_ansi[13],
+        "terminal_ansi_14" => opt terminal_ansi[14],
+        "terminal_ansi_15" => opt terminal_ansi[15],
         "terminal_bg" => color terminal_bg fallback "editor.bg",
         "terminal_fg" => color terminal_fg fallback "editor.fg",
         "text_input_selection_bg" => color text_input_selection_bg fallback "ui.popup_selection_bg",
@@ -3288,6 +3418,18 @@ theme_color_keys! {
 }
 
 impl Theme {
+    /// The color the built-in terminal draws `color` in: the theme's
+    /// `ui.terminal_ansi_N` for basic palette color N (`Indexed(0..=15)`)
+    /// when the theme sets one, otherwise `color` itself. The 256-color
+    /// range above 15 and RGB are the program's own choice and are never
+    /// replaced.
+    pub fn terminal_color(&self, color: Color) -> Color {
+        match color {
+            Color::Indexed(n) if n < 16 => self.terminal_ansi[n as usize].unwrap_or(color),
+            _ => color,
+        }
+    }
+
     /// Return the independently configurable indentation-guide color for a
     /// zero-based nesting depth, cycling after the sixth level.
     pub fn indent_rainbow_color(&self, depth: usize) -> Color {
@@ -4024,6 +4166,39 @@ mod tests {
         assert_eq!(theme.indent_rainbow_2, Color::Rgb(4, 5, 6));
         assert_eq!(theme.bracket_rainbow_1, Color::Rgb(200, 201, 202));
         assert_eq!(theme.indent_rainbow_color(6), Color::Rgb(1, 2, 3));
+    }
+
+    /// Plugins such as the theme editor see a theme as its `ThemeFile`, so
+    /// each terminal color a theme sets must come back under its own key,
+    /// and one it leaves out must stay out rather than come back filled in.
+    #[test]
+    fn terminal_ansi_keys_survive_the_theme_file_round_trip() {
+        // A distinct color per palette number, so a key read or written at
+        // the wrong number shows up as the wrong color.
+        let color_for = |n: u8| Color::Rgb(0x10 + n, 0x80, 0xf0 - n);
+        let keys: Vec<String> = (0..16u8)
+            .map(|n| {
+                let Color::Rgb(r, g, b) = color_for(n) else {
+                    unreachable!()
+                };
+                format!(r##""terminal_ansi_{n}": "#{r:02x}{g:02x}{b:02x}""##)
+            })
+            .collect();
+        let round_trip = |ui: &str| {
+            let json = format!(
+                r#"{{ "name": "terminal-palette", "extends": "builtin://dark", "ui": {{ {ui} }} }}"#
+            );
+            let file: ThemeFile = Theme::from_json(&json).expect("should parse").into();
+            Theme::from_json(&serde_json::to_string(&file).unwrap()).unwrap()
+        };
+
+        let all_set = round_trip(&keys.join(", "));
+        let none_set = round_trip("");
+        for n in 0..16u8 {
+            let key = format!("ui.terminal_ansi_{n}");
+            assert_eq!(all_set.resolve_theme_key(&key), Some(color_for(n)), "{key}");
+            assert_eq!(none_set.resolve_theme_key(&key), None, "{key} unset");
+        }
     }
 
     #[test]
