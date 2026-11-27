@@ -872,11 +872,31 @@ impl OverlayManager {
     /// Query overlays in a viewport range efficiently using the marker interval tree
     ///
     /// This is much faster than calling `at_position()` for every character in the range.
-    /// Returns overlays with their resolved byte ranges.
+    /// Returns overlays with their resolved byte ranges, **in position order**.
+    ///
+    /// # Ordering
+    /// The pairs come back sorted by `(range.start, range.end, span_marker)`,
+    /// never in storage order. The storage order of an unordered `Vec` that
+    /// removes with `swap_remove` is not a property of the buffer at all: it
+    /// changes when some *unrelated* overlay is removed, so a consumer that
+    /// inherits it renders a different frame for the same buffer (issue
+    /// #3705 — one semantic token out of position order left every token
+    /// before it on screen without its colour, because `span_at`'s
+    /// forward-only cursor needs them sorted).
+    ///
+    /// Sorting here rather than in each consumer is what the sibling
+    /// viewport queries already do (`SoftBreakPoints::query_viewport`,
+    /// `ConcealRanges::query_viewport_styled_in`), and it covers the
+    /// consumers that only *tie-break* on this order: a stable sort by
+    /// priority, or a first-seen-wins fold, is deterministic given
+    /// position-ordered input and storage-dependent without it. The third
+    /// key is the span marker — monotonic in creation order, and the only
+    /// one of the three that makes the order total, so two overlays with
+    /// identical ranges cannot swap either.
     ///
     /// # Performance
     /// - Old approach: O(N * M) where N = positions to check, M = overlay count
-    /// - This approach: O(log M + k) where k = overlays in viewport (typically 2-10)
+    /// - This approach: O(log M + k log k) where k = overlays in viewport (typically 2-10)
     pub fn query_viewport(
         &self,
         start: usize,
@@ -908,7 +928,7 @@ impl OverlayManager {
         // The span marker is only an index — deliberately a superset, so it
         // can offer a candidate that does not really overlap. The real
         // markers decide, exactly as before.
-        candidates
+        let mut hits: Vec<(&Overlay, Range<usize>)> = candidates
             .into_iter()
             .filter_map(|idx| {
                 let overlay = self.overlays.get(idx)?;
@@ -927,7 +947,15 @@ impl OverlayManager {
 
                 included.then_some((overlay, range))
             })
-            .collect()
+            .collect();
+
+        // Position order, not storage order — see the `# Ordering` note
+        // above. `candidates` was sorted by *index*, which is exactly the
+        // order `swap_remove` shuffles.
+        hits.sort_unstable_by_key(|(overlay, range)| {
+            (range.start, range.end, overlay.span_marker.0)
+        });
+        hits
     }
 
     /// Get total number of overlays
@@ -1291,6 +1319,120 @@ mod tests {
         // Disjoint on either side — not visible.
         assert!(manager.query_viewport(300, 400, &marker_list).is_empty());
         assert!(manager.query_viewport(10, 90, &marker_list).is_empty());
+    }
+
+    /// Issue #3705: `query_viewport` answers in position order, whatever the
+    /// store's internal order is.
+    ///
+    /// The store is an unordered `Vec` that removes with `swap_remove`, so
+    /// removing one overlay moves the last entry into the freed slot: its
+    /// order is not a property of the buffer, and a consumer that inherits it
+    /// draws a different frame depending on what was removed when. The
+    /// renderer's per-cell lookup walks these with a forward-only cursor, so
+    /// one entry out of order costs every cell before it its colour.
+    #[test]
+    fn test_query_viewport_answers_in_position_order_after_a_removal() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(1000);
+        let mut manager = OverlayManager::new();
+
+        // One overlay from another producer, added before the rest — as a
+        // highlight already on screen is when a server's tokens arrive.
+        let other = OverlayNamespace::from_string("other-producer".to_string());
+        let doomed = manager.add(Overlay::with_namespace(
+            &mut marker_list,
+            500..510,
+            OverlayFace::Background { color: Color::Blue },
+            other,
+        ));
+
+        let ns = OverlayNamespace::from_string("ordered".to_string());
+        for i in 0..5 {
+            manager.add(Overlay::with_namespace(
+                &mut marker_list,
+                (i * 10)..(i * 10 + 4),
+                OverlayFace::Background { color: Color::Red },
+                ns.clone(),
+            ));
+        }
+
+        let starts = |m: &OverlayManager, ml: &MarkerList| -> Vec<usize> {
+            m.query_viewport(0, 1000, ml)
+                .into_iter()
+                .map(|(_, range)| range.start)
+                .collect()
+        };
+        assert_eq!(
+            starts(&manager, &marker_list),
+            vec![0, 10, 20, 30, 40, 500],
+            "ordered to begin with"
+        );
+
+        assert!(
+            manager.remove_by_handle(&doomed, &mut marker_list),
+            "the other producer's overlay is still there"
+        );
+
+        // `swap_remove` has rotated the store — the assertion is that this
+        // does not reach the caller.
+        assert_eq!(
+            starts(&manager, &marker_list),
+            vec![0, 10, 20, 30, 40],
+            "removing an unrelated overlay must not reorder the rest"
+        );
+        manager.check_invariants();
+    }
+
+    /// Overlays that share a start are ordered too: by end, then by their
+    /// span marker, which is monotonic in creation order. Sorting on the
+    /// start alone would leave these two to the store's order, which is the
+    /// hole the third key closes.
+    #[test]
+    fn test_query_viewport_orders_overlays_sharing_a_start() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(1000);
+        let mut manager = OverlayManager::new();
+
+        let other = OverlayNamespace::from_string("other-producer".to_string());
+        let doomed = manager.add(Overlay::with_namespace(
+            &mut marker_list,
+            900..910,
+            OverlayFace::Background { color: Color::Blue },
+            other,
+        ));
+        // Same start, different ends; and two that are identical but for
+        // their markers.
+        for range in [100..300, 100..200, 100..200] {
+            manager.add(Overlay::new(
+                &mut marker_list,
+                range,
+                OverlayFace::Background { color: Color::Red },
+            ));
+        }
+
+        let order = |m: &OverlayManager, ml: &MarkerList| -> Vec<(usize, usize, u64)> {
+            m.query_viewport(0, 1000, ml)
+                .into_iter()
+                .map(|(o, range)| (range.start, range.end, o.span_marker.0))
+                .collect()
+        };
+        let before = order(&manager, &marker_list);
+        assert!(
+            before.windows(2).all(|w| w[0] < w[1]),
+            "the key is a total order: {before:?}"
+        );
+
+        assert!(
+            manager.remove_by_handle(&doomed, &mut marker_list),
+            "the other producer's overlay is still there"
+        );
+
+        let after = order(&manager, &marker_list);
+        assert_eq!(
+            after,
+            before[..before.len() - 1].to_vec(),
+            "the surviving overlays keep their order exactly"
+        );
     }
 
     #[test]
